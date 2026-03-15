@@ -30,11 +30,22 @@ class Config:
 
     # ── These rarely need editing ─────────────────────────────────
 
-    # Only this amount (₹) is ever invested by the auto-manager.
-    # Your existing stocks are READ-ONLY and will NEVER be touched.
-    # Phase 2 uses this as the total capital for intraday trades.
-    # Increase this to ₹10,000+ for meaningful intraday returns.
-    MANAGED_BUDGET_INR: int = 10_000
+    # DYNAMIC BUDGET: The bot fetches your actual Zerodha account
+    # balance at startup and displays it. The trading budget is:
+    #   min(available_funds, MAX_BUDGET_INR)
+    # So even if you have ₹50K in Zerodha, the bot only risks ₹10K.
+    # Increase this when you're confident in the bot's performance.
+    #
+    # MAX_BUDGET_INR: absolute cap on how much capital the bot can
+    # deploy in a single day, regardless of account balance.
+    MAX_BUDGET_INR: int = 10_000
+
+    # MIN_BALANCE_TO_TRADE: minimum Zerodha account balance required
+    # to start trading. If your funds are below this, the bot logs
+    # the balance and exits without trading. Prevents micro-trades
+    # that get eaten by brokerage and taxes.
+    # In DRY RUN mode, this check is skipped (only a warning is shown).
+    MIN_BALANCE_TO_TRADE: int = 3_000
 
     # Scheduling: "manual" means you run it yourself.
     # "daily" / "weekly" automation comes in Phase 3.

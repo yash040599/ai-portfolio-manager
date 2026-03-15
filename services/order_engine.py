@@ -56,8 +56,16 @@ class OrderEngine:
         self.trade_log:   list[dict] = []   # chronological log of all actions
         self.claude_calls: int       = 0    # tracks Claude API call count for cost calc
 
+        # Dynamic budget — set by PortfolioManager after fetching Zerodha funds.
+        # Falls back to MAX_BUDGET_INR if not set.
+        self._budget: float = float(config.MAX_BUDGET_INR)
+
         # Running order counter for dry-run IDs
         self._dry_run_counter: int = 0
+
+    def set_budget(self, amount: float):
+        """Sets the trading budget (called by PortfolioManager after fetching funds)."""
+        self._budget = amount
 
     # ================================================================
     # ENTRY — OPEN A NEW POSITION
@@ -89,7 +97,7 @@ class OrderEngine:
         # ── Budget check before entering ──────────────────────────
         cost = entry * qty
         current_exposure = self._total_open_exposure()
-        if current_exposure + cost > self.cfg.MANAGED_BUDGET_INR:
+        if current_exposure + cost > self._budget:
             self.log.warning(
                 f"Cannot enter {symbol}: ₹{cost:,.0f} would exceed "
                 f"budget (current exposure: ₹{current_exposure:,.0f})"
@@ -378,7 +386,7 @@ class OrderEngine:
         if max_loss_pct <= 0:
             return False
 
-        budget   = self.cfg.MANAGED_BUDGET_INR
+        budget   = self._budget
         max_loss = budget * max_loss_pct / 100
         day_pnl  = self.day_pnl()
 
@@ -531,7 +539,7 @@ class OrderEngine:
 
     def budget_remaining(self) -> float:
         """How much of the budget is not currently allocated."""
-        return self.cfg.MANAGED_BUDGET_INR - self._total_open_exposure()
+        return self._budget - self._total_open_exposure()
 
     # ================================================================
     # INTERNAL HELPERS

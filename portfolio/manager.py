@@ -22,7 +22,7 @@
 #   - DRY_RUN mode: no real orders, simulated P&L on live prices
 #   - Circuit breaker: stops trading if daily loss exceeds threshold
 #   - Graceful shutdown: Ctrl+C squares off all positions first
-#   - Budget cap: never exceeds MANAGED_BUDGET_INR
+#   - Budget cap: uses actual Zerodha account balance
 #   - Max positions limit: prevents over-diversification
 #
 # Key constraint: Only ever touches the managed budget pool.
@@ -66,6 +66,8 @@ class PortfolioManager:
         self._shutdown_requested = False   # set by Ctrl+C handler
         self._trade_plans: list[dict] = [] # trades Claude picked pre-market
         self._circuit_broken = False       # true if max daily loss hit
+        self._available_funds: float = 0.0 # fetched from Zerodha at startup
+        self._budget: float = 0.0          # actual trading budget for the day
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -98,13 +100,17 @@ class PortfolioManager:
             return
 
         # ── Step 3: Login to Zerodha ──────────────────────────────
-        # Login after we know it's a trading day so the token is fresh.
         self.log.section("ZERODHA LOGIN")
         try:
             self.zerodha.login()
         except Exception as e:
             self.log.error(f"Zerodha login failed: {e}")
             self.log.info("Fix your API credentials in .env and try again.")
+            return
+
+        # ── Step 3b: Fetch account funds ──────────────────────────
+        self._fetch_and_set_budget()
+        if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
         # ── Step 4: Wait for pre-market time ──────────────────────
@@ -118,6 +124,11 @@ class PortfolioManager:
             self.zerodha.login()
         except Exception as e:
             self.log.error(f"Zerodha re-login failed: {e}")
+            return
+
+        # Refresh funds after re-login
+        self._fetch_and_set_budget()
+        if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
         # ── Step 5: Pre-market scan ───────────────────────────────
@@ -160,7 +171,7 @@ class PortfolioManager:
         """
         self.log.section("PRE-MARKET SCAN")
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
-        self.log.info(f"Budget: ₹{self.cfg.MANAGED_BUDGET_INR:,}")
+        self.log.info(f"Budget: ₹{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
 
         universe = self.scanner.get_universe()
@@ -358,9 +369,84 @@ class PortfolioManager:
             trade_log  = self.engine.trade_log,
             pnl        = pnl_summary,
             dry_run    = self.cfg.DRY_RUN,
+            budget     = self._budget,
         )
 
         self._print_pnl_summary(pnl_summary)
+
+    # ================================================================
+    # ACCOUNT FUNDS & BUDGET
+    # ================================================================
+
+    def _fetch_and_set_budget(self):
+        """
+        Fetches available cash from Zerodha and sets the trading budget.
+
+        Budget = min(available_funds, MAX_BUDGET_INR).
+        So even if account has ₹50K, the bot only uses up to ₹10K.
+
+        Live mode:
+          - Fetches real balance, checks against MIN_BALANCE_TO_TRADE.
+          - If below minimum, stops trading.
+
+        Dry-run mode:
+          - Tries to fetch real balance for display.
+          - If fetch fails, uses MAX_BUDGET_INR as fallback.
+          - Min balance check is skipped (only a warning).
+        """
+        self.log.section("ACCOUNT FUNDS")
+
+        max_budget = self.cfg.MAX_BUDGET_INR
+
+        try:
+            self._available_funds = self.zerodha.get_available_funds()
+            self.log.success(
+                f"Available funds in Zerodha: ₹{self._available_funds:,.2f}"
+            )
+        except Exception as e:
+            self.log.warning(f"Could not fetch Zerodha funds: {e}")
+            if self.cfg.DRY_RUN:
+                self._available_funds = float(max_budget)
+                self.log.info(
+                    f"DRY RUN — using max budget as fallback: ₹{max_budget:,}"
+                )
+            else:
+                self.log.error(
+                    "Cannot trade without knowing account balance. Aborting."
+                )
+                self._budget = 0
+                return
+
+        min_balance = self.cfg.MIN_BALANCE_TO_TRADE
+
+        if self._available_funds < min_balance:
+            if self.cfg.DRY_RUN:
+                self.log.warning(
+                    f"Funds ₹{self._available_funds:,.2f} below minimum "
+                    f"₹{min_balance:,} — ignored in DRY RUN mode"
+                )
+            else:
+                self.log.error(
+                    f"Funds ₹{self._available_funds:,.2f} below minimum "
+                    f"₹{min_balance:,}. Add funds to Zerodha and retry."
+                )
+                self._budget = 0
+                return
+
+        # Cap at MAX_BUDGET_INR — never risk more than configured max
+        self._budget = min(self._available_funds, float(max_budget))
+
+        if self._available_funds > max_budget:
+            self.log.info(
+                f"Funds ₹{self._available_funds:,.2f} exceed max budget — "
+                f"capping at ₹{max_budget:,}"
+            )
+
+        self.log.info(f"Trading budget for today: ₹{self._budget:,.2f}")
+
+        # Set budget on engine and scanner so they use the live value
+        self.engine.set_budget(self._budget)
+        self.scanner.set_budget(self._budget)
 
     # ================================================================
     # TIMING HELPERS
@@ -591,7 +677,8 @@ class PortfolioManager:
         print("  AI PORTFOLIO MANAGER — PHASE 2 INTRADAY BOT")
         print(f"{'='*58}")
         print(f"  Mode           : {mode}")
-        print(f"  Budget         : ₹{self.cfg.MANAGED_BUDGET_INR:,}")
+        print(f"  Budget         : Up to ₹{self.cfg.MAX_BUDGET_INR:,} (capped from Zerodha funds)")
+        print(f"  Min balance    : ₹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
         print(f"  Max positions  : {self.cfg.MAX_POSITIONS}")
         print(f"  Universe       : {self.cfg.SCAN_UNIVERSE}")
         print(f"  Claude model   : {plan['model']}")

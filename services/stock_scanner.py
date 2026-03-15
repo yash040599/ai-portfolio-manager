@@ -84,6 +84,14 @@ class StockScanner:
         self.claude = claude
         self.log    = log
 
+        # Dynamic budget — set by PortfolioManager after fetching Zerodha funds.
+        # Falls back to MAX_BUDGET_INR if not set.
+        self._budget: float = float(config.MAX_BUDGET_INR)
+
+    def set_budget(self, amount: float):
+        """Sets the trading budget (called by PortfolioManager after fetching funds)."""
+        self._budget = amount
+
     # ================================================================
     # GET STOCK UNIVERSE
     # ================================================================
@@ -228,7 +236,7 @@ class StockScanner:
         and must return trade plans in a strict parseable format.
         """
         today  = datetime.date.today().strftime("%B %d, %Y")
-        budget = self.cfg.MANAGED_BUDGET_INR
+        budget = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
         default_sl     = self.cfg.DEFAULT_STOP_LOSS_PCT
@@ -452,7 +460,7 @@ RATIONALE: [1 sentence]
         Drops trades that would push over the limit.
         Warns when a trade is dropped.
         """
-        budget    = self.cfg.MANAGED_BUDGET_INR
+        budget    = self._budget
         max_pct   = self.cfg.MAX_POSITION_PCT / 100
         max_per   = budget * max_pct
         allocated = 0

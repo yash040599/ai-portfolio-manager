@@ -141,7 +141,8 @@ Open `config.py` and review these key settings:
 | Setting | Default | What it controls |
 |---------|---------|-----------------|
 | `DRY_RUN` | `True` | `True` = simulate orders (safe). `False` = real trading |
-| `MANAGED_BUDGET_INR` | `10,000` | Total capital for intraday trades |
+| `MAX_BUDGET_INR` | `10,000` | Maximum capital the bot can deploy per day |
+| `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading |
 | `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Auto-exit on loss |
@@ -149,6 +150,8 @@ Open `config.py` and review these key settings:
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 | `ZERODHA_PLAN` | `connect_paid` | Zerodha plan: personal_free or connect_paid |
+
+> **Dynamic Budget:** The bot fetches your Zerodha account balance at startup and trades with `min(available_funds, MAX_BUDGET_INR)`. So if you have ₹20K in Zerodha but `MAX_BUDGET_INR = 10,000`, only ₹10K is used. If your balance is below `MIN_BALANCE_TO_TRADE` (₹3K), the bot won't trade (skipped in dry-run mode). Increase `MAX_BUDGET_INR` as your confidence grows.
 
 All settings are thoroughly commented in `config.py` — read the comments for details on each option.
 

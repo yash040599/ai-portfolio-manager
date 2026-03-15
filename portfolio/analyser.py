@@ -71,6 +71,13 @@ class PortfolioAnalyser:
         self.log.section("ZERODHA LOGIN")
         self.zerodha.login()
 
+        # ── Step 2b: Show available funds ─────────────────────────
+        try:
+            funds = self.zerodha.get_available_funds()
+            self.log.success(f"Available funds in Zerodha: ₹{funds:,.2f}")
+        except Exception:
+            self.log.warning("Could not fetch Zerodha funds (non-critical for Phase 1)")
+
         # ── Step 3: Fetch holdings ────────────────────────────────
         self.log.section("FETCHING HOLDINGS")
         portfolio = self.zerodha.get_holdings()
@@ -112,7 +119,8 @@ class PortfolioAnalyser:
         print()
         print(f"  Claude model   : {plan['model']}")
         print(f"  Price source   : {zrd['price_source'].upper()}")
-        print(f"  Managed budget : ₹{self.cfg.MANAGED_BUDGET_INR:,}  (existing stocks READ-ONLY)")
+        print(f"  Managed budget : Dynamic (from Zerodha account funds)")
+        print(f"  Min balance    : ₹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
         print(f"{'='*58}\n")
 
     def _print_summary(
@@ -133,5 +141,5 @@ class PortfolioAnalyser:
         print(f"  Report : reports/portfolio_report_{today}.txt")
         print(f"  Data   : reports/portfolio_data_{today}.json")
         print()
-        print(f"  Managed budget ₹{self.cfg.MANAGED_BUDGET_INR} ready for Phase 2")
+        print(f"  Managed budget ready for Phase 2 (dynamic from Zerodha funds)")
         print(f"{'='*58}\n")

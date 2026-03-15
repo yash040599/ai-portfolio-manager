@@ -85,7 +85,7 @@ class ReportWriter:
                 "config": {
                     "claude_plan":  self.cfg.CLAUDE_PLAN,
                     "zerodha_plan": self.cfg.ZERODHA_PLAN,
-                    "budget":       self.cfg.MANAGED_BUDGET_INR,
+                    "budget":       "dynamic",
                 },
                 "portfolio": portfolio,
                 "analyses": [
@@ -122,7 +122,7 @@ class ReportWriter:
         f.write(f"Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}  ({plan['model']})\n")
         f.write(f"Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}\n")
         f.write(f"Price source   : {zrd['price_source'].upper()}\n")
-        f.write(f"Managed budget : ₹{self.cfg.MANAGED_BUDGET_INR:,}  (existing stocks READ-ONLY)\n\n")
+        f.write(f"Managed budget : Dynamic (from Zerodha account funds)\n\n")
 
     def _write_summary_section(
         self, f, portfolio, analyses, skipped,
@@ -281,6 +281,7 @@ class ReportWriter:
         trade_log:  list[dict],
         pnl:        dict,
         dry_run:    bool = True,
+        budget:     float = 0,
     ) -> str:
         """
         Writes the Phase 2 intraday trading report.
@@ -290,6 +291,7 @@ class ReportWriter:
             trade_log:  chronological action log from OrderEngine
             pnl:        net_profit() dict from OrderEngine
             dry_run:    whether this was a dry run
+            budget:     actual trading budget used (from Zerodha funds)
 
         Outputs:
             reports/trading_report_YYYY-MM-DD.txt  — human-readable
@@ -316,7 +318,7 @@ class ReportWriter:
             f.write("CONFIGURATION\n")
             f.write(f"{self.SEP_MINOR}\n")
             f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
-            f.write(f"Budget          : ₹{self.cfg.MANAGED_BUDGET_INR:,}\n")
+            f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
             f.write(f"Max positions   : {self.cfg.MAX_POSITIONS}\n")
             f.write(f"Stop-loss       : {self.cfg.DEFAULT_STOP_LOSS_PCT}%\n")
@@ -429,7 +431,7 @@ class ReportWriter:
                 "config": {
                     "claude_plan":  self.cfg.CLAUDE_PLAN,
                     "zerodha_plan": self.cfg.ZERODHA_PLAN,
-                    "budget":       self.cfg.MANAGED_BUDGET_INR,
+                    "budget":       budget,
                     "universe":     self.cfg.SCAN_UNIVERSE,
                     "max_positions": self.cfg.MAX_POSITIONS,
                     "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
