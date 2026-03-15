@@ -479,16 +479,22 @@ class PortfolioManager:
                 self._budget = 0
                 return
 
-        # Cap at MAX_BUDGET_INR — never risk more than configured max
-        self._budget = min(self._available_funds, float(max_budget))
+        if self.cfg.DRY_RUN:
+            # Dry run always uses MAX_BUDGET_INR regardless of account balance
+            self._budget = float(max_budget)
+            self.log.info(f"DRY RUN — using max budget: ₹{max_budget:,}")
+        else:
+            # Live mode: cap at MAX_BUDGET_INR
+            self._budget = min(self._available_funds, float(max_budget))
 
-        if self._available_funds > max_budget:
-            self.log.info(
-                f"Funds ₹{self._available_funds:,.2f} exceed max budget — "
-                f"capping at ₹{max_budget:,}"
-            )
-
-        self.log.info(f"Trading budget for today: ₹{self._budget:,.2f}")
+            if self._available_funds > max_budget:
+                self.log.info(
+                    f"Using maximum budget: ₹{max_budget:,}"
+                )
+            else:
+                self.log.info(
+                    f"Using ₹{self._budget:,.2f} to trade"
+                )
 
         # Set budget on engine and scanner so they use the live value
         self.engine.set_budget(self._budget)

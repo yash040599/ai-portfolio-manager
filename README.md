@@ -5,7 +5,7 @@ An AI-powered intraday trading bot for the Indian stock market (NSE) that uses *
 ## What it does
 
 ### Phase 1 — Portfolio Analysis (read-only)
-Analyses your existing demat holdings using Claude AI. Generates a detailed report with action recommendations (HOLD, BUY MORE, EXIT, etc.) for each stock.
+Logs into Zerodha, shows an account snapshot (available balance, portfolio value, P&L), then analyses your existing demat holdings using Claude AI. Generates a detailed report with action recommendations (HOLD, BUY MORE, EXIT, etc.) for each stock.
 
 ```bash
 python main.py --phase 1
@@ -13,6 +13,7 @@ python main.py --phase 1
 
 ### Phase 2 — Intraday Trading Bot
 A fully automated intraday trading bot that:
+- Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
 - Enters positions at market open with stop-loss and target prices
@@ -166,11 +167,14 @@ python main.py --phase 2
 ```
 
 You can start Phase 2 anytime — even the night before. It will:
-1. Detect weekends and NSE holidays, show a countdown to the next trading day
-2. Wait for pre-market time (9:00 AM IST)
-3. Log in to Zerodha (opens a browser — log in and close the tab)
-4. Run the full trading day cycle
-5. Generate reports in `reports/`
+1. Log in to Zerodha (opens a browser — log in and close the tab)
+2. Show your account snapshot (available balance, portfolio stocks, invested vs current value, P&L)
+3. Detect weekends and NSE holidays — show a countdown to the next trading day
+4. Wait for pre-market time (9:00 AM IST)
+5. Run the full trading day cycle
+6. Generate reports in `reports/`
+
+> **On holidays/weekends,** the bot still logs into Zerodha and shows your account snapshot before starting the countdown. You can see your balance and portfolio status anytime.
 
 Press **Ctrl+C** to gracefully shut down (squares off all positions first).
 
@@ -258,7 +262,8 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 
 - **Dry-run mode** (default) — no real orders, simulated P&L on live prices
 - **Circuit breaker** — stops trading if daily loss exceeds threshold
-- **Budget cap** — never exceeds your configured budget
+- **Budget cap** — never exceeds `MAX_BUDGET_INR`; dry-run always uses the full cap
+- **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
 - **Position limits** — max stocks held simultaneously
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
