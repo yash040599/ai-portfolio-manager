@@ -143,8 +143,7 @@ Open `config.py` and review these key settings:
 |---------|---------|-----------------|
 | `DRY_RUN` | `True` | `True` = simulate orders (safe). `False` = real trading |
 | `MAX_BUDGET_INR` | `10,000` | Maximum capital the bot can deploy per day |
-| `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading |
-| `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
+| `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Auto-exit on loss |
 | `DEFAULT_TARGET_PCT` | `2.0%` | Auto-exit on profit |
@@ -173,6 +172,8 @@ You can start Phase 2 anytime — even the night before. It will:
 4. Wait for pre-market time (9:00 AM IST)
 5. Run the full trading day cycle
 6. Generate reports in `reports/`
+
+> **Late start?** If you start after 9:15 AM, the bot skips the wait and scans stocks at current prices (shows "MARKET SCAN (joined late)" instead of "PRE-MARKET SCAN"). If you start within `CUTOFF_MINUTES_BEFORE_CLOSE` (default 30 min) of square-off time, it skips trading entirely — not enough time for meaningful trades.
 
 > **On holidays/weekends,** the bot still logs into Zerodha and shows your account snapshot before starting the countdown. You can see your balance and portfolio status anytime.
 
@@ -265,6 +266,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Budget cap** — never exceeds `MAX_BUDGET_INR`; dry-run always uses the full cap
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
 - **Position limits** — max stocks held simultaneously
+- **Late-start cutoff** — skips trading if started too close to market close
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
 - **NSE holiday calendar** — no wasted API calls on non-trading days

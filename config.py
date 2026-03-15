@@ -88,6 +88,7 @@ class Config:
     SQUARE_OFF_HOUR:    int = 15
     SQUARE_OFF_MINUTE:  int = 10
     PRE_MARKET_MINUTES_BEFORE: int = 15   # scan starts this many min before open
+    CUTOFF_MINUTES_BEFORE_CLOSE: int = 30   # skip trading if less than this many min to square-off
 
     # ── Polling & Claude Review Intervals ─────────────────────────
     # PRICE_POLL_SECONDS: how often to check Kite quotes for SL/target hits.

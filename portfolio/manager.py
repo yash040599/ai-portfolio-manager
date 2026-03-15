@@ -135,7 +135,32 @@ class PortfolioManager:
         if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
-        # ── Step 6: Pre-market scan ───────────────────────────────
+        # ── Step 6: Stock scan ─────────────────────────────────
+        # Check if we're too close to square-off to trade
+        now = datetime.datetime.now()
+        square_off = now.replace(
+            hour=self.cfg.SQUARE_OFF_HOUR,
+            minute=self.cfg.SQUARE_OFF_MINUTE,
+            second=0, microsecond=0,
+        )
+        minutes_left = (square_off - now).total_seconds() / 60
+
+        if minutes_left <= 0:
+            self.log.warning(
+                f"Square-off time ({self.cfg.SQUARE_OFF_HOUR}:"
+                f"{self.cfg.SQUARE_OFF_MINUTE:02d}) already passed. "
+                f"Too late to trade today."
+            )
+            return
+
+        if minutes_left < self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
+            self.log.warning(
+                f"Only {minutes_left:.0f} minutes until square-off. "
+                f"Need at least {self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE} minutes. "
+                f"Skipping today."
+            )
+            return
+
         self._run_pre_market_scan()
         if self._shutdown_requested:
             return
@@ -173,7 +198,19 @@ class PortfolioManager:
         Fetches live quotes for the stock universe and asks Claude
         to pick the best intraday trade candidates.
         """
-        self.log.section("PRE-MARKET SCAN")
+        now = datetime.datetime.now()
+        market_open = now.replace(
+            hour=self.cfg.MARKET_OPEN_HOUR,
+            minute=self.cfg.MARKET_OPEN_MINUTE,
+            second=0, microsecond=0,
+        )
+
+        if now < market_open:
+            self.log.section("PRE-MARKET SCAN")
+        else:
+            self.log.section("MARKET SCAN (joined late)")
+            self.log.info(f"Started at {now.strftime('%I:%M %p')} — picking stocks at current prices")
+
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
         self.log.info(f"Budget: ₹{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
