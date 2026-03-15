@@ -91,15 +91,8 @@ class PortfolioManager:
             self.log.info("Create or edit the .env file in this folder and re-run.")
             return
 
-        # ── Step 2: Wait for next trading day ─────────────────────
-        # Checks weekends + NSE holiday calendar. If today is not a
-        # trading day, shows a countdown to the next market open.
-        # This prevents wasted Claude API calls on closed days.
-        self._wait_for_trading_day()
-        if self._shutdown_requested:
-            return
-
-        # ── Step 3: Login to Zerodha ──────────────────────────────
+        # ── Step 2: Login to Zerodha ──────────────────────────────
+        # Login early so we can show account details even on holidays.
         self.log.section("ZERODHA LOGIN")
         try:
             self.zerodha.login()
@@ -108,12 +101,23 @@ class PortfolioManager:
             self.log.info("Fix your API credentials in .env and try again.")
             return
 
-        # ── Step 3b: Fetch account funds ──────────────────────────
+        # ── Step 2b: Show account snapshot ─────────────────────────
+        self._print_account_snapshot()
+
+        # ── Step 3: Wait for next trading day ─────────────────────
+        # Checks weekends + NSE holiday calendar. If today is not a
+        # trading day, shows a countdown to the next market open.
+        # This prevents wasted Claude API calls on closed days.
+        self._wait_for_trading_day()
+        if self._shutdown_requested:
+            return
+
+        # ── Step 4: Fetch account funds & set budget ──────────────
         self._fetch_and_set_budget()
         if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
-        # ── Step 4: Wait for pre-market time ──────────────────────
+        # ── Step 5: Wait for pre-market time ─────────────────────
         self._wait_for_pre_market()
         if self._shutdown_requested:
             return
@@ -131,7 +135,7 @@ class PortfolioManager:
         if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
-        # ── Step 5: Pre-market scan ───────────────────────────────
+        # ── Step 6: Pre-market scan ───────────────────────────────
         self._run_pre_market_scan()
         if self._shutdown_requested:
             return
@@ -373,6 +377,48 @@ class PortfolioManager:
         )
 
         self._print_pnl_summary(pnl_summary)
+
+    # ================================================================
+    # ACCOUNT SNAPSHOT
+    # ================================================================
+
+    def _print_account_snapshot(self):
+        """
+        Prints a quick overview of the Zerodha account right after login.
+        Shows available balance, portfolio size, invested vs current value.
+        Runs even on holidays so you can see your account status anytime.
+        """
+        self.log.section("ACCOUNT SNAPSHOT")
+
+        # Available funds
+        try:
+            self._available_funds = self.zerodha.get_available_funds()
+            self.log.info(f"Available balance: ₹{self._available_funds:,.2f}")
+        except Exception:
+            self.log.warning("Could not fetch available balance")
+
+        # Portfolio holdings
+        try:
+            holdings = self.zerodha.get_holdings()
+            if holdings:
+                invested = sum(h["invested_value"] for h in holdings)
+                current  = sum(h["current_value"]  for h in holdings)
+                pnl      = current - invested
+                pnl_pct  = (pnl / invested * 100) if invested > 0 else 0
+                pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+                reset     = "\033[0m"
+
+                self.log.info(f"Stocks in portfolio: {len(holdings)}")
+                self.log.info(f"Invested value     : ₹{invested:,.2f}")
+                self.log.info(f"Current value      : ₹{current:,.2f}")
+                self.log.info(
+                    f"Portfolio P&L      : {pnl_color}₹{pnl:+,.2f} "
+                    f"({pnl_pct:+.2f}%){reset}"
+                )
+            else:
+                self.log.info("No stocks in portfolio")
+        except Exception:
+            self.log.warning("Could not fetch portfolio holdings")
 
     # ================================================================
     # ACCOUNT FUNDS & BUDGET
@@ -677,7 +723,7 @@ class PortfolioManager:
         print("  AI PORTFOLIO MANAGER — PHASE 2 INTRADAY BOT")
         print(f"{'='*58}")
         print(f"  Mode           : {mode}")
-        print(f"  Budget         : Up to ₹{self.cfg.MAX_BUDGET_INR:,} (capped from Zerodha funds)")
+        print(f"  Max budget     : \u20b9{self.cfg.MAX_BUDGET_INR:,}")
         print(f"  Min balance    : ₹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
         print(f"  Max positions  : {self.cfg.MAX_POSITIONS}")
         print(f"  Universe       : {self.cfg.SCAN_UNIVERSE}")
