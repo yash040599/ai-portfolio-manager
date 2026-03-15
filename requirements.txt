@@ -1,0 +1,3 @@
+anthropic
+kiteconnect
+python-dotenv

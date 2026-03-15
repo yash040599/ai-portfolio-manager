@@ -1,0 +1,31 @@
+# ── Secrets ────────────────────────────────────────────────
+.env
+access_token.json
+
+# ── Python ────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Logs & Reports (regenerated on each run) ──────────────
+logs/
+reports/
+
+# ── IDE / Editor ─────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS junk ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Temp / scratch ────────────────────────────────────────
+ClaudeTemp/
