@@ -68,6 +68,7 @@ class PortfolioManager:
         self._circuit_broken = False       # true if max daily loss hit
         self._available_funds: float = 0.0 # fetched from Zerodha at startup
         self._budget: float = 0.0          # actual trading budget for the day
+        self._scan_failed = False          # true if quote fetch failed
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -166,7 +167,10 @@ class PortfolioManager:
             return
 
         if not self._trade_plans:
-            self.log.warning("No trades recommended by Claude. Nothing to do today.")
+            if self._scan_failed:
+                self.log.error("Scan failed — could not fetch market data. Exiting.")
+            else:
+                self.log.warning("No trades recommended by Claude. Nothing to do today.")
             self._generate_report()
             return
 
@@ -224,7 +228,22 @@ class PortfolioManager:
             quotes = self.zerodha.get_quotes(stocks)
         except Exception as e:
             self.log.error(f"Failed to fetch quotes: {e}")
-            return
+
+            # If it's an auth error, the token may be stale — force re-login
+            if "api_key" in str(e).lower() or "access_token" in str(e).lower():
+                self.log.info("Token appears invalid — forcing re-login...")
+                self.zerodha.force_relogin()
+                try:
+                    quotes = self.zerodha.get_quotes(stocks)
+                except Exception as e2:
+                    self.log.error(f"Retry also failed: {e2}")
+                    self.log.error("Could not fetch market data. Aborting scan.")
+                    self._scan_failed = True
+                    return
+            else:
+                self.log.error("Could not fetch market data. Aborting scan.")
+                self._scan_failed = True
+                return
 
         if not quotes:
             self.log.warning("No quotes returned — market may not be open yet")

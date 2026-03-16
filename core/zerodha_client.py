@@ -101,6 +101,13 @@ class ZerodhaClient:
 
         self.log.success("Logged in to Zerodha successfully")
 
+    def force_relogin(self):
+        """Deletes the cached token and triggers a fresh browser login."""
+        if os.path.exists(self.TOKEN_FILE):
+            os.remove(self.TOKEN_FILE)
+            self.log.info("Deleted stale access token")
+        self.login()
+
     # ================================================================
     # HOLDINGS
     # ================================================================
