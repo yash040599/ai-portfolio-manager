@@ -19,7 +19,11 @@ A fully automated intraday trading bot that:
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
-- Claude reviews positions every 30 minutes for adjustments
+- **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
+- Claude reviews positions every **15 minutes** for adjustments
+- Uses **NIFTY 50 index trend** to bias trade direction (bullish/bearish/neutral)
+- Anti-momentum-chasing rules — avoids stocks already up >2% at scan time
+- **Slippage model** in dry-run mode for realistic P&L simulation
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
 
@@ -149,10 +153,13 @@ Open `config.py` and review these key settings:
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Auto-exit on loss |
 | `DEFAULT_TARGET_PCT` | `2.0%` | Auto-exit on profit |
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
+| `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
+| `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
+| `SLIPPAGE_PCT` | `0.05%` | Simulated slippage on dry-run entries |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 | `ZERODHA_PLAN` | `connect_paid` | Zerodha plan: personal_free or connect_paid |
 
-> **Dynamic Budget:** The bot fetches your Zerodha account balance at startup and trades with `min(available_funds, MAX_BUDGET_INR)`. So if you have ₹20K in Zerodha but `MAX_BUDGET_INR = 10,000`, only ₹10K is used. If your balance is below `MIN_BALANCE_TO_TRADE` (₹3K), the bot won't trade (skipped in dry-run mode). Increase `MAX_BUDGET_INR` as your confidence grows.
+> **Dynamic Budget:** The bot fetches your Zerodha margin (`available.live_balance`) at startup and trades with `min(available_funds, MAX_BUDGET_INR)`. So if you have ₹20K in Zerodha but `MAX_BUDGET_INR = 10,000`, only ₹10K is used. If your balance is below `MIN_BALANCE_TO_TRADE` (₹3K), the bot won't trade (skipped in dry-run mode). Increase `MAX_BUDGET_INR` as your confidence grows.
 
 All settings are thoroughly commented in `config.py` — read the comments for details on each option.
 
@@ -266,6 +273,9 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Circuit breaker** — stops trading if daily loss exceeds threshold
 - **Budget cap** — never exceeds `MAX_BUDGET_INR`; dry-run always uses the full cap
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
+- **Auto trailing stop-loss** — rule-based SL tightening as positions move in profit
+- **Slippage simulation** — dry-run entries are adjusted by 0.05% adverse to avoid inflated P&L
+- **NIFTY trend filter** — biases BUY/SELL decisions based on index direction
 - **Position limits** — max stocks held simultaneously
 - **Late-start cutoff** — skips trading if started too close to market close; auto-waits for next day
 - **Auto next-day resume** — if market is closed (weekend, holiday, or past square-off), shows a countdown and resumes automatically
