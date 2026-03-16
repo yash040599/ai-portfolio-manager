@@ -50,10 +50,16 @@ WATCH: [one specific trigger or event to monitor]
 NEXT_STEPS:
 1. [first concrete actionable step e.g. "Average down if price drops below ₹X"]
 2. [second step e.g. "Set stop-loss at ₹Y" or "Book partial profits above ₹Z"]
+ACTION_DETAIL: [short description e.g. "Sell 50% of position" or "Buy 10 shares" or "Exit all" or "No action"]
+NUM_STOCKS: [number of shares to buy/sell NOW, or 0 if no immediate action]
+TRIGGER_PRICE: [price level to watch for next action, or 0 if none]
+TRIGGER_ACTION: [BUY or SELL at trigger price, or NONE]
+TRIGGER_NUM_STOCKS: [number of shares to buy/sell at trigger, or 0]
 ---END---
 """
 
-EXPECTED_FIELDS = ["ACTION", "CONVICTION", "REASONING", "HORIZON", "TARGET_PRICE", "RISKS", "WATCH", "NEXT_STEPS"]
+EXPECTED_FIELDS = ["ACTION", "CONVICTION", "REASONING", "HORIZON", "TARGET_PRICE", "RISKS", "WATCH", "NEXT_STEPS",
+                   "ACTION_DETAIL", "NUM_STOCKS", "TRIGGER_PRICE", "TRIGGER_ACTION", "TRIGGER_NUM_STOCKS"]
 VALID_ACTIONS   = {"HOLD", "AVERAGE DOWN", "PARTIAL EXIT", "FULL EXIT", "ADD MORE"}
 
 
@@ -333,7 +339,16 @@ class AnalysisQueue:
             "  High   : Strong conviction based on clear evidence.\n\n"
             "NEXT_STEPS — give 2 concrete, actionable steps the investor should take right now. "
             "Examples: specific price levels to buy/sell at, stop-loss levels, profit booking targets, "
-            "SIP amounts, rebalance triggers, or upcoming events to wait for before acting.\n"
+            "SIP amounts, rebalance triggers, or upcoming events to wait for before acting.\n\n"
+            "SPREADSHEET FIELDS (fill these precisely for tracking):\n"
+            "  ACTION_DETAIL  : Short description of immediate action, e.g. \"Sell 25 shares (50%)\", "
+            "\"Buy 10 shares at ₹840-850\", \"Exit all 17 shares\", or \"No action\" for HOLD.\n"
+            f"  NUM_STOCKS     : Number of shares to buy/sell NOW (integer). 0 if HOLD or waiting for trigger. "
+            f"The investor holds {stock['quantity']} shares.\n"
+            "  TRIGGER_PRICE  : Specific price level to watch for the NEXT action (e.g. stop-loss, "
+            "averaging level, breakout). Use a single number, not a range. 0 if none.\n"
+            "  TRIGGER_ACTION : What to do at TRIGGER_PRICE — BUY or SELL. Write NONE if no trigger.\n"
+            "  TRIGGER_NUM_STOCKS : How many shares to buy/sell at trigger price (integer). 0 if none.\n"
         )
 
         # Instruction depth
@@ -358,7 +373,13 @@ class AnalysisQueue:
             )
 
         return (
-            f"You are an experienced Indian stock market analyst (NSE/BSE).\n\n"
+            f"You are an experienced Indian stock market analyst (NSE/BSE) advising a "
+            f"long-term retail investor. This is a DEMAT holdings review — NOT intraday "
+            f"or swing trading. Think like a wealth manager: focus on fundamentals, "
+            f"business quality, sector outlook, and multi-month/multi-year compounding. "
+            f"Avoid day-trading language (no intraday targets, no scalping, no momentum "
+            f"chasing). Price targets should reflect fair value over the stated horizon, "
+            f"not short-term moves.\n\n"
             f"{instruction}\n\n"
             f"{action_guide}"
             f"STOCK DATA:\n{data}\n"

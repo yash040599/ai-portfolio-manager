@@ -9,12 +9,15 @@
 #   for every stock regardless of which Claude call produced the data
 #   or how many retry attempts it took.
 #
-# Outputs (both written to reports/):
-#   portfolio_report_YYYY-MM-DD.txt  — human-readable, open in any editor
-#   portfolio_data_YYYY-MM-DD.json   — raw data for Phase 2 manager
+# Outputs:
+#   reports/portfolio/<year>/<month>/portfolio_report_DD.txt
+#   reports/portfolio/<year>/<month>/portfolio_data_DD.json
+#   reports/trading/<year>/<month>/trading_report_DD.txt
+#   reports/trading/<year>/<month>/trading_data_DD.json
 # ================================================================
 
 import os
+import re
 import json
 import datetime
 
@@ -34,6 +37,38 @@ class ReportWriter:
         self.log = log
 
     # ================================================================
+    # PATH HELPERS
+    # ================================================================
+
+    @staticmethod
+    def _portfolio_dir(date: datetime.date) -> str:
+        return f"reports/portfolio/{date.year}/{date.month:02d}"
+
+    @staticmethod
+    def _trading_dir(date: datetime.date) -> str:
+        return f"reports/trading/{date.year}/{date.month:02d}"
+
+    @staticmethod
+    def portfolio_report_path(date: datetime.date) -> str:
+        return f"{ReportWriter._portfolio_dir(date)}/portfolio_report_{date.day:02d}.txt"
+
+    @staticmethod
+    def portfolio_data_path(date: datetime.date) -> str:
+        return f"{ReportWriter._portfolio_dir(date)}/portfolio_data_{date.day:02d}.json"
+
+    @staticmethod
+    def portfolio_sheet_path(date: datetime.date) -> str:
+        return f"{ReportWriter._portfolio_dir(date)}/portfolio_sheet_{date.day:02d}.tsv"
+
+    @staticmethod
+    def trading_report_path(date: datetime.date) -> str:
+        return f"{ReportWriter._trading_dir(date)}/trading_report_{date.day:02d}.txt"
+
+    @staticmethod
+    def trading_data_path(date: datetime.date) -> str:
+        return f"{ReportWriter._trading_dir(date)}/trading_data_{date.day:02d}.json"
+
+    # ================================================================
     # PUBLIC ENTRY POINT
     # ================================================================
 
@@ -45,13 +80,13 @@ class ReportWriter:
         failed_log:      list[dict] = None,
     ) -> str:
         """
-        Writes the report (.txt) and data file (.json) to reports/.
+        Writes the report (.txt) and data file (.json).
         Returns the path to the .txt file.
         """
-        os.makedirs("reports", exist_ok=True)
         today     = datetime.date.today()
-        txt_path  = f"reports/portfolio_report_{today}.txt"
-        json_path = f"reports/portfolio_data_{today}.json"
+        os.makedirs(self._portfolio_dir(today), exist_ok=True)
+        txt_path  = self.portfolio_report_path(today)
+        json_path = self.portfolio_data_path(today)
 
         skipped_symbols = skipped_symbols or []
         failed_log      = failed_log      or []
@@ -101,8 +136,13 @@ class ReportWriter:
                 "failed":  failed_log,
             }, f, indent=2)
 
+        # Write the spreadsheet-friendly TSV file
+        tsv_path = self.portfolio_sheet_path(today)
+        self._write_spreadsheet(tsv_path, analyses)
+
         self.log.success(f"Report : {txt_path}")
         self.log.success(f"Data   : {json_path}")
+        self.log.success(f"Sheet  : {tsv_path}")
         return txt_path
 
     # ================================================================
@@ -268,6 +308,129 @@ class ReportWriter:
         return "\n".join(lines)
 
     # ================================================================
+    # SPREADSHEET TABLE (TSV)
+    # ================================================================
+
+    @staticmethod
+    def _parse_target_range(target_str: str) -> tuple[str, str]:
+        """Extract low and high from target price string like '₹450-500' or '₹1,320–₹1,380'."""
+        # Remove ₹ and commas, find all numbers
+        cleaned = target_str.replace("₹", "").replace(",", "")
+        numbers = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
+        if len(numbers) >= 2:
+            return numbers[0], numbers[1]
+        elif len(numbers) == 1:
+            return numbers[0], numbers[0]
+        return "", ""
+
+    @staticmethod
+    def _parse_int_field(value: str) -> str:
+        """Extract the first integer from a field like '25 shares' or '0'."""
+        nums = re.findall(r"\d+", value)
+        return nums[0] if nums else "0"
+
+    @staticmethod
+    def _parse_price_field(value: str) -> str:
+        """Extract the first number from a price field like '₹840' or '1200'."""
+        cleaned = value.replace("₹", "").replace(",", "")
+        nums = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
+        return nums[0] if nums else "0"
+
+    def _write_spreadsheet(self, path: str, analyses: list[dict]):
+        """
+        Writes a tab-separated file for easy copy-paste into Google Sheets / Excel.
+        """
+        headers = [
+            "Ticker",
+            "Horizon",
+            "Action Detail",
+            "Buy/Sell",
+            "No of Stocks",
+            "Value",
+            "My Average",
+            "Current Price",
+            "Target Low",
+            "Target High",
+            "Next Steps",
+            "Trigger Price",
+            "Action at Trigger",
+            "Stocks at Trigger",
+            "Value at Trigger",
+        ]
+
+        rows = []
+        for a in analyses:
+            p     = a["parsed"]
+            stock = a["stock"]
+            action = p.get("ACTION", "")
+
+            # Determine Buy/Sell from action
+            if action in ("AVERAGE DOWN", "ADD MORE"):
+                buy_sell = "BUY"
+            elif action in ("PARTIAL EXIT", "FULL EXIT"):
+                buy_sell = "SELL"
+            else:
+                buy_sell = ""
+
+            # Number of stocks for immediate action
+            num_stocks_raw = self._parse_int_field(p.get("NUM_STOCKS", "0"))
+            num_stocks = num_stocks_raw if num_stocks_raw != "0" else ""
+
+            # Value = num_stocks * current_price
+            current_price = float(stock.get("current_price", 0))
+            try:
+                value = str(round(int(num_stocks) * current_price, 2)) if num_stocks else ""
+            except (ValueError, TypeError):
+                value = ""
+
+            # Target range
+            target_low, target_high = self._parse_target_range(p.get("TARGET_PRICE", ""))
+
+            # Next steps — join into single cell, replace newlines with semicolons
+            next_steps = p.get("NEXT_STEPS", "").replace("\n", " ").replace("\t", " ").strip()
+
+            # Trigger fields
+            trigger_price_raw = self._parse_price_field(p.get("TRIGGER_PRICE", "0"))
+            trigger_price = trigger_price_raw if trigger_price_raw != "0" else ""
+
+            trigger_action = p.get("TRIGGER_ACTION", "NONE").strip().upper()
+            if trigger_action == "NONE" or trigger_action == "[NOT PROVIDED]":
+                trigger_action = ""
+
+            trigger_num_raw = self._parse_int_field(p.get("TRIGGER_NUM_STOCKS", "0"))
+            trigger_num = trigger_num_raw if trigger_num_raw != "0" else ""
+
+            # Value at trigger = trigger_num * trigger_price
+            try:
+                val_at_trigger = str(round(int(trigger_num) * float(trigger_price_raw), 2)) if trigger_num and trigger_price else ""
+            except (ValueError, TypeError):
+                val_at_trigger = ""
+
+            row = [
+                a["symbol"],
+                p.get("HORIZON", ""),
+                p.get("ACTION_DETAIL", action),
+                buy_sell,
+                num_stocks,
+                value,
+                str(stock.get("avg_buy_price", "")),
+                str(stock.get("current_price", "")),
+                target_low,
+                target_high,
+                next_steps,
+                trigger_price,
+                trigger_action,
+                trigger_num,
+                val_at_trigger,
+            ]
+            rows.append(row)
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\t".join(headers) + "\n")
+            for row in rows:
+                f.write("\t".join(row) + "\n")
+
+    # ================================================================
     # PHASE 2 — TRADING DAY REPORT
     # ================================================================
     # Generates a full end-of-day report for intraday trading.
@@ -294,15 +457,15 @@ class ReportWriter:
             budget:     actual trading budget used (from Zerodha funds)
 
         Outputs:
-            reports/trading_report_YYYY-MM-DD.txt  — human-readable
-            reports/trading_data_YYYY-MM-DD.json   — machine-readable
+            reports/trading/<year>/<month>/trading_report_DD.txt
+            reports/trading/<year>/<month>/trading_data_DD.json
 
         Returns the path to the .txt file.
         """
-        os.makedirs("reports", exist_ok=True)
         today     = datetime.date.today()
-        txt_path  = f"reports/trading_report_{today}.txt"
-        json_path = f"reports/trading_data_{today}.json"
+        os.makedirs(self._trading_dir(today), exist_ok=True)
+        txt_path  = self.trading_report_path(today)
+        json_path = self.trading_data_path(today)
 
         mode_label = "DRY RUN (simulated)" if dry_run else "LIVE TRADING"
         charges    = pnl["charges"]

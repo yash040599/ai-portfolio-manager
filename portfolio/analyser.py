@@ -22,6 +22,7 @@
 #   the other — main.py decides which one to run.
 # ================================================================
 
+import os
 import datetime
 
 from config                  import Config
@@ -54,6 +55,17 @@ class PortfolioAnalyser:
     def run(self):
         """Executes the full end-to-end analysis flow."""
         self._print_banner()
+
+        # ── Check if today's report already exists ────────────────
+        today = datetime.date.today()
+        if os.path.exists(ReportWriter.portfolio_report_path(today)):
+            answer = input(
+                f"\n⚠️  Report for {today} already exists and will be overwritten.\n"
+                f"   Do you want to run again? (y/n): "
+            ).strip().lower()
+            if answer != 'y':
+                self.log.info("Skipped — existing report preserved.")
+                return
 
         # ── Step 1: Validate config ───────────────────────────────
         missing = self.cfg.validate()
@@ -136,8 +148,8 @@ class PortfolioAnalyser:
         if failed_log:
             self.log.error(f"Failed   : {len(failed_log)} (see report for details)")
         print()
-        print(f"  Report : reports/portfolio_report_{today}.txt")
-        print(f"  Data   : reports/portfolio_data_{today}.json")
+        print(f"  Report : {ReportWriter.portfolio_report_path(today)}")
+        print(f"  Data   : {ReportWriter.portfolio_data_path(today)}")
         print()
         print(f"  Managed budget ready for Phase 2 (dynamic from Zerodha funds)")
         print(f"{'='*58}\n")

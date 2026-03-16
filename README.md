@@ -173,19 +173,7 @@ python main.py --phase 1
 python main.py --phase 2
 ```
 
-You can start Phase 2 anytime — even the night before. It will:
-1. Log in to Zerodha (opens a browser — log in and close the tab)
-2. Show your account snapshot (available balance, portfolio stocks, invested vs current value, P&L)
-3. Detect weekends and NSE holidays — show a countdown to the next trading day
-4. Wait for pre-market time (9:00 AM IST)
-5. Run the full trading day cycle
-6. Generate reports in `reports/`
-
-> **Late start?** If you start after 9:15 AM, the bot skips the wait and scans stocks at current prices (shows "MARKET SCAN (joined late)" instead of "PRE-MARKET SCAN"). If you start after square-off time (3:10 PM) or within `CUTOFF_MINUTES_BEFORE_CLOSE` (default 30 min) of square-off, it shows a countdown timer to the next trading day and **automatically resumes** the next morning — no need to restart the script. On the new day, it re-logs into Zerodha (tokens expire at midnight) and refreshes your account balance before trading.
-
-> **On holidays/weekends,** the bot still logs into Zerodha and shows your account snapshot before starting the countdown. You can see your balance and portfolio status anytime.
-
-Press **Ctrl+C** to gracefully shut down (squares off all positions first).
+You can start Phase 2 anytime — even the night before. It handles weekends, NSE holidays, late starts, and token expiry automatically. Press **Ctrl+C** to gracefully shut down (squares off all positions first).
 
 ---
 
@@ -195,6 +183,7 @@ Press **Ctrl+C** to gracefully shut down (squares off all positions first).
 ai-portfolio-manager/
 ├── main.py                  # Entry point — routes to Phase 1 or Phase 2
 ├── config.py                # All settings in one place (plans, budget, timing, costs)
+├── generate_sheet.py        # One-off script to generate TSV spreadsheet from report data
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Your API keys (not in Git)
 ├── .gitignore               # Keeps secrets and junk out of Git
@@ -211,7 +200,18 @@ ai-portfolio-manager/
 │   ├── stock_scanner.py     # Pre-market Claude scan + mid-day review + price parsing helpers
 │   ├── order_engine.py      # Order execution, position tracking, P&L + taxes
 │   └── report_writer.py     # Generates .txt reports and .json data dumps
-├── reports/                 # Generated reports (one per run)
+├── reports/                 # Generated reports, organised by type → year → month
+│   ├── portfolio/           # Phase 1 portfolio analysis reports
+│   │   └── <year>/
+│   │       └── <month>/
+│   │           ├── portfolio_report_DD.txt
+│   │           ├── portfolio_data_DD.json
+│   │           └── portfolio_sheet_DD.tsv
+│   └── trading/             # Phase 2 intraday trading reports
+│       └── <year>/
+│           └── <month>/
+│               ├── trading_report_DD.txt
+│               └── trading_data_DD.json
 └── logs/                    # Rotating log files (portfolio.log)
 ```
 
@@ -240,17 +240,19 @@ If you want to keep the bot running 24/7:
 
 ## Reports
 
-After each run, check the `reports/` folder:
+Reports are organised by type, year, and month inside `reports/`:
 
-- **Phase 1:** `portfolio_report_YYYY-MM-DD.txt` + `portfolio_data_YYYY-MM-DD.json`
-- **Phase 2:** `trading_report_YYYY-MM-DD.txt` + `trading_data_YYYY-MM-DD.json`
+- **Phase 1:** `reports/portfolio/<year>/<month>/portfolio_report_DD.txt` + `portfolio_data_DD.json`
+- **Phase 2:** `reports/trading/<year>/<month>/trading_report_DD.txt` + `trading_data_DD.json`
+
+Folders are created on-demand — only when a report is generated for that period. Files are zero-padded by day (`01`, `02`, … `31`) so they sort chronologically.
+
+> **Re-run protection (Phase 1):** If a report for today already exists, the bot asks for confirmation before overwriting it.
 
 The Phase 2 report includes:
 - Every trade with entry/exit prices, P&L, and reason (SL/target/review/square-off)
 - Full tax breakdown: brokerage, STT, GST, exchange charges, SEBI, stamp duty
-- Claude API costs (per-call, actual usage)
-- Zerodha subscription cost (FYI, not deducted from daily P&L)
-- **Net profit after all charges and taxes**
+- Claude API costs and **net profit after all charges and taxes**
 
 ---
 
@@ -269,20 +271,14 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 
 ## Safety Features
 
-- **Dry-run mode** (default) — no real orders, simulated P&L on live prices
+- **Dry-run mode** (default) — no real orders, simulated P&L on live prices with slippage modelling
 - **Circuit breaker** — stops trading if daily loss exceeds threshold
-- **Budget cap** — never exceeds `MAX_BUDGET_INR`; dry-run always uses the full cap
+- **Budget cap** — never exceeds `MAX_BUDGET_INR`
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
 - **Auto trailing stop-loss** — rule-based SL tightening as positions move in profit
-- **Slippage simulation** — dry-run entries are adjusted by 0.05% adverse to avoid inflated P&L
-- **NIFTY trend filter** — biases BUY/SELL decisions based on index direction
-- **Position limits** — max stocks held simultaneously
-- **Late-start cutoff** — skips trading if started too close to market close; auto-waits for next day
-- **Auto next-day resume** — if market is closed (weekend, holiday, or past square-off), shows a countdown and resumes automatically
-- **Token auto-refresh** — re-logs into Zerodha when waiting across midnight (tokens expire daily)
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
-- **NSE holiday calendar** — no wasted API calls on non-trading days
+- **NSE holiday calendar** — handles weekends, holidays, late starts, and token expiry automatically
 
 ---
 
