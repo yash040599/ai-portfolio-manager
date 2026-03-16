@@ -102,7 +102,7 @@ class Config:
     #   30 min = ~12 calls/day ≈ ₹25-50/day in Claude costs.
     #   15 min = ~24 calls/day ≈ ₹50-100/day. Only if budget is large.
     PRICE_POLL_SECONDS:     int = 30
-    CLAUDE_REVIEW_MINUTES:  int = 30
+    CLAUDE_REVIEW_MINUTES:  int = 15
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
@@ -151,6 +151,27 @@ class Config:
     DEFAULT_STOP_LOSS_PCT: float = 1.5
     DEFAULT_TARGET_PCT:    float = 2.0
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
+
+    # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
+    # TRAIL_AFTER_RISK_MULTIPLE: once the price moves this many
+    #   multiples of the SL distance in your favour, trailing kicks in.
+    #   1.0 = trail starts once profit equals the initial risk.
+    #   e.g. entry ₹100, SL ₹98 (risk ₹2). At ₹102 (1×risk profit)
+    #   the SL auto-moves to breakeven (₹100).
+    #
+    # TRAIL_STEP_PCT: after the initial trail-to-breakeven,
+    #   the SL is moved up to lock in this % of current profit.
+    #   50 = SL always sits at 50% of the way from entry to current price.
+    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103 (50% of ₹6 gain).
+    TRAIL_AFTER_RISK_MULTIPLE: float = 1.0
+    TRAIL_STEP_PCT:            float = 50.0
+
+    # ── Dry-Run Realism ──────────────────────────────────────────
+    # SLIPPAGE_PCT: simulated slippage added to entries and exits
+    #   in dry-run mode. Makes simulated P&L more realistic.
+    #   0.05 = 0.05% adverse fill on each trade.
+    #   For a ₹1,000 stock: ₹0.50 worse per share per trade.
+    SLIPPAGE_PCT: float = 0.05
 
     # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)

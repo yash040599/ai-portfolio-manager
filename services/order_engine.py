@@ -94,6 +94,14 @@ class OrderEngine:
 
         now = datetime.datetime.now()
 
+        # ── Apply slippage in dry-run mode for realism ────────────
+        if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
+            slip = entry * self.cfg.SLIPPAGE_PCT / 100
+            if side == "BUY":
+                entry = round(entry + slip, 2)   # buy slightly higher
+            else:
+                entry = round(entry - slip, 2)   # sell slightly lower
+
         # ── Budget check before entering ──────────────────────────
         cost = entry * qty
         current_exposure = self._total_open_exposure()
@@ -236,6 +244,7 @@ class OrderEngine:
         """
         Checks all open positions against live prices.
         Auto-exits any position where stop-loss or target is hit.
+        Also applies auto trailing stop-loss for winning positions.
 
         This is the rule-based monitoring loop — no Claude API calls.
         Called every PRICE_POLL_SECONDS.
@@ -262,7 +271,8 @@ class OrderEngine:
                     f"STOP-LOSS HIT: {pos['symbol']} dropped to "
                     f"₹{current_price:.2f} (SL: ₹{sl:.2f})"
                 )
-                self.exit_position(pos, current_price, "STOP_LOSS")
+                exit_price = sl if self.cfg.DRY_RUN else current_price
+                self.exit_position(pos, exit_price, "STOP_LOSS")
                 closed += 1
 
             elif side == "SELL" and current_price >= sl:
@@ -270,7 +280,8 @@ class OrderEngine:
                     f"STOP-LOSS HIT: {pos['symbol']} rose to "
                     f"₹{current_price:.2f} (SL: ₹{sl:.2f})"
                 )
-                self.exit_position(pos, current_price, "STOP_LOSS")
+                exit_price = sl if self.cfg.DRY_RUN else current_price
+                self.exit_position(pos, exit_price, "STOP_LOSS")
                 closed += 1
 
             # ── Target check ─────────────────────────────────────
@@ -279,7 +290,8 @@ class OrderEngine:
                     f"TARGET HIT: {pos['symbol']} reached "
                     f"₹{current_price:.2f} (Target: ₹{target:.2f})"
                 )
-                self.exit_position(pos, current_price, "TARGET_HIT")
+                exit_price = target if self.cfg.DRY_RUN else current_price
+                self.exit_position(pos, exit_price, "TARGET_HIT")
                 closed += 1
 
             elif side == "SELL" and current_price <= target:
@@ -287,10 +299,78 @@ class OrderEngine:
                     f"TARGET HIT: {pos['symbol']} reached "
                     f"₹{current_price:.2f} (Target: ₹{target:.2f})"
                 )
-                self.exit_position(pos, current_price, "TARGET_HIT")
+                exit_price = target if self.cfg.DRY_RUN else current_price
+                self.exit_position(pos, exit_price, "TARGET_HIT")
                 closed += 1
 
+            # ── Auto trailing stop-loss (only for open, winning positions) ──
+            else:
+                self._auto_trail_stop(pos, current_price)
+
         return closed
+
+    def _auto_trail_stop(self, pos: dict, current_price: float):
+        """
+        Rule-based trailing stop-loss. Runs every price poll (free).
+
+        Logic:
+          1. Calculate original risk = |entry - initial SL|
+          2. If current profit >= TRAIL_AFTER_RISK_MULTIPLE × risk:
+             move SL to at least breakeven (entry price)
+          3. Then, SL = entry + TRAIL_STEP_PCT% of unrealised profit
+             (for BUY; inverted for SELL)
+          4. SL only ever moves in the favorable direction (never down for BUY)
+        """
+        entry  = pos["entry_price"]
+        sl     = pos["stop_loss"]
+        side   = pos["side"]
+        symbol = pos["symbol"]
+
+        # Store initial SL on first call (so trailing calc always knows the original risk)
+        if "initial_sl" not in pos:
+            pos["initial_sl"] = sl
+
+        initial_risk = abs(entry - pos["initial_sl"])
+        if initial_risk <= 0:
+            return  # no risk defined, can't trail
+
+        trail_after = self.cfg.TRAIL_AFTER_RISK_MULTIPLE
+        trail_pct   = self.cfg.TRAIL_STEP_PCT / 100
+
+        if side == "BUY":
+            profit = current_price - entry
+            if profit < initial_risk * trail_after:
+                return  # not enough profit to start trailing
+
+            # New SL = entry + trail_pct of current profit
+            new_sl = round(entry + profit * trail_pct, 2)
+
+            # SL must only move UP (more protective)
+            if new_sl > sl:
+                pos["stop_loss"] = new_sl
+                self.log.info(
+                    f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
+                    f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
+                )
+                self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
+                                 f"Auto trailing: profit ₹{profit:.2f}")
+
+        else:  # SELL (short)
+            profit = entry - current_price
+            if profit < initial_risk * trail_after:
+                return
+
+            new_sl = round(entry - profit * trail_pct, 2)
+
+            # SL must only move DOWN for shorts (more protective)
+            if new_sl < sl:
+                pos["stop_loss"] = new_sl
+                self.log.info(
+                    f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
+                    f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
+                )
+                self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
+                                 f"Auto trailing: profit ₹{profit:.2f}")
 
     # ================================================================
     # APPLY CLAUDE REVIEW ACTIONS

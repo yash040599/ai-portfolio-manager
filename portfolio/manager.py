@@ -271,9 +271,12 @@ class PortfolioManager:
             # In pre-market, previous close data is still available
             # Proceed anyway — Claude can work with available data
 
+        # Fetch NIFTY 50 index for trend context
+        nifty_context = self._build_nifty_context()
+
         # Ask Claude to pick trades
         self.engine.claude_calls += 1
-        self._trade_plans = self.scanner.scan(quotes)
+        self._trade_plans = self.scanner.scan(quotes, nifty_context)
 
         if self._trade_plans:
             self.log.section("TRADE PLAN")
@@ -397,11 +400,14 @@ class PortfolioManager:
         self.log.section("CLAUDE REVIEW")
         self.engine.claude_calls += 1
 
+        nifty_context = self._build_nifty_context()
+
         actions = self.scanner.review_positions(
             open_positions  = self.engine.open_positions(),
             quotes          = quotes,
             day_pnl         = self.engine.day_pnl(),
             budget_remaining = self.engine.budget_remaining(),
+            nifty_context   = nifty_context,
         )
 
         if actions:
@@ -496,6 +502,53 @@ class PortfolioManager:
                 self.log.info("No stocks in portfolio")
         except Exception:
             self.log.warning("Could not fetch portfolio holdings")
+
+    # ================================================================
+    # NIFTY INDEX TREND FILTER
+    # ================================================================
+
+    def _build_nifty_context(self) -> str:
+        """
+        Fetches NIFTY 50 index quote and builds a concise trend context
+        string for Claude prompts. Helps Claude align trade direction
+        with the broader market.
+
+        Returns empty string if the fetch fails (non-blocking).
+        """
+        try:
+            nifty_quote = self.zerodha.get_quotes(
+                [{"symbol": "NIFTY 50", "exchange": "NSE"}]
+            )
+            q = nifty_quote.get("NSE:NIFTY 50", {})
+            price = q.get("last_price", 0)
+            ohlc  = q.get("ohlc", {})
+            prev_close = ohlc.get("close", 0)
+            day_open   = ohlc.get("open", 0)
+            day_high   = ohlc.get("high", 0)
+            day_low    = ohlc.get("low", 0)
+
+            if not price or not prev_close:
+                return ""
+
+            change = price - prev_close
+            change_pct = (change / prev_close) * 100
+
+            if change_pct > 0.5:
+                bias = "BULLISH — favour BUY trades, be selective with shorts"
+            elif change_pct < -0.5:
+                bias = "BEARISH — favour SELL (short) trades, avoid buying into weakness"
+            else:
+                bias = "NEUTRAL — no strong directional bias, favour mean-reversion setups"
+
+            return (
+                f"\nMARKET TREND (NIFTY 50 INDEX):\n"
+                f"  NIFTY 50: ₹{price:,.2f}  Change: {change_pct:+.2f}%  "
+                f"Open: ₹{day_open:,.2f}  High: ₹{day_high:,.2f}  Low: ₹{day_low:,.2f}  "
+                f"PrevClose: ₹{prev_close:,.2f}\n"
+                f"  Market bias: {bias}\n"
+            )
+        except Exception:
+            return ""
 
     # ================================================================
     # ACCOUNT FUNDS & BUDGET
@@ -801,6 +854,8 @@ class PortfolioManager:
         print(f"  Claude review  : every {self.cfg.CLAUDE_REVIEW_MINUTES}min")
         print(f"  Stop-loss      : {self.cfg.DEFAULT_STOP_LOSS_PCT}%")
         print(f"  Target         : {self.cfg.DEFAULT_TARGET_PCT}%")
+        print(f"  Trailing SL    : after {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}R, lock {self.cfg.TRAIL_STEP_PCT}% profit")
+        print(f"  Slippage (sim) : {self.cfg.SLIPPAGE_PCT}%")
         print(f"  Circuit breaker: {self.cfg.MAX_LOSS_PER_DAY_PCT}% of budget")
         print(f"  Market open    : {self.cfg.MARKET_OPEN_HOUR}:{self.cfg.MARKET_OPEN_MINUTE:02d}")
         print(f"  Square off     : {self.cfg.SQUARE_OFF_HOUR}:{self.cfg.SQUARE_OFF_MINUTE:02d}")

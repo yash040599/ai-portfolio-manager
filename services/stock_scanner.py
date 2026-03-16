@@ -156,13 +156,14 @@ class StockScanner:
     # PRE-MARKET SCAN
     # ================================================================
 
-    def scan(self, quotes: dict) -> list[dict]:
+    def scan(self, quotes: dict, nifty_context: str = "") -> list[dict]:
         """
         Asks Claude to pick intraday trade candidates.
 
         Args:
             quotes: dict of live Kite quotes keyed by "NSE:SYMBOL".
                     Each value has last_price, ohlc, volume, etc.
+            nifty_context: optional string with NIFTY 50 index data for trend filter.
 
         Returns:
             List of trade plan dicts, each with:
@@ -177,7 +178,7 @@ class StockScanner:
             self.log.warning("No valid quotes to scan — snapshot is empty")
             return []
 
-        prompt = self._build_scan_prompt(snapshot)
+        prompt = self._build_scan_prompt(snapshot, nifty_context)
 
         self.log.info("Asking Claude to pick intraday trades...")
         try:
@@ -200,6 +201,7 @@ class StockScanner:
         quotes: dict,
         day_pnl: float,
         budget_remaining: float,
+        nifty_context: str = "",
     ) -> list[dict]:
         """
         Periodic Claude review of open positions + market conditions.
@@ -214,7 +216,7 @@ class StockScanner:
           {"action": "HOLD|EXIT|NEW", "symbol": ..., ...}
         """
         prompt = self._build_review_prompt(
-            open_positions, quotes, day_pnl, budget_remaining
+            open_positions, quotes, day_pnl, budget_remaining, nifty_context
         )
 
         self.log.info("Claude reviewing open positions...")
@@ -264,36 +266,43 @@ class StockScanner:
 
         return "\n".join(lines)
 
-    def _build_scan_prompt(self, snapshot: str) -> str:
+    def _build_scan_prompt(self, snapshot: str, nifty_context: str = "") -> str:
         """
         Builds the pre-market scan prompt.
         Claude is given the full price data and budget constraints,
         and must return trade plans in a strict parseable format.
         """
         today  = datetime.date.today().strftime("%B %d, %Y")
+        now    = datetime.datetime.now().strftime("%I:%M %p")
         budget = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
         default_sl     = self.cfg.DEFAULT_STOP_LOSS_PCT
         default_target = self.cfg.DEFAULT_TARGET_PCT
 
-        return f"""You are an expert Indian stock market intraday trader (NSE).
-Today is {today}. You must pick stocks for INTRADAY trading (buy and sell same day).
+        return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of fund management experience.
+Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
 
-BUDGET: ₹{budget:,} total capital. All positions MUST be closed by 3:10 PM IST today.
+BUDGET: ₹{budget:,} total capital.
 MAX POSITIONS: {max_positions} stocks simultaneously.
 MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
+{nifty_context}
+CRITICAL RULES — MUST FOLLOW:
+1. DO NOT chase stocks already up more than 2% from previous close. These moves are extended and likely to revert.
+2. DO NOT pick a stock just because it gapped up with volume — that move already happened. Look for PULLBACK ENTRIES near intraday support or VWAP.
+3. RISK:REWARD must be at least 1:1.5 for every trade. If you can't find 1.5× upside vs your stop-loss, skip the stock.
+4. Use REALISTIC stop-loss levels — base SL on chart structure (recent swing low for BUY, swing high for SELL), NOT a fixed %. Typical range: {default_sl}% to 2%.
+5. Actively consider SHORT (SELL) trades when the market index is weak or a stock shows bearish structure. Don't default to all-BUY.
+6. Prefer stocks near support (for BUY) or near resistance (for SELL) — mean-reversion setups with tight risk.
+7. Avoid stocks with less than ₹10 average intraday range — too tight for meaningful P&L on small capital.
+8. Total position value across all trades MUST NOT exceed ₹{budget:,}.
 
-STRATEGY GUIDELINES:
-- Focus on liquid large-cap stocks with tight bid-ask spreads
-- Look for momentum, gaps, support/resistance levels, volume breakouts
-- Entry price should be realistic (near current market price)
-- Stop-loss: typically {default_sl}% below entry for longs
-- Target: typically {default_target}% above entry for longs
-- Risk-reward ratio should be at least 1:1.3
-- Consider pre-market sentiment, gap openings, sector trends
-- You can recommend SHORT (sell first, buy later) if bearish setup exists
-- Total position value across all trades MUST NOT exceed ₹{budget:,}
+STRATEGY FRAMEWORK:
+- Opening Range Breakout (ORB): if within the first 30 minutes, identify stocks that break above/below their opening 15-min high/low with volume.
+- VWAP mean-reversion: stocks that gap up and pull back to VWAP are good BUY candidates. Stocks that gap down and rally to VWAP are good SELL candidates.
+- Sector relative strength: compare each stock's % change to the NIFTY 50 index. Pick the strongest stocks in a up-trending market, weakest in a down-trending market.
+- Volume confirmation: entry signals are stronger when current volume is above the stock's average. Low volume breakouts fail more often.
+- Time decay: if it's past 1:00 PM, reduce your target by ~30% — less time for the move to play out. After 2:00 PM, only take high-conviction setups.
 
 CURRENT MARKET DATA (live prices):
 {snapshot}
@@ -305,10 +314,10 @@ TRADE 1:
 SYMBOL: [NSE stock symbol e.g. RELIANCE]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price in ₹, near current price]
-STOP_LOSS: [stop-loss price in ₹]
-TARGET: [target price in ₹]
+STOP_LOSS: [stop-loss price in ₹ — based on chart structure, not a fixed %]
+TARGET: [target price in ₹ — must be at least 1.5× the SL distance from entry]
 QTY: [number of shares — must fit within budget constraints]
-RATIONALE: [1-2 sentences why this trade]
+RATIONALE: [1-2 sentences: what setup you see, key level, why R:R is favorable]
 ---
 TRADE 2:
 ...
@@ -322,12 +331,22 @@ TRADE 2:
         quotes: dict,
         day_pnl: float,
         budget_remaining: float,
+        nifty_context: str = "",
     ) -> str:
         """
         Builds the periodic review prompt for open positions.
         """
         today = datetime.date.today().strftime("%B %d, %Y")
         now   = datetime.datetime.now().strftime("%I:%M %p")
+
+        # Calculate minutes until square-off for time-pressure context
+        now_dt = datetime.datetime.now()
+        square_off = now_dt.replace(
+            hour=self.cfg.SQUARE_OFF_HOUR,
+            minute=self.cfg.SQUARE_OFF_MINUTE,
+            second=0, microsecond=0,
+        )
+        mins_left = max(0, (square_off - now_dt).total_seconds() / 60)
 
         pos_text = ""
         for p in positions:
@@ -339,23 +358,36 @@ TRADE 2:
             if p.get("side") == "SELL":
                 pnl = (entry - current_price) * p.get("qty", 0)
 
+            # Calculate risk and R-multiple for Claude's context
+            sl = p.get("stop_loss", entry)
+            risk_per_share = abs(entry - sl) if sl else 0
+            r_multiple = (pnl / (risk_per_share * p.get("qty", 1))) if risk_per_share > 0 else 0
+
             pos_text += (
                 f"  {p['symbol']}: {p['side']} {p['qty']} shares @ ₹{entry:.2f}  "
-                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f}  "
+                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
                 f"SL: ₹{p.get('stop_loss', 'N/A')}  Target: ₹{p.get('target_price', 'N/A')}\n"
             )
 
-        return f"""You are an expert Indian stock market intraday trader (NSE).
+        return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of fund management experience.
 Today is {today}, current time is {now} IST. Market closes at 3:30 PM, we square off at 3:10 PM.
-
+TIME REMAINING: {mins_left:.0f} minutes until square-off.
+{nifty_context}
 CURRENT OPEN POSITIONS:
 {pos_text if pos_text else "  (none)"}
 
 DAY P&L SO FAR: ₹{day_pnl:,.2f}
 REMAINING BUDGET: ₹{budget_remaining:,.2f}
 
+REVIEW RULES — MUST FOLLOW:
+1. TRAILING STOP: If a position is profitable by more than 1× the original risk (entry-to-SL distance), move the SL to at least breakeven. If profitable by 2× risk, move SL to lock in 50% of profit.
+2. TIME DECAY: With {mins_left:.0f} minutes left, reduce expected targets. Under 60 min → lower target by 30%. Under 30 min → EXIT all positions unless they are very close to target.
+3. CUT LOSERS EARLY: If a position is underwater and has been drifting sideways for 2+ review cycles, EXIT. Dead money is worse than a small loss.
+4. DON'T AVERAGE DOWN: Never add to a losing position. Only suggest NEW trades for fresh setups with good R:R.
+5. SECTOR ALIGNMENT: If NIFTY 50 has turned against your trade direction since entry, tighten the SL aggressively.
+
 Review each position and recommend ONE action per position.
-You may also suggest NEW trades if budget allows and there's a good setup.
+You may also suggest NEW trades if budget allows and there's a good setup (only if 60+ minutes remain).
 
 For each position, respond with EXACTLY this format:
 
@@ -364,10 +396,10 @@ SYMBOL: [symbol]
 ACTION: [HOLD | EXIT | ADJUST_SL | ADJUST_TARGET]
 NEW_SL: [new stop-loss price if ADJUST_SL, otherwise leave blank]
 NEW_TARGET: [new target price if ADJUST_TARGET, otherwise leave blank]
-REASON: [1 sentence]
+REASON: [1 sentence explaining why, referencing the R-multiple or time remaining]
 ---
 
-For new trades (optional), add:
+For new trades (optional, only if 60+ minutes remain), add:
 NEW_TRADE:
 SYMBOL: [symbol]
 SIDE: [BUY or SELL]
