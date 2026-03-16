@@ -341,16 +341,16 @@ class ZerodhaClient:
 
     def get_available_funds(self) -> float:
         """
-        Returns available cash balance in the equity segment.
+        Returns available margin in the equity segment.
         Uses Kite Connect /user/margins endpoint.
 
-        Returns the 'available.cash' value from the equity segment,
-        which is the raw cash available for trading (includes
-        intraday_payin).
+        Returns 'available.live_balance' which includes cash,
+        intraday payin, and collateral — the actual usable amount
+        for placing new orders.
         """
         self._require_login()
         margins = self._kite.margins(segment="equity")
-        return float(margins["available"]["cash"])
+        return float(margins["available"]["live_balance"])
 
     # ================================================================
     # ACCOUNT SNAPSHOT
