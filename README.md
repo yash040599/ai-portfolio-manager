@@ -7,6 +7,8 @@ An AI-powered intraday trading bot for the Indian stock market (NSE) that uses *
 ### Phase 1 — Portfolio Analysis (read-only)
 Logs into Zerodha, shows an account snapshot (available balance, portfolio value, P&L), then analyses your existing demat holdings using Claude AI. Generates a detailed report with action recommendations (HOLD, BUY MORE, EXIT, etc.) for each stock.
 
+If a previous report exists, Claude automatically receives the last analysis for each stock — including its old price, action, target, and next steps — so it can compare changes and make better-informed recommendations.
+
 ```bash
 python main.py --phase 1
 ```

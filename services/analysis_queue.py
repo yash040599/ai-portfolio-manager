@@ -74,15 +74,20 @@ class AnalysisQueue:
         self.claude = claude
         self.log    = log
         self._queue: list[dict] = []
+        self._prev_by_symbol: dict[str, dict] = {}  # symbol → previous analysis
 
     # ================================================================
     # LOAD
     # ================================================================
 
-    def load(self, portfolio: list[dict]):
+    def load(self, portfolio: list[dict], previous_data: dict | None = None):
         """
         Loads the portfolio into the queue.
         Every stock starts with status = "pending".
+
+        If previous_data (a parsed portfolio_data JSON) is provided,
+        builds a per-symbol lookup so _build_prompt can include
+        the last analysis for comparison.
         """
         self._queue = [
             {
@@ -95,6 +100,18 @@ class AnalysisQueue:
             }
             for stock in portfolio
         ]
+
+        # Build previous-analysis lookup
+        self._prev_by_symbol = {}
+        if previous_data:
+            # Build stock lookup from previous portfolio data
+            prev_portfolio = {s["symbol"]: s for s in previous_data.get("portfolio", [])}
+            for a in previous_data.get("analyses", []):
+                sym = a.get("symbol")
+                if sym:
+                    a["stock"] = prev_portfolio.get(sym, {})
+                    a["date"]  = previous_data.get("date", "unknown")
+                    self._prev_by_symbol[sym] = a
 
     # ================================================================
     # RUN
@@ -176,7 +193,7 @@ class AnalysisQueue:
         Updates entry in place on success.
         Returns (success, error_message_or_None).
         """
-        prompt = self._build_prompt(entry["stock"])
+        prompt = self._build_prompt(entry["stock"], self._prev_by_symbol.get(entry["stock"]["symbol"]))
 
         try:
             raw    = self.claude.call(prompt)
@@ -292,7 +309,7 @@ class AnalysisQueue:
     # PROMPT BUILDER
     # ================================================================
 
-    def _build_prompt(self, stock: dict) -> str:
+    def _build_prompt(self, stock: dict, prev: dict | None = None) -> str:
         """
         Builds the analysis prompt for one stock.
 
@@ -321,6 +338,25 @@ class AnalysisQueue:
             data += f"P/E ratio      : {stock.get('pe_ratio','N/A')}\n"
             data += f"P/B ratio      : {stock.get('pb_ratio','N/A')}\n"
             data += f"Market cap     : ₹{stock.get('market_cap_cr','N/A')} Cr\n"
+
+        # Previous analysis context (if available)
+        prev_block = ""
+        if prev:
+            p = prev.get("parsed", {})
+            prev_date = prev.get("date", "unknown")
+            prev_stock = prev.get("stock", {})
+            prev_block = (
+                f"\nPREVIOUS ANALYSIS ({prev_date}):\n"
+                f"  Price then     : ₹{prev_stock.get('current_price', 'N/A')}\n"
+                f"  Action         : {p.get('ACTION', 'N/A')}\n"
+                f"  Conviction     : {p.get('CONVICTION', 'N/A')}\n"
+                f"  Target price   : {p.get('TARGET_PRICE', 'N/A')}\n"
+                f"  Horizon        : {p.get('HORIZON', 'N/A')}\n"
+                f"  Next steps     : {p.get('NEXT_STEPS', 'N/A')}\n"
+                f"  Key watch      : {p.get('WATCH', 'N/A')}\n"
+                f"\nCompare today's data with the previous analysis. Note any price changes, "
+                f"whether the previous target was hit, and whether the thesis still holds.\n"
+            )
 
         # Action guide — always included so Claude picks the right action
         action_guide = (
@@ -383,6 +419,7 @@ class AnalysisQueue:
             f"{instruction}\n\n"
             f"{action_guide}"
             f"STOCK DATA:\n{data}\n"
+            f"{prev_block}"
             f"REQUIRED OUTPUT FORMAT (follow exactly):\n{OUTPUT_FORMAT}"
         )
 

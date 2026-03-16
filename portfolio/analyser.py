@@ -98,8 +98,16 @@ class PortfolioAnalyser:
         self.log.section("ENRICHING WITH MARKET DATA")
         portfolio = self.market.enrich(portfolio)
 
+        # ── Step 4b: Load previous report for comparison ──────────
+        from services.report_writer import ReportWriter
+        prev_data = ReportWriter.find_latest_portfolio_data(datetime.date.today())
+        if prev_data:
+            self.log.info(f"Previous report found ({prev_data['date']}) — Claude will compare changes")
+        else:
+            self.log.info("No previous report found — first run")
+
         # ── Step 5: Analyse via Claude API ────────────────────────
-        self.queue.load(portfolio)
+        self.queue.load(portfolio, previous_data=prev_data)
         analyses, skipped, failed_log = self.queue.run()
 
         # ── Step 6: Save report ───────────────────────────────────

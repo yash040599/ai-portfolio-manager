@@ -19,6 +19,7 @@
 import os
 import re
 import json
+import glob
 import datetime
 
 from config      import Config
@@ -67,6 +68,37 @@ class ReportWriter:
     @staticmethod
     def trading_data_path(date: datetime.date) -> str:
         return f"{ReportWriter._trading_dir(date)}/trading_data_{date.day:02d}.json"
+
+    @staticmethod
+    def find_latest_portfolio_data(before: datetime.date) -> dict | None:
+        """
+        Scans reports/portfolio/ for the most recent portfolio_data JSON
+        strictly before the given date.  Returns the parsed dict or None.
+        """
+        best_date = None
+        best_path = None
+
+        for path in glob.glob("reports/portfolio/*/*/portfolio_data_*.json"):
+            path = path.replace("\\", "/")
+            parts = path.split("/")
+            # parts: reports / portfolio / <year> / <month> / portfolio_data_DD.json
+            try:
+                year  = int(parts[2])
+                month = int(parts[3])
+                day   = int(re.search(r"portfolio_data_(\d+)\.json", parts[4]).group(1))
+                d     = datetime.date(year, month, day)
+            except (ValueError, IndexError, AttributeError):
+                continue
+
+            if d < before and (best_date is None or d > best_date):
+                best_date = d
+                best_path = path
+
+        if best_path is None:
+            return None
+
+        with open(best_path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     # ================================================================
     # PUBLIC ENTRY POINT
