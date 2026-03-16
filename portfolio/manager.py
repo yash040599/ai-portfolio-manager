@@ -137,29 +137,50 @@ class PortfolioManager:
             return
 
         # ── Step 6: Stock scan ─────────────────────────────────
-        # Check if we're too close to square-off to trade
-        now = datetime.datetime.now()
-        square_off = now.replace(
-            hour=self.cfg.SQUARE_OFF_HOUR,
-            minute=self.cfg.SQUARE_OFF_MINUTE,
-            second=0, microsecond=0,
-        )
-        minutes_left = (square_off - now).total_seconds() / 60
-
-        if minutes_left <= 0:
-            self.log.warning(
-                f"Square-off time ({self.cfg.SQUARE_OFF_HOUR}:"
-                f"{self.cfg.SQUARE_OFF_MINUTE:02d}) already passed. "
-                f"Too late to trade today."
+        # Check if we're too close to square-off to trade.
+        # If too late, wait for the next trading day and retry.
+        while not self._shutdown_requested:
+            now = datetime.datetime.now()
+            square_off = now.replace(
+                hour=self.cfg.SQUARE_OFF_HOUR,
+                minute=self.cfg.SQUARE_OFF_MINUTE,
+                second=0, microsecond=0,
             )
-            return
+            minutes_left = (square_off - now).total_seconds() / 60
 
-        if minutes_left < self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
-            self.log.warning(
-                f"Only {minutes_left:.0f} minutes until square-off. "
-                f"Need at least {self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE} minutes. "
-                f"Skipping today."
-            )
+            if minutes_left <= 0:
+                reason = (
+                    f"Square-off time ({self.cfg.SQUARE_OFF_HOUR}:"
+                    f"{self.cfg.SQUARE_OFF_MINUTE:02d}) already passed — "
+                    f"too late to trade today"
+                )
+            elif minutes_left < self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
+                reason = (
+                    f"Only {minutes_left:.0f} minutes until square-off — "
+                    f"need at least {self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE} minutes, "
+                    f"skipping today"
+                )
+            else:
+                break  # Enough time to trade — proceed
+
+            # Too late — wait for the next market open
+            self._wait_for_next_market_open(reason)
+            if self._shutdown_requested:
+                return
+
+            # New day: re-login (token expired overnight) and refresh funds
+            self.log.info("Refreshing Zerodha login for new trading day...")
+            try:
+                self.zerodha.login()
+            except Exception as e:
+                self.log.error(f"Zerodha re-login failed: {e}")
+                return
+
+            self._fetch_and_set_budget()
+            if not self.cfg.DRY_RUN and self._budget <= 0:
+                return
+
+        if self._shutdown_requested:
             return
 
         self._run_pre_market_scan()
@@ -629,15 +650,7 @@ class PortfolioManager:
     def _wait_for_trading_day(self):
         """
         Checks if today is a trading day. If not (weekend or holiday),
-        finds the next trading day and shows a countdown timer.
-
-        This prevents the bot from doing anything on non-trading days,
-        saving Claude API calls and avoiding stale-data trades.
-
-        The timer updates every second and shows:
-          - Why today is not a trading day
-          - When the next trading day is
-          - A live countdown in DD:HH:MM:SS format
+        determines the reason and delegates to _wait_for_next_market_open.
         """
         today = datetime.date.today()
 
@@ -647,63 +660,56 @@ class PortfolioManager:
 
         # Determine WHY today is not a trading day
         if today.weekday() == 5:
-            reason = "Saturday"
+            reason = "Today is Saturday — market is closed"
         elif today.weekday() == 6:
-            reason = "Sunday"
+            reason = "Today is Sunday — market is closed"
         else:
             holiday = self._holiday_name(today)
-            reason = f"Market holiday ({holiday})" if holiday else "Market holiday"
+            name = f" ({holiday})" if holiday else ""
+            reason = f"Today is a market holiday{name} — market is closed"
 
-        # Find the next trading day
+        self._wait_for_next_market_open(reason)
+
+    def _wait_for_next_market_open(self, reason: str = ""):
+        """
+        Common wait: finds the next trading day, shows why we're
+        waiting, and counts down to pre-market time.
+
+        Used by ALL "market not open" scenarios:
+          - Weekend / holiday (_wait_for_trading_day)
+          - Square-off time already passed (too late)
+          - Not enough time before close (cutoff)
+
+        After this returns, callers should re-login to Zerodha
+        (token expires at midnight) and refresh budget.
+        """
+        today = datetime.date.today()
         next_day = self._next_trading_day(today + datetime.timedelta(days=1))
         next_open = datetime.datetime(
             next_day.year, next_day.month, next_day.day,
             self.cfg.MARKET_OPEN_HOUR, self.cfg.MARKET_OPEN_MINUTE, 0,
         )
-        # Pre-market scan starts earlier
         next_pre_market = next_open - datetime.timedelta(
             minutes=self.cfg.PRE_MARKET_MINUTES_BEFORE
         )
 
-        self.log.section("MARKET CLOSED")
-        self.log.warning(f"Today is {reason} — market is closed")
+        self.log.section("WAITING FOR NEXT MARKET OPEN")
+        if reason:
+            self.log.warning(reason)
         self.log.info(f"Next trading day: {next_day.strftime('%A, %B %d, %Y')}")
         self.log.info(f"Pre-market scan at: {next_pre_market.strftime('%I:%M %p')}")
         self.log.info(f"Market opens at: {next_open.strftime('%I:%M %p')}")
         self.log.info("Press Ctrl+C to abort.\n")
-
-        # Countdown loop — sleeps until pre-market time on the next trading day
-        while datetime.datetime.now() < next_pre_market and not self._shutdown_requested:
-            remaining = next_pre_market - datetime.datetime.now()
-            total_secs = int(remaining.total_seconds())
-            days, remainder = divmod(total_secs, 86400)
-            hrs, remainder  = divmod(remainder, 3600)
-            mins, secs      = divmod(remainder, 60)
-
-            if days > 0:
-                countdown = f"{days}d {hrs:02d}:{mins:02d}:{secs:02d}"
-            else:
-                countdown = f"{hrs:02d}:{mins:02d}:{secs:02d}"
-
-            print(
-                f"\r  ⏳ Next market open in: {countdown}  "
-                f"({next_day.strftime('%a %d %b')})",
-                end="", flush=True,
-            )
-            time.sleep(1)
-
-        print()  # newline after countdown
+        self._countdown_to(next_pre_market, "Next market open in")
 
     def _wait_for_pre_market(self):
         """
         Sleeps until PRE_MARKET_MINUTES_BEFORE the market opens.
         If already past pre-market time, returns immediately.
-        Shows a countdown so you know it's alive.
         """
         pre_market = self._get_pre_market_time()
-        now = datetime.datetime.now()
 
-        if now >= pre_market:
+        if datetime.datetime.now() >= pre_market:
             self.log.info("Pre-market time already reached — starting scan")
             return
 
@@ -711,18 +717,7 @@ class PortfolioManager:
         self.log.info(f"Pre-market scan at: {pre_market.strftime('%I:%M %p')}")
         self.log.info(f"Market opens at: {self.cfg.MARKET_OPEN_HOUR}:{self.cfg.MARKET_OPEN_MINUTE:02d}")
         self.log.info("Press Ctrl+C to abort.\n")
-
-        while datetime.datetime.now() < pre_market and not self._shutdown_requested:
-            remaining = pre_market - datetime.datetime.now()
-            hrs, remainder = divmod(int(remaining.total_seconds()), 3600)
-            mins, secs = divmod(remainder, 60)
-            print(
-                f"\r  ⏳ Pre-market in: {hrs:02d}:{mins:02d}:{secs:02d}  ",
-                end="", flush=True,
-            )
-            time.sleep(1)
-
-        print()  # newline after countdown
+        self._countdown_to(pre_market, "Pre-market in")
 
     def _wait_for_market_open(self):
         """
@@ -734,26 +729,38 @@ class PortfolioManager:
             minute=self.cfg.MARKET_OPEN_MINUTE,
             second=0, microsecond=0,
         )
-        now = datetime.datetime.now()
 
-        if now >= market_open:
+        if datetime.datetime.now() >= market_open:
             self.log.info("Market already open — entering positions now")
             return
 
         self.log.section("WAITING FOR MARKET OPEN")
         self.log.info(f"Market opens at: {market_open.strftime('%I:%M %p')}")
         self.log.info("Press Ctrl+C to abort.\n")
+        self._countdown_to(market_open, "Market open in")
 
-        while datetime.datetime.now() < market_open and not self._shutdown_requested:
-            remaining = market_open - datetime.datetime.now()
-            mins, secs = divmod(int(remaining.total_seconds()), 60)
-            print(
-                f"\r  ⏳ Market open in: {mins:02d}:{secs:02d}  ",
-                end="", flush=True,
-            )
+    def _countdown_to(self, target: datetime.datetime, label: str):
+        """
+        Common countdown loop. Shows a live timer until target time.
+        Used by _wait_for_pre_market, _wait_for_market_open, and
+        _wait_for_next_market_open.
+        """
+        while datetime.datetime.now() < target and not self._shutdown_requested:
+            remaining = target - datetime.datetime.now()
+            total_secs = int(remaining.total_seconds())
+            days, remainder = divmod(total_secs, 86400)
+            hrs, remainder  = divmod(remainder, 3600)
+            mins, secs      = divmod(remainder, 60)
+
+            if days > 0:
+                countdown = f"{days}d {hrs:02d}:{mins:02d}:{secs:02d}"
+            else:
+                countdown = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+            print(f"\r  \u23f3 {label}: {countdown}  ", end="", flush=True)
             time.sleep(1)
 
-        print()
+        print()  # newline after countdown
 
     def _get_pre_market_time(self) -> datetime.datetime:
         """Returns today's pre-market scan start time."""

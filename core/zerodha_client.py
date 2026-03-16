@@ -353,6 +353,51 @@ class ZerodhaClient:
         return float(margins["available"]["cash"])
 
     # ================================================================
+    # ACCOUNT SNAPSHOT
+    # ================================================================
+
+    def print_account_snapshot(self):
+        """
+        Prints a quick overview of the Zerodha account:
+        available balance, portfolio size, invested vs current value.
+
+        Returns the available funds amount (or 0 if fetch failed).
+        Reusable by both Phase 1 (analyser) and Phase 2 (manager).
+        """
+        self.log.section("ACCOUNT SNAPSHOT")
+
+        funds = 0.0
+        try:
+            funds = self.get_available_funds()
+            self.log.info(f"Available balance: \u20b9{funds:,.2f}")
+        except Exception:
+            self.log.warning("Could not fetch available balance")
+
+        try:
+            holdings = self.get_holdings()
+            if holdings:
+                invested = sum(h["invested_value"] for h in holdings)
+                current  = sum(h["current_value"]  for h in holdings)
+                pnl      = current - invested
+                pnl_pct  = (pnl / invested * 100) if invested > 0 else 0
+                pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+                reset     = "\033[0m"
+
+                self.log.info(f"Stocks in portfolio: {len(holdings)}")
+                self.log.info(f"Invested value     : \u20b9{invested:,.2f}")
+                self.log.info(f"Current value      : \u20b9{current:,.2f}")
+                self.log.info(
+                    f"Portfolio P&L      : {pnl_color}\u20b9{pnl:+,.2f} "
+                    f"({pnl_pct:+.2f}%){reset}"
+                )
+            else:
+                self.log.info("No stocks in portfolio")
+        except Exception:
+            self.log.warning("Could not fetch portfolio holdings")
+
+        return funds
+
+    # ================================================================
     # INTERNAL HELPERS
     # ================================================================
 

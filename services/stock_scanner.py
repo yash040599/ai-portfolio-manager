@@ -77,6 +77,41 @@ NIFTY200_EXTRA = [
 ]
 
 
+# ================================================================
+# PARSING HELPERS
+# ================================================================
+# Shared by _extract_trade_fields() and _parse_review_response().
+# ================================================================
+
+def _parse_price(val: str) -> float:
+    """Strips \u20b9, commas, spaces and converts to float. Returns 0.0 on failure."""
+    cleaned = re.sub(r'[\u20b9,\s]', '', val)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def _parse_price_optional(val: str) -> float | None:
+    """Like _parse_price but returns None for empty/invalid input."""
+    if not val:
+        return None
+    cleaned = re.sub(r'[\u20b9,\s]', '', val)
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def _parse_int(val: str) -> int:
+    """Strips commas/spaces and converts to int. Returns 0 on failure."""
+    cleaned = re.sub(r'[,\s]', '', val)
+    try:
+        return int(float(cleaned))
+    except ValueError:
+        return 0
+
+
 class StockScanner:
 
     def __init__(self, config: type[Config], claude: ClaudeClient, log: Logger):
@@ -402,25 +437,10 @@ RATIONALE: [1 sentence]
         if not all([symbol, side, entry, qty]):
             return None
 
-        # Clean up price values — remove ₹ and commas
-        def parse_price(val: str) -> float:
-            cleaned = re.sub(r'[₹,\s]', '', val)
-            try:
-                return float(cleaned)
-            except ValueError:
-                return 0.0
-
-        def parse_int(val: str) -> int:
-            cleaned = re.sub(r'[,\s]', '', val)
-            try:
-                return int(float(cleaned))
-            except ValueError:
-                return 0
-
-        entry_price = parse_price(entry)
-        stop_loss   = parse_price(sl) if sl else 0.0
-        target_price = parse_price(target) if target else 0.0
-        quantity    = parse_int(qty)
+        entry_price  = _parse_price(entry)
+        stop_loss    = _parse_price(sl) if sl else 0.0
+        target_price = _parse_price(target) if target else 0.0
+        quantity     = _parse_int(qty)
 
         if entry_price <= 0 or quantity <= 0:
             return None
@@ -530,20 +550,11 @@ RATIONALE: [1 sentence]
             reason = extract("REASON")
 
             if symbol and action:
-                def parse_price(val: str) -> float | None:
-                    if not val:
-                        return None
-                    cleaned = re.sub(r'[₹,\s]', '', val)
-                    try:
-                        return float(cleaned)
-                    except ValueError:
-                        return None
-
                 actions.append({
                     "symbol":     symbol,
                     "action":     action,
-                    "new_sl":     parse_price(new_sl),
-                    "new_target": parse_price(new_target),
+                    "new_sl":     _parse_price_optional(new_sl),
+                    "new_target": _parse_price_optional(new_target),
                     "reason":     reason,
                 })
 

@@ -15,6 +15,7 @@ python main.py --phase 1
 A fully automated intraday trading bot that:
 - Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
+- If started after market hours, shows a countdown timer to the next trading day and auto-resumes
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
@@ -173,7 +174,7 @@ You can start Phase 2 anytime — even the night before. It will:
 5. Run the full trading day cycle
 6. Generate reports in `reports/`
 
-> **Late start?** If you start after 9:15 AM, the bot skips the wait and scans stocks at current prices (shows "MARKET SCAN (joined late)" instead of "PRE-MARKET SCAN"). If you start within `CUTOFF_MINUTES_BEFORE_CLOSE` (default 30 min) of square-off time, it skips trading entirely — not enough time for meaningful trades.
+> **Late start?** If you start after 9:15 AM, the bot skips the wait and scans stocks at current prices (shows "MARKET SCAN (joined late)" instead of "PRE-MARKET SCAN"). If you start after square-off time (3:10 PM) or within `CUTOFF_MINUTES_BEFORE_CLOSE` (default 30 min) of square-off, it shows a countdown timer to the next trading day and **automatically resumes** the next morning — no need to restart the script. On the new day, it re-logs into Zerodha (tokens expire at midnight) and refreshes your account balance before trading.
 
 > **On holidays/weekends,** the bot still logs into Zerodha and shows your account snapshot before starting the countdown. You can see your balance and portfolio status anytime.
 
@@ -192,7 +193,7 @@ ai-portfolio-manager/
 ├── .gitignore               # Keeps secrets and junk out of Git
 ├── core/
 │   ├── claude_client.py     # Claude API wrapper + error classification
-│   ├── zerodha_client.py    # Zerodha Kite API wrapper (login, quotes, orders)
+│   ├── zerodha_client.py    # Zerodha Kite API wrapper (login, quotes, orders, account snapshot)
 │   └── logger.py            # Coloured terminal output + rotating log file
 ├── portfolio/
 │   ├── analyser.py          # Phase 1 orchestrator (read-only analysis)
@@ -200,7 +201,7 @@ ai-portfolio-manager/
 ├── services/
 │   ├── analysis_queue.py    # Per-stock Claude analysis with retry logic
 │   ├── market_data.py       # Enriches portfolio with live prices + history
-│   ├── stock_scanner.py     # Pre-market Claude scan + mid-day review
+│   ├── stock_scanner.py     # Pre-market Claude scan + mid-day review + price parsing helpers
 │   ├── order_engine.py      # Order execution, position tracking, P&L + taxes
 │   └── report_writer.py     # Generates .txt reports and .json data dumps
 ├── reports/                 # Generated reports (one per run)
@@ -266,7 +267,9 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Budget cap** — never exceeds `MAX_BUDGET_INR`; dry-run always uses the full cap
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
 - **Position limits** — max stocks held simultaneously
-- **Late-start cutoff** — skips trading if started too close to market close
+- **Late-start cutoff** — skips trading if started too close to market close; auto-waits for next day
+- **Auto next-day resume** — if market is closed (weekend, holiday, or past square-off), shows a countdown and resumes automatically
+- **Token auto-refresh** — re-logs into Zerodha when waiting across midnight (tokens expire daily)
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
 - **NSE holiday calendar** — no wasted API calls on non-trading days
