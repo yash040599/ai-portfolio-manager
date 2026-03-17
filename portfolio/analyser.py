@@ -99,7 +99,6 @@ class PortfolioAnalyser:
         portfolio = self.market.enrich(portfolio)
 
         # ── Step 4b: Load previous report for comparison ──────────
-        from services.report_writer import ReportWriter
         prev_data = ReportWriter.find_latest_portfolio_data(datetime.date.today())
         if prev_data:
             self.log.info(f"Previous report found ({prev_data['date']}) — Claude will compare changes")

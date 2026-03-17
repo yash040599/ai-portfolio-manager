@@ -138,7 +138,7 @@ class ZerodhaClient:
                 "invested_value": round(qty * avg,  2),
                 "pnl":            round(pnl, 2),
                 "pnl_percent":    round((pnl / (qty * avg)) * 100, 2)
-                                  if avg > 0 else 0,
+                                  if qty > 0 and avg > 0 else 0,
             })
 
         return holdings
