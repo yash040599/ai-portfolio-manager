@@ -106,11 +106,24 @@ class OrderEngine:
         cost = entry * qty
         current_exposure = self._total_open_exposure()
         if current_exposure + cost > self._budget:
-            self.log.warning(
-                f"Cannot enter {symbol}: ₹{cost:,.0f} would exceed "
-                f"budget (current exposure: ₹{current_exposure:,.0f})"
-            )
-            return False
+            # Try reducing qty to fit remaining budget
+            remaining = self._budget - current_exposure
+            max_qty = int(remaining / entry) if entry > 0 else 0
+            if max_qty >= 1:
+                self.log.warning(
+                    f"{symbol}: {qty}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds budget. "
+                    f"Reducing qty to {max_qty} (₹{max_qty * entry:,.0f})"
+                )
+                qty = max_qty
+                trade["qty"] = qty
+                cost = entry * qty
+            else:
+                self.log.warning(
+                    f"Cannot enter {symbol}: ₹{cost:,.0f} would exceed "
+                    f"budget (current exposure: ₹{current_exposure:,.0f}, "
+                    f"remaining: ₹{remaining:,.0f})"
+                )
+                return False
 
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
@@ -119,6 +132,19 @@ class OrderEngine:
                 f"Cannot enter {symbol}: already at max {self.cfg.MAX_POSITIONS} positions"
             )
             return False
+
+        # ── Max re-entries per stock check ────────────────────────
+        max_reentries = self.cfg.MAX_REENTRIES_PER_STOCK
+        if max_reentries > 0:
+            past_entries = sum(
+                1 for p in self.positions if p["symbol"] == symbol
+            )
+            if past_entries >= max_reentries:
+                self.log.warning(
+                    f"Cannot enter {symbol}: already traded {past_entries} "
+                    f"time(s) today (max {max_reentries}). Skipping re-entry."
+                )
+                return False
 
         # ── Place or simulate the order ───────────────────────────
         if self.cfg.DRY_RUN:

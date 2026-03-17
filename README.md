@@ -22,7 +22,9 @@ A fully automated intraday trading bot that:
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
-- Claude reviews positions every **15 minutes** for adjustments
+- Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
+- **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
+- **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - Uses **NIFTY 50 index trend** to bias trade direction (bullish/bearish/neutral)
 - Anti-momentum-chasing rules — avoids stocks already up >2% at scan time
 - **Slippage model** in dry-run mode for realistic P&L simulation
@@ -152,6 +154,7 @@ Open `config.py` and review these key settings:
 | `MAX_BUDGET_INR` | `10,000` | Maximum capital the bot can deploy per day |
 | `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
+| `MAX_REENTRIES_PER_STOCK` | `2` | Max times a stock can be traded in one day |
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Auto-exit on loss |
 | `DEFAULT_TARGET_PCT` | `2.0%` | Auto-exit on profit |
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
@@ -276,6 +279,8 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Dry-run mode** (default) — no real orders, simulated P&L on live prices with slippage modelling
 - **Circuit breaker** — stops trading if daily loss exceeds threshold
 - **Budget cap** — never exceeds `MAX_BUDGET_INR`
+- **Smart sizing** — auto-reduces qty to fit remaining budget instead of rejecting the trade
+- **Re-entry limit** — blocks repeated entries into the same stock after stop-losses (`MAX_REENTRIES_PER_STOCK`)
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
 - **Auto trailing stop-loss** — rule-based SL tightening as positions move in profit
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting

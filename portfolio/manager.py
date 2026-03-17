@@ -403,11 +403,12 @@ class PortfolioManager:
         nifty_context = self._build_nifty_context()
 
         actions = self.scanner.review_positions(
-            open_positions  = self.engine.open_positions(),
-            quotes          = quotes,
-            day_pnl         = self.engine.day_pnl(),
+            open_positions   = self.engine.open_positions(),
+            quotes           = quotes,
+            day_pnl          = self.engine.day_pnl(),
             budget_remaining = self.engine.budget_remaining(),
-            nifty_context   = nifty_context,
+            nifty_context    = nifty_context,
+            closed_positions = self.engine.closed_positions(),
         )
 
         if actions:

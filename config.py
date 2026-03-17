@@ -134,6 +134,13 @@ class Config:
     MAX_POSITIONS:    int = 5
     MAX_POSITION_PCT: int = 40
 
+    # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
+    #   the same stock in a single day. Prevents Claude from repeatedly
+    #   re-entering a stock that keeps hitting stop-loss.
+    #   2 = allow one re-entry after the first trade closes.
+    #   Set to 0 for unlimited (not recommended).
+    MAX_REENTRIES_PER_STOCK: int = 2
+
     # ── Risk Management ───────────────────────────────────────────
     # DEFAULT_STOP_LOSS_PCT: fallback stop-loss if Claude doesn't set one.
     #   1.5 = exit if stock drops 1.5% from entry price.

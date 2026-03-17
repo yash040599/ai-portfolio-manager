@@ -202,6 +202,7 @@ class StockScanner:
         day_pnl: float,
         budget_remaining: float,
         nifty_context: str = "",
+        closed_positions: list[dict] | None = None,
     ) -> list[dict]:
         """
         Periodic Claude review of open positions + market conditions.
@@ -216,7 +217,8 @@ class StockScanner:
           {"action": "HOLD|EXIT|NEW", "symbol": ..., ...}
         """
         prompt = self._build_review_prompt(
-            open_positions, quotes, day_pnl, budget_remaining, nifty_context
+            open_positions, quotes, day_pnl, budget_remaining, nifty_context,
+            closed_positions or [],
         )
 
         self.log.info("Claude reviewing open positions...")
@@ -332,12 +334,19 @@ TRADE 2:
         day_pnl: float,
         budget_remaining: float,
         nifty_context: str = "",
+        closed_positions: list[dict] | None = None,
     ) -> str:
         """
         Builds the periodic review prompt for open positions.
         """
         today = datetime.date.today().strftime("%B %d, %Y")
         now   = datetime.datetime.now().strftime("%I:%M %p")
+
+        budget         = self._budget
+        max_positions  = self.cfg.MAX_POSITIONS
+        max_pct        = self.cfg.MAX_POSITION_PCT
+        max_per        = budget * max_pct // 100
+        max_reentries  = self.cfg.MAX_REENTRIES_PER_STOCK
 
         # Calculate minutes until square-off for time-pressure context
         now_dt = datetime.datetime.now()
@@ -369,6 +378,29 @@ TRADE 2:
                 f"SL: ₹{p.get('stop_loss', 'N/A')}  Target: ₹{p.get('target_price', 'N/A')}\n"
             )
 
+        # Build closed/failed trade history so Claude doesn't re-enter losers
+        closed_text = ""
+        reentry_counts: dict[str, int] = {}
+        for cp in (closed_positions or []):
+            sym = cp.get("symbol", "")
+            reentry_counts[sym] = reentry_counts.get(sym, 0) + 1
+            closed_text += (
+                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ ₹{cp.get('entry_price', 0):.2f}  "
+                f"Exit: ₹{cp.get('exit_price', 0):.2f}  P&L: ₹{cp.get('pnl', 0):.2f}  "
+                f"Reason: {cp.get('exit_reason', '?')}\n"
+            )
+
+        # Build list of stocks at re-entry limit
+        blocked_stocks = [
+            sym for sym, count in reentry_counts.items()
+            if max_reentries > 0 and count >= max_reentries
+        ]
+        blocked_text = (
+            f"\nBLOCKED FROM RE-ENTRY (already traded {max_reentries}x today): "
+            + ", ".join(blocked_stocks)
+            if blocked_stocks else ""
+        )
+
         return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of fund management experience.
 Today is {today}, current time is {now} IST. Market closes at 3:30 PM, we square off at 3:10 PM.
 TIME REMAINING: {mins_left:.0f} minutes until square-off.
@@ -376,8 +408,14 @@ TIME REMAINING: {mins_left:.0f} minutes until square-off.
 CURRENT OPEN POSITIONS:
 {pos_text if pos_text else "  (none)"}
 
+CLOSED TRADES TODAY:
+{closed_text if closed_text else "  (none)"}
+
 DAY P&L SO FAR: ₹{day_pnl:,.2f}
 REMAINING BUDGET: ₹{budget_remaining:,.2f}
+MAX POSITIONS: {max_positions} stocks simultaneously.
+MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
+{blocked_text}
 
 REVIEW RULES — MUST FOLLOW:
 1. TRAILING STOP: If a position is profitable by more than 1× the original risk (entry-to-SL distance), move the SL to at least breakeven. If profitable by 2× risk, move SL to lock in 50% of profit.
@@ -385,6 +423,8 @@ REVIEW RULES — MUST FOLLOW:
 3. CUT LOSERS EARLY: If a position is underwater and has been drifting sideways for 2+ review cycles, EXIT. Dead money is worse than a small loss.
 4. DON'T AVERAGE DOWN: Never add to a losing position. Only suggest NEW trades for fresh setups with good R:R.
 5. SECTOR ALIGNMENT: If NIFTY 50 has turned against your trade direction since entry, tighten the SL aggressively.
+6. DO NOT RE-ENTER A STOCK THAT ALREADY HIT STOP-LOSS TODAY unless you have a fundamentally different setup (opposite direction or completely new catalyst). Check CLOSED TRADES above before suggesting any NEW trade.
+7. NEW TRADE SIZING: QTY × ENTRY_PRICE must not exceed REMAINING BUDGET (₹{budget_remaining:,.0f}) or MAX PER STOCK (₹{max_per:,}), whichever is lower. Calculate QTY accordingly.
 
 Review each position and recommend ONE action per position.
 You may also suggest NEW trades if budget allows and there's a good setup (only if 60+ minutes remain).
@@ -406,7 +446,7 @@ SIDE: [BUY or SELL]
 ENTRY_PRICE: [price]
 STOP_LOSS: [price]
 TARGET: [price]
-QTY: [quantity]
+QTY: [quantity — MUST satisfy: QTY × ENTRY_PRICE ≤ ₹{min(budget_remaining, max_per):,.0f}]
 RATIONALE: [1 sentence]
 ---
 ===END===
@@ -509,8 +549,7 @@ RATIONALE: [1 sentence]
     def _validate_budget(self, trades: list[dict]) -> list[dict]:
         """
         Ensures total trade value doesn't exceed budget.
-        Drops trades that would push over the limit.
-        Warns when a trade is dropped.
+        Reduces qty to fit when possible, drops only as a last resort.
         """
         budget    = self._budget
         max_pct   = self.cfg.MAX_POSITION_PCT / 100
@@ -520,20 +559,42 @@ RATIONALE: [1 sentence]
 
         for t in trades:
             cost = t["entry_price"] * t["qty"]
+            entry = t["entry_price"]
 
-            if cost > max_per:
-                self.log.warning(
-                    f"Dropping {t['symbol']}: ₹{cost:,.0f} exceeds "
-                    f"per-stock limit of ₹{max_per:,.0f}"
-                )
-                continue
+            # Check per-stock limit — reduce qty to fit if needed
+            if cost > max_per and entry > 0:
+                new_qty = int(max_per / entry)
+                if new_qty >= 1:
+                    self.log.warning(
+                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
+                        f"per-stock limit ₹{max_per:,.0f}. Reducing qty to {new_qty}"
+                    )
+                    t["qty"] = new_qty
+                    cost = entry * new_qty
+                else:
+                    self.log.warning(
+                        f"Dropping {t['symbol']}: ₹{cost:,.0f} exceeds "
+                        f"per-stock limit of ₹{max_per:,.0f} and min qty is 1"
+                    )
+                    continue
 
-            if allocated + cost > budget:
-                self.log.warning(
-                    f"Dropping {t['symbol']}: ₹{cost:,.0f} would exceed "
-                    f"total budget of ₹{budget:,}"
-                )
-                continue
+            # Check total budget — reduce qty to fit if needed
+            if allocated + cost > budget and entry > 0:
+                remaining = budget - allocated
+                new_qty = int(remaining / entry)
+                if new_qty >= 1:
+                    self.log.warning(
+                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
+                        f"remaining budget ₹{remaining:,.0f}. Reducing qty to {new_qty}"
+                    )
+                    t["qty"] = new_qty
+                    cost = entry * new_qty
+                else:
+                    self.log.warning(
+                        f"Dropping {t['symbol']}: ₹{cost:,.0f} would exceed "
+                        f"total budget of ₹{budget:,} (only ₹{remaining:,.0f} left)"
+                    )
+                    continue
 
             allocated += cost
             valid.append(t)
