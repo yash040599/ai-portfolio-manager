@@ -345,8 +345,25 @@ class AnalysisQueue:
             p = prev.get("parsed", {})
             prev_date = prev.get("date", "unknown")
             prev_stock = prev.get("stock", {})
+            prev_qty = prev_stock.get("quantity", "N/A")
+            curr_qty = stock["quantity"]
+
+            # Detect if user acted on the previous recommendation
+            qty_changed = ""
+            if isinstance(prev_qty, (int, float)) and prev_qty != curr_qty:
+                diff = curr_qty - int(prev_qty)
+                if diff < 0:
+                    qty_changed = f"  ** Shares REDUCED by {abs(diff)} (from {prev_qty} → {curr_qty}) — user SOLD shares since last analysis **\n"
+                else:
+                    qty_changed = f"  ** Shares INCREASED by {diff} (from {prev_qty} → {curr_qty}) — user BOUGHT more since last analysis **\n"
+            elif isinstance(prev_qty, (int, float)) and prev_qty == curr_qty:
+                qty_changed = f"  ** Shares UNCHANGED at {curr_qty} — user did NOT act on previous recommendation **\n"
+
             prev_block = (
                 f"\nPREVIOUS ANALYSIS ({prev_date}):\n"
+                f"  Qty then       : {prev_qty} shares\n"
+                f"  Qty now        : {curr_qty} shares\n"
+                f"{qty_changed}"
                 f"  Price then     : ₹{prev_stock.get('current_price', 'N/A')}\n"
                 f"  Action         : {p.get('ACTION', 'N/A')}\n"
                 f"  Conviction     : {p.get('CONVICTION', 'N/A')}\n"
@@ -354,8 +371,11 @@ class AnalysisQueue:
                 f"  Horizon        : {p.get('HORIZON', 'N/A')}\n"
                 f"  Next steps     : {p.get('NEXT_STEPS', 'N/A')}\n"
                 f"  Key watch      : {p.get('WATCH', 'N/A')}\n"
-                f"\nCompare today's data with the previous analysis. Note any price changes, "
-                f"whether the previous target was hit, and whether the thesis still holds.\n"
+                f"\nIMPORTANT: Compare the previous quantity with the current quantity above. "
+                f"If shares were reduced, the user already sold — acknowledge this and base your "
+                f"new recommendation on the CURRENT position size, not the old one. "
+                f"If shares increased, the user bought more. If unchanged, the user did not act. "
+                f"Also note price changes and whether the previous target was hit.\n"
             )
 
         # Action guide — always included so Claude picks the right action
