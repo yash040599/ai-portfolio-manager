@@ -46,7 +46,7 @@ class ZerodhaClient:
     #   Delete access_token.json and re-run.
     # ================================================================
 
-    def login(self):
+    def login(self, interactive: bool = True):
         from kiteconnect import KiteConnect
         self._kite = KiteConnect(api_key=self.cfg.ZERODHA_API_KEY)
 
@@ -59,7 +59,21 @@ class ZerodhaClient:
                 self._kite.set_access_token(saved["token"])
                 return
 
-        # No valid token — open browser OAuth flow
+        # No valid token — need browser OAuth flow
+        # If interactive, wait for user confirmation before opening browser
+        if interactive:
+            self.log.info("Zerodha login required (token expired or missing).")
+            try:
+                answer = input(
+                    "\n  Press ENTER when you're ready to log in via browser "
+                    "(or type 'q' to quit): "
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "q"
+
+            if answer == "q":
+                raise RuntimeError("User skipped Zerodha login.")
+
         login_url = self._kite.login_url()
         self.log.info(f"Opening Zerodha login in browser...")
         self.log.info(f"If it doesn't open automatically: {login_url}")
@@ -80,11 +94,18 @@ class ZerodhaClient:
                 pass  # Suppress HTTP server noise in terminal
 
         server = HTTPServer(("localhost", 8080), _TokenHandler)
+        server.timeout = 300  # 5 minute timeout per request cycle
         webbrowser.open(login_url)
 
-        self.log.info("Waiting for Zerodha login in browser...")
+        self.log.info("Waiting for Zerodha login in browser (5 min timeout)...")
+        deadline = datetime.datetime.now() + datetime.timedelta(minutes=5)
         while not captured:
             server.handle_request()
+            if datetime.datetime.now() >= deadline:
+                raise RuntimeError(
+                    "Zerodha login timed out after 5 minutes. "
+                    "Re-run the script when you can complete the browser login."
+                )
 
         # Exchange one-time request_token for a reusable access_token
         session = self._kite.generate_session(
