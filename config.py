@@ -90,6 +90,13 @@ class Config:
     PRE_MARKET_MINUTES_BEFORE: int = 15   # scan starts this many min before open
     CUTOFF_MINUTES_BEFORE_CLOSE: int = 30   # skip trading if less than this many min to square-off
 
+    # ENTRY_DELAY_MINUTES: after market open, observe prices for this many
+    #   minutes before entering positions. Only stocks with >0.3% directional
+    #   movement from open price are entered. Helps avoid opening whipsaws.
+    #   Set to 0 to enter immediately at market open (old behaviour).
+    ENTRY_DELAY_MINUTES: int = 15
+    ENTRY_MIN_MOVE_PCT:  float = 0.3   # min % move from open to confirm direction
+
     # ── Polling & Claude Review Intervals ─────────────────────────
     # PRICE_POLL_SECONDS: how often to check Kite quotes for SL/target hits.
     #   Lower = faster reaction to price moves, but more API calls.
@@ -158,6 +165,13 @@ class Config:
     DEFAULT_STOP_LOSS_PCT: float = 1.5
     DEFAULT_TARGET_PCT:    float = 2.0
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
+
+    # ATR_MULTIPLIER: multiplier for 14-day ATR to compute dynamic stop-loss.
+    #   SL = entry - (ATR_MULTIPLIER × ATR) for longs.
+    #   Target = entry + (ATR_MULTIPLIER × 2 × ATR) for 2:1 reward:risk.
+    #   Falls back to DEFAULT_STOP_LOSS_PCT if historical data is unavailable.
+    ATR_MULTIPLIER: float = 1.5
+    ATR_PERIOD:     int   = 14    # number of days for ATR calculation
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: once the price moves this many

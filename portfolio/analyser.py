@@ -25,13 +25,14 @@
 import os
 import datetime
 
-from config                  import Config
-from core.logger             import Logger
-from core.zerodha_client     import ZerodhaClient
-from core.claude_client      import ClaudeClient
-from services.market_data    import MarketData
-from services.analysis_queue import AnalysisQueue
-from services.report_writer  import ReportWriter
+from config                        import Config
+from core.logger                   import Logger
+from core.zerodha_client           import ZerodhaClient
+from core.claude_client            import ClaudeClient
+from services.market_data          import MarketData
+from services.analysis_queue       import AnalysisQueue
+from services.report_writer        import ReportWriter
+from services.performance_tracker  import PerformanceTracker
 
 
 class PortfolioAnalyser:
@@ -47,6 +48,7 @@ class PortfolioAnalyser:
         self.market  = MarketData(config, self.zerodha, Logger("MarketData"))
         self.queue   = AnalysisQueue(config, self.claude, Logger("AnalysisQueue"))
         self.report  = ReportWriter(config, Logger("ReportWriter"))
+        self.tracker = PerformanceTracker(config, Logger("PerformanceTracker"))
 
     # ================================================================
     # RUN
@@ -99,7 +101,10 @@ class PortfolioAnalyser:
         portfolio = self.market.enrich(portfolio)
 
         # ── Step 4b: Load previous report for comparison ──────────
-        prev_data = ReportWriter.find_latest_portfolio_data(datetime.date.today())
+        prev_data = self.tracker.get_latest_portfolio_analysis()
+        if prev_data is None:
+            # Fallback to JSON file scan if DB is empty (first run after DB was added)
+            prev_data = ReportWriter.find_latest_portfolio_data(datetime.date.today())
         if prev_data:
             self.log.info(f"Previous report found ({prev_data['date']}) — Claude will compare changes")
         else:
@@ -112,6 +117,9 @@ class PortfolioAnalyser:
         # ── Step 6: Save report ───────────────────────────────────
         self.log.section("SAVING REPORT")
         self.report.save(portfolio, analyses, skipped, failed_log)
+
+        # ── Step 7: Record to performance database ────────────────
+        self.tracker.record_portfolio_analyses(portfolio, analyses)
 
         self._print_summary(analyses, skipped, failed_log)
 

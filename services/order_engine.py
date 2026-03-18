@@ -68,6 +68,49 @@ class OrderEngine:
         self._budget = amount
 
     # ================================================================
+    # ATR CALCULATION
+    # ================================================================
+
+    def calculate_atr(self, symbol: str, exchange: str = "NSE", period: int = 0) -> float | None:
+        """
+        Computes the Average True Range over `period` trading days.
+        Returns ATR as a price value, or None if data is unavailable.
+
+        True Range = max(high-low, |high-prev_close|, |low-prev_close|)
+        ATR = SMA of True Range over `period` days.
+        """
+        if period <= 0:
+            period = self.cfg.ATR_PERIOD
+
+        to_date   = datetime.date.today()
+        from_date = to_date - datetime.timedelta(days=period * 2)  # extra buffer for weekends/holidays
+
+        try:
+            candles = self.zerodha.get_historical(symbol, exchange, from_date, to_date, "day")
+        except Exception as e:
+            self.log.info(f"ATR: no historical data for {symbol}: {e}")
+            return None
+
+        if not candles or len(candles) < period + 1:
+            self.log.info(f"ATR: insufficient data for {symbol} ({len(candles) if candles else 0} candles)")
+            return None
+
+        # Use the last `period + 1` candles so we have `period` TR values
+        candles = candles[-(period + 1):]
+        true_ranges = []
+
+        for i in range(1, len(candles)):
+            high       = candles[i]["high"]
+            low        = candles[i]["low"]
+            prev_close = candles[i - 1]["close"]
+
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            true_ranges.append(tr)
+
+        atr = sum(true_ranges) / len(true_ranges)
+        return round(atr, 2)
+
+    # ================================================================
     # ENTRY — OPEN A NEW POSITION
     # ================================================================
 
@@ -93,6 +136,28 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = datetime.datetime.now()
+
+        # ── ATR-based dynamic stop-loss / target ──────────────────
+        atr = self.calculate_atr(symbol, exchange)
+        if atr and atr > 0:
+            multiplier = self.cfg.ATR_MULTIPLIER
+            if side == "BUY":
+                atr_sl     = round(entry - multiplier * atr, 2)
+                atr_target = round(entry + multiplier * 2 * atr, 2)
+            else:  # SELL (short)
+                atr_sl     = round(entry + multiplier * atr, 2)
+                atr_target = round(entry - multiplier * 2 * atr, 2)
+
+            self.log.info(
+                f"ATR({self.cfg.ATR_PERIOD}) for {symbol}: ₹{atr:.2f} | "
+                f"Dynamic SL: ₹{atr_sl:.2f} | Target: ₹{atr_target:.2f}"
+            )
+            sl     = atr_sl
+            target = atr_target
+        else:
+            self.log.info(
+                f"ATR unavailable for {symbol} — using Claude SL: ₹{sl:.2f} / Target: ₹{target:.2f}"
+            )
 
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
@@ -287,24 +352,41 @@ class OrderEngine:
             if current_price <= 0:
                 continue
 
+            symbol = pos["symbol"]
             side   = pos["side"]
             sl     = pos["stop_loss"]
             target = pos["target_price"]
+            entry  = pos["entry_price"]
+            qty    = pos["qty"]
+
+            # Calculate unrealised P&L and distances
+            if side == "BUY":
+                unrealised   = (current_price - entry) * qty
+                sl_distance  = (current_price - sl) / current_price * 100
+                tgt_distance = (target - current_price) / current_price * 100
+            else:
+                unrealised   = (entry - current_price) * qty
+                sl_distance  = (sl - current_price) / current_price * 100
+                tgt_distance = (current_price - target) / current_price * 100
 
             # ── Stop-loss check ───────────────────────────────────
             if side == "BUY" and current_price <= sl:
+                loss = (sl - entry) * qty
                 self.log.warning(
-                    f"STOP-LOSS HIT: {pos['symbol']} dropped to "
-                    f"₹{current_price:.2f} (SL: ₹{sl:.2f})"
+                    f"STOP-LOSS HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (SL: ₹{sl:.2f}) | "
+                    f"Loss: ₹{loss:,.2f} on {qty} shares"
                 )
                 exit_price = sl if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "STOP_LOSS")
                 closed += 1
 
             elif side == "SELL" and current_price >= sl:
+                loss = (entry - sl) * qty
                 self.log.warning(
-                    f"STOP-LOSS HIT: {pos['symbol']} rose to "
-                    f"₹{current_price:.2f} (SL: ₹{sl:.2f})"
+                    f"STOP-LOSS HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (SL: ₹{sl:.2f}) | "
+                    f"Loss: ₹{loss:,.2f} on {qty} shares"
                 )
                 exit_price = sl if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "STOP_LOSS")
@@ -312,18 +394,22 @@ class OrderEngine:
 
             # ── Target check ─────────────────────────────────────
             elif side == "BUY" and current_price >= target:
+                profit = (target - entry) * qty
                 self.log.success(
-                    f"TARGET HIT: {pos['symbol']} reached "
-                    f"₹{current_price:.2f} (Target: ₹{target:.2f})"
+                    f"TARGET HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (Target: ₹{target:.2f}) | "
+                    f"Profit: ₹{profit:,.2f} on {qty} shares"
                 )
                 exit_price = target if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "TARGET_HIT")
                 closed += 1
 
             elif side == "SELL" and current_price <= target:
+                profit = (entry - target) * qty
                 self.log.success(
-                    f"TARGET HIT: {pos['symbol']} reached "
-                    f"₹{current_price:.2f} (Target: ₹{target:.2f})"
+                    f"TARGET HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (Target: ₹{target:.2f}) | "
+                    f"Profit: ₹{profit:,.2f} on {qty} shares"
                 )
                 exit_price = target if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "TARGET_HIT")
@@ -410,12 +496,22 @@ class OrderEngine:
         for action in actions:
             act    = action.get("action", "").upper()
             symbol = action.get("symbol", "")
+            reason = action.get("reason", "no reason given")
 
             if act == "EXIT":
                 pos = self._find_open_position(symbol)
                 if pos:
                     key = f"{pos['exchange']}:{symbol}"
                     price = quotes.get(key, {}).get("last_price", pos["entry_price"])
+                    pnl_est = (
+                        (price - pos["entry_price"]) * pos["qty"]
+                        if pos["side"] == "BUY"
+                        else (pos["entry_price"] - price) * pos["qty"]
+                    )
+                    self.log.info(
+                        f"CLAUDE REVIEW → EXIT {symbol}: {reason} | "
+                        f"Current ₹{price:.2f}, Est P&L ₹{pnl_est:+,.2f}"
+                    )
                     self.exit_position(pos, price, "REVIEW_EXIT")
                 else:
                     self.log.warning(f"Claude said EXIT {symbol} but no open position found")
@@ -426,10 +522,11 @@ class OrderEngine:
                     old_sl = pos["stop_loss"]
                     pos["stop_loss"] = action["new_sl"]
                     self.log.info(
-                        f"SL adjusted for {symbol}: ₹{old_sl:.2f} → ₹{action['new_sl']:.2f}"
+                        f"CLAUDE REVIEW → ADJUST SL {symbol}: "
+                        f"₹{old_sl:.2f} → ₹{action['new_sl']:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_SL", symbol, "", 0, action["new_sl"],
-                                     action.get("reason", ""))
+                                     reason)
 
             elif act == "ADJUST_TARGET" and action.get("new_target"):
                 pos = self._find_open_position(symbol)
@@ -437,17 +534,21 @@ class OrderEngine:
                     old_tgt = pos["target_price"]
                     pos["target_price"] = action["new_target"]
                     self.log.info(
-                        f"Target adjusted for {symbol}: ₹{old_tgt:.2f} → ₹{action['new_target']:.2f}"
+                        f"CLAUDE REVIEW → ADJUST TARGET {symbol}: "
+                        f"₹{old_tgt:.2f} → ₹{action['new_target']:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_TARGET", symbol, "", 0, action["new_target"],
-                                     action.get("reason", ""))
+                                     reason)
 
             elif act == "NEW":
-                # New trade suggestion from Claude review
+                self.log.info(
+                    f"CLAUDE REVIEW → NEW TRADE: {action.get('side', '?')} "
+                    f"{action.get('symbol', '?')} | {reason}"
+                )
                 self.enter_trade(action)
 
             elif act == "HOLD":
-                self.log.info(f"HOLD {symbol} — {action.get('reason', 'no change')}")
+                self.log.info(f"CLAUDE REVIEW → HOLD {symbol}: {reason}")
 
     # ================================================================
     # SQUARE OFF — END OF DAY
@@ -646,6 +747,57 @@ class OrderEngine:
     def budget_remaining(self) -> float:
         """How much of the budget is not currently allocated."""
         return self._budget - self._total_open_exposure()
+
+    def print_position_status(self, quotes: dict):
+        """
+        Prints a detailed per-position status table showing current price,
+        P&L, distance to SL and target. Called periodically from the
+        monitor loop to give visibility into what the bot is doing.
+        """
+        open_pos = self.open_positions()
+        if not open_pos:
+            return
+
+        print()  # newline before table
+        self.log.info(f"{'─'*80}")
+        self.log.info(f"  {'SYMBOL':<12} {'SIDE':<5} {'ENTRY':>8} {'CURRENT':>8} "
+                       f"{'P&L':>10} {'SL':>8} {'SL%':>6} {'TGT':>8} {'TGT%':>6}")
+        self.log.info(f"  {'─'*12} {'─'*5} {'─'*8} {'─'*8} {'─'*10} {'─'*8} {'─'*6} {'─'*8} {'─'*6}")
+
+        for pos in open_pos:
+            key = f"{pos['exchange']}:{pos['symbol']}"
+            q   = quotes.get(key, {})
+            current = q.get("last_price", 0)
+            if current <= 0:
+                continue
+
+            entry  = pos["entry_price"]
+            sl     = pos["stop_loss"]
+            target = pos["target_price"]
+            side   = pos["side"]
+            qty    = pos["qty"]
+
+            if side == "BUY":
+                pnl          = (current - entry) * qty
+                sl_dist_pct  = (current - sl) / current * 100
+                tgt_dist_pct = (target - current) / current * 100
+            else:
+                pnl          = (entry - current) * qty
+                sl_dist_pct  = (sl - current) / current * 100
+                tgt_dist_pct = (current - target) / current * 100
+
+            pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+            reset     = "\033[0m"
+
+            self.log.info(
+                f"  {pos['symbol']:<12} {side:<5} "
+                f"₹{entry:>7.2f} ₹{current:>7.2f} "
+                f"{pnl_color}₹{pnl:>+9,.2f}{reset} "
+                f"₹{sl:>7.2f} {sl_dist_pct:>5.1f}% "
+                f"₹{target:>7.2f} {tgt_dist_pct:>5.1f}%"
+            )
+
+        self.log.info(f"{'─'*80}")
 
     # ================================================================
     # INTERNAL HELPERS

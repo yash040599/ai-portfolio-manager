@@ -477,6 +477,7 @@ class ReportWriter:
         pnl:        dict,
         dry_run:    bool = True,
         budget:     float = 0,
+        market_condition: str = "",
     ) -> str:
         """
         Writes the Phase 2 intraday trading report.
@@ -562,6 +563,8 @@ class ReportWriter:
             f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
             f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
+            if market_condition:
+                f.write(f"Market condition: {market_condition}\n")
             f.write(f"Max positions   : {self.cfg.MAX_POSITIONS}\n")
             f.write(f"Stop-loss       : {self.cfg.DEFAULT_STOP_LOSS_PCT}%\n")
             f.write(f"Target          : {self.cfg.DEFAULT_TARGET_PCT}%\n")
@@ -672,9 +675,10 @@ class ReportWriter:
         # ── JSON data dump ────────────────────────────────────────
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({
-                "date":       str(today),
-                "mode":       "dry_run" if dry_run else "live",
-                "sessions":   session_count,
+                "date":             str(today),
+                "mode":             "dry_run" if dry_run else "live",
+                "sessions":         session_count,
+                "market_condition": market_condition,
                 "config": {
                     "claude_plan":  self.cfg.CLAUDE_PLAN,
                     "zerodha_plan": self.cfg.ZERODHA_PLAN,

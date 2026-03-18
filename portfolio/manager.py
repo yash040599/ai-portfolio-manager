@@ -34,13 +34,14 @@ import sys
 import time
 import datetime
 
-from config                   import Config
-from core.logger              import Logger
-from core.zerodha_client      import ZerodhaClient
-from core.claude_client       import ClaudeClient
-from services.stock_scanner   import StockScanner
-from services.order_engine    import OrderEngine
-from services.report_writer   import ReportWriter
+from config                        import Config
+from core.logger                   import Logger
+from core.zerodha_client           import ZerodhaClient
+from core.claude_client            import ClaudeClient
+from services.stock_scanner        import StockScanner
+from services.order_engine         import OrderEngine
+from services.report_writer        import ReportWriter
+from services.performance_tracker  import PerformanceTracker
 
 
 class PortfolioManager:
@@ -61,6 +62,7 @@ class PortfolioManager:
         self.scanner = StockScanner(config, self.claude, Logger("StockScanner"))
         self.engine  = OrderEngine(config, self.zerodha, Logger("OrderEngine"))
         self.report  = ReportWriter(config, Logger("ReportWriter"))
+        self.tracker = PerformanceTracker(config, Logger("PerformanceTracker"))
 
         # ── State ─────────────────────────────────────────────────
         self._shutdown_requested = False   # set by Ctrl+C handler
@@ -69,6 +71,7 @@ class PortfolioManager:
         self._available_funds: float = 0.0 # fetched from Zerodha at startup
         self._budget: float = 0.0          # actual trading budget for the day
         self._scan_failed = False          # true if quote fetch failed
+        self._market_condition: str = ""   # BULLISH/BEARISH/NEUTRAL + volatility
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -201,8 +204,8 @@ class PortfolioManager:
             self._emergency_shutdown()
             return
 
-        # ── Step 7: Enter positions ───────────────────────────────
-        self._enter_positions()
+        # ── Step 7: Observation period + Enter positions ──────────
+        self._observe_and_enter()
 
         # ── Step 8: Monitor loop ──────────────────────────────────
         self._run_monitor_loop()
@@ -271,12 +274,15 @@ class PortfolioManager:
             # In pre-market, previous close data is still available
             # Proceed anyway — Claude can work with available data
 
-        # Fetch NIFTY 50 index for trend context
+        # Fetch NIFTY 50 index for trend context + market condition
         nifty_context = self._build_nifty_context()
+
+        # Get historical performance context for Claude
+        perf_context = self.tracker.get_claude_prompt_context()
 
         # Ask Claude to pick trades
         self.engine.claude_calls += 1
-        self._trade_plans = self.scanner.scan(quotes, nifty_context)
+        self._trade_plans = self.scanner.scan(quotes, nifty_context, perf_context)
 
         if self._trade_plans:
             self.log.section("TRADE PLAN")
@@ -293,7 +299,7 @@ class PortfolioManager:
     # ENTER POSITIONS
     # ================================================================
 
-    def _enter_positions(self):
+    def _enter_positions(self, trades: list[dict] | None = None):
         """
         Enters all trade plans at market open.
         Each trade goes through OrderEngine which checks budget and
@@ -301,7 +307,8 @@ class PortfolioManager:
         """
         self.log.section("ENTERING POSITIONS")
 
-        for trade in self._trade_plans:
+        plans = trades if trades is not None else self._trade_plans
+        for trade in plans:
             if self._shutdown_requested:
                 break
             self.engine.enter_trade(trade)
@@ -309,6 +316,123 @@ class PortfolioManager:
 
         open_count = len(self.engine.open_positions())
         self.log.success(f"Entered {open_count} positions")
+
+    # ================================================================
+    # OBSERVATION PERIOD + DELAYED ENTRY
+    # ================================================================
+
+    def _observe_and_enter(self):
+        """
+        If ENTRY_DELAY_MINUTES > 0, observes prices after market open
+        and only enters stocks that show directional movement (>ENTRY_MIN_MOVE_PCT
+        from their open price). Filters out whipsaw / indecisive stocks.
+
+        If ENTRY_DELAY_MINUTES == 0, enters immediately (old behaviour).
+        """
+        delay = self.cfg.ENTRY_DELAY_MINUTES
+        if delay <= 0:
+            self._enter_positions()
+            return
+
+        entry_time = datetime.datetime.now() + datetime.timedelta(minutes=delay)
+        self.log.section(f"OBSERVATION MODE — watching prices for {delay} min")
+        self.log.info(
+            f"Trades will be entered at {entry_time.strftime('%I:%M %p')} "
+            f"for stocks with >{self.cfg.ENTRY_MIN_MOVE_PCT}% directional move"
+        )
+
+        # Collect open prices at start of observation
+        plan_symbols = [
+            {"symbol": t["symbol"], "exchange": t.get("exchange", "NSE")}
+            for t in self._trade_plans
+        ]
+        try:
+            open_quotes = self.zerodha.get_quotes(plan_symbols)
+        except Exception as e:
+            self.log.warning(f"Quote fetch failed during observation: {e}")
+            self.log.info("Entering all trades without observation filter")
+            self._enter_positions()
+            return
+
+        open_prices = {}
+        for t in self._trade_plans:
+            key = f"{t.get('exchange', 'NSE')}:{t['symbol']}"
+            q = open_quotes.get(key, {})
+            ohlc = q.get("ohlc", {})
+            day_open = ohlc.get("open", 0)
+            if day_open > 0:
+                open_prices[t["symbol"]] = day_open
+            else:
+                # Use last_price as fallback
+                open_prices[t["symbol"]] = q.get("last_price", t["entry_price"])
+
+        # Wait until entry time — print status during observation
+        while datetime.datetime.now() < entry_time and not self._shutdown_requested:
+            remaining = (entry_time - datetime.datetime.now()).total_seconds()
+            mins, secs = divmod(int(remaining), 60)
+            print(
+                f"\r  \U0001f50d Observing: {mins:02d}:{secs:02d} remaining  ",
+                end="", flush=True,
+            )
+            time.sleep(1)
+        print()
+
+        if self._shutdown_requested:
+            return
+
+        # Fetch live quotes after observation period
+        try:
+            current_quotes = self.zerodha.get_quotes(plan_symbols)
+        except Exception as e:
+            self.log.warning(f"Quote fetch failed after observation: {e}")
+            self.log.info("Entering all trades without observation filter")
+            self._enter_positions()
+            return
+
+        # Filter: only enter stocks that moved >ENTRY_MIN_MOVE_PCT from open
+        min_move = self.cfg.ENTRY_MIN_MOVE_PCT
+        confirmed = []
+        skipped = []
+
+        for trade in self._trade_plans:
+            symbol = trade["symbol"]
+            key = f"{trade.get('exchange', 'NSE')}:{symbol}"
+            q = current_quotes.get(key, {})
+            current_price = q.get("last_price", 0)
+            day_open_price = open_prices.get(symbol, 0)
+
+            if current_price <= 0 or day_open_price <= 0:
+                confirmed.append(trade)  # no data — let it through
+                continue
+
+            move_pct = abs(current_price - day_open_price) / day_open_price * 100
+
+            if move_pct >= min_move:
+                # Update entry price to current market price
+                trade["entry_price"] = round(current_price, 2)
+                confirmed.append(trade)
+                direction = "↑" if current_price > day_open_price else "↓"
+                self.log.info(
+                    f"  ✓ {symbol}: {direction} {move_pct:.2f}% from open "
+                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — CONFIRMED"
+                )
+            else:
+                skipped.append(trade)
+                self.log.info(
+                    f"  ✗ {symbol}: only {move_pct:.2f}% move from open "
+                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — SKIPPED"
+                )
+
+        if skipped:
+            self.log.info(
+                f"Filtered out {len(skipped)} stocks with <{min_move}% move"
+            )
+
+        if confirmed:
+            self._enter_positions(confirmed)
+        else:
+            self.log.warning("No stocks passed the observation filter")
+
 
     # ================================================================
     # MONITOR LOOP
@@ -339,6 +463,9 @@ class PortfolioManager:
         poll_interval    = self.cfg.PRICE_POLL_SECONDS
         review_interval  = self.cfg.CLAUDE_REVIEW_MINUTES * 60  # convert to seconds
         last_review_time = time.time()
+        poll_count       = 0
+        # Print full position table every N polls (roughly every 60s)
+        detail_interval  = max(1, 60 // poll_interval)
 
         while not self._shutdown_requested:
             now = datetime.datetime.now()
@@ -410,7 +537,11 @@ class PortfolioManager:
                 last_review_time = time.time()
 
             # ── Print status line ─────────────────────────────────
-            self._print_status(quotes)
+            poll_count += 1
+            if poll_count % detail_interval == 0:
+                self.engine.print_position_status(quotes)
+            else:
+                self._print_status(quotes)
 
             # ── Sleep until next poll ─────────────────────────────
             time.sleep(poll_interval)
@@ -475,16 +606,24 @@ class PortfolioManager:
         """
         Writes the end-of-day trading report with full P&L breakdown,
         including taxes, Zerodha charges, and Claude API costs.
+        Also records trades to the performance database.
         """
         self.log.section("END OF DAY REPORT")
 
         pnl_summary = self.engine.net_profit()
         self.report.save_trading_day(
-            positions  = self.engine.positions,
-            trade_log  = self.engine.trade_log,
-            pnl        = pnl_summary,
-            dry_run    = self.cfg.DRY_RUN,
-            budget     = self._budget,
+            positions        = self.engine.positions,
+            trade_log        = self.engine.trade_log,
+            pnl              = pnl_summary,
+            dry_run          = self.cfg.DRY_RUN,
+            budget           = self._budget,
+            market_condition = self._market_condition,
+        )
+
+        # Record to performance database
+        self.tracker.record_trades(
+            self.engine.positions,
+            market_condition=self._market_condition,
         )
 
         self._print_pnl_summary(pnl_summary)
@@ -541,6 +680,10 @@ class PortfolioManager:
         string for Claude prompts. Helps Claude align trade direction
         with the broader market.
 
+        Also classifies market condition (BULLISH/BEARISH/NEUTRAL) and
+        volatility regime (HIGH_VOLATILITY/NORMAL), storing them on
+        self._market_condition for the trading report.
+
         Returns empty string if the fetch fails (non-blocking).
         """
         try:
@@ -561,19 +704,72 @@ class PortfolioManager:
             change = price - prev_close
             change_pct = (change / prev_close) * 100
 
+            # ── Market condition classification ───────────────────
             if change_pct > 0.5:
                 bias = "BULLISH — favour BUY trades, be selective with shorts"
+                condition = "BULLISH"
             elif change_pct < -0.5:
                 bias = "BEARISH — favour SELL (short) trades, avoid buying into weakness"
+                condition = "BEARISH"
             else:
                 bias = "NEUTRAL — no strong directional bias, favour mean-reversion setups"
+                condition = "NEUTRAL"
+
+            # ── Volatility regime (from last 5 days of NIFTY) ─────
+            volatility_label = "NORMAL"
+            volatility_text  = ""
+            try:
+                to_date   = datetime.date.today()
+                from_date = to_date - datetime.timedelta(days=10)
+                nifty_candles = self.zerodha.get_historical(
+                    "NIFTY 50", "NSE", from_date, to_date, "day"
+                )
+                if nifty_candles and len(nifty_candles) >= 5:
+                    recent = nifty_candles[-5:]
+                    intraday_ranges = []
+                    for c in recent:
+                        if c["open"] > 0:
+                            intraday_ranges.append(
+                                (c["high"] - c["low"]) / c["open"] * 100
+                            )
+                    if intraday_ranges:
+                        avg_range = sum(intraday_ranges) / len(intraday_ranges)
+                        if avg_range > 1.5:
+                            volatility_label = "HIGH_VOLATILITY"
+                        volatility_text = (
+                            f"\n  Volatility: {volatility_label} "
+                            f"(avg 5-day intraday range: {avg_range:.2f}%)"
+                        )
+                        if volatility_label == "HIGH_VOLATILITY":
+                            volatility_text += (
+                                "\n  HIGH VOLATILITY: reduce position sizes by 20-30%, "
+                                "widen stop-losses, prefer liquid large-caps"
+                            )
+            except Exception:
+                pass  # volatility data is optional — don't fail
+
+            self._market_condition = f"{condition}_{volatility_label}"
+
+            sector_advice = ""
+            if condition == "BEARISH":
+                sector_advice = (
+                    "\n  BEARISH DAY: prefer defensive sectors (FMCG, Pharma, IT services), "
+                    "avoid leveraged/cyclical stocks"
+                )
+            elif condition == "BULLISH":
+                sector_advice = (
+                    "\n  BULLISH DAY: favour momentum sectors (Banks, Auto, Metals), "
+                    "look for breakout setups"
+                )
 
             return (
                 f"\nMARKET TREND (NIFTY 50 INDEX):\n"
                 f"  NIFTY 50: ₹{price:,.2f}  Change: {change_pct:+.2f}%  "
                 f"Open: ₹{day_open:,.2f}  High: ₹{day_high:,.2f}  Low: ₹{day_low:,.2f}  "
                 f"PrevClose: ₹{prev_close:,.2f}\n"
-                f"  Market bias: {bias}\n"
+                f"  Market bias: {bias}"
+                f"{sector_advice}"
+                f"{volatility_text}\n"
             )
         except Exception:
             return ""

@@ -9,6 +9,8 @@ Logs into Zerodha, shows an account snapshot (available balance, portfolio value
 
 If a previous report exists, Claude automatically receives the last analysis for each stock — including its old price, action, target, and next steps — so it can compare changes and make better-informed recommendations.
 
+All analysis results are stored in a **SQLite database** (`data/trades.db`) for historical tracking and faster lookups across runs.
+
 ```bash
 python main.py --phase 1
 ```
@@ -19,15 +21,20 @@ A fully automated intraday trading bot that:
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
+- **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%)
+- **ATR-based dynamic stop-losses** — computes Average True Range from historical data to set intelligent SL/target levels (falls back to Claude's values if data unavailable)
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
+- **Detailed live position tracking** — prints a per-position status table every ~60s showing current price, P&L, and distance to SL/target
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
 - Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
 - **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
-- Uses **NIFTY 50 index trend** to bias trade direction (bullish/bearish/neutral)
+- **Market condition detection** — classifies the day as BULLISH/BEARISH/NEUTRAL with HIGH_VOLATILITY/NORMAL regime, adjusts strategy accordingly
+- Uses **NIFTY 50 index trend** to bias trade direction with sector-specific advice
 - Anti-momentum-chasing rules — avoids stocks already up >2% at scan time
+- **Performance database** — stores every trade in SQLite, feeds recent win rates and P&L history into Claude's next-day stock selection
 - **Slippage model** in dry-run mode for realistic P&L simulation
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
@@ -156,8 +163,12 @@ Open `config.py` and review these key settings:
 | `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
 | `MAX_REENTRIES_PER_STOCK` | `2` | Max times a stock can be traded in one day |
-| `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Auto-exit on loss |
-| `DEFAULT_TARGET_PCT` | `2.0%` | Auto-exit on profit |
+| `ENTRY_DELAY_MINUTES` | `15` | Observation period after market open before entering trades |
+| `ENTRY_MIN_MOVE_PCT` | `0.3%` | Minimum directional move from open to confirm entry |
+| `ATR_PERIOD` | `14` | Number of days for Average True Range calculation |
+| `ATR_MULTIPLIER` | `1.5` | ATR multiplier for dynamic SL (2× for target) |
+| `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Fallback SL when ATR data is unavailable |
+| `DEFAULT_TARGET_PCT` | `2.0%` | Fallback target when ATR data is unavailable |
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
 | `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
 | `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
@@ -204,8 +215,11 @@ ai-portfolio-manager/
 │   ├── analysis_queue.py    # Per-stock Claude analysis with retry logic
 │   ├── market_data.py       # Enriches portfolio with live prices + history
 │   ├── stock_scanner.py     # Pre-market Claude scan + mid-day review + price parsing helpers
-│   ├── order_engine.py      # Order execution, position tracking, P&L + taxes
-│   └── report_writer.py     # Generates .txt reports and .json data dumps
+│   ├── order_engine.py      # Order execution, position tracking, SL/target monitoring, P&L + taxes
+│   ├── report_writer.py     # Generates .txt reports and .json data dumps
+│   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
+├── data/
+│   └── trades.db            # SQLite database (auto-created on first run)
 ├── reports/                 # Generated reports, organised by type → year → month
 │   ├── portfolio/           # Phase 1 portfolio analysis reports
 │   │   └── <year>/
@@ -264,6 +278,27 @@ The Phase 2 report includes:
 
 ---
 
+## Database
+
+All historical data is stored in a single **SQLite database** at `data/trades.db` (auto-created on first run).
+
+| Table | Phase | What it stores |
+|---|---|---|
+| `trades` | Phase 2 | Intraday trade results — symbol, side, entry/exit price, qty, P&L, exit reason, market condition |
+| `portfolio_analyses` | Phase 1 | Analysis results — symbol, action, conviction, reasoning, horizon, target price, current/invested values, risks |
+
+The bot uses this data to:
+- Feed recent performance (win rates, losing stocks) into Claude's stock selection prompt
+- Load the previous Phase 1 analysis for comparison (faster than scanning JSON files)
+- Track how Claude's recommendations for each stock evolve over time
+
+Query it directly:
+```bash
+sqlite3 data/trades.db "SELECT symbol, COUNT(*) as trades, ROUND(AVG(pnl),2) as avg_pnl FROM trades GROUP BY symbol;"
+```
+
+---
+
 ## Cost Summary
 
 | Cost | Amount | Frequency |
@@ -285,7 +320,11 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Smart sizing** — auto-reduces qty to fit remaining budget instead of rejecting the trade
 - **Re-entry limit** — blocks repeated entries into the same stock after stop-losses (`MAX_REENTRIES_PER_STOCK`)
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
+- **ATR-based dynamic stop-losses** — data-driven SL/target using historical volatility
 - **Auto trailing stop-loss** — rule-based SL tightening as positions move in profit
+- **Delayed entry filter** — skips indecisive stocks that haven't moved after market open
+- **Market condition awareness** — detects high-volatility regimes and adjusts position sizing
+- **Performance memory** — learns from past trades via SQLite DB to avoid repeating mistakes
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
 - **NSE holiday calendar** — handles weekends, holidays, late starts, and token expiry automatically

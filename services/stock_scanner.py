@@ -156,7 +156,7 @@ class StockScanner:
     # PRE-MARKET SCAN
     # ================================================================
 
-    def scan(self, quotes: dict, nifty_context: str = "") -> list[dict]:
+    def scan(self, quotes: dict, nifty_context: str = "", perf_context: str = "") -> list[dict]:
         """
         Asks Claude to pick intraday trade candidates.
 
@@ -164,6 +164,7 @@ class StockScanner:
             quotes: dict of live Kite quotes keyed by "NSE:SYMBOL".
                     Each value has last_price, ohlc, volume, etc.
             nifty_context: optional string with NIFTY 50 index data for trend filter.
+            perf_context: optional string with recent trading performance for Claude.
 
         Returns:
             List of trade plan dicts, each with:
@@ -178,7 +179,7 @@ class StockScanner:
             self.log.warning("No valid quotes to scan — snapshot is empty")
             return []
 
-        prompt = self._build_scan_prompt(snapshot, nifty_context)
+        prompt = self._build_scan_prompt(snapshot, nifty_context, perf_context)
 
         self.log.info("Asking Claude to pick intraday trades...")
         try:
@@ -268,7 +269,7 @@ class StockScanner:
 
         return "\n".join(lines)
 
-    def _build_scan_prompt(self, snapshot: str, nifty_context: str = "") -> str:
+    def _build_scan_prompt(self, snapshot: str, nifty_context: str = "", perf_context: str = "") -> str:
         """
         Builds the pre-market scan prompt.
         Claude is given the full price data and budget constraints,
@@ -288,7 +289,7 @@ Today is {today}, current time is {now} IST. All positions MUST be closed by 3:1
 BUDGET: ₹{budget:,} total capital.
 MAX POSITIONS: {max_positions} stocks simultaneously.
 MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
-{nifty_context}
+{nifty_context}{perf_context}
 CRITICAL RULES — MUST FOLLOW:
 1. DO NOT chase stocks already up more than 2% from previous close. These moves are extended and likely to revert.
 2. DO NOT pick a stock just because it gapped up with volume — that move already happened. Look for PULLBACK ENTRIES near intraday support or VWAP.
