@@ -481,6 +481,10 @@ class ReportWriter:
         """
         Writes the Phase 2 intraday trading report.
 
+        If a report already exists for today, merges the new session's
+        data with the existing data and writes a combined report with
+        cumulative P&L and %returns for the day.
+
         Args:
             positions:  all positions (open and closed) from OrderEngine
             trade_log:  chronological action log from OrderEngine
@@ -499,6 +503,47 @@ class ReportWriter:
         txt_path  = self.trading_report_path(today)
         json_path = self.trading_data_path(today)
 
+        # ── Merge with existing session data if report exists ─────
+        session_count = 1
+        prev_claude_cost = 0.0
+        curr_claude_cost = pnl.get("charges", {}).get("claude_api_cost", 0.0)
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+
+                prev_positions = existing.get("positions", [])
+                prev_trade_log = existing.get("trade_log", [])
+                session_count  = existing.get("sessions", 1) + 1
+                prev_claude_cost = existing.get("pnl", {}).get("charges", {}).get("claude_api_cost", 0.0)
+
+                # Add session separator to trade log
+                separator_entry = {
+                    "time":   datetime.datetime.now().strftime("%H:%M:%S"),
+                    "action": "SESSION",
+                    "symbol": "",
+                    "side":   "",
+                    "qty":    0,
+                    "price":  0,
+                    "detail": f"═══ SESSION {session_count} START ═══",
+                }
+
+                # Merge: previous data + separator + current session data
+                positions = prev_positions + positions
+                trade_log = prev_trade_log + [separator_entry] + trade_log
+                budget    = max(budget, existing.get("config", {}).get("budget", budget))
+
+                # Recalculate combined P&L from all positions
+                total_claude_cost = prev_claude_cost + curr_claude_cost
+                pnl = self._calculate_combined_pnl(positions, total_claude_cost)
+
+                self.log.info(
+                    f"Merging with existing report (session {session_count})"
+                )
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                self.log.warning(f"Could not merge with existing report: {e} — overwriting")
+                session_count = 1
+
         mode_label = "DRY RUN (simulated)" if dry_run else "LIVE TRADING"
         charges    = pnl["charges"]
 
@@ -507,6 +552,8 @@ class ReportWriter:
             f.write(f"{self.SEP_MAJOR}\n")
             f.write(f"  INTRADAY TRADING REPORT — {today}\n")
             f.write(f"  Mode: {mode_label}\n")
+            if session_count > 1:
+                f.write(f"  Sessions: {session_count} (combined)\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
             # ── Configuration ─────────────────────────────────────
@@ -593,7 +640,11 @@ class ReportWriter:
             f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
             f.write(f"{'=' * 42}\n")
             profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
-            f.write(f"  Profitable?           : {profitable}\n\n")
+            f.write(f"  Profitable?           : {profitable}\n")
+            if budget > 0:
+                returns_pct = pnl["net_profit"] / budget * 100
+                f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
+            f.write("\n")
 
             f.write(f"  FYI: Zerodha Kite Connect subscription is ₹{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
             f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
@@ -623,6 +674,7 @@ class ReportWriter:
             json.dump({
                 "date":       str(today),
                 "mode":       "dry_run" if dry_run else "live",
+                "sessions":   session_count,
                 "config": {
                     "claude_plan":  self.cfg.CLAUDE_PLAN,
                     "zerodha_plan": self.cfg.ZERODHA_PLAN,
@@ -640,4 +692,75 @@ class ReportWriter:
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
         return txt_path
+
+    # ================================================================
+    # COMBINED P&L CALCULATION (for multi-session day reports)
+    # ================================================================
+
+    def _calculate_combined_pnl(self, all_positions: list[dict], claude_api_cost: float = 0.0) -> dict:
+        """
+        Recalculates P&L from a merged list of positions across
+        multiple sessions. Uses the same charge formula as OrderEngine
+        but operates on the combined position list directly.
+        """
+        closed = [p for p in all_positions if p.get("status") == "CLOSED"]
+
+        gross_pnl = sum(p.get("pnl", 0) for p in closed)
+
+        total_buy_turnover  = 0.0
+        total_sell_turnover = 0.0
+        num_orders          = 0
+
+        for p in closed:
+            entry_value = p.get("entry_price", 0) * p.get("qty", 0)
+            exit_value  = p.get("exit_price", 0)  * p.get("qty", 0)
+
+            if p.get("side") == "BUY":
+                total_buy_turnover  += entry_value
+                total_sell_turnover += exit_value
+            else:
+                total_sell_turnover += entry_value
+                total_buy_turnover  += exit_value
+
+            num_orders += 2
+
+        total_turnover = total_buy_turnover + total_sell_turnover
+
+        brokerage_flat = self.cfg.ZERODHA_BROKERAGE_FLAT * num_orders
+        brokerage_pct  = total_turnover * self.cfg.ZERODHA_BROKERAGE_PCT / 100
+        brokerage      = min(brokerage_flat, brokerage_pct) if num_orders > 0 else 0
+
+        stt          = total_sell_turnover * self.cfg.STT_SELL_PCT / 100
+        exchange_txn = total_turnover * self.cfg.EXCHANGE_TXN_PCT / 100
+        sebi         = total_turnover / 1e7 * self.cfg.SEBI_CHARGE_PER_CR
+        gst          = (brokerage + sebi + exchange_txn) * self.cfg.GST_PCT / 100
+        stamp_duty   = total_buy_turnover * self.cfg.STAMP_DUTY_BUY_PCT / 100
+
+        total_charges = brokerage + stt + exchange_txn + gst + sebi + stamp_duty
+
+        charges = {
+            "total_turnover":        round(total_turnover, 2),
+            "buy_turnover":          round(total_buy_turnover, 2),
+            "sell_turnover":         round(total_sell_turnover, 2),
+            "num_orders":            num_orders,
+            "brokerage":             round(brokerage, 2),
+            "stt":                   round(stt, 2),
+            "exchange_txn":          round(exchange_txn, 2),
+            "gst":                   round(gst, 2),
+            "sebi_charges":          round(sebi, 4),
+            "stamp_duty":            round(stamp_duty, 2),
+            "total_tax_and_charges": round(total_charges, 2),
+            "claude_api_cost":       round(claude_api_cost, 2),
+            "total_costs":           round(total_charges + claude_api_cost, 2),
+            "zerodha_monthly_fyi":   self.cfg.ZERODHA_MONTHLY_COST,
+        }
+
+        net = gross_pnl - charges["total_costs"]
+
+        return {
+            "gross_pnl":     round(gross_pnl, 2),
+            "charges":       charges,
+            "net_profit":    round(net, 2),
+            "is_profitable": net > 0,
+        }
 

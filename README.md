@@ -23,6 +23,7 @@ A fully automated intraday trading bot that:
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
 - Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
+- **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - Uses **NIFTY 50 index trend** to bias trade direction (bullish/bearish/neutral)
@@ -253,6 +254,8 @@ Reports are organised by type, year, and month inside `reports/`:
 Folders are created on-demand — only when a report is generated for that period. Files are zero-padded by day (`01`, `02`, … `31`) so they sort chronologically.
 
 > **Re-run protection (Phase 1):** If a report for today already exists, the bot asks for confirmation before overwriting it.
+
+> **Same-day merging (Phase 2):** Running Phase 2 multiple times on the same day merges all sessions into a single combined report with cumulative P&L, % returns on budget, and session markers in the trade log.
 
 The Phase 2 report includes:
 - Every trade with entry/exit prices, P&L, and reason (SL/target/review/square-off)

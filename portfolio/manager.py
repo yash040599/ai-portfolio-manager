@@ -350,8 +350,35 @@ class PortfolioManager:
 
             # ── Check if all positions are already closed ─────────
             if not self.engine.open_positions():
-                self.log.info("All positions closed — nothing left to monitor")
-                break
+                # Check if there's enough time to re-scan and trade more
+                sq_now = datetime.datetime.now()
+                sq_off = sq_now.replace(
+                    hour=self.cfg.SQUARE_OFF_HOUR,
+                    minute=self.cfg.SQUARE_OFF_MINUTE,
+                    second=0, microsecond=0,
+                )
+                mins_remaining = (sq_off - sq_now).total_seconds() / 60
+
+                if mins_remaining >= self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
+                    self.log.info(
+                        f"All positions closed with {mins_remaining:.0f} min left — "
+                        f"scanning for new opportunities..."
+                    )
+                    self._trade_plans = []
+                    self._run_pre_market_scan()
+                    if self._trade_plans:
+                        self._enter_positions()
+                        last_review_time = time.time()  # reset review timer
+                        continue
+                    else:
+                        self.log.info("No new trades found — done for the day")
+                        break
+                else:
+                    self.log.info(
+                        f"All positions closed — only {mins_remaining:.0f} min left, "
+                        f"not enough time for new trades"
+                    )
+                    break
 
             # ── Fetch live quotes ─────────────────────────────────
             open_symbols = [
@@ -913,6 +940,10 @@ class PortfolioManager:
         print(f"{'='*58}")
         print(f"  {color}NET PROFIT       : ₹{pnl['net_profit']:+,.2f}{reset}")
         print(f"{'='*58}")
+        if self._budget > 0:
+            returns_pct = pnl["net_profit"] / self._budget * 100
+            color2 = "\033[92m" if returns_pct >= 0 else "\033[91m"
+            print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on ₹{self._budget:,.0f} budget")
         print(f"  FYI: Zerodha Kite Connect: ₹{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
         print()
 
