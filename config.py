@@ -101,8 +101,8 @@ class Config:
     #   Each review call ≈ ₹2-4 on Pro plan.
     #   30 min = ~12 calls/day ≈ ₹25-50/day in Claude costs.
     #   15 min = ~24 calls/day ≈ ₹50-100/day. Only if budget is large.
-    PRICE_POLL_SECONDS:     int = 30
-    CLAUDE_REVIEW_MINUTES:  int = 15
+    PRICE_POLL_SECONDS:     int = 10
+    CLAUDE_REVIEW_MINUTES:  int = 25
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
