@@ -12,7 +12,7 @@ If a previous report exists, Claude automatically receives the last analysis for
 All analysis results are stored in a **SQLite database** (`data/trades.db`) for historical tracking and faster lookups across runs.
 
 ```bash
-python main.py --phase 1
+python main.py --mode analyze
 ```
 
 ### Phase 2 — Intraday Trading Bot
@@ -40,7 +40,7 @@ A fully automated intraday trading bot that:
 - Generates a full P&L report with taxes, charges, and net profit
 
 ```bash
-python main.py --phase 2
+python main.py --mode trade
 ```
 
 **Dry-run mode** is ON by default — no real orders are placed. Set `DRY_RUN = False` in `config.py` only after reviewing dry-run results.
@@ -183,11 +183,11 @@ All settings are thoroughly commented in `config.py` — read the comments for d
 ### Step 6: Run
 
 ```bash
-# Phase 1: Analyse existing portfolio
-python main.py --phase 1
+# Analyse existing portfolio
+python main.py --mode analyze
 
-# Phase 2: Intraday trading bot (dry-run by default)
-python main.py --phase 2
+# Intraday trading bot (dry-run by default)
+python main.py --mode trade
 ```
 
 You can start Phase 2 anytime — even the night before. It handles weekends, NSE holidays, late starts, and token expiry automatically. Press **Ctrl+C** to gracefully shut down (squares off all positions first).
@@ -251,7 +251,7 @@ If you want to keep the bot running 24/7:
 5. Delete any old `access_token.json` (tokens are IP-specific)
 6. RDP into the VM and run:
    ```bash
-   python main.py --phase 2
+   python main.py --mode trade
    ```
 7. The bot will wait for market open, trade the full day, and generate reports
 8. Zerodha login pops up in the browser once per day — keep the RDP session alive until login completes, then you can disconnect
