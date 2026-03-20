@@ -110,6 +110,7 @@ class ReportWriter:
         analyses:        list[dict],
         skipped_symbols: list[str]  = None,
         failed_log:      list[dict] = None,
+        portfolio_review: str       = None,
     ) -> str:
         """
         Writes the report (.txt) and data file (.json).
@@ -144,6 +145,8 @@ class ReportWriter:
                 self._write_skipped_section(f, skipped_symbols)
             if failed_log:
                 self._write_failed_log(f, failed_log)
+            if portfolio_review:
+                self._write_portfolio_review(f, portfolio_review)
 
         # Write the JSON data dump for Phase 2
         with open(json_path, "w") as f:
@@ -166,6 +169,7 @@ class ReportWriter:
                 ],
                 "skipped": skipped_symbols,
                 "failed":  failed_log,
+                "portfolio_review": portfolio_review,
             }, f, indent=2)
 
         # Write the spreadsheet-friendly TSV file
@@ -267,6 +271,14 @@ class ReportWriter:
         f.write(f"{self.SEP_MINOR}\n")
         for entry in failed_log:
             f.write(f"  • {entry['symbol']}: {entry['error']}\n")
+        f.write("\n")
+
+    def _write_portfolio_review(self, f, review_text: str):
+        f.write(f"\n{self.SEP_MAJOR}\n")
+        f.write("PORTFOLIO-LEVEL REVIEW\n")
+        f.write(f"{self.SEP_MAJOR}\n\n")
+        for line in review_text.strip().splitlines():
+            f.write(f"  {line}\n")
         f.write("\n")
 
     # ================================================================

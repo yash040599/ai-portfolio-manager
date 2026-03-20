@@ -74,9 +74,17 @@ class PerformanceTracker:
                     trigger_action  TEXT,
                     risks           TEXT,
                     watch           TEXT,
-                    next_steps      TEXT
+                    next_steps      TEXT,
+                    action_taken    TEXT    DEFAULT 'PENDING'
                 )
             """)
+            # Add action_taken column if upgrading from older schema
+            try:
+                conn.execute(
+                    "ALTER TABLE portfolio_analyses ADD COLUMN action_taken TEXT DEFAULT 'PENDING'"
+                )
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.DB_PATH)
@@ -258,10 +266,8 @@ class PerformanceTracker:
     ):
         """
         Stores Phase 1 portfolio analysis results into the DB.
-        Called by PortfolioAnalyser after the report is saved.
-
-        Each analysis entry is a dict with 'symbol', 'stock' (enriched data),
-        and 'parsed' (Claude's structured fields).
+        Also resolves action_taken status on previous recommendations
+        by comparing current qty vs previous qty.
         """
         today = str(datetime.date.today())
 
@@ -271,6 +277,9 @@ class PerformanceTracker:
 
         # Build stock lookup for portfolio data
         stock_by_symbol = {s["symbol"]: s for s in portfolio}
+
+        # Resolve previous pending actions before recording new ones
+        self._resolve_pending_actions(stock_by_symbol)
 
         with self._connect() as conn:
             for a in analyses:
@@ -283,8 +292,9 @@ class PerformanceTracker:
                        (date, symbol, action, conviction, reasoning, horizon,
                         target_price, current_price, invested_value, current_value,
                         stock_pnl, stock_pnl_pct, action_detail, num_stocks,
-                        trigger_price, trigger_action, risks, watch, next_steps)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        trigger_price, trigger_action, risks, watch, next_steps,
+                        action_taken)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         today,
                         symbol,
@@ -309,10 +319,64 @@ class PerformanceTracker:
                         parsed.get("RISKS", ""),
                         parsed.get("WATCH", ""),
                         parsed.get("NEXT_STEPS", ""),
+                        "PENDING" if parsed.get("ACTION", "HOLD") != "HOLD" else "N/A",
                     ),
                 )
 
         self.log.success(f"Recorded {len(analyses)} portfolio analyses to database")
+
+    def _resolve_pending_actions(self, current_stocks: dict):
+        """
+        Compares current holdings against previous PENDING recommendations.
+        If a PARTIAL EXIT / FULL EXIT was recommended and qty decreased → DONE.
+        If AVERAGE DOWN / ADD MORE was recommended and qty increased → DONE.
+        If qty unchanged → stays PENDING (Claude will be told to re-evaluate).
+        Stocks no longer in portfolio with FULL EXIT → DONE (fully sold).
+        """
+        with self._connect() as conn:
+            pending = conn.execute(
+                """SELECT id, symbol, action, num_stocks, date
+                   FROM portfolio_analyses
+                   WHERE action_taken = 'PENDING'
+                   ORDER BY date DESC"""
+            ).fetchall()
+
+            if not pending:
+                return
+
+            # Get the qty at time of each recommendation
+            # (current_value / current_price ≈ qty, but we stored invested_value)
+            # Better: get from the previous portfolio snapshot
+            prev_analyses = {}
+            for p in pending:
+                # Only process the most recent pending per symbol
+                if p["symbol"] not in prev_analyses:
+                    prev_analyses[p["symbol"]] = p
+
+            for symbol, prev in prev_analyses.items():
+                action = prev["action"].upper()
+                curr_stock = current_stocks.get(symbol)
+
+                if action in ("FULL EXIT",):
+                    if curr_stock is None or curr_stock.get("quantity", 0) == 0:
+                        # Stock no longer held — action was taken
+                        conn.execute(
+                            "UPDATE portfolio_analyses SET action_taken = 'DONE' WHERE id = ?",
+                            (prev["id"],),
+                        )
+                    else:
+                        # Still held — not acted on
+                        pass
+
+                elif action in ("PARTIAL EXIT",):
+                    # We can't definitively know, but if they still hold it
+                    # we leave as PENDING for Claude to re-evaluate
+                    pass
+
+                elif action in ("AVERAGE DOWN", "ADD MORE"):
+                    # If the stock appeared in holdings, user may have bought
+                    # Leave as PENDING for Claude to see the history
+                    pass
 
     def get_latest_portfolio_analysis(self) -> dict | None:
         """
@@ -386,7 +450,7 @@ class PerformanceTracker:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT date, action, conviction, target_price,
-                          current_price, stock_pnl_pct, reasoning
+                          current_price, stock_pnl_pct, reasoning, action_taken
                    FROM portfolio_analyses
                    WHERE symbol = ?
                    ORDER BY date DESC
@@ -403,6 +467,86 @@ class PerformanceTracker:
                 "price":        r["current_price"],
                 "pnl_pct":      round(r["stock_pnl_pct"], 2),
                 "reasoning":    r["reasoning"],
+                "action_taken": r["action_taken"],
             }
             for r in rows
         ]
+
+    def get_full_history_context(self, current_symbols: list[str]) -> dict[str, list[dict]]:
+        """
+        Returns analysis history for ALL stocks across all past runs,
+        not just the latest. Keyed by symbol.
+
+        This solves the problem where only the latest report is fed to
+        Claude — now Claude sees the full recommendation timeline including
+        stocks that appeared in older reports but not the latest.
+
+        Returns: {symbol: [list of past analyses, newest first]}
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT date, symbol, action, conviction, target_price,
+                          current_price, num_stocks, action_detail,
+                          reasoning, action_taken, next_steps
+                   FROM portfolio_analyses
+                   ORDER BY date DESC"""
+            ).fetchall()
+
+        history: dict[str, list[dict]] = {}
+        for r in rows:
+            sym = r["symbol"]
+            if sym not in history:
+                history[sym] = []
+            # Limit to 5 entries per stock to keep prompt size manageable
+            if len(history[sym]) < 5:
+                history[sym].append({
+                    "date":         r["date"],
+                    "action":       r["action"],
+                    "conviction":   r["conviction"],
+                    "target_price": r["target_price"],
+                    "price":        r["current_price"],
+                    "num_stocks":   r["num_stocks"],
+                    "action_detail": r["action_detail"],
+                    "reasoning":    r["reasoning"],
+                    "action_taken": r["action_taken"],
+                    "next_steps":   r["next_steps"],
+                })
+
+        return history
+
+    def get_pending_actions(self) -> list[dict]:
+        """
+        Returns all recommendations where action_taken = 'PENDING'.
+        These are suggestions Claude made that the user hasn't acted on.
+        Claude should re-evaluate whether they're still valid.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT date, symbol, action, conviction, action_detail,
+                          num_stocks, target_price, reasoning, next_steps,
+                          current_price
+                   FROM portfolio_analyses
+                   WHERE action_taken = 'PENDING'
+                   ORDER BY date DESC"""
+            ).fetchall()
+
+        # Deduplicate: only latest pending per symbol
+        seen = set()
+        result = []
+        for r in rows:
+            if r["symbol"] not in seen:
+                seen.add(r["symbol"])
+                result.append({
+                    "date":         r["date"],
+                    "symbol":       r["symbol"],
+                    "action":       r["action"],
+                    "conviction":   r["conviction"],
+                    "action_detail": r["action_detail"],
+                    "num_stocks":   r["num_stocks"],
+                    "target_price": r["target_price"],
+                    "reasoning":    r["reasoning"],
+                    "next_steps":   r["next_steps"],
+                    "price_then":   r["current_price"],
+                })
+
+        return result

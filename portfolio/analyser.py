@@ -110,13 +110,41 @@ class PortfolioAnalyser:
         else:
             self.log.info("No previous report found — first run")
 
+        # ── Step 4c: Load full history + pending actions from DB ──
+        current_symbols = [s["symbol"] for s in portfolio]
+        history = self.tracker.get_full_history_context(current_symbols)
+        pending_actions = self.tracker.get_pending_actions()
+        if history:
+            total_entries = sum(len(v) for v in history.values())
+            self.log.info(f"Loaded {total_entries} historical analyses across {len(history)} stocks")
+        if pending_actions:
+            self.log.info(
+                f"Found {len(pending_actions)} unacted recommendations — "
+                f"Claude will re-evaluate"
+            )
+
         # ── Step 5: Analyse via Claude API ────────────────────────
-        self.queue.load(portfolio, previous_data=prev_data)
+        self.queue.load(
+            portfolio,
+            previous_data=prev_data,
+            history=history,
+            pending_actions=pending_actions,
+        )
         analyses, skipped, failed_log = self.queue.run()
+
+        # ── Step 5b: Portfolio-level overall review ───────────────
+        portfolio_review = None
+        if analyses:
+            self.log.section("PORTFOLIO REVIEW — Overall assessment")
+            try:
+                portfolio_review = self.queue.run_portfolio_review(portfolio, analyses)
+                self.log.success("Portfolio-level review complete")
+            except Exception as e:
+                self.log.warning(f"Portfolio review failed: {e} — individual analyses still saved")
 
         # ── Step 6: Save report ───────────────────────────────────
         self.log.section("SAVING REPORT")
-        self.report.save(portfolio, analyses, skipped, failed_log)
+        self.report.save(portfolio, analyses, skipped, failed_log, portfolio_review)
 
         # ── Step 7: Record to performance database ────────────────
         self.tracker.record_portfolio_analyses(portfolio, analyses)

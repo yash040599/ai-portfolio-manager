@@ -75,19 +75,28 @@ class AnalysisQueue:
         self.log    = log
         self._queue: list[dict] = []
         self._prev_by_symbol: dict[str, dict] = {}  # symbol → previous analysis
+        self._history_by_symbol: dict[str, list[dict]] = {}  # symbol → all past analyses
+        self._pending_actions: list[dict] = []  # unacted recommendations
 
     # ================================================================
     # LOAD
     # ================================================================
 
-    def load(self, portfolio: list[dict], previous_data: dict | None = None):
+    def load(
+        self,
+        portfolio: list[dict],
+        previous_data: dict | None = None,
+        history: dict[str, list[dict]] | None = None,
+        pending_actions: list[dict] | None = None,
+    ):
         """
         Loads the portfolio into the queue.
         Every stock starts with status = "pending".
 
-        If previous_data (a parsed portfolio_data JSON) is provided,
-        builds a per-symbol lookup so _build_prompt can include
-        the last analysis for comparison.
+        Args:
+            previous_data: Latest analysis for comparison (backward compat).
+            history: Full analysis history per symbol from DB.
+            pending_actions: Unacted recommendations to re-evaluate.
         """
         self._queue = [
             {
@@ -101,10 +110,9 @@ class AnalysisQueue:
             for stock in portfolio
         ]
 
-        # Build previous-analysis lookup
+        # Build previous-analysis lookup (latest only — backward compat)
         self._prev_by_symbol = {}
         if previous_data:
-            # Build stock lookup from previous portfolio data
             prev_portfolio = {s["symbol"]: s for s in previous_data.get("portfolio", [])}
             for a in previous_data.get("analyses", []):
                 sym = a.get("symbol")
@@ -112,6 +120,15 @@ class AnalysisQueue:
                     a["stock"] = prev_portfolio.get(sym, {})
                     a["date"]  = previous_data.get("date", "unknown")
                     self._prev_by_symbol[sym] = a
+
+        # Full history from DB (all past analyses per symbol)
+        self._history_by_symbol = history or {}
+
+        # Pending actions from DB
+        self._pending_actions = pending_actions or []
+
+        # Index pending by symbol for quick lookup
+        self._pending_by_symbol = {p["symbol"]: p for p in self._pending_actions}
 
     # ================================================================
     # RUN
@@ -193,7 +210,12 @@ class AnalysisQueue:
         Updates entry in place on success.
         Returns (success, error_message_or_None).
         """
-        prompt = self._build_prompt(entry["stock"], self._prev_by_symbol.get(entry["stock"]["symbol"]))
+        prompt = self._build_prompt(
+            entry["stock"],
+            self._prev_by_symbol.get(entry["stock"]["symbol"]),
+            self._history_by_symbol.get(entry["stock"]["symbol"]),
+            self._get_pending_for(entry["stock"]["symbol"]),
+        )
 
         try:
             raw    = self.claude.call(prompt)
@@ -305,11 +327,103 @@ class AnalysisQueue:
         ]
         return analyses, skipped_symbols, failed_log
 
+    def _get_pending_for(self, symbol: str) -> dict | None:
+        """Returns the latest unacted recommendation for a symbol."""
+        return self._pending_by_symbol.get(symbol)
+
+    # ================================================================
+    # PORTFOLIO-LEVEL REVIEW
+    # ================================================================
+
+    def run_portfolio_review(
+        self,
+        portfolio: list[dict],
+        analyses: list[dict],
+    ) -> str:
+        """
+        After individual stock analysis, asks Claude for a portfolio-level
+        assessment: sector concentration, missing exposure, strengths,
+        weaknesses, and suggestions for rebalancing or adding new stocks.
+
+        Returns the raw Claude response text.
+        """
+        today = datetime.date.today().strftime("%B %d, %Y")
+
+        # Build portfolio summary for Claude
+        total_invested = sum(s.get("invested_value", 0) for s in portfolio)
+        total_current  = sum(s.get("current_value", 0) for s in portfolio)
+        total_pnl      = total_current - total_invested
+        pnl_pct        = (total_pnl / total_invested * 100) if total_invested > 0 else 0
+
+        holdings_section = f"PORTFOLIO OVERVIEW (as of {today}):\n"
+        holdings_section += f"  Total invested : ₹{total_invested:,.2f}\n"
+        holdings_section += f"  Current value  : ₹{total_current:,.2f}\n"
+        holdings_section += f"  Overall P&L    : ₹{total_pnl:,.2f} ({pnl_pct:.1f}%)\n"
+        holdings_section += f"  Total stocks   : {len(portfolio)}\n\n"
+
+        # Group by sector
+        sectors: dict[str, list] = {}
+        for stock in portfolio:
+            sector = stock.get("sector", "Unknown")
+            if sector not in sectors:
+                sectors[sector] = []
+            sectors[sector].append(stock)
+
+        holdings_section += "SECTOR BREAKDOWN:\n"
+        for sector, stocks in sorted(sectors.items(), key=lambda x: -sum(s.get("current_value", 0) for s in x[1])):
+            sector_value = sum(s.get("current_value", 0) for s in stocks)
+            sector_pct = (sector_value / total_current * 100) if total_current > 0 else 0
+            stock_names = ", ".join(s["symbol"] for s in stocks)
+            holdings_section += f"  {sector:<25} : ₹{sector_value:>10,.2f}  ({sector_pct:>5.1f}%)  [{stock_names}]\n"
+
+        # Include individual analysis summaries
+        analysis_section = "\nINDIVIDUAL STOCK RECOMMENDATIONS (just completed):\n"
+        for a in analyses:
+            p = a.get("parsed", {})
+            stock = a.get("stock", {})
+            analysis_section += (
+                f"  {a['symbol']:<14} : {p.get('ACTION','?'):<14} | "
+                f"Conviction: {p.get('CONVICTION','?'):<8} | "
+                f"P&L: {stock.get('pnl_percent','?')}% | "
+                f"Sector: {stock.get('sector','?')}\n"
+            )
+
+        prompt = (
+            f"You are a senior Indian portfolio strategist advising a long-term retail "
+            f"investor. You have just finished analysing each stock individually. Now do a "
+            f"PORTFOLIO-LEVEL assessment.\n\n"
+            f"{holdings_section}\n"
+            f"{analysis_section}\n"
+            f"Provide a comprehensive portfolio review covering:\n\n"
+            f"1. PORTFOLIO HEALTH: Is this a strong, balanced portfolio? Overall grade (A/B/C/D).\n"
+            f"2. SECTOR ANALYSIS: Which sectors are over/under-represented? Any dangerous concentration?\n"
+            f"3. RISK ASSESSMENT: Single-stock risk, sector risk, market-cap bias (too many small/large caps?).\n"
+            f"4. MISSING EXPOSURE: Which important sectors or themes is the portfolio missing? "
+            f"(e.g. IT, Pharma, Banking, Defence, Green Energy, FMCG, Infrastructure).\n"
+            f"5. REBALANCING SUGGESTIONS: Based on the individual stock recommendations above, "
+            f"what should the investor prioritise? Which exits free up capital for which additions?\n"
+            f"6. STOCKS TO CONSIDER: Suggest 3-5 specific NSE-listed stocks that would improve "
+            f"portfolio diversification and fill gaps. For each, give the ticker, sector, and "
+            f"one-line rationale.\n\n"
+            f"Keep it practical, specific, and in plain English. Use Indian market context "
+            f"(NSE-listed stocks only). Today is {today}.\n\n"
+            f"Format your response as clear sections with the headers above. No strict template needed — "
+            f"just be thorough and actionable.\n"
+        )
+
+        return self.claude.call(prompt)
+
     # ================================================================
     # PROMPT BUILDER
     # ================================================================
 
-    def _build_prompt(self, stock: dict, prev: dict | None = None) -> str:
+    def _build_prompt(
+        self,
+        stock: dict,
+        prev: dict | None = None,
+        history: list[dict] | None = None,
+        pending: dict | None = None,
+    ) -> str:
         """
         Builds the analysis prompt for one stock.
 
@@ -378,6 +492,39 @@ class AnalysisQueue:
                 f"Also note price changes and whether the previous target was hit.\n"
             )
 
+        # Full analysis history (all past runs from DB, not just latest)
+        history_block = ""
+        if history and len(history) > 0:
+            history_block = f"\nANALYSIS HISTORY (last {len(history)} runs for {stock['symbol']}):\n"
+            for h in history:
+                taken = h.get("action_taken", "N/A")
+                taken_label = f" [USER ACTION: {taken}]" if taken not in ("N/A", None) else ""
+                history_block += (
+                    f"  {h['date']}: {h.get('action','?')} ({h.get('conviction','?')}) | "
+                    f"Price: ₹{h.get('price', 0):.2f} | Target: {h.get('target_price','?')}"
+                    f"{taken_label}\n"
+                )
+            history_block += (
+                "\nIMPORTANT: Use the FULL history to avoid recommending actions the user already "
+                "completed (e.g. don't say 'FULL EXIT' for a stock sold 2 reports back). "
+                "Track how price moved since each recommendation to assess quality of past advice.\n"
+            )
+
+        # Pending (unacted) recommendations
+        pending_block = ""
+        if pending:
+            pending_block = (
+                f"\nPENDING RECOMMENDATION (from {pending['date']}, NOT yet acted on):\n"
+                f"  Previous action  : {pending['action']}\n"
+                f"  Action detail    : {pending.get('action_detail', 'N/A')}\n"
+                f"  Price at time    : ₹{pending.get('price_then', 0):.2f}\n"
+                f"  Target then      : {pending.get('target_price', 'N/A')}\n"
+                f"  Reasoning then   : {pending.get('reasoning', 'N/A')[:200]}\n"
+                f"\nThe user did NOT act on this recommendation. Evaluate whether it is still valid "
+                f"given current price and market conditions. If still valid, re-recommend with "
+                f"updated price levels. If no longer valid, explain why and give new advice.\n"
+            )
+
         # Action guide — always included so Claude picks the right action
         action_guide = (
             "ACTION GUIDE — pick the single best action:\n"
@@ -440,6 +587,8 @@ class AnalysisQueue:
             f"{action_guide}"
             f"STOCK DATA:\n{data}\n"
             f"{prev_block}"
+            f"{history_block}"
+            f"{pending_block}"
             f"REQUIRED OUTPUT FORMAT (follow exactly):\n{OUTPUT_FORMAT}"
         )
 

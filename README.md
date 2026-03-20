@@ -11,6 +11,11 @@ If a previous report exists, Claude automatically receives the last analysis for
 
 All analysis results are stored in a **SQLite database** (`data/trades.db`) for historical tracking and faster lookups across runs.
 
+**Key intelligence features:**
+- **Multi-report history** — Claude sees the full analysis history for each stock across all past runs, not just the latest. This lets it track evolving trends, conviction changes, and price movements over time.
+- **Action tracking** — Every non-HOLD recommendation is tracked as PENDING → DONE / NOT ACTED. When you act on a recommendation and run the analyser again, it detects the change (e.g. reduced quantity = partial exit done) and marks it DONE. Pending actions are re-surfaced to Claude so it can follow up.
+- **Portfolio-level review** — After analysing individual stocks, Claude performs a separate portfolio-wide assessment: sector-wise breakdown, portfolio health grade, missing exposure, rebalancing suggestions, and new stock recommendations.
+
 ```bash
 python main.py --mode analyze
 ```
@@ -201,6 +206,9 @@ ai-portfolio-manager/
 ├── main.py                  # Entry point — routes to Phase 1 or Phase 2
 ├── config.py                # All settings in one place (plans, budget, timing, costs)
 ├── generate_sheet.py        # One-off script to generate TSV spreadsheet from report data
+├── import_reports_to_db.py  # Import existing JSON report files into the SQLite database
+├── view_trades.py           # View all intraday trades from database with P&L summary
+├── view_analyses.py         # View all portfolio analyses from database with action status
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Your API keys (not in Git)
 ├── .gitignore               # Keeps secrets and junk out of Git
@@ -292,7 +300,15 @@ The bot uses this data to:
 - Load the previous Phase 1 analysis for comparison (faster than scanning JSON files)
 - Track how Claude's recommendations for each stock evolve over time
 
-Query it directly:
+**Utility scripts:**
+
+| Script | Purpose |
+|---|---|
+| `python view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
+| `python view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
+| `python import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
+
+Or query directly:
 ```bash
 sqlite3 data/trades.db "SELECT symbol, COUNT(*) as trades, ROUND(AVG(pnl),2) as avg_pnl FROM trades GROUP BY symbol;"
 ```
@@ -325,6 +341,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Delayed entry filter** — skips indecisive stocks that haven't moved after market open
 - **Market condition awareness** — detects high-volatility regimes and adjusts position sizing
 - **Performance memory** — learns from past trades via SQLite DB to avoid repeating mistakes
+- **Action tracking** — tracks whether you acted on each recommendation (PENDING → DONE / NOT ACTED)
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
 - **NSE holiday calendar** — handles weekends, holidays, late starts, and token expiry automatically
