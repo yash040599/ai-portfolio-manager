@@ -122,7 +122,7 @@ class Config:
     #
     # For ₹10K budget, NIFTY50 is recommended — most liquid, lowest
     # impact cost, tightest bid-ask spreads for intraday.
-    SCAN_UNIVERSE: str = "NIFTY50"
+    SCAN_UNIVERSE: str = "NIFTY100"
 
     # Only used when SCAN_UNIVERSE = "CUSTOM".
     # Add NSE symbols you want the bot to consider.
