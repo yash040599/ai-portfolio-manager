@@ -716,8 +716,7 @@ class ReportWriter:
     def _calculate_combined_pnl(self, all_positions: list[dict], claude_api_cost: float = 0.0) -> dict:
         """
         Recalculates P&L from a merged list of positions across
-        multiple sessions. Uses the same charge formula as OrderEngine
-        but operates on the combined position list directly.
+        multiple sessions. Delegates charge calculation to Config.
         """
         closed = [p for p in all_positions if p.get("status") == "CLOSED"]
 
@@ -740,36 +739,13 @@ class ReportWriter:
 
             num_orders += 2
 
-        total_turnover = total_buy_turnover + total_sell_turnover
+        # Reverse-calculate claude_calls from cost (for merged reports)
+        claude_calls = int(claude_api_cost / self.cfg.CLAUDE_COST_PER_CALL) if self.cfg.CLAUDE_COST_PER_CALL > 0 else 0
 
-        brokerage_flat = self.cfg.ZERODHA_BROKERAGE_FLAT * num_orders
-        brokerage_pct  = total_turnover * self.cfg.ZERODHA_BROKERAGE_PCT / 100
-        brokerage      = min(brokerage_flat, brokerage_pct) if num_orders > 0 else 0
-
-        stt          = total_sell_turnover * self.cfg.STT_SELL_PCT / 100
-        exchange_txn = total_turnover * self.cfg.EXCHANGE_TXN_PCT / 100
-        sebi         = total_turnover / 1e7 * self.cfg.SEBI_CHARGE_PER_CR
-        gst          = (brokerage + sebi + exchange_txn) * self.cfg.GST_PCT / 100
-        stamp_duty   = total_buy_turnover * self.cfg.STAMP_DUTY_BUY_PCT / 100
-
-        total_charges = brokerage + stt + exchange_txn + gst + sebi + stamp_duty
-
-        charges = {
-            "total_turnover":        round(total_turnover, 2),
-            "buy_turnover":          round(total_buy_turnover, 2),
-            "sell_turnover":         round(total_sell_turnover, 2),
-            "num_orders":            num_orders,
-            "brokerage":             round(brokerage, 2),
-            "stt":                   round(stt, 2),
-            "exchange_txn":          round(exchange_txn, 2),
-            "gst":                   round(gst, 2),
-            "sebi_charges":          round(sebi, 4),
-            "stamp_duty":            round(stamp_duty, 2),
-            "total_tax_and_charges": round(total_charges, 2),
-            "claude_api_cost":       round(claude_api_cost, 2),
-            "total_costs":           round(total_charges + claude_api_cost, 2),
-            "zerodha_monthly_fyi":   self.cfg.ZERODHA_MONTHLY_COST,
-        }
+        charges = self.cfg.calculate_charges(
+            total_buy_turnover, total_sell_turnover,
+            num_orders, claude_calls,
+        )
 
         net = gross_pnl - charges["total_costs"]
 

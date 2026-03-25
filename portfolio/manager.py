@@ -248,26 +248,11 @@ class PortfolioManager:
 
         # Fetch live quotes for the universe
         stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
-        try:
-            quotes = self.zerodha.get_quotes(stocks)
-        except Exception as e:
-            self.log.error(f"Failed to fetch quotes: {e}")
-
-            # If it's an auth error, the token may be stale — force re-login
-            if "api_key" in str(e).lower() or "access_token" in str(e).lower():
-                self.log.info("Token appears invalid — forcing re-login...")
-                self.zerodha.force_relogin()
-                try:
-                    quotes = self.zerodha.get_quotes(stocks)
-                except Exception as e2:
-                    self.log.error(f"Retry also failed: {e2}")
-                    self.log.error("Could not fetch market data. Aborting scan.")
-                    self._scan_failed = True
-                    return
-            else:
-                self.log.error("Could not fetch market data. Aborting scan.")
-                self._scan_failed = True
-                return
+        quotes = self.zerodha.get_quotes_safe(stocks)
+        if quotes is None:
+            self.log.error("Could not fetch market data. Aborting scan.")
+            self._scan_failed = True
+            return
 
         if not quotes:
             self.log.warning("No quotes returned — market may not be open yet")
@@ -328,11 +313,32 @@ class PortfolioManager:
         from their open price). Filters out whipsaw / indecisive stocks.
 
         If ENTRY_DELAY_MINUTES == 0, enters immediately (old behaviour).
+
+        Smart delay: if the market has already been open for longer than
+        the configured delay (e.g. bot started at 9:40 with 15-min delay),
+        the delay is shortened to 5 min since the opening volatility has
+        already settled and prices have established direction.
         """
         delay = self.cfg.ENTRY_DELAY_MINUTES
         if delay <= 0:
             self._enter_positions()
             return
+
+        # If market has been open longer than the configured delay,
+        # reduce to 5 min — opening volatility has already passed.
+        now = datetime.datetime.now()
+        market_open = now.replace(
+            hour=self.cfg.MARKET_OPEN_HOUR,
+            minute=self.cfg.MARKET_OPEN_MINUTE,
+            second=0, microsecond=0,
+        )
+        minutes_since_open = (now - market_open).total_seconds() / 60
+        if minutes_since_open >= delay:
+            delay = 5
+            self.log.info(
+                f"Market has been open for {minutes_since_open:.0f} min — "
+                f"reduced observation to {delay} min (opening volatility passed)"
+            )
 
         entry_time = datetime.datetime.now() + datetime.timedelta(minutes=delay)
         self.log.section(f"OBSERVATION MODE — watching prices for {delay} min")
@@ -634,41 +640,10 @@ class PortfolioManager:
 
     def _print_account_snapshot(self):
         """
-        Prints a quick overview of the Zerodha account right after login.
-        Shows available balance, portfolio size, invested vs current value.
-        Runs even on holidays so you can see your account status anytime.
+        Delegates to ZerodhaClient for display, captures the
+        returned funds amount for budget calculation.
         """
-        self.log.section("ACCOUNT SNAPSHOT")
-
-        # Available funds
-        try:
-            self._available_funds = self.zerodha.get_available_funds()
-            self.log.info(f"Available balance: ₹{self._available_funds:,.2f}")
-        except Exception:
-            self.log.warning("Could not fetch available balance")
-
-        # Portfolio holdings
-        try:
-            holdings = self.zerodha.get_holdings()
-            if holdings:
-                invested = sum(h["invested_value"] for h in holdings)
-                current  = sum(h["current_value"]  for h in holdings)
-                pnl      = current - invested
-                pnl_pct  = (pnl / invested * 100) if invested > 0 else 0
-                pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
-                reset     = "\033[0m"
-
-                self.log.info(f"Stocks in portfolio: {len(holdings)}")
-                self.log.info(f"Invested value     : ₹{invested:,.2f}")
-                self.log.info(f"Current value      : ₹{current:,.2f}")
-                self.log.info(
-                    f"Portfolio P&L      : {pnl_color}₹{pnl:+,.2f} "
-                    f"({pnl_pct:+.2f}%){reset}"
-                )
-            else:
-                self.log.info("No stocks in portfolio")
-        except Exception:
-            self.log.warning("Could not fetch portfolio holdings")
+        self._available_funds = self.zerodha.print_account_snapshot()
 
     # ================================================================
     # NIFTY INDEX TREND FILTER

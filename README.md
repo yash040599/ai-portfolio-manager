@@ -26,8 +26,9 @@ A fully automated intraday trading bot that:
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
-- **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%)
+- **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from historical data to set intelligent SL/target levels (falls back to Claude's values if data unavailable)
+- **Actual fill prices** — in live mode, after placing a MARKET order, polls Zerodha's order trades API to get the real weighted-average fill price. Entry price, P&L, SL, and target are all recalculated on the actual fill — not the estimated quote price
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
 - **Detailed live position tracking** — prints a per-position status table every ~60s showing current price, P&L, and distance to SL/target

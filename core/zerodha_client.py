@@ -187,6 +187,26 @@ class ZerodhaClient:
 
         return result
 
+    def get_quotes_safe(self, stocks: list[dict]) -> dict | None:
+        """
+        Fetches quotes with automatic token-expiry retry.
+        Returns the quotes dict, or None if both attempts fail.
+        """
+        try:
+            return self.get_quotes(stocks)
+        except Exception as e:
+            if "api_key" in str(e).lower() or "access_token" in str(e).lower():
+                self.log.info("Token appears invalid — forcing re-login...")
+                self.force_relogin()
+                try:
+                    return self.get_quotes(stocks)
+                except Exception as e2:
+                    self.log.error(f"Retry also failed: {e2}")
+                    return None
+            else:
+                self.log.error(f"Quote fetch failed: {e}")
+                return None
+
     # ================================================================
     # HISTORICAL DATA
     # ================================================================
@@ -417,6 +437,44 @@ class ZerodhaClient:
             self.log.warning("Could not fetch portfolio holdings")
 
         return funds
+
+    # ================================================================
+    # ORDER FILL PRICE
+    # ================================================================
+
+    def get_order_fill_price(self, order_id: str, timeout: int = 15) -> float | None:
+        """
+        Polls Zerodha order trades to get the actual average fill price.
+        MARKET orders fill almost instantly, but we retry a few times
+        in case there's a brief delay.
+
+        Returns the weighted-average fill price, or None if not filled.
+        """
+        import time
+        self._require_login()
+
+        for attempt in range(timeout):
+            try:
+                trades = self._kite.order_trades(order_id)
+                if trades:
+                    # Weighted average price across all fills
+                    total_qty   = sum(t["quantity"] for t in trades)
+                    total_value = sum(t["quantity"] * t["average_price"] for t in trades)
+                    if total_qty > 0:
+                        avg_price = round(total_value / total_qty, 2)
+                        self.log.info(
+                            f"Fill confirmed: Order {order_id} | "
+                            f"Avg price: \u20b9{avg_price:.2f} ({len(trades)} fill(s))"
+                        )
+                        return avg_price
+            except Exception:
+                pass  # Order may not be in terminal state yet
+
+            if attempt < timeout - 1:
+                time.sleep(1)
+
+        self.log.warning(f"Could not get fill price for order {order_id} after {timeout}s")
+        return None
 
     # ================================================================
     # INTERNAL HELPERS

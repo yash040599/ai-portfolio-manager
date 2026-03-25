@@ -67,7 +67,7 @@ class Config:
     # False = LIVE TRADING. Orders are placed on Zerodha for real.
     #         Only set this after you've reviewed dry-run results
     #         and are comfortable with the bot's decisions.
-    DRY_RUN: bool = True
+    DRY_RUN: bool = False
 
     # ── Market Timing (IST) ──────────────────────────────────────
     # The bot waits until MARKET_OPEN_HOUR:MARKET_OPEN_MINUTE to
@@ -358,3 +358,52 @@ class Config:
                 "Upgrade Zerodha to Connect Paid for real-time prices."
             )
         return warnings
+
+    @classmethod
+    def calculate_charges(
+        cls,
+        total_buy_turnover:  float,
+        total_sell_turnover: float,
+        num_orders:          int,
+        claude_calls:        int = 0,
+    ) -> dict:
+        """
+        Calculates Zerodha charges, taxes, and fees using the
+        cost parameters defined in this config.
+
+        Shared by OrderEngine.calculate_charges() and
+        ReportWriter._calculate_combined_pnl() to avoid duplication.
+
+        Returns a dict with each charge component and the total.
+        """
+        total_turnover = total_buy_turnover + total_sell_turnover
+
+        brokerage_flat = cls.ZERODHA_BROKERAGE_FLAT * num_orders
+        brokerage_pct  = total_turnover * cls.ZERODHA_BROKERAGE_PCT / 100
+        brokerage      = min(brokerage_flat, brokerage_pct) if num_orders > 0 else 0
+
+        stt          = total_sell_turnover * cls.STT_SELL_PCT / 100
+        exchange_txn = total_turnover * cls.EXCHANGE_TXN_PCT / 100
+        sebi         = total_turnover / 1e7 * cls.SEBI_CHARGE_PER_CR
+        gst          = (brokerage + sebi + exchange_txn) * cls.GST_PCT / 100
+        stamp_duty   = total_buy_turnover * cls.STAMP_DUTY_BUY_PCT / 100
+
+        total_charges = brokerage + stt + exchange_txn + gst + sebi + stamp_duty
+        claude_cost   = claude_calls * cls.CLAUDE_COST_PER_CALL
+
+        return {
+            "total_turnover":        round(total_turnover, 2),
+            "buy_turnover":          round(total_buy_turnover, 2),
+            "sell_turnover":         round(total_sell_turnover, 2),
+            "num_orders":            num_orders,
+            "brokerage":             round(brokerage, 2),
+            "stt":                   round(stt, 2),
+            "exchange_txn":          round(exchange_txn, 2),
+            "gst":                   round(gst, 2),
+            "sebi_charges":          round(sebi, 4),
+            "stamp_duty":            round(stamp_duty, 2),
+            "total_tax_and_charges": round(total_charges, 2),
+            "claude_api_cost":       round(claude_cost, 2),
+            "total_costs":           round(total_charges + claude_cost, 2),
+            "zerodha_monthly_fyi":   cls.ZERODHA_MONTHLY_COST,
+        }

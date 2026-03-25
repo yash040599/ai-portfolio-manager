@@ -227,10 +227,33 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=side, order_type="MARKET",
                 )
-                self.log.success(
-                    f"ORDER PLACED: {side} {qty}x {symbol} @ ₹{entry:.2f} | "
-                    f"Order ID: {order_id}"
-                )
+                # Fetch actual fill price from Zerodha
+                fill_price = self.zerodha.get_order_fill_price(order_id)
+                if fill_price:
+                    self.log.success(
+                        f"ORDER FILLED: {side} {qty}x {symbol} | "
+                        f"Estimated: ₹{entry:.2f} → Actual: ₹{fill_price:.2f} | "
+                        f"Order ID: {order_id}"
+                    )
+                    entry = fill_price
+                    cost = entry * qty
+                    # Recalculate ATR-based SL/target around actual fill
+                    if atr and atr > 0:
+                        multiplier = self.cfg.ATR_MULTIPLIER
+                        if side == "BUY":
+                            sl     = round(entry - multiplier * atr, 2)
+                            target = round(entry + multiplier * 2 * atr, 2)
+                        else:
+                            sl     = round(entry + multiplier * atr, 2)
+                            target = round(entry - multiplier * 2 * atr, 2)
+                        self.log.info(
+                            f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+                        )
+                else:
+                    self.log.warning(
+                        f"ORDER PLACED but fill price unknown: {side} {qty}x {symbol} @ ₹{entry:.2f} | "
+                        f"Order ID: {order_id} — using estimated price"
+                    )
             except Exception as e:
                 self.log.error(f"Order FAILED for {symbol}: {e}")
                 self._log_action("ORDER_FAILED", symbol, side, qty, entry, str(e))
@@ -303,13 +326,32 @@ class OrderEngine:
             )
         else:
             try:
-                self.zerodha.place_order(
+                exit_order_id = self.zerodha.place_order(
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=exit_side, order_type="MARKET",
                 )
-                self.log.success(
-                    f"EXIT ORDER: {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
-                    f"Reason: {reason} | P&L: ₹{pnl:+,.2f}"
+                # Fetch actual fill price from Zerodha
+                fill_price = self.zerodha.get_order_fill_price(exit_order_id)
+                if fill_price:
+                    self.log.success(
+                        f"EXIT FILLED: {exit_side} {qty}x {symbol} | "
+                        f"Estimated: ₹{exit_price:.2f} → Actual: ₹{fill_price:.2f} | "
+                        f"Reason: {reason}"
+                    )
+                    exit_price = fill_price
+                else:
+                    self.log.warning(
+                        f"EXIT placed but fill price unknown: {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
+                        f"Reason: {reason} — using estimated price"
+                    )
+                # Recalculate P&L with actual fill prices
+                if side == "BUY":
+                    pnl = (exit_price - entry) * qty
+                else:
+                    pnl = (entry - exit_price) * qty
+                pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+                self.log.info(
+                    f"Actual P&L for {symbol}: {pnl_color}₹{pnl:+,.2f}\033[0m"
                 )
             except Exception as e:
                 self.log.error(
@@ -630,17 +672,7 @@ class OrderEngine:
     def calculate_charges(self) -> dict:
         """
         Calculates all Zerodha charges, taxes, and fees for the day's
-        trades. Uses the cost parameters from Config.
-
-        Returns a dict with each charge component and the total.
-
-        Charge breakdown for intraday equity:
-          - Brokerage: min(₹20, 0.03% of turnover) per executed order
-          - STT: 0.025% on SELL side turnover only
-          - Exchange transaction: 0.00297% on total turnover
-          - GST: 18% on (brokerage + exchange charges)
-          - SEBI charges: ₹10 per crore of turnover
-          - Stamp duty: 0.003% on BUY side turnover only
+        trades. Delegates to Config.calculate_charges().
         """
         closed = [p for p in self.positions if p["status"] == "CLOSED"]
 
@@ -653,65 +685,18 @@ class OrderEngine:
             exit_value  = p["exit_price"]  * p["qty"]
 
             if p["side"] == "BUY":
-                total_buy_turnover  += entry_value   # buy leg
-                total_sell_turnover += exit_value     # sell leg (exit)
-            else:  # SELL (short) — sell first, buy later
-                total_sell_turnover += entry_value    # sell leg (entry)
-                total_buy_turnover  += exit_value     # buy leg (exit)
+                total_buy_turnover  += entry_value
+                total_sell_turnover += exit_value
+            else:
+                total_sell_turnover += entry_value
+                total_buy_turnover  += exit_value
 
-            num_orders += 2  # entry + exit = 2 orders per round trip
+            num_orders += 2
 
-        total_turnover = total_buy_turnover + total_sell_turnover
-
-        # ── Brokerage ─────────────────────────────────────────────
-        # Per order: min(₹20 flat, 0.03% of that order's value)
-        # Simplified: we use total turnover / num_orders for average
-        brokerage_flat  = self.cfg.ZERODHA_BROKERAGE_FLAT * num_orders
-        brokerage_pct   = total_turnover * self.cfg.ZERODHA_BROKERAGE_PCT / 100
-        brokerage       = min(brokerage_flat, brokerage_pct) if num_orders > 0 else 0
-
-        # ── STT — sell side only for intraday ─────────────────────
-        stt = total_sell_turnover * self.cfg.STT_SELL_PCT / 100
-
-        # ── Exchange transaction charges ──────────────────────────
-        exchange_txn = total_turnover * self.cfg.EXCHANGE_TXN_PCT / 100
-
-        # ── SEBI charges — ₹10 per crore ─────────────────────────
-        sebi = total_turnover / 1e7 * self.cfg.SEBI_CHARGE_PER_CR
-
-        # ── GST — 18% on (brokerage + SEBI charges + exchange charges)
-        gst = (brokerage + sebi + exchange_txn) * self.cfg.GST_PCT / 100
-
-        # ── Stamp duty — buy side only ────────────────────────────
-        stamp_duty = total_buy_turnover * self.cfg.STAMP_DUTY_BUY_PCT / 100
-
-        total_charges = brokerage + stt + exchange_txn + gst + sebi + stamp_duty
-
-        # ── Claude API cost (per-use, deducted from P&L) ─────────
-        claude_cost = self.claude_calls * self.cfg.CLAUDE_COST_PER_CALL
-
-        # ── Zerodha Kite Connect — monthly subscription (FYI only)
-        # This is NOT deducted from daily P&L. It's a fixed monthly
-        # cost shown in the report for awareness. Over a month you
-        # can check if cumulative daily profits cover this cost.
-        zerodha_monthly = self.cfg.ZERODHA_MONTHLY_COST
-
-        return {
-            "total_turnover":       round(total_turnover, 2),
-            "buy_turnover":         round(total_buy_turnover, 2),
-            "sell_turnover":        round(total_sell_turnover, 2),
-            "num_orders":           num_orders,
-            "brokerage":            round(brokerage, 2),
-            "stt":                  round(stt, 2),
-            "exchange_txn":         round(exchange_txn, 2),
-            "gst":                  round(gst, 2),
-            "sebi_charges":         round(sebi, 4),
-            "stamp_duty":           round(stamp_duty, 2),
-            "total_tax_and_charges": round(total_charges, 2),
-            "claude_api_cost":      round(claude_cost, 2),
-            "total_costs":          round(total_charges + claude_cost, 2),
-            "zerodha_monthly_fyi":  zerodha_monthly,
-        }
+        return self.cfg.calculate_charges(
+            total_buy_turnover, total_sell_turnover,
+            num_orders, self.claude_calls,
+        )
 
     def net_profit(self) -> dict:
         """
