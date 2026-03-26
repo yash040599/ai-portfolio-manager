@@ -51,8 +51,7 @@ A fully automated intraday trading bot that:
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
-- **Tax ledger** — separate scripts to fill, verify, view, and summarise intraday and capital-gains trades in SQLite. Intraday trades are auto-filled from live JSONs, then verified against the official Zerodha Tax P&L xlsx. Capital gains (short/long term) are imported from the same xlsx. See the **Tax Scripts** section below for details
-- **Tax guide** — `docs/TAX_GUIDE.md` covers ITR form selection, slab rates, deductible expenses, loss carry-forward rules, and advance tax deadlines
+- **Tax ledger & capital gains** — full tax infrastructure with separate DB tables, verification against Zerodha's official Tax P&L report, and combined tax summary. See the **[Taxation](#taxation)** section below
 
 ```bash
 python main.py --mode trade
@@ -246,7 +245,9 @@ ai-portfolio-manager/
 │   ├── tax_summary.py              # Tax summary — intraday, capital gains, or both (with grand total)
 │   ├── view_trades.py              # View all intraday trades from database with P&L summary
 │   ├── view_analyses.py            # View all portfolio analyses from database with action status
-│   └── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
+│   ├── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
+│   ├── backup_data.py              # Backup gitignored data (DB, reports, logs) to a private Git repo
+│   └── recover_data.py             # Recover data from the private backup repo
 ├── docs/
 │   └── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 ├── data/
@@ -319,8 +320,8 @@ All historical data is stored in a single **SQLite database** at `data/trades.db
 | Table | Phase | What it stores |
 |---|---|---|
 | `trades` | Phase 2 | Intraday trade results — symbol, side, entry/exit price, qty, P&L, exit reason, market condition |
-| `intraday_tax_ledger` | Phase 2 | Live intraday trades with per-trade charges, net P&L, and a `verified` flag (unverified → verified after Zerodha xlsx confirmation) — for ITR-3 Schedule BP |
-| `capital_gains_ledger` | Phase 2 | Short-term and long-term capital gains from Zerodha Tax P&L xlsx — entry/exit dates, holding period, FMV, taxable profit, all charges — for ITR-3 Schedule CG |
+| `intraday_tax_ledger` | Phase 2 | Intraday tax ledger — see [Taxation](#taxation) section |
+| `capital_gains_ledger` | Phase 2 | Capital gains ledger — see [Taxation](#taxation) section |
 | `portfolio_analyses` | Phase 1 | Analysis results — symbol, action, conviction, reasoning, horizon, target price, current/invested values, risks |
 
 The bot uses this data to:
@@ -336,18 +337,6 @@ The bot uses this data to:
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported |
-
-**Tax scripts:**
-
-| Script | Purpose |
-|---|---|
-| `python scripts/fill_intraday_ledger.py` | Fill `intraday_tax_ledger` from live trading JSONs (marks as `unverified`). Auto-runs after each live trade day |
-| `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verifies/corrects intraday data + imports short/long-term capital gains |
-| `python scripts/view_intraday_ledger.py` | View intraday trades with entry/exit prices, charges, net P&L, and verified status |
-| `python scripts/view_capital_gains_ledger.py` | View capital gains trades — filterable by `--type short_term` or `--type long_term` |
-| `python scripts/tax_summary.py` | Combined tax summary — speculative income, STCG, LTCG, estimated tax, deductible expenses |
-
-**Detailed usage:**
 
 ```bash
 # View all intraday trades with P&L totals
@@ -365,43 +354,140 @@ python scripts/generate_sheet.py 2026-03-16
 # List all available report dates
 python scripts/generate_sheet.py --list
 
-# Save spreadsheet to a custom path
-python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/portfolio.tsv
-
 # Import old JSON reports into the database (one-time)
 python scripts/import_reports_to_db.py
-
-# Fill intraday tax ledger from live trading JSONs (current FY)
-python scripts/fill_intraday_ledger.py
-
-# Fill for a specific FY or all FYs
-python scripts/fill_intraday_ledger.py --fy 2025
-python scripts/fill_intraday_ledger.py --all
-
-# Import Zerodha Tax P&L xlsx (verify intraday + import capital gains)
-python scripts/import_zerodha_taxpnl.py
-python scripts/import_zerodha_taxpnl.py data/ZerodhaTaxPL/taxpnl-HMN785-2025_2026-Q1-Q4.xlsx
-
-# View intraday trades with verified status
-python scripts/view_intraday_ledger.py
-python scripts/view_intraday_ledger.py --fy 2025
-
-# View capital gains trades (all, short-term, or long-term)
-python scripts/view_capital_gains_ledger.py
-python scripts/view_capital_gains_ledger.py --type short_term
-python scripts/view_capital_gains_ledger.py --type long_term
-
-# Tax summary (both intraday + capital gains by default)
-python scripts/tax_summary.py
-python scripts/tax_summary.py --intraday
-python scripts/tax_summary.py --capital-gains
-python scripts/tax_summary.py --fy 2025
 ```
 
 Or query directly:
 ```bash
 sqlite3 data/trades.db "SELECT symbol, COUNT(*) as trades, ROUND(AVG(pnl),2) as avg_pnl FROM trades GROUP BY symbol;"
 ```
+
+---
+
+## Taxation
+
+Intraday equity trading in India has specific tax implications. The bot tracks all charges and generates tax-ready data.
+
+### How intraday trading is taxed
+
+- **Intraday (speculative) income** — classified as "speculative business income" under Section 43(5) of the Income Tax Act. Taxed at your **personal slab rate** (e.g. 30% + 4% cess = 31.2% for the highest bracket). Reported in **ITR-3 → Schedule BP**. Speculative losses can only be set off against speculative gains and carried forward for 4 years.
+
+- **Short-term capital gains (STCG)** — listed equity held ≤ 12 months. Taxed at a flat **20% + 4% cess = 20.8%** (w.e.f. 23-Jul-2024). Reported in **ITR-3 → Schedule CG**.
+
+- **Long-term capital gains (LTCG)** — listed equity held > 12 months. Taxed at **12.5% + 4% cess = 13.0%** on gains above the **₹1.25 lakh annual exemption** (Section 112A).
+
+- **Deductible expenses** — brokerage, STT, exchange transaction charges, GST, SEBI charges, stamp duty, internet/software costs, and platform subscriptions (e.g. Zerodha Kite Connect ₹500/month) can be claimed as business expenses against speculative income.
+
+For a comprehensive guide covering ITR form selection, advance tax deadlines, loss carry-forward rules, and audit thresholds, see **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)**.
+
+### Tax database tables
+
+| Table | What it stores |
+|---|---|
+| `intraday_tax_ledger` | Live intraday trades with per-trade charges, net P&L, and a `verified` flag (unverified → verified after Zerodha xlsx confirmation) — for ITR-3 Schedule BP |
+| `capital_gains_ledger` | Short-term and long-term capital gains from Zerodha Tax P&L xlsx — entry/exit dates, holding period, FMV, taxable profit, all charges — for ITR-3 Schedule CG |
+
+### Tax scripts
+
+| Script | Purpose |
+|---|---|
+| `python scripts/fill_intraday_ledger.py` | Fill `intraday_tax_ledger` from live trading JSONs (marks as `unverified`). Auto-runs after each live trade day |
+| `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verifies/corrects intraday data + imports short/long-term capital gains |
+| `python scripts/view_intraday_ledger.py` | View intraday trades with entry/exit prices, charges, net P&L, and verified status |
+| `python scripts/view_capital_gains_ledger.py` | View capital gains trades — filterable by `--type short_term` or `--type long_term` |
+| `python scripts/tax_summary.py` | Combined tax summary — speculative income, STCG, LTCG, estimated tax, deductible expenses |
+
+### Tax workflow
+
+**Daily (automatic):** After each live trading day, the bot auto-fills `intraday_tax_ledger` with trades marked as `unverified`.
+
+**Periodically (manual):** Download the Zerodha Tax P&L report from [Console → Tax P&L](https://console.zerodha.com/reports/taxpnl), place the xlsx in `data/ZerodhaTaxPL/`, and run the import script. This verifies/corrects intraday data and imports capital gains.
+
+```bash
+# Step 1: Fill intraday ledger from live trading JSONs
+python scripts/fill_intraday_ledger.py
+python scripts/fill_intraday_ledger.py --fy 2025    # specific FY
+python scripts/fill_intraday_ledger.py --all         # all FYs
+
+# Step 2: Import Zerodha Tax P&L xlsx (verify intraday + import capital gains)
+python scripts/import_zerodha_taxpnl.py
+python scripts/import_zerodha_taxpnl.py data/ZerodhaTaxPL/your-file.xlsx
+
+# Step 3: View your data
+python scripts/view_intraday_ledger.py               # intraday trades
+python scripts/view_intraday_ledger.py --fy 2025
+python scripts/view_capital_gains_ledger.py           # capital gains
+python scripts/view_capital_gains_ledger.py --type short_term
+python scripts/view_capital_gains_ledger.py --type long_term
+
+# Step 4: Tax summary
+python scripts/tax_summary.py                        # both intraday + CG
+python scripts/tax_summary.py --intraday              # intraday only
+python scripts/tax_summary.py --capital-gains          # capital gains only
+python scripts/tax_summary.py --fy 2025
+```
+
+### Tax rates in config.py
+
+| Setting | Default | What it controls |
+|---------|---------|------------------|
+| `TAX_RATE_PCT` | `30.0` | Your income tax slab rate (for speculative income) |
+| `TAX_CESS_PCT` | `4.0` | Health & education cess on tax |
+| `STCG_TAX_RATE_PCT` | `20.0` | Short-term capital gains flat rate |
+| `LTCG_TAX_RATE_PCT` | `12.5` | Long-term capital gains flat rate |
+| `LTCG_EXEMPTION_LIMIT` | `125000.0` | Annual LTCG exemption (₹1.25 lakh) |
+
+---
+
+## Data Backup & Recovery
+
+The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain personal trading data). You can back them up to a **separate private Git repo** so your data is safe if you lose your local machine.
+
+### Setting it up
+
+1. **Create a private repo** on GitHub (e.g. `your-username/ai-portfolio-manager-data`). Keep it **Private**.
+
+2. **Clone it** next to your main project folder:
+   ```bash
+   cd /path/to/your/projects/   # parent of ai-portfolio-manager/
+   git clone https://github.com/your-username/ai-portfolio-manager-data.git
+   ```
+   Your folder structure should look like:
+   ```
+   projects/
+   ├── ai-portfolio-manager/       # main code repo
+   └── ai-portfolio-manager-data/  # private data repo
+   ```
+
+3. **Backup** — run whenever you want to sync your data:
+   ```bash
+   python scripts/backup_data.py              # sync + commit + push
+   python scripts/backup_data.py --dry-run    # preview what would be copied
+   ```
+
+4. **Recover** — on a new machine or after data loss:
+   ```bash
+   # Clone both repos
+   git clone https://github.com/your-username/ai-portfolio-manager.git
+   git clone https://github.com/your-username/ai-portfolio-manager-data.git
+
+   # Restore data
+   cd ai-portfolio-manager
+   python scripts/recover_data.py
+   ```
+
+### What gets backed up
+
+| Folder | Contents |
+|--------|----------|
+| `data/` | SQLite database (`trades.db`), Zerodha Tax P&L xlsx files |
+| `reports/` | All trading and portfolio reports (txt + json) |
+| `logs/` | Log files |
+
+**Excluded:** `access_token.json` (expires daily), `__pycache__`, OS junk files.
+
+> **Security:** The backup repo must be **Private** on GitHub. Only you (and any collaborators you explicitly invite) can access it. The main code repo has no link to the data repo — the connection only exists inside the backup/recovery scripts.
 
 ---
 
