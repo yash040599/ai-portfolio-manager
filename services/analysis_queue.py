@@ -16,6 +16,7 @@
 # One failure affects exactly one stock — the rest continue.
 # ================================================================
 
+import json
 import re
 import time
 import datetime
@@ -339,13 +340,15 @@ class AnalysisQueue:
         self,
         portfolio: list[dict],
         analyses: list[dict],
-    ) -> str:
+    ) -> tuple[str, list[dict]]:
         """
         After individual stock analysis, asks Claude for a portfolio-level
         assessment: sector concentration, missing exposure, strengths,
         weaknesses, and suggestions for rebalancing or adding new stocks.
 
-        Returns the raw Claude response text.
+        Returns (review_text, new_stock_recommendations) where
+        new_stock_recommendations is a list of dicts with keys:
+          symbol, sector, action, horizon, target_price, rationale
         """
         today = datetime.date.today().strftime("%B %d, %Y")
 
@@ -408,10 +411,39 @@ class AnalysisQueue:
             f"Keep it practical, specific, and in plain English. Use Indian market context "
             f"(NSE-listed stocks only). Today is {today}.\n\n"
             f"Format your response as clear sections with the headers above. No strict template needed — "
-            f"just be thorough and actionable.\n"
+            f"just be thorough and actionable.\n\n"
+            f"IMPORTANT: At the very end of your response, after all sections, add a line "
+            f"containing exactly '---RECOMMENDATIONS_JSON---' followed by a JSON array of your "
+            f"recommended new stocks. Each object must have these fields:\n"
+            f'  {{"symbol": "TICKER", "sector": "Sector Name", "action": "BUY", '
+            f'"horizon": "Short/Medium/Long-term", "target_price": "₹XXX-₹YYY", '
+            f'"rationale": "One-line reason"}}\n'
+            f"Return ONLY the JSON array after the marker line. No markdown fences.\n"
         )
 
-        return self.claude.call(prompt)
+        raw = self.claude.call(prompt)
+
+        # Split review text from structured recommendations
+        review_text = raw
+        recommendations = []
+
+        marker = "---RECOMMENDATIONS_JSON---"
+        if marker in raw:
+            parts = raw.split(marker, 1)
+            review_text = parts[0].strip()
+            json_text = parts[1].strip()
+            try:
+                recommendations = json.loads(json_text)
+            except json.JSONDecodeError:
+                # Try extracting JSON array from the text
+                match = re.search(r"\[.*\]", json_text, re.DOTALL)
+                if match:
+                    try:
+                        recommendations = json.loads(match.group())
+                    except json.JSONDecodeError:
+                        pass
+
+        return review_text, recommendations
 
     # ================================================================
     # PROMPT BUILDER

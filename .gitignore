@@ -1,6 +1,5 @@
 # ── Secrets ────────────────────────────────────────────────
 .env
-access_token.json
 
 # ── Python ────────────────────────────────────────────────
 __pycache__/
@@ -14,6 +13,9 @@ build/
 # ── Logs & Reports (regenerated on each run) ──────────────
 logs/
 reports/
+
+# ── Database (contains personal trading data) ────────────
+data/
 
 # ── IDE / Editor ─────────────────────────────────────────
 .vscode/

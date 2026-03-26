@@ -111,6 +111,7 @@ class ReportWriter:
         skipped_symbols: list[str]  = None,
         failed_log:      list[dict] = None,
         portfolio_review: str       = None,
+        new_stock_recommendations: list[dict] = None,
     ) -> str:
         """
         Writes the report (.txt) and data file (.json).
@@ -170,11 +171,12 @@ class ReportWriter:
                 "skipped": skipped_symbols,
                 "failed":  failed_log,
                 "portfolio_review": portfolio_review,
+                "new_stock_recommendations": new_stock_recommendations or [],
             }, f, indent=2)
 
         # Write the spreadsheet-friendly TSV file
         tsv_path = self.portfolio_sheet_path(today)
-        self._write_spreadsheet(tsv_path, analyses)
+        self._write_spreadsheet(tsv_path, analyses, new_stock_recommendations)
 
         self.log.success(f"Report : {txt_path}")
         self.log.success(f"Data   : {json_path}")
@@ -380,9 +382,10 @@ class ReportWriter:
         nums = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
         return nums[0] if nums else "0"
 
-    def _write_spreadsheet(self, path: str, analyses: list[dict]):
+    def _write_spreadsheet(self, path: str, analyses: list[dict], new_stock_recommendations: list[dict] = None):
         """
         Writes a tab-separated file for easy copy-paste into Google Sheets / Excel.
+        Includes both existing portfolio stocks and new stock recommendations.
         """
         headers = [
             "Ticker",
@@ -466,6 +469,29 @@ class ReportWriter:
                 trigger_action,
                 trigger_num,
                 val_at_trigger,
+            ]
+            rows.append(row)
+
+        # Append new stock recommendations from portfolio review
+        for rec in (new_stock_recommendations or []):
+            symbol = rec.get("symbol", "")
+            target_low, target_high = self._parse_target_range(rec.get("target_price", ""))
+            row = [
+                symbol,
+                rec.get("horizon", ""),
+                f"NEW BUY — {rec.get('rationale', '')}",
+                "BUY",
+                "",   # num_stocks (unknown — not in portfolio yet)
+                "",   # value
+                "",   # avg_buy_price (no holding)
+                "",   # current_price (not fetched)
+                target_low,
+                target_high,
+                rec.get("rationale", ""),
+                "",   # trigger_price
+                "",   # trigger_action
+                "",   # trigger_num
+                "",   # val_at_trigger
             ]
             rows.append(row)
 

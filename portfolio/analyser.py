@@ -134,17 +134,20 @@ class PortfolioAnalyser:
 
         # ── Step 5b: Portfolio-level overall review ───────────────
         portfolio_review = None
+        new_stock_recommendations = []
         if analyses:
             self.log.section("PORTFOLIO REVIEW — Overall assessment")
             try:
-                portfolio_review = self.queue.run_portfolio_review(portfolio, analyses)
+                portfolio_review, new_stock_recommendations = self.queue.run_portfolio_review(portfolio, analyses)
                 self.log.success("Portfolio-level review complete")
+                if new_stock_recommendations:
+                    self.log.info(f"  {len(new_stock_recommendations)} new stock recommendations extracted")
             except Exception as e:
                 self.log.warning(f"Portfolio review failed: {e} — individual analyses still saved")
 
         # ── Step 6: Save report ───────────────────────────────────
         self.log.section("SAVING REPORT")
-        self.report.save(portfolio, analyses, skipped, failed_log, portfolio_review)
+        self.report.save(portfolio, analyses, skipped, failed_log, portfolio_review, new_stock_recommendations)
 
         # ── Step 7: Record to performance database ────────────────
         self.tracker.record_portfolio_analyses(portfolio, analyses)

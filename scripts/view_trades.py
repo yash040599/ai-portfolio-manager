@@ -2,7 +2,8 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join("data", "trades.db")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")
 
 conn = sqlite3.connect(DB_PATH)
 conn.row_factory = sqlite3.Row

@@ -12,7 +12,7 @@
 # for a given (date, symbol) combination.
 #
 # Usage:
-#   python import_reports_to_db.py
+#   python scripts/import_reports_to_db.py
 # ================================================================
 
 import os
@@ -21,7 +21,8 @@ import json
 import glob
 import sqlite3
 
-DB_PATH = os.path.join("data", "trades.db")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")
 
 
 def connect():
@@ -91,7 +92,7 @@ def existing_dates(conn, table: str) -> set:
 def import_portfolio_reports(conn):
     """Import portfolio_data_*.json files into portfolio_analyses table."""
     existing = existing_dates(conn, "portfolio_analyses")
-    files = sorted(glob.glob("reports/portfolio/*/*/portfolio_data_*.json"))
+    files = sorted(glob.glob(os.path.join(PROJECT_ROOT, "reports/portfolio/*/*/portfolio_data_*.json")))
 
     if not files:
         print("  No portfolio JSON files found")
@@ -183,7 +184,7 @@ def import_portfolio_reports(conn):
 def import_trading_reports(conn):
     """Import trading_data_*.json files into trades table."""
     existing = existing_dates(conn, "trades")
-    files = sorted(glob.glob("reports/trading/*/*/trading_data_*.json"))
+    files = sorted(glob.glob(os.path.join(PROJECT_ROOT, "reports/trading/*/*/trading_data_*.json")))
 
     if not files:
         print("  No trading JSON files found")

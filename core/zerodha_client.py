@@ -24,7 +24,7 @@ from core.logger import Logger
 
 class ZerodhaClient:
 
-    TOKEN_FILE = "access_token.json"
+    TOKEN_FILE = os.path.join("data", "access_token.json")
 
     def __init__(self, config: type[Config], log: Logger):
         self.cfg   = config

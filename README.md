@@ -15,6 +15,7 @@ All analysis results are stored in a **SQLite database** (`data/trades.db`) for 
 - **Multi-report history** — Claude sees the full analysis history for each stock across all past runs, not just the latest. This lets it track evolving trends, conviction changes, and price movements over time.
 - **Action tracking** — Every non-HOLD recommendation is tracked as PENDING → DONE / NOT ACTED. When you act on a recommendation and run the analyser again, it detects the change (e.g. reduced quantity = partial exit done) and marks it DONE. Pending actions are re-surfaced to Claude so it can follow up.
 - **Portfolio-level review** — After analysing individual stocks, Claude performs a separate portfolio-wide assessment: sector-wise breakdown, portfolio health grade, missing exposure, rebalancing suggestions, and new stock recommendations.
+- **New stock recommendations in spreadsheet** — Claude suggests 3-5 NSE-listed stocks to fill portfolio gaps (missing sectors, diversification). These appear as `NEW BUY` rows in the TSV spreadsheet alongside your existing holdings, with target prices and rationale — ready to act on.
 
 ```bash
 python main.py --mode analyze
@@ -29,12 +30,17 @@ A fully automated intraday trading bot that:
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from historical data to set intelligent SL/target levels (falls back to Claude's values if data unavailable)
 - **Actual fill prices** — in live mode, after placing a MARKET order, polls Zerodha's order trades API to get the real weighted-average fill price. Entry price, P&L, SL, and target are all recalculated on the actual fill — not the estimated quote price
+- **Fill price sanity check** — rejects fill prices that deviate >5% from the expected quote, treating them as corrupted data (logs a warning and keeps the original estimate)
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
-- **Detailed live position tracking** — prints a per-position status table every ~60s showing current price, P&L, and distance to SL/target
+- **Compact live status** — prints a one-line status every poll (time, open/closed count, unrealised/realised P&L). Detailed per-stock table only after Claude review calls
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
+- **Time-decay targets** — after 2 PM, reduces open position targets by 40% to lock in profits before square-off
 - Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
+- **Anti-panic exit** — Claude's review includes a rule against panic-selling: "If a position shows a loss but hasn't hit its numeric SL, do NOT recommend EXIT"
 - **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
+- **Session-aware re-scans** — mid-day re-scans pass current day P&L and already-traded symbols to Claude so it can adjust risk appetite
+- **Late entry guard** — won't open new positions if fewer than 60 minutes remain before square-off
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - **Market condition detection** — classifies the day as BULLISH/BEARISH/NEUTRAL with HIGH_VOLATILITY/NORMAL regime, adjusts strategy accordingly
@@ -178,7 +184,10 @@ Open `config.py` and review these key settings:
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
 | `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
 | `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
-| `SLIPPAGE_PCT` | `0.05%` | Simulated slippage on dry-run entries |
+| `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run entries |
+| `TARGET_DECAY_AFTER_HOUR` | `14` | After 2 PM, start reducing targets (24h format) |
+| `TARGET_DECAY_PCT` | `40.0%` | How much to reduce targets after decay hour |
+| `MIN_MINUTES_FOR_ENTRY` | `60` | Don't open new trades if fewer than this many min remain |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 | `ZERODHA_PLAN` | `connect_paid` | Zerodha plan: personal_free or connect_paid |
 
@@ -206,10 +215,6 @@ You can start Phase 2 anytime — even the night before. It handles weekends, NS
 ai-portfolio-manager/
 ├── main.py                  # Entry point — routes to Phase 1 or Phase 2
 ├── config.py                # All settings in one place (plans, budget, timing, costs)
-├── generate_sheet.py        # One-off script to generate TSV spreadsheet from report data
-├── import_reports_to_db.py  # Import existing JSON report files into the SQLite database
-├── view_trades.py           # View all intraday trades from database with P&L summary
-├── view_analyses.py         # View all portfolio analyses from database with action status
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Your API keys (not in Git)
 ├── .gitignore               # Keeps secrets and junk out of Git
@@ -227,8 +232,14 @@ ai-portfolio-manager/
 │   ├── order_engine.py      # Order execution, position tracking, SL/target monitoring, P&L + taxes
 │   ├── report_writer.py     # Generates .txt reports and .json data dumps
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
+├── scripts/
+│   ├── generate_sheet.py    # Generate TSV spreadsheet from portfolio report (Claude-powered)
+│   ├── view_trades.py       # View all intraday trades from database with P&L summary
+│   ├── view_analyses.py     # View all portfolio analyses from database with action status
+│   └── import_reports_to_db.py # Import existing JSON report files into the SQLite database
 ├── data/
-│   └── trades.db            # SQLite database (auto-created on first run)
+│   ├── trades.db            # SQLite database (auto-created on first run)
+│   └── access_token.json    # Zerodha session token (auto-created on login)
 ├── reports/                 # Generated reports, organised by type → year → month
 │   ├── portfolio/           # Phase 1 portfolio analysis reports
 │   │   └── <year>/
@@ -257,7 +268,7 @@ If you want to keep the bot running 24/7:
    pip install -r requirements.txt
    ```
 4. Create your `.env` file with API keys
-5. Delete any old `access_token.json` (tokens are IP-specific)
+5. Delete any old `data/access_token.json` (tokens are IP-specific)
 6. RDP into the VM and run:
    ```bash
    python main.py --mode trade
@@ -291,6 +302,8 @@ The Phase 2 report includes:
 
 All historical data is stored in a single **SQLite database** at `data/trades.db` (auto-created on first run).
 
+> **Security:** The `data/` directory is excluded from Git via `.gitignore`. Your trading data stays local and is never committed to the repository.
+
 | Table | Phase | What it stores |
 |---|---|---|
 | `trades` | Phase 2 | Intraday trade results — symbol, side, entry/exit price, qty, P&L, exit reason, market condition |
@@ -305,9 +318,35 @@ The bot uses this data to:
 
 | Script | Purpose |
 |---|---|
-| `python view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
-| `python view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
-| `python import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
+| `python scripts/view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
+| `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
+| `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
+| `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
+
+**Detailed usage:**
+
+```bash
+# View all intraday trades with P&L totals
+python scripts/view_trades.py
+
+# View all portfolio analyses grouped by date
+python scripts/view_analyses.py
+
+# Generate spreadsheet from today's portfolio report
+python scripts/generate_sheet.py
+
+# Generate spreadsheet from a specific date
+python scripts/generate_sheet.py 2026-03-16
+
+# List all available report dates
+python scripts/generate_sheet.py --list
+
+# Save spreadsheet to a custom path
+python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/portfolio.tsv
+
+# Import old JSON reports into the database (one-time)
+python scripts/import_reports_to_db.py
+```
 
 Or query directly:
 ```bash
@@ -342,6 +381,11 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Delayed entry filter** — skips indecisive stocks that haven't moved after market open
 - **Market condition awareness** — detects high-volatility regimes and adjusts position sizing
 - **Performance memory** — learns from past trades via SQLite DB to avoid repeating mistakes
+- **Fill price sanity check** — rejects corrupted fill prices (>5% deviation from expected quote)
+- **Time-decay targets** — reduces targets after 2 PM to lock in profits before square-off
+- **Late entry guard** — blocks new positions when insufficient time remains in session
+- **Session-aware re-scans** — mid-day re-scans account for current P&L and traded symbols
+- **Anti-panic exit** — Claude review rule prevents premature exits before SL is actually hit
 - **Action tracking** — tracks whether you acted on each recommendation (PENDING → DONE / NOT ACTED)
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool

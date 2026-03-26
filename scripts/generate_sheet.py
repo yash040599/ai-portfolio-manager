@@ -1,15 +1,19 @@
 """
-One-time script to generate the spreadsheet TSV from an existing
-portfolio_data JSON file.
+Generate a TSV spreadsheet from a portfolio analysis JSON report.
 
 Makes ONE Claude API call to extract structured fields (action detail,
 stock counts, trigger prices) from the free-text NEXT_STEPS.
 
 Usage:
-    python generate_sheet.py                              # uses today's date
-    python generate_sheet.py 2026-03-16                   # specific date
+    python scripts/generate_sheet.py                     # today's portfolio report
+    python scripts/generate_sheet.py 2026-03-16          # specific date
+    python scripts/generate_sheet.py --list              # list all available report dates
+    python scripts/generate_sheet.py --output out.tsv    # custom output path
 """
 
+import argparse
+import datetime
+import glob
 import os
 import re
 import sys
@@ -18,7 +22,8 @@ import json
 from dotenv import load_dotenv
 import anthropic
 
-load_dotenv()
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 
 def parse_target_range(target_str: str) -> tuple[str, str]:
@@ -58,18 +63,57 @@ def build_claude_prompt(analyses: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def list_available_dates():
+    """List all portfolio report dates that have JSON data files."""
+    pattern = os.path.join(PROJECT_ROOT, "reports", "portfolio", "*", "*", "portfolio_data_*.json")
+    files = sorted(glob.glob(pattern))
+    if not files:
+        print("No portfolio report files found.")
+        return
+    print(f"\n  Available portfolio report dates:\n")
+    for f in files:
+        # Extract date from path: reports/portfolio/YYYY/MM/portfolio_data_DD.json
+        parts = f.replace("\\", "/").split("/")
+        year, month = parts[2], parts[3]
+        day = re.search(r"portfolio_data_(\d+)\.json", parts[4])
+        if day:
+            print(f"    {year}-{month}-{int(day.group(1)):02d}")
+    print()
+
+
 def main():
-    import datetime
+    parser = argparse.ArgumentParser(
+        description="Generate a TSV spreadsheet from a portfolio analysis report.",
+        epilog="Examples:\n"
+               "  python scripts/generate_sheet.py                  # today's report\n"
+               "  python scripts/generate_sheet.py 2026-03-16       # specific date\n"
+               "  python scripts/generate_sheet.py --list           # show available dates\n"
+               "  python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/sheet.tsv\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("date", nargs="?", default=None,
+                        help="Report date in YYYY-MM-DD format (default: today)")
+    parser.add_argument("--list", action="store_true",
+                        help="List all available report dates and exit")
+    parser.add_argument("-o", "--output", default=None,
+                        help="Custom output file path (default: alongside the JSON)")
 
-    if len(sys.argv) > 1:
-        date_str = sys.argv[1]
-    else:
-        date_str = str(datetime.date.today())
+    args = parser.parse_args()
 
-    date_obj  = datetime.date.fromisoformat(date_str)
-    base_dir  = f"reports/portfolio/{date_obj.year}/{date_obj.month:02d}"
-    json_path = f"{base_dir}/portfolio_data_{date_obj.day:02d}.json"
-    tsv_path  = f"{base_dir}/portfolio_sheet_{date_obj.day:02d}.tsv"
+    if args.list:
+        list_available_dates()
+        return
+
+    date_str = args.date or str(datetime.date.today())
+    try:
+        date_obj = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        print(f"Invalid date format: {date_str}  (expected YYYY-MM-DD)")
+        sys.exit(1)
+
+    base_dir  = os.path.join(PROJECT_ROOT, "reports", "portfolio", str(date_obj.year), f"{date_obj.month:02d}")
+    json_path = os.path.join(base_dir, f"portfolio_data_{date_obj.day:02d}.json")
+    tsv_path  = args.output or os.path.join(base_dir, f"portfolio_sheet_{date_obj.day:02d}.tsv")
 
     if not os.path.exists(json_path):
         print(f"❌ File not found: {json_path}")
@@ -198,6 +242,66 @@ def main():
             trigger_action,
             trigger_num,
             val_at_trigger,
+        ]
+        rows.append(row)
+
+    # ── New stock recommendations from portfolio review ───────────
+    new_recs = data.get("new_stock_recommendations", [])
+    portfolio_review = data.get("portfolio_review", "")
+
+    # If pre-parsed recommendations exist in JSON, use them directly
+    if new_recs:
+        print(f"📋 Found {len(new_recs)} new stock recommendations in report data")
+    elif portfolio_review:
+        # Old report without pre-parsed recs — extract via Claude
+        print(f"🤖 Extracting new stock recommendations from portfolio review (1 API call)...")
+        rec_prompt = (
+            "Extract all specific stock recommendations from this portfolio review text.\n"
+            "For each recommended stock, return a JSON object with:\n"
+            '  {"symbol": "NSE_TICKER", "sector": "Sector", "action": "BUY", '
+            '"horizon": "Short/Medium/Long-term", "target_price": "₹XXX-₹YYY", '
+            '"rationale": "One-line reason"}\n\n'
+            "Return ONLY a JSON array. No markdown, no explanation. "
+            "If no specific stocks are recommended, return [].\n\n"
+            f"REVIEW TEXT:\n{portfolio_review}"
+        )
+        rec_response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            messages=[{"role": "user", "content": rec_prompt}],
+        )
+        rec_raw = rec_response.content[0].text.strip()
+        try:
+            new_recs = json.loads(rec_raw)
+        except json.JSONDecodeError:
+            match = re.search(r"\[.*\]", rec_raw, re.DOTALL)
+            if match:
+                try:
+                    new_recs = json.loads(match.group())
+                except json.JSONDecodeError:
+                    new_recs = []
+        if new_recs:
+            print(f"📋 Extracted {len(new_recs)} new stock recommendations")
+
+    for rec in new_recs:
+        symbol = rec.get("symbol", "")
+        target_low, target_high = parse_target_range(rec.get("target_price", ""))
+        row = [
+            symbol,
+            rec.get("horizon", ""),
+            f"NEW BUY — {rec.get('rationale', '')}",
+            "BUY",
+            "",   # num_stocks
+            "",   # value
+            "",   # avg_buy_price
+            "",   # current_price
+            target_low,
+            target_high,
+            rec.get("rationale", ""),
+            "",   # trigger_price
+            "",   # trigger_action
+            "",   # trigger_num
+            "",   # val_at_trigger
         ]
         rows.append(row)
 

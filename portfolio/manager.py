@@ -581,12 +581,8 @@ class PortfolioManager:
                 self._run_claude_review(quotes)
                 last_review_time = time.time()
 
-            # ── Print status line ─────────────────────────────────
-            poll_count += 1
-            if poll_count % detail_interval == 0:
-                self.engine.print_position_status(quotes)
-            else:
-                self._print_status(quotes)
+            # ── Print compact status line ─────────────────────────
+            self._print_status(quotes)
 
             # ── Sleep until next poll ─────────────────────────────
             time.sleep(poll_interval)
