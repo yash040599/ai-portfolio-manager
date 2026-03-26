@@ -190,9 +190,23 @@ class Config:
     # ── Dry-Run Realism ──────────────────────────────────────────
     # SLIPPAGE_PCT: simulated slippage added to entries and exits
     #   in dry-run mode. Makes simulated P&L more realistic.
-    #   0.05 = 0.05% adverse fill on each trade.
-    #   For a ₹1,000 stock: ₹0.50 worse per share per trade.
-    SLIPPAGE_PCT: float = 0.05
+    #   0.15 = 0.15% adverse fill on each trade.
+    #   For a ₹1,000 stock: ₹1.50 worse per share per trade.
+    #   Real-world slippage on NSE is typically 0.1-0.3%.
+    SLIPPAGE_PCT: float = 0.15
+
+    # ── Time-Decay Targets ────────────────────────────────────────
+    # After TARGET_DECAY_AFTER_HOUR (24h format), reduce open position
+    # targets by TARGET_DECAY_PCT% to account for less time remaining.
+    # e.g. After 2:00 PM, a ₹100 → ₹106 target becomes ₹100 → ₹103.60
+    TARGET_DECAY_AFTER_HOUR: int   = 14     # 2:00 PM IST
+    TARGET_DECAY_PCT:        float = 40.0   # reduce target by this %
+
+    # ── Late Entry Guard ──────────────────────────────────────────
+    # MIN_MINUTES_FOR_ENTRY: don't open new positions if fewer than
+    # this many minutes remain until square-off. Prevents entering
+    # too late when full-day targets are impossible.
+    MIN_MINUTES_FOR_ENTRY: int = 60
 
     # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)

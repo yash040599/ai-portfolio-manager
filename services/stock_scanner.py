@@ -156,7 +156,7 @@ class StockScanner:
     # PRE-MARKET SCAN
     # ================================================================
 
-    def scan(self, quotes: dict, nifty_context: str = "", perf_context: str = "") -> list[dict]:
+    def scan(self, quotes: dict, nifty_context: str = "", perf_context: str = "", session_context: str = "") -> list[dict]:
         """
         Asks Claude to pick intraday trade candidates.
 
@@ -165,6 +165,7 @@ class StockScanner:
                     Each value has last_price, ohlc, volume, etc.
             nifty_context: optional string with NIFTY 50 index data for trend filter.
             perf_context: optional string with recent trading performance for Claude.
+            session_context: optional string with mid-day session data (P&L, traded symbols).
 
         Returns:
             List of trade plan dicts, each with:
@@ -179,7 +180,7 @@ class StockScanner:
             self.log.warning("No valid quotes to scan — snapshot is empty")
             return []
 
-        prompt = self._build_scan_prompt(snapshot, nifty_context, perf_context)
+        prompt = self._build_scan_prompt(snapshot, nifty_context, perf_context, session_context)
 
         self.log.info("Asking Claude to pick intraday trades...")
         try:
@@ -269,7 +270,7 @@ class StockScanner:
 
         return "\n".join(lines)
 
-    def _build_scan_prompt(self, snapshot: str, nifty_context: str = "", perf_context: str = "") -> str:
+    def _build_scan_prompt(self, snapshot: str, nifty_context: str = "", perf_context: str = "", session_context: str = "") -> str:
         """
         Builds the pre-market scan prompt.
         Claude is given the full price data and budget constraints,
@@ -289,7 +290,7 @@ Today is {today}, current time is {now} IST. All positions MUST be closed by 3:1
 BUDGET: ₹{budget:,} total capital.
 MAX POSITIONS: {max_positions} stocks simultaneously.
 MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
-{nifty_context}{perf_context}
+{nifty_context}{perf_context}{session_context}
 CRITICAL RULES — MUST FOLLOW:
 1. DO NOT chase stocks already up more than 2% from previous close. These moves are extended and likely to revert.
 2. DO NOT pick a stock just because it gapped up with volume — that move already happened. Look for PULLBACK ENTRIES near intraday support or VWAP.
@@ -426,6 +427,7 @@ REVIEW RULES — MUST FOLLOW:
 5. SECTOR ALIGNMENT: If NIFTY 50 has turned against your trade direction since entry, tighten the SL aggressively.
 6. DO NOT RE-ENTER A STOCK THAT ALREADY HIT STOP-LOSS TODAY unless you have a fundamentally different setup (opposite direction or completely new catalyst). Check CLOSED TRADES above before suggesting any NEW trade.
 7. NEW TRADE SIZING: QTY × ENTRY_PRICE must not exceed REMAINING BUDGET (₹{budget_remaining:,.0f}) or MAX PER STOCK (₹{max_per:,}), whichever is lower. Calculate QTY accordingly.
+8. DO NOT PANIC-EXIT PROFITABLE POSITIONS just because of "time pressure" when 30+ minutes remain. If a position is green and the trend is intact, HOLD or tighten the stop — do NOT exit a winner early to "lock in" a tiny profit. Only exit profitable positions if the trend has clearly reversed or target is unreachable in remaining time.
 
 Review each position and recommend ONE action per position.
 You may also suggest NEW trades if budget allows and there's a good setup (only if 60+ minutes remain).

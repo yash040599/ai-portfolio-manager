@@ -230,25 +230,34 @@ class OrderEngine:
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(order_id)
                 if fill_price:
-                    self.log.success(
-                        f"ORDER FILLED: {side} {qty}x {symbol} | "
-                        f"Estimated: ₹{entry:.2f} → Actual: ₹{fill_price:.2f} | "
-                        f"Order ID: {order_id}"
-                    )
-                    entry = fill_price
-                    cost = entry * qty
-                    # Recalculate ATR-based SL/target around actual fill
-                    if atr and atr > 0:
-                        multiplier = self.cfg.ATR_MULTIPLIER
-                        if side == "BUY":
-                            sl     = round(entry - multiplier * atr, 2)
-                            target = round(entry + multiplier * 2 * atr, 2)
-                        else:
-                            sl     = round(entry + multiplier * atr, 2)
-                            target = round(entry - multiplier * 2 * atr, 2)
-                        self.log.info(
-                            f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+                    # Sanity check: reject fills that deviate >5% from estimate
+                    deviation = abs(fill_price - entry) / entry if entry > 0 else 0
+                    if deviation > 0.05:
+                        self.log.error(
+                            f"FILL PRICE REJECTED: {symbol} fill ₹{fill_price:.2f} "
+                            f"deviates {deviation*100:.1f}% from estimate ₹{entry:.2f} "
+                            f"(>{5}% threshold) — using estimated price"
                         )
+                    else:
+                        self.log.success(
+                            f"ORDER FILLED: {side} {qty}x {symbol} | "
+                            f"Estimated: ₹{entry:.2f} → Actual: ₹{fill_price:.2f} | "
+                            f"Order ID: {order_id}"
+                        )
+                        entry = fill_price
+                        cost = entry * qty
+                        # Recalculate ATR-based SL/target around actual fill
+                        if atr and atr > 0:
+                            multiplier = self.cfg.ATR_MULTIPLIER
+                            if side == "BUY":
+                                sl     = round(entry - multiplier * atr, 2)
+                                target = round(entry + multiplier * 2 * atr, 2)
+                            else:
+                                sl     = round(entry + multiplier * atr, 2)
+                                target = round(entry - multiplier * 2 * atr, 2)
+                            self.log.info(
+                                f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+                            )
                 else:
                     self.log.warning(
                         f"ORDER PLACED but fill price unknown: {side} {qty}x {symbol} @ ₹{entry:.2f} | "
@@ -333,12 +342,21 @@ class OrderEngine:
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(exit_order_id)
                 if fill_price:
-                    self.log.success(
-                        f"EXIT FILLED: {exit_side} {qty}x {symbol} | "
-                        f"Estimated: ₹{exit_price:.2f} → Actual: ₹{fill_price:.2f} | "
-                        f"Reason: {reason}"
-                    )
-                    exit_price = fill_price
+                    # Sanity check: reject fills that deviate >5% from estimate
+                    deviation = abs(fill_price - exit_price) / exit_price if exit_price > 0 else 0
+                    if deviation > 0.05:
+                        self.log.error(
+                            f"EXIT FILL REJECTED: {symbol} fill ₹{fill_price:.2f} "
+                            f"deviates {deviation*100:.1f}% from estimate ₹{exit_price:.2f} "
+                            f"(>{5}% threshold) — using estimated price"
+                        )
+                    else:
+                        self.log.success(
+                            f"EXIT FILLED: {exit_side} {qty}x {symbol} | "
+                            f"Estimated: ₹{exit_price:.2f} → Actual: ₹{fill_price:.2f} | "
+                            f"Reason: {reason}"
+                        )
+                        exit_price = fill_price
                 else:
                     self.log.warning(
                         f"EXIT placed but fill price unknown: {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
@@ -400,6 +418,10 @@ class OrderEngine:
             target = pos["target_price"]
             entry  = pos["entry_price"]
             qty    = pos["qty"]
+
+            # Apply time-decay to targets after configured hour
+            self._adjust_target_for_time(pos)
+            target = pos["target_price"]  # re-read after possible adjustment
 
             # Calculate unrealised P&L and distances
             if side == "BUY":
@@ -525,6 +547,46 @@ class OrderEngine:
                 )
                 self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
                                  f"Auto trailing: profit ₹{profit:.2f}")
+
+    # ================================================================
+    # TIME-DECAY TARGET ADJUSTMENT
+    # ================================================================
+
+    def _adjust_target_for_time(self, pos: dict):
+        """
+        After TARGET_DECAY_AFTER_HOUR, reduce a position's target by
+        TARGET_DECAY_PCT% of the entry-to-target distance. Only applied
+        once per position (stores the original target in 'original_target').
+        """
+        now = datetime.datetime.now()
+        if now.hour < self.cfg.TARGET_DECAY_AFTER_HOUR:
+            return
+
+        # Already adjusted — don't decay again
+        if "original_target" in pos:
+            return
+
+        entry  = pos["entry_price"]
+        target = pos["target_price"]
+        side   = pos["side"]
+        decay  = self.cfg.TARGET_DECAY_PCT / 100
+
+        pos["original_target"] = target
+
+        if side == "BUY":
+            distance = target - entry
+            new_target = round(entry + distance * (1 - decay), 2)
+        else:
+            distance = entry - target
+            new_target = round(entry - distance * (1 - decay), 2)
+
+        pos["target_price"] = new_target
+        self.log.info(
+            f"TIME-DECAY: {pos['symbol']} target ₹{target:.2f} → ₹{new_target:.2f} "
+            f"(-{self.cfg.TARGET_DECAY_PCT:.0f}% after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00)"
+        )
+        self._log_action("TIME_DECAY_TARGET", pos["symbol"], "", 0, new_target,
+                         f"Original target: ₹{target:.2f}")
 
     # ================================================================
     # APPLY CLAUDE REVIEW ACTIONS

@@ -221,7 +221,7 @@ class PortfolioManager:
     # PRE-MARKET SCAN
     # ================================================================
 
-    def _run_pre_market_scan(self):
+    def _run_pre_market_scan(self, session_context: str = ""):
         """
         Fetches live quotes for the stock universe and asks Claude
         to pick the best intraday trade candidates.
@@ -267,7 +267,7 @@ class PortfolioManager:
 
         # Ask Claude to pick trades
         self.engine.claude_calls += 1
-        self._trade_plans = self.scanner.scan(quotes, nifty_context, perf_context)
+        self._trade_plans = self.scanner.scan(quotes, nifty_context, perf_context, session_context)
 
         if self._trade_plans:
             self.log.section("TRADE PLAN")
@@ -321,6 +321,20 @@ class PortfolioManager:
         """
         delay = self.cfg.ENTRY_DELAY_MINUTES
         if delay <= 0:
+            # Late entry guard: don't enter if too few minutes remain
+            now_check = datetime.datetime.now()
+            sq_off_check = now_check.replace(
+                hour=self.cfg.SQUARE_OFF_HOUR,
+                minute=self.cfg.SQUARE_OFF_MINUTE,
+                second=0, microsecond=0,
+            )
+            mins_to_close = (sq_off_check - now_check).total_seconds() / 60
+            if mins_to_close < self.cfg.MIN_MINUTES_FOR_ENTRY:
+                self.log.warning(
+                    f"Only {mins_to_close:.0f} min until square-off — "
+                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min for entry. Skipping."
+                )
+                return
             self._enter_positions()
             return
 
@@ -435,6 +449,20 @@ class PortfolioManager:
             )
 
         if confirmed:
+            # Late entry guard after observation period
+            now_post = datetime.datetime.now()
+            sq_off_post = now_post.replace(
+                hour=self.cfg.SQUARE_OFF_HOUR,
+                minute=self.cfg.SQUARE_OFF_MINUTE,
+                second=0, microsecond=0,
+            )
+            mins_left_post = (sq_off_post - now_post).total_seconds() / 60
+            if mins_left_post < self.cfg.MIN_MINUTES_FOR_ENTRY:
+                self.log.warning(
+                    f"Only {mins_left_post:.0f} min until square-off after observation — "
+                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries."
+                )
+                return
             self._enter_positions(confirmed)
         else:
             self.log.warning("No stocks passed the observation filter")
@@ -492,13 +520,27 @@ class PortfolioManager:
                 )
                 mins_remaining = (sq_off - sq_now).total_seconds() / 60
 
-                if mins_remaining >= self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
+                if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
                         f"scanning for new opportunities..."
                     )
+                    # Build session context for the re-scan so Claude knows
+                    # what already happened today (P&L, traded symbols)
+                    closed_trades = self.engine.closed_positions()
+                    traded_symbols = list({p["symbol"] for p in closed_trades})
+                    day_pnl = self.engine.day_pnl()
+                    session_ctx = (
+                        f"\nSESSION CONTEXT (mid-day re-scan):\n"
+                        f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                        f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
+                        f"  DO NOT pick any stock already traded today unless you have a "
+                        f"fundamentally different setup (opposite direction or new catalyst).\n"
+                        f"  If day P&L is negative, prioritise capital preservation — "
+                        f"pick only high-conviction setups with tight stops.\n"
+                    )
                     self._trade_plans = []
-                    self._run_pre_market_scan()
+                    self._run_pre_market_scan(session_context=session_ctx)
                     if self._trade_plans:
                         self._enter_positions()
                         last_review_time = time.time()  # reset review timer
