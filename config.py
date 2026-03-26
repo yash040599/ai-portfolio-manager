@@ -255,6 +255,26 @@ class Config:
     CLAUDE_COST_PER_CALL:  float = 3.0   # avg ₹3 per Claude API call on Pro
 
     # ══════════════════════════════════════════════════════════════
+    # INCOME TAX SETTINGS
+    # ══════════════════════════════════════════════════════════════
+    # Intraday equity trading is "speculative business income" and
+    # taxed at your personal income tax slab rate.
+    #
+    # TAX_RATE_PCT: Your marginal tax slab rate (%).
+    #   Set this to the slab you fall in based on your total income.
+    #   30 = 30% (income above ₹15L in new regime, or ₹10L old regime)
+    #   20 = 20% (₹12-15L new regime)
+    #   The bot uses this to show estimated tax liability on each
+    #   day's net profit in the trading report. This helps you track
+    #   how much you need to set aside for advance tax payments.
+    #
+    # TAX_CESS_PCT: Health & Education Cess — currently 4% on tax.
+    #   Effective rate = TAX_RATE_PCT × (1 + TAX_CESS_PCT/100)
+    #   e.g. 30% slab → 30 × 1.04 = 31.2% effective.
+    TAX_RATE_PCT:  float = 30.0   # your income tax slab rate
+    TAX_CESS_PCT:  float = 4.0    # health & education cess on tax
+
+    # ══════════════════════════════════════════════════════════════
     # NSE MARKET HOLIDAY CALENDAR — 2026
     # ══════════════════════════════════════════════════════════════
     # Source: https://zerodha.com/marketintel/holiday-calendar/

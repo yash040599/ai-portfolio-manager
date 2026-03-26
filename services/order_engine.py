@@ -762,8 +762,8 @@ class OrderEngine:
 
     def net_profit(self) -> dict:
         """
-        Returns the full P&L summary including all charges.
-        This is what goes into the final report.
+        Returns the full P&L summary including all charges and
+        estimated income tax liability on speculative business income.
         """
         gross_pnl = self.day_pnl()
         charges   = self.calculate_charges()
@@ -772,11 +772,19 @@ class OrderEngine:
         # Zerodha monthly subscription is NOT subtracted here — it's FYI.
         net = gross_pnl - charges["total_costs"]
 
+        # Estimated tax liability (only on positive net profit)
+        tax_rate = Config.TAX_RATE_PCT * (1 + Config.TAX_CESS_PCT / 100) / 100
+        estimated_tax = round(net * tax_rate, 2) if net > 0 else 0.0
+        profit_after_tax = round(net - estimated_tax, 2)
+
         return {
-            "gross_pnl":      round(gross_pnl, 2),
-            "charges":        charges,
-            "net_profit":     round(net, 2),
-            "is_profitable":  net > 0,
+            "gross_pnl":         round(gross_pnl, 2),
+            "charges":           charges,
+            "net_profit":        round(net, 2),
+            "is_profitable":     net > 0,
+            "tax_rate_pct":      round(Config.TAX_RATE_PCT * (1 + Config.TAX_CESS_PCT / 100), 2),
+            "estimated_tax":     estimated_tax,
+            "profit_after_tax":  profit_after_tax,
         }
 
     # ================================================================

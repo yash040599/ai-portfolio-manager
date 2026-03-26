@@ -50,6 +50,9 @@ A fully automated intraday trading bot that:
 - **Slippage model** in dry-run mode for realistic P&L simulation
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
+- **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
+- **Tax ledger generation** — `scripts/generate_tax_ledger.py` creates a clean per-FY TSV with every trade, all charges, deductible expenses, and estimated tax — ready for ITR-3 filing
+- **Tax guide** — `docs/TAX_GUIDE.md` covers ITR form selection, slab rates, deductible expenses, loss carry-forward rules, and advance tax deadlines
 
 ```bash
 python main.py --mode trade
@@ -234,9 +237,12 @@ ai-portfolio-manager/
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
 ├── scripts/
 │   ├── generate_sheet.py    # Generate TSV spreadsheet from portfolio report (Claude-powered)
+│   ├── generate_tax_ledger.py # Generate per-FY tax ledger with trade-wise charges for ITR filing
 │   ├── view_trades.py       # View all intraday trades from database with P&L summary
 │   ├── view_analyses.py     # View all portfolio analyses from database with action status
 │   └── import_reports_to_db.py # Import existing JSON report files into the SQLite database
+├── docs/
+│   └── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
 │   └── access_token.json    # Zerodha session token (auto-created on login)
@@ -252,6 +258,8 @@ ai-portfolio-manager/
 │           └── <month>/
 │               ├── trading_report_DD.txt
 │               └── trading_data_DD.json
+├── reports/tax/             # Tax ledgers grouped by Indian financial year
+│   └── tax_ledger_FY_YYYY-YY.tsv
 └── logs/                    # Rotating log files (portfolio.log)
 ```
 
@@ -321,6 +329,7 @@ The bot uses this data to:
 | `python scripts/view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
+| `python scripts/generate_tax_ledger.py` | Generate FY-wise tax ledger with per-trade charges breakdown, estimated tax, deductible expenses — ready for ITR-3 filing |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
 
 **Detailed usage:**
@@ -346,6 +355,18 @@ python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/portfolio.tsv
 
 # Import old JSON reports into the database (one-time)
 python scripts/import_reports_to_db.py
+
+# Generate tax ledger for current financial year
+python scripts/generate_tax_ledger.py
+
+# Generate tax ledger for a specific FY (e.g. FY 2025-26)
+python scripts/generate_tax_ledger.py --fy 2025
+
+# List all FYs with available trading data
+python scripts/generate_tax_ledger.py --list
+
+# Generate tax ledgers for all FYs at once
+python scripts/generate_tax_ledger.py --all
 ```
 
 Or query directly:

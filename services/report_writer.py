@@ -687,6 +687,21 @@ class ReportWriter:
                 f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
             f.write("\n")
 
+            # ── Estimated Income Tax ──────────────────────────────
+            tax_rate_pct = pnl.get("tax_rate_pct", 0)
+            estimated_tax = pnl.get("estimated_tax", 0)
+            profit_after_tax = pnl.get("profit_after_tax", pnl["net_profit"])
+            f.write("ESTIMATED INCOME TAX (speculative business income)\n")
+            f.write(f"{self.SEP_MINOR}\n")
+            f.write(f"  Tax slab rate         : {self.cfg.TAX_RATE_PCT}% + {self.cfg.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
+            if pnl["net_profit"] > 0:
+                f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
+                f.write(f"  Profit after tax      : ₹{profit_after_tax:+,.2f}\n")
+            else:
+                f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
+                f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
+            f.write("\n")
+
             f.write(f"  FYI: Zerodha Kite Connect subscription is ₹{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
             f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
@@ -775,10 +790,18 @@ class ReportWriter:
 
         net = gross_pnl - charges["total_costs"]
 
+        # Estimated tax liability (only on positive net profit)
+        tax_rate = self.cfg.TAX_RATE_PCT * (1 + self.cfg.TAX_CESS_PCT / 100) / 100
+        estimated_tax = round(net * tax_rate, 2) if net > 0 else 0.0
+        profit_after_tax = round(net - estimated_tax, 2)
+
         return {
-            "gross_pnl":     round(gross_pnl, 2),
-            "charges":       charges,
-            "net_profit":    round(net, 2),
-            "is_profitable": net > 0,
+            "gross_pnl":         round(gross_pnl, 2),
+            "charges":           charges,
+            "net_profit":        round(net, 2),
+            "is_profitable":     net > 0,
+            "tax_rate_pct":      round(self.cfg.TAX_RATE_PCT * (1 + self.cfg.TAX_CESS_PCT / 100), 2),
+            "estimated_tax":     estimated_tax,
+            "profit_after_tax":  profit_after_tax,
         }
 
