@@ -51,7 +51,7 @@ A fully automated intraday trading bot that:
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
-- **Tax ledger generation** — `scripts/generate_tax_ledger.py` creates a clean per-FY TSV with every trade, all charges, deductible expenses, and estimated tax — ready for ITR-3 filing
+- **Tax ledger** — `scripts/generate_tax_ledger.py` stores live trades in SQLite with per-trade charges, then prints an FY summary with total P&L, estimated tax, and deductible expenses. Two modes: `fill` (populate DB from Zerodha-verified JSONs + summary) and `summary` (read-only)
 - **Tax guide** — `docs/TAX_GUIDE.md` covers ITR form selection, slab rates, deductible expenses, loss carry-forward rules, and advance tax deadlines
 
 ```bash
@@ -237,7 +237,8 @@ ai-portfolio-manager/
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
 ├── scripts/
 │   ├── generate_sheet.py    # Generate TSV spreadsheet from portfolio report (Claude-powered)
-│   ├── generate_tax_ledger.py # Generate per-FY tax ledger with trade-wise charges for ITR filing
+│   ├── generate_tax_ledger.py # Tax ledger: fill DB from live JSONs / print FY tax summary
+│   ├── view_tax_ledger.py   # View all tax-ledger trades from DB for a financial year
 │   ├── view_trades.py       # View all intraday trades from database with P&L summary
 │   ├── view_analyses.py     # View all portfolio analyses from database with action status
 │   └── import_reports_to_db.py # Import existing JSON report files into the SQLite database
@@ -258,8 +259,6 @@ ai-portfolio-manager/
 │           └── <month>/
 │               ├── trading_report_DD.txt
 │               └── trading_data_DD.json
-├── reports/tax/             # Tax ledgers grouped by Indian financial year
-│   └── tax_ledger_FY_YYYY-YY.tsv
 └── logs/                    # Rotating log files (portfolio.log)
 ```
 
@@ -315,6 +314,7 @@ All historical data is stored in a single **SQLite database** at `data/trades.db
 | Table | Phase | What it stores |
 |---|---|---|
 | `trades` | Phase 2 | Intraday trade results — symbol, side, entry/exit price, qty, P&L, exit reason, market condition |
+| `tax_ledger` | Phase 2 | Live trades with Zerodha-verified prices, per-trade charges (brokerage, STT, GST, exchange, SEBI, stamp duty), net P&L — for ITR-3 filing |
 | `portfolio_analyses` | Phase 1 | Analysis results — symbol, action, conviction, reasoning, horizon, target price, current/invested values, risks |
 
 The bot uses this data to:
@@ -329,7 +329,9 @@ The bot uses this data to:
 | `python scripts/view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
-| `python scripts/generate_tax_ledger.py` | Generate FY-wise tax ledger with per-trade charges breakdown, estimated tax, deductible expenses — ready for ITR-3 filing |
+| `python scripts/generate_tax_ledger.py fill` | Populate tax_ledger DB from live trading JSONs (Zerodha-verified prices, actual trades only) and print FY tax summary |
+| `python scripts/generate_tax_ledger.py summary` | Print FY tax summary from DB — total P&L, estimated tax at slab rate, deductible expenses, day-wise breakdown |
+| `python scripts/view_tax_ledger.py` | View all tax-ledger trades from DB with entry/exit prices, charges, net P&L, and FY totals |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
 
 **Detailed usage:**
@@ -356,17 +358,23 @@ python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/portfolio.tsv
 # Import old JSON reports into the database (one-time)
 python scripts/import_reports_to_db.py
 
-# Generate tax ledger for current financial year
-python scripts/generate_tax_ledger.py
+# Fill tax ledger DB with live trades for current FY + print summary
+python scripts/generate_tax_ledger.py fill
 
-# Generate tax ledger for a specific FY (e.g. FY 2025-26)
-python scripts/generate_tax_ledger.py --fy 2025
+# Fill for a specific FY (e.g. FY 2025-26)
+python scripts/generate_tax_ledger.py fill --fy 2025
 
-# List all FYs with available trading data
-python scripts/generate_tax_ledger.py --list
+# Print FY tax summary only (no DB changes)
+python scripts/generate_tax_ledger.py summary
 
-# Generate tax ledgers for all FYs at once
-python scripts/generate_tax_ledger.py --all
+# List FYs with data in DB
+python scripts/generate_tax_ledger.py summary --list
+
+# View all tax-ledger trades for current FY
+python scripts/view_tax_ledger.py
+
+# View trades for a specific FY
+python scripts/view_tax_ledger.py --fy 2025
 ```
 
 Or query directly:
