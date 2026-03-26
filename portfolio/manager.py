@@ -497,9 +497,6 @@ class PortfolioManager:
         poll_interval    = self.cfg.PRICE_POLL_SECONDS
         review_interval  = self.cfg.CLAUDE_REVIEW_MINUTES * 60  # convert to seconds
         last_review_time = time.time()
-        poll_count       = 0
-        # Print full position table every N polls (roughly every 60s)
-        detail_interval  = max(1, 60 // poll_interval)
 
         while not self._shutdown_requested:
             now = datetime.datetime.now()
@@ -619,6 +616,9 @@ class PortfolioManager:
 
         if actions:
             self.engine.apply_review_actions(actions, quotes)
+
+        # Always show per-stock P&L table after Claude review
+        self.engine.print_position_status(quotes)
 
     # ================================================================
     # SQUARE OFF
