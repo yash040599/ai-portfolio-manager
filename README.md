@@ -51,7 +51,7 @@ A fully automated intraday trading bot that:
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
-- **Tax ledger** — `scripts/generate_tax_ledger.py` stores live trades in SQLite with per-trade charges, then prints an FY summary with total P&L, estimated tax, and deductible expenses. Two modes: `fill` (populate DB from Zerodha-verified JSONs + summary) and `summary` (read-only)
+- **Tax ledger** — separate scripts to fill, verify, view, and summarise intraday and capital-gains trades in SQLite. Intraday trades are auto-filled from live JSONs, then verified against the official Zerodha Tax P&L xlsx. Capital gains (short/long term) are imported from the same xlsx. See the **Tax Scripts** section below for details
 - **Tax guide** — `docs/TAX_GUIDE.md` covers ITR form selection, slab rates, deductible expenses, loss carry-forward rules, and advance tax deadlines
 
 ```bash
@@ -91,6 +91,7 @@ This installs:
 | `anthropic` | Claude AI API client |
 | `kiteconnect` | Zerodha Kite trading API client |
 | `python-dotenv` | Loads API keys from `.env` file |
+| `openpyxl` | Read Zerodha Tax P&L xlsx reports |
 
 ### Step 3: Get your API keys
 
@@ -236,12 +237,16 @@ ai-portfolio-manager/
 │   ├── report_writer.py     # Generates .txt reports and .json data dumps
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
 ├── scripts/
-│   ├── generate_sheet.py    # Generate TSV spreadsheet from portfolio report (Claude-powered)
-│   ├── generate_tax_ledger.py # Tax ledger: fill DB from live JSONs / print FY tax summary
-│   ├── view_tax_ledger.py   # View all tax-ledger trades from DB for a financial year
-│   ├── view_trades.py       # View all intraday trades from database with P&L summary
-│   ├── view_analyses.py     # View all portfolio analyses from database with action status
-│   └── import_reports_to_db.py # Import existing JSON report files into the SQLite database
+│   ├── generate_sheet.py           # Generate TSV spreadsheet from portfolio report (Claude-powered)
+│   ├── tax_db.py                   # Shared DB helpers for all tax scripts (migration, FY utils)
+│   ├── fill_intraday_ledger.py     # Fill intraday_tax_ledger from live JSONs (auto-runs after each trade day)
+│   ├── import_zerodha_taxpnl.py    # Import Zerodha Tax P&L xlsx — verify intraday + import capital gains
+│   ├── view_intraday_ledger.py     # View intraday trades with verified/unverified status
+│   ├── view_capital_gains_ledger.py # View capital gains trades (short-term / long-term)
+│   ├── tax_summary.py              # Tax summary — intraday, capital gains, or both (with grand total)
+│   ├── view_trades.py              # View all intraday trades from database with P&L summary
+│   ├── view_analyses.py            # View all portfolio analyses from database with action status
+│   └── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
 ├── docs/
 │   └── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 ├── data/
@@ -314,7 +319,8 @@ All historical data is stored in a single **SQLite database** at `data/trades.db
 | Table | Phase | What it stores |
 |---|---|---|
 | `trades` | Phase 2 | Intraday trade results — symbol, side, entry/exit price, qty, P&L, exit reason, market condition |
-| `tax_ledger` | Phase 2 | Live trades with Zerodha-verified prices, per-trade charges (brokerage, STT, GST, exchange, SEBI, stamp duty), net P&L — for ITR-3 filing |
+| `intraday_tax_ledger` | Phase 2 | Live intraday trades with per-trade charges, net P&L, and a `verified` flag (unverified → verified after Zerodha xlsx confirmation) — for ITR-3 Schedule BP |
+| `capital_gains_ledger` | Phase 2 | Short-term and long-term capital gains from Zerodha Tax P&L xlsx — entry/exit dates, holding period, FMV, taxable profit, all charges — for ITR-3 Schedule CG |
 | `portfolio_analyses` | Phase 1 | Analysis results — symbol, action, conviction, reasoning, horizon, target price, current/invested values, risks |
 
 The bot uses this data to:
@@ -329,10 +335,17 @@ The bot uses this data to:
 | `python scripts/view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
-| `python scripts/generate_tax_ledger.py fill` | Populate tax_ledger DB from live trading JSONs (Zerodha-verified prices, actual trades only) and print FY tax summary |
-| `python scripts/generate_tax_ledger.py summary` | Print FY tax summary from DB — total P&L, estimated tax at slab rate, deductible expenses, day-wise breakdown |
-| `python scripts/view_tax_ledger.py` | View all tax-ledger trades from DB with entry/exit prices, charges, net P&L, and FY totals |
-| `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported. Also auto-resolves `action_taken` by comparing portfolio quantities across consecutive reports. |
+| `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported |
+
+**Tax scripts:**
+
+| Script | Purpose |
+|---|---|
+| `python scripts/fill_intraday_ledger.py` | Fill `intraday_tax_ledger` from live trading JSONs (marks as `unverified`). Auto-runs after each live trade day |
+| `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verifies/corrects intraday data + imports short/long-term capital gains |
+| `python scripts/view_intraday_ledger.py` | View intraday trades with entry/exit prices, charges, net P&L, and verified status |
+| `python scripts/view_capital_gains_ledger.py` | View capital gains trades — filterable by `--type short_term` or `--type long_term` |
+| `python scripts/tax_summary.py` | Combined tax summary — speculative income, STCG, LTCG, estimated tax, deductible expenses |
 
 **Detailed usage:**
 
@@ -358,23 +371,31 @@ python scripts/generate_sheet.py 2026-03-16 -o ~/Desktop/portfolio.tsv
 # Import old JSON reports into the database (one-time)
 python scripts/import_reports_to_db.py
 
-# Fill tax ledger DB with live trades for current FY + print summary
-python scripts/generate_tax_ledger.py fill
+# Fill intraday tax ledger from live trading JSONs (current FY)
+python scripts/fill_intraday_ledger.py
 
-# Fill for a specific FY (e.g. FY 2025-26)
-python scripts/generate_tax_ledger.py fill --fy 2025
+# Fill for a specific FY or all FYs
+python scripts/fill_intraday_ledger.py --fy 2025
+python scripts/fill_intraday_ledger.py --all
 
-# Print FY tax summary only (no DB changes)
-python scripts/generate_tax_ledger.py summary
+# Import Zerodha Tax P&L xlsx (verify intraday + import capital gains)
+python scripts/import_zerodha_taxpnl.py
+python scripts/import_zerodha_taxpnl.py data/ZerodhaTaxPL/taxpnl-HMN785-2025_2026-Q1-Q4.xlsx
 
-# List FYs with data in DB
-python scripts/generate_tax_ledger.py summary --list
+# View intraday trades with verified status
+python scripts/view_intraday_ledger.py
+python scripts/view_intraday_ledger.py --fy 2025
 
-# View all tax-ledger trades for current FY
-python scripts/view_tax_ledger.py
+# View capital gains trades (all, short-term, or long-term)
+python scripts/view_capital_gains_ledger.py
+python scripts/view_capital_gains_ledger.py --type short_term
+python scripts/view_capital_gains_ledger.py --type long_term
 
-# View trades for a specific FY
-python scripts/view_tax_ledger.py --fy 2025
+# Tax summary (both intraday + capital gains by default)
+python scripts/tax_summary.py
+python scripts/tax_summary.py --intraday
+python scripts/tax_summary.py --capital-gains
+python scripts/tax_summary.py --fy 2025
 ```
 
 Or query directly:

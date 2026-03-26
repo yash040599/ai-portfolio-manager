@@ -748,6 +748,25 @@ class ReportWriter:
 
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
+
+        # ── Auto-fill intraday tax ledger for live trading days ───
+        if not dry_run:
+            try:
+                import sys as _sys, os as _os
+                _scripts = _os.path.join(
+                    _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                    "scripts",
+                )
+                if _scripts not in _sys.path:
+                    _sys.path.insert(0, _os.path.dirname(_scripts))
+                from scripts.fill_intraday_ledger import fill_fy
+                from scripts.tax_db import current_fy
+                n = fill_fy(current_fy())
+                if n:
+                    self.log.info(f"Tax ledger     : {n} trade(s) added to intraday_tax_ledger")
+            except Exception as e:
+                self.log.warning(f"Tax ledger auto-fill skipped: {e}")
+
         return txt_path
 
     # ================================================================

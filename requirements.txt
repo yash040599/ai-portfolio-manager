@@ -1,3 +1,4 @@
 anthropic
 kiteconnect
 python-dotenv
+openpyxl

@@ -274,6 +274,13 @@ class Config:
     TAX_RATE_PCT:  float = 30.0   # your income tax slab rate
     TAX_CESS_PCT:  float = 4.0    # health & education cess on tax
 
+    # ── Capital-gains tax (statutory flat rates, not slab-based) ──
+    # STCG on listed equity (held ≤ 12 months):  20%  (w.e.f. 23-Jul-2024)
+    # LTCG on listed equity (held > 12 months):  12.5% above ₹1.25 lakh exemption
+    STCG_TAX_RATE_PCT:     float = 20.0
+    LTCG_TAX_RATE_PCT:     float = 12.5
+    LTCG_EXEMPTION_LIMIT:  float = 125000.0   # annual LTCG exemption (₹1.25L)
+
     # ══════════════════════════════════════════════════════════════
     # NSE MARKET HOLIDAY CALENDAR — 2026
     # ══════════════════════════════════════════════════════════════
