@@ -30,7 +30,8 @@ A fully automated intraday trading bot that:
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from historical data to set intelligent SL/target levels (falls back to Claude's values if data unavailable)
 - **Actual fill prices** — in live mode, after placing a MARKET order, polls Zerodha's order trades API to get the real weighted-average fill price. Entry price, P&L, SL, and target are all recalculated on the actual fill — not the estimated quote price
-- **Fill price sanity check** — rejects fill prices that deviate >5% from the expected quote, treating them as corrupted data (logs a warning and keeps the original estimate)
+- **Live entry price validation** — before placing any order, cross-checks Claude's recommended entry price against Zerodha's live quote. If they differ by >5%, overrides with the live price to prevent hallucinated-price entries
+- **Always trusts Zerodha fills** — after a MARKET order fills, always uses Zerodha's actual fill price (not the pre-order estimate). SL, target, and P&L are recalculated on the real fill. Logs a warning if the fill deviates >5% but never rejects it
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 30 seconds, auto-exits on SL/target hits
 - **Compact live status** — prints a one-line status every poll (time, open/closed count, unrealised/realised P&L). Detailed per-stock table only after Claude review calls
@@ -52,6 +53,7 @@ A fully automated intraday trading bot that:
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
 - **Tax ledger & capital gains** — full tax infrastructure with separate DB tables, verification against Zerodha's official Tax P&L report, and combined tax summary. See the **[Taxation](#taxation)** section below
+- **Crash recovery** — if the bot is stopped (Ctrl+C, crash, terminal closed) while positions are still open on Zerodha, restarting it will automatically detect and resume monitoring those positions. Fetches open MIS positions from Zerodha, recalculates ATR-based SL/targets, and jumps straight to the monitor loop — no duplicate orders, no orphaned positions
 
 ```bash
 python main.py --mode trade

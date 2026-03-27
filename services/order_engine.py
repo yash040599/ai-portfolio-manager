@@ -68,6 +68,95 @@ class OrderEngine:
         self._budget = amount
 
     # ================================================================
+    # RESUME — LOAD EXISTING POSITIONS FROM ZERODHA
+    # ================================================================
+
+    def load_existing_positions(self) -> int:
+        """
+        Fetches today's open MIS positions from Zerodha and loads them
+        into the engine. Used when restarting after a crash so the bot
+        can resume monitoring positions that are still live.
+
+        Returns the number of positions loaded.
+        """
+        try:
+            positions_data = self.zerodha.get_positions()
+        except Exception as e:
+            self.log.error(f"Failed to fetch positions from Zerodha: {e}")
+            return 0
+
+        net_positions = positions_data.get("net", [])
+        loaded = 0
+        now = datetime.datetime.now()
+
+        for pos in net_positions:
+            # Only MIS (intraday) positions with open quantity
+            if pos.get("product") != "MIS":
+                continue
+            qty = pos.get("quantity", 0)
+            if qty == 0:
+                continue
+
+            symbol   = pos.get("tradingsymbol", "")
+            exchange = pos.get("exchange", "NSE")
+            avg_price = pos.get("average_price", 0)
+
+            if avg_price <= 0 or not symbol:
+                continue
+
+            side = "BUY" if qty > 0 else "SELL"
+            abs_qty = abs(qty)
+
+            # Calculate ATR-based SL/target around the actual entry
+            atr = self.calculate_atr(symbol, exchange)
+            if atr and atr > 0:
+                multiplier = self.cfg.ATR_MULTIPLIER
+                if side == "BUY":
+                    sl     = round(avg_price - multiplier * atr, 2)
+                    target = round(avg_price + multiplier * 2 * atr, 2)
+                else:
+                    sl     = round(avg_price + multiplier * atr, 2)
+                    target = round(avg_price - multiplier * 2 * atr, 2)
+            else:
+                # Fallback: 2% SL, 4% target
+                if side == "BUY":
+                    sl     = round(avg_price * 0.98, 2)
+                    target = round(avg_price * 1.04, 2)
+                else:
+                    sl     = round(avg_price * 1.02, 2)
+                    target = round(avg_price * 0.96, 2)
+
+            position = {
+                "symbol":       symbol,
+                "exchange":     exchange,
+                "side":         side,
+                "qty":          abs_qty,
+                "entry_price":  round(avg_price, 2),
+                "stop_loss":    sl,
+                "target_price": target,
+                "exit_price":   None,
+                "exit_reason":  None,
+                "status":       "OPEN",
+                "pnl":          0.0,
+                "entry_time":   now.strftime("%H:%M:%S"),
+                "exit_time":    None,
+                "rationale":    "Resumed from existing Zerodha position",
+                "order_id":     "RESUMED",
+            }
+            self.positions.append(position)
+            loaded += 1
+
+            sl_label = f"SL ₹{sl:.2f}" if atr else f"SL ₹{sl:.2f} (fallback)"
+            self.log.success(
+                f"Resumed: {side} {abs_qty}x {symbol} @ ₹{avg_price:.2f} | "
+                f"{sl_label} | Target ₹{target:.2f}"
+            )
+            self._log_action("RESUME", symbol, side, abs_qty, avg_price,
+                             "Loaded from existing Zerodha position")
+
+        return loaded
+
+    # ================================================================
     # ATR CALCULATION
     # ================================================================
 
@@ -136,6 +225,29 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = datetime.datetime.now()
+
+        # ── Validate entry price against live quote ───────────────
+        # Claude can hallucinate prices. Always cross-check vs Zerodha.
+        try:
+            live_quotes = self.zerodha.get_quotes(
+                [{"symbol": symbol, "exchange": exchange}]
+            )
+            live_price = live_quotes.get(
+                f"{exchange}:{symbol}", {}
+            ).get("last_price", 0)
+        except Exception:
+            live_price = 0
+
+        if live_price > 0:
+            deviation = abs(entry - live_price) / live_price
+            if deviation > 0.05:
+                self.log.warning(
+                    f"Entry price override: {symbol} Claude said ₹{entry:.2f} "
+                    f"but live quote is ₹{live_price:.2f} "
+                    f"({deviation*100:.1f}% off) — using live price"
+                )
+                entry = live_price
+                trade["entry_price"] = entry
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
@@ -230,34 +342,33 @@ class OrderEngine:
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(order_id)
                 if fill_price:
-                    # Sanity check: reject fills that deviate >5% from estimate
                     deviation = abs(fill_price - entry) / entry if entry > 0 else 0
                     if deviation > 0.05:
-                        self.log.error(
-                            f"FILL PRICE REJECTED: {symbol} fill ₹{fill_price:.2f} "
-                            f"deviates {deviation*100:.1f}% from estimate ₹{entry:.2f} "
-                            f"(>{5}% threshold) — using estimated price"
+                        self.log.warning(
+                            f"Fill price differs: {symbol} estimated ₹{entry:.2f} "
+                            f"→ actual ₹{fill_price:.2f} ({deviation*100:.1f}% off) "
+                            f"— using actual fill (Zerodha is source of truth)"
                         )
                     else:
                         self.log.success(
-                            f"ORDER FILLED: {side} {qty}x {symbol} | "
-                            f"Estimated: ₹{entry:.2f} → Actual: ₹{fill_price:.2f} | "
-                            f"Order ID: {order_id}"
+                            f"Fill confirmed: Order {order_id} | "
+                            f"Avg price: ₹{fill_price:.2f}"
                         )
-                        entry = fill_price
-                        cost = entry * qty
-                        # Recalculate ATR-based SL/target around actual fill
-                        if atr and atr > 0:
-                            multiplier = self.cfg.ATR_MULTIPLIER
-                            if side == "BUY":
-                                sl     = round(entry - multiplier * atr, 2)
-                                target = round(entry + multiplier * 2 * atr, 2)
-                            else:
-                                sl     = round(entry + multiplier * atr, 2)
-                                target = round(entry - multiplier * 2 * atr, 2)
-                            self.log.info(
-                                f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
-                            )
+                    # Always use the actual Zerodha fill price
+                    entry = fill_price
+                    cost = entry * qty
+                    # Recalculate ATR-based SL/target around actual fill
+                    if atr and atr > 0:
+                        multiplier = self.cfg.ATR_MULTIPLIER
+                        if side == "BUY":
+                            sl     = round(entry - multiplier * atr, 2)
+                            target = round(entry + multiplier * 2 * atr, 2)
+                        else:
+                            sl     = round(entry + multiplier * atr, 2)
+                            target = round(entry - multiplier * 2 * atr, 2)
+                        self.log.info(
+                            f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+                        )
                 else:
                     self.log.warning(
                         f"ORDER PLACED but fill price unknown: {side} {qty}x {symbol} @ ₹{entry:.2f} | "
@@ -342,13 +453,12 @@ class OrderEngine:
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(exit_order_id)
                 if fill_price:
-                    # Sanity check: reject fills that deviate >5% from estimate
                     deviation = abs(fill_price - exit_price) / exit_price if exit_price > 0 else 0
                     if deviation > 0.05:
-                        self.log.error(
-                            f"EXIT FILL REJECTED: {symbol} fill ₹{fill_price:.2f} "
-                            f"deviates {deviation*100:.1f}% from estimate ₹{exit_price:.2f} "
-                            f"(>{5}% threshold) — using estimated price"
+                        self.log.warning(
+                            f"Exit fill differs: {symbol} estimated ₹{exit_price:.2f} "
+                            f"→ actual ₹{fill_price:.2f} ({deviation*100:.1f}% off) "
+                            f"— using actual fill"
                         )
                     else:
                         self.log.success(
@@ -356,7 +466,8 @@ class OrderEngine:
                             f"Estimated: ₹{exit_price:.2f} → Actual: ₹{fill_price:.2f} | "
                             f"Reason: {reason}"
                         )
-                        exit_price = fill_price
+                    # Always use the actual Zerodha fill price
+                    exit_price = fill_price
                 else:
                     self.log.warning(
                         f"EXIT placed but fill price unknown: {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
@@ -376,6 +487,10 @@ class OrderEngine:
                     f"Exit order FAILED for {symbol}: {e} — "
                     f"MANUAL INTERVENTION NEEDED"
                 )
+                # Don't mark as CLOSED — the position is still open on Zerodha.
+                # Resume feature will pick it up on next restart.
+                self._log_action("EXIT_FAILED", symbol, exit_side, qty, exit_price, str(e))
+                return
 
         # Update position record
         position.update(
@@ -813,7 +928,8 @@ class OrderEngine:
         if not open_pos:
             return
 
-        print()  # newline before table
+        # Clear the in-place status line before printing the table
+        print(f"\r{' ' * 100}\r")
         self.log.info(f"{'─'*80}")
         self.log.info(f"  {'SYMBOL':<12} {'SIDE':<5} {'ENTRY':>8} {'CURRENT':>8} "
                        f"{'P&L':>10} {'SL':>8} {'SL%':>6} {'TGT':>8} {'TGT%':>6}")
@@ -891,3 +1007,120 @@ class OrderEngine:
             "price":  round(price, 2) if isinstance(price, (int, float)) else price,
             "detail": detail,
         })
+
+    # ================================================================
+    # END-OF-DAY RECONCILIATION WITH ZERODHA
+    # ================================================================
+
+    def reconcile_with_zerodha(self) -> int:
+        """
+        Fetches today's actual positions from Zerodha and compares
+        with our internal tracking. Corrects entry/exit prices and
+        P&L where they differ.
+
+        Called after square-off, before report generation, so the
+        report and DB have Zerodha's actual numbers.
+
+        Returns the number of positions that were corrected.
+        """
+        if self.cfg.DRY_RUN:
+            return 0
+
+        self.log.section("RECONCILIATION — Verifying against Zerodha")
+
+        zerodha_positions = self.zerodha.get_todays_positions()
+        if not zerodha_positions:
+            self.log.warning("No position data from Zerodha — skipping reconciliation")
+            return 0
+
+        # Build lookup: symbol → Zerodha position data
+        # Only MIS (intraday) positions
+        z_lookup: dict[str, dict] = {}
+        for zp in zerodha_positions:
+            if zp.get("product") != "MIS":
+                continue
+            sym = zp.get("tradingsymbol", "")
+            if sym:
+                z_lookup[sym] = zp
+
+        if not z_lookup:
+            self.log.info("No MIS positions found on Zerodha for today")
+            return 0
+
+        corrected = 0
+
+        for pos in self.positions:
+            if pos["status"] != "CLOSED":
+                continue
+
+            symbol = pos["symbol"]
+            zp = z_lookup.get(symbol)
+            if not zp:
+                continue
+
+            # Zerodha day position fields:
+            #   buy_quantity, sell_quantity, buy_price, sell_price,
+            #   quantity (net, 0 if squared off), pnl, realised
+            z_buy_qty    = zp.get("buy_quantity", 0)
+            z_sell_qty   = zp.get("sell_quantity", 0)
+            z_buy_price  = zp.get("buy_price", 0)
+            z_sell_price = zp.get("sell_price", 0)
+            z_pnl        = zp.get("pnl", 0)
+
+            # Determine Zerodha's entry/exit based on our trade side
+            if pos["side"] == "BUY":
+                z_entry = z_buy_price
+                z_exit  = z_sell_price
+                z_qty   = z_buy_qty
+            else:  # SELL (short)
+                z_entry = z_sell_price
+                z_exit  = z_buy_price
+                z_qty   = z_sell_qty
+
+            if z_entry <= 0 or z_exit <= 0:
+                continue
+
+            # Compare and correct
+            changes = []
+            old_entry = pos["entry_price"]
+            old_exit  = pos["exit_price"]
+            old_pnl   = pos["pnl"]
+
+            if abs(z_entry - old_entry) > 0.01:
+                changes.append(f"entry ₹{old_entry:.2f}→₹{z_entry:.2f}")
+                pos["entry_price"] = round(z_entry, 2)
+
+            if old_exit is not None and abs(z_exit - old_exit) > 0.01:
+                changes.append(f"exit ₹{old_exit:.2f}→₹{z_exit:.2f}")
+                pos["exit_price"] = round(z_exit, 2)
+
+            # Recalculate P&L from corrected prices
+            if pos["side"] == "BUY":
+                new_pnl = (pos["exit_price"] - pos["entry_price"]) * pos["qty"]
+            else:
+                new_pnl = (pos["entry_price"] - pos["exit_price"]) * pos["qty"]
+            new_pnl = round(new_pnl, 2)
+
+            if abs(new_pnl - old_pnl) > 0.01:
+                changes.append(f"P&L ₹{old_pnl:+,.2f}→₹{new_pnl:+,.2f}")
+                pos["pnl"] = new_pnl
+
+            if changes:
+                corrected += 1
+                self.log.warning(
+                    f"CORRECTED {symbol}: {' | '.join(changes)}"
+                )
+                self._log_action(
+                    "RECONCILE", symbol, pos["side"], pos["qty"],
+                    pos["entry_price"],
+                    f"Zerodha correction: {' | '.join(changes)}",
+                )
+            else:
+                self.log.success(f"{symbol}: ✓ matches Zerodha")
+
+        if corrected:
+            self.log.warning(f"Reconciliation: {corrected} position(s) corrected")
+        else:
+            self.log.success("Reconciliation: all positions match Zerodha ✓")
+
+        return corrected

@@ -60,35 +60,46 @@ class Logger:
 
     def info(self, message: str):
         """Plain informational message — no colour prefix."""
+        self._clear_status_line()
         print(f"  {message}")
         self._logger.info(message)
 
     def success(self, message: str):
         """Green ✓ — for completed actions."""
+        self._clear_status_line()
         self._print(self._GREEN, "✓", message)
         self._logger.info(f"SUCCESS — {message}")
 
     def warning(self, message: str):
         """Yellow ⚠ — for non-fatal issues."""
+        self._clear_status_line()
         self._print(self._YELLOW, "⚠", message)
         self._logger.warning(message)
 
     def error(self, message: str):
         """Red ✗ — for failures."""
+        self._clear_status_line()
         self._print(self._RED, "✗", message)
         self._logger.error(message)
 
     def section(self, title: str):
         """Prints a prominent section header."""
+        self._clear_status_line()
         bar = "=" * 58
         print(f"\n{bar}\n  {title}\n{bar}")
         self._logger.info(f"=== {title} ===")
 
     def blank(self):
         """Prints a blank line — for visual spacing in terminal."""
+        self._clear_status_line()
         print()
 
     # ── Internal helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _clear_status_line():
+        """Erase the in-place status line so the next print starts clean."""
+        print(f"\r{' ' * 100}\r", end="", flush=True)
 
     def _print(self, colour: str, symbol: str, message: str):
         bold_sym = f"{self._BOLD}{symbol}{self._RESET}"

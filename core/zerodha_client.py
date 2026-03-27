@@ -477,6 +477,43 @@ class ZerodhaClient:
         return None
 
     # ================================================================
+    # END-OF-DAY TRADE RECONCILIATION
+    # ================================================================
+
+    def get_todays_trades(self) -> list[dict]:
+        """
+        Fetches all executed trades for today from Zerodha.
+        Returns list of dicts with: tradingsymbol, exchange,
+        transaction_type (BUY/SELL), quantity, average_price,
+        order_id, product, fill_timestamp.
+
+        Uses Kite's trades() endpoint which gives actual fills
+        (not orders — one order can have multiple fills).
+        """
+        self._require_login()
+        try:
+            raw = self._kite.trades()
+            return raw or []
+        except Exception as e:
+            self.log.error(f"Failed to fetch today's trades from Zerodha: {e}")
+            return []
+
+    def get_todays_positions(self) -> list[dict]:
+        """
+        Fetches today's day-level positions from Zerodha.
+        Each position has: tradingsymbol, exchange, product,
+        buy_quantity, sell_quantity, buy_price, sell_price,
+        quantity (net), pnl, realised, unrealised, etc.
+        """
+        self._require_login()
+        try:
+            data = self._kite.positions()
+            return data.get("day", [])
+        except Exception as e:
+            self.log.error(f"Failed to fetch today's positions from Zerodha: {e}")
+            return []
+
+    # ================================================================
     # INTERNAL HELPERS
     # ================================================================
 

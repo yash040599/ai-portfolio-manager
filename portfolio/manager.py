@@ -186,36 +186,80 @@ class PortfolioManager:
         if self._shutdown_requested:
             return
 
-        self._run_pre_market_scan()
-        if self._shutdown_requested:
-            return
+        # ── Step 5b: Check for existing positions on Zerodha ─────
+        # If the bot crashed or was stopped while positions were open,
+        # resume monitoring them instead of starting fresh.
+        resumed = 0
+        if not self.cfg.DRY_RUN:
+            resumed = self.engine.load_existing_positions()
+            if resumed > 0:
+                self.log.success(
+                    f"Resumed {resumed} existing position(s) from Zerodha — "
+                    f"skipping to monitor loop"
+                )
 
-        if not self._trade_plans:
-            if self._scan_failed:
-                self.log.error("Scan failed — could not fetch market data. Exiting.")
-            else:
-                self.log.warning("No trades recommended by Claude. Nothing to do today.")
-            self._generate_report()
-            return
+        if resumed > 0:
+            # Already have live positions — run an immediate Claude
+            # review so it can assess the resumed positions, then
+            # start the normal monitor loop.
+            open_symbols = [
+                {"symbol": p["symbol"], "exchange": p["exchange"]}
+                for p in self.engine.open_positions()
+            ]
+            try:
+                quotes = self.zerodha.get_quotes(open_symbols)
+                self._run_claude_review(quotes)
+            except Exception as e:
+                self.log.warning(f"Initial review quote fetch failed: {e}")
+            self._run_monitor_loop()
+        else:
+            self._run_pre_market_scan()
+            if self._shutdown_requested:
+                return
 
-        # ── Step 6: Wait for market open ──────────────────────────
-        self._wait_for_market_open()
-        if self._shutdown_requested:
-            self._emergency_shutdown()
-            return
+            if not self._trade_plans:
+                if self._scan_failed:
+                    self.log.error("Scan failed — could not fetch market data. Exiting.")
+                else:
+                    self.log.warning("No trades recommended by Claude. Nothing to do today.")
+                self._generate_report()
+                return
 
-        # ── Step 7: Observation period + Enter positions ──────────
-        self._observe_and_enter()
+            # ── Step 6: Wait for market open ──────────────────────────
+            self._wait_for_market_open()
+            if self._shutdown_requested:
+                self._emergency_shutdown()
+                return
 
-        # ── Step 8: Monitor loop ──────────────────────────────────
-        self._run_monitor_loop()
+            # ── Step 7: Observation period + Enter positions ──────────
+            self._observe_and_enter()
+
+            # ── Step 8: Monitor loop ──────────────────────────────────
+            self._run_monitor_loop()
 
         # ── Step 9: Square off (if not already done) ──────────────
-        if self.engine.open_positions() and not self._shutdown_requested:
+        # Always attempt square-off — even on Ctrl+C. Real money
+        # positions must be closed. Resume feature is a safety net,
+        # not the primary shutdown path.
+        if self.engine.open_positions():
             self._square_off()
 
+        # ── Step 9b: Reconcile with Zerodha ─────────────────────
+        # Fetch actual trade data from Zerodha and correct any
+        # price/P&L discrepancies before generating the report.
+        try:
+            self.engine.reconcile_with_zerodha()
+        except Exception as e:
+            self.log.warning(f"Reconciliation failed: {e} — using internal data")
+
         # ── Step 10: Generate report ──────────────────────────────
-        self._generate_report()
+        try:
+            self._generate_report()
+        except Exception as e:
+            self.log.error(f"Report generation failed: {e}")
+            self.log.warning(
+                "Trading data may not be saved. Check Zerodha for actual P&L."
+            )
 
     # ================================================================
     # PRE-MARKET SCAN
@@ -1099,7 +1143,7 @@ class PortfolioManager:
         print(f"{'='*58}\n")
 
     def _print_status(self, quotes: dict):
-        """Compact one-line status during monitor loop."""
+        """Compact one-line status during monitor loop — overwrites in place."""
         open_pos   = self.engine.open_positions()
         closed_pos = self.engine.closed_positions()
         unrealised = self.engine.unrealised_pnl(quotes)
@@ -1110,14 +1154,15 @@ class PortfolioManager:
         u_color = "\033[92m" if unrealised >= 0 else "\033[91m"
         r_color = "\033[92m" if realised >= 0 else "\033[91m"
 
-        print(
-            f"\r  [{now}]  "
+        line = (
+            f"  [{now}]  "
             f"Open: {len(open_pos)}  "
             f"Closed: {len(closed_pos)}  "
             f"Unrealised: {u_color}₹{unrealised:+,.2f}\033[0m  "
-            f"Realised: {r_color}₹{realised:+,.2f}\033[0m  ",
-            end="", flush=True,
+            f"Realised: {r_color}₹{realised:+,.2f}\033[0m"
         )
+        # Clear with spaces then overwrite — prevents leftover characters
+        print(f"\r{' ' * 100}\r{line}", end="", flush=True)
 
     def _print_pnl_summary(self, pnl: dict):
         """Prints the final P&L breakdown to terminal."""
@@ -1172,7 +1217,7 @@ class PortfolioManager:
                 self.log.error("Force exit — some positions may still be open!")
                 sys.exit(1)
 
-            self.log.warning("\nShutdown requested — squaring off positions...")
+            self.log.warning("\nShutdown requested — will square off and exit...")
             self._shutdown_requested = True
 
         signal.signal(signal.SIGINT, handler)

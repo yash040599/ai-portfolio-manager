@@ -641,9 +641,9 @@ class ReportWriter:
                 f.write(
                     f"{p['symbol']:<12} {p['side']:<6} {p['qty']:>5} "
                     f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
-                    f"{p.get('exit_reason', 'OPEN'):<14} "
-                    f"{p.get('entry_time', '—'):<10} "
-                    f"{p.get('exit_time', '—'):<10}\n"
+                    f"{(p.get('exit_reason') or 'OPEN'):<14} "
+                    f"{(p.get('entry_time') or '—'):<10} "
+                    f"{(p.get('exit_time') or '—'):<10}\n"
                 )
 
             f.write("\n")
