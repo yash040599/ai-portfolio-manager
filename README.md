@@ -379,24 +379,46 @@ python scripts/backup_data.py --ssh
 python main.py --mode login
 ```
 
-### Daily operation
+### Daily operation (SSH in → run)
+
+Every time you SSH into the VM (including after a VM restart), you need to:
+
+1. **Activate the virtual environment** — the venv doesn't persist across SSH sessions
+2. **Navigate to the project directory**
+3. **Start the bot inside tmux** so it keeps running after you disconnect
 
 ```bash
-# Start a tmux/screen session so the bot survives SSH disconnect
-tmux new -s bot
+# 1. SSH into the VM
+ssh azureuser@<your-vm-ip>
 
-# Activate venv and run
-source venv/bin/activate
-python main.py --mode trade
+# 2. Go to the project and activate venv
+cd ai-portfolio-manager
+source venv/bin/activate      # prompt changes to (venv)
+
+# 3. Start a tmux session and run the bot
+tmux new -s bot
+python main.py --mode trade   # or --mode analyze
 ```
 
 When Zerodha login is needed, the bot prompts with a URL. Open it on your phone/laptop, log in, then paste the redirect URL back into SSH. After that you can detach (`Ctrl+B, D`) and disconnect.
 
-```bash
-# Re-attach later to check status
-tmux attach -t bot
+#### Reconnecting to a running session
 
-# Sync data back to GitHub after the trading day
+If the bot is already running inside tmux (you just disconnected SSH earlier):
+
+```bash
+ssh azureuser@<your-vm-ip>
+cd ai-portfolio-manager
+source venv/bin/activate
+tmux attach -t bot            # re-attach to the existing session
+```
+
+> If the VM **restarted** (or tmux was killed), `tmux attach` will fail with "no sessions". In that case start a new session with `tmux new -s bot` and re-run the bot.
+
+#### After the trading day
+
+```bash
+# Sync data back to GitHub
 python scripts/backup_data.py --ssh
 ```
 
