@@ -311,31 +311,65 @@ ai-portfolio-manager/
 
 ---
 
-## Running on a VM
+## Running on a VM (Azure Ubuntu)
 
-If you want to keep the bot running 24/7:
+Run the bot 24/7 on a headless Ubuntu VM. Zerodha login uses manual mode — paste the redirect URL from your phone/laptop via SSH.
 
-1. Use a **Windows VM with RDP access** or a **Linux VM** (needed for Zerodha browser login)
-2. Zip the project folder (exclude `__pycache__/`, `logs/`, `reports/`)
-3. On the VM:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. **Set the VM timezone to India** (critical — the bot uses local time for market hours):
-   ```bash
-   # Check current timezone
-   timedatectl status
-   # Set to IST
-   sudo timedatectl set-timezone Asia/Kolkata
-   ```
-5. Create your `.env` file with API keys
-6. Delete any old `data/access_token.json` (tokens are IP-specific)
-7. RDP/SSH into the VM and run:
-   ```bash
-   python main.py --mode trade
-   ```
-8. The bot will wait for market open, trade the full day, and generate reports
-9. Zerodha login pops up in the browser once per day — keep the RDP session alive until login completes, then you can disconnect
+### One-time setup
+
+```bash
+# 1. SSH into your VM
+ssh your-user@your-vm-ip
+
+# 2. Install Python 3.10+ and pip
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
+
+# 3. Clone the code repo
+git clone https://github.com/your-username/ai-portfolio-manager.git
+cd ai-portfolio-manager
+
+# 4. Create a virtual environment and install dependencies
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# 5. Create your .env file with API keys
+cat > .env << 'EOF'
+ZERODHA_API_KEY=your_key_here
+ZERODHA_API_SECRET=your_secret_here
+CLAUDE_API_KEY=your_key_here
+EOF
+
+# 6. Sync data (reports, DB, logs) from the backup repo
+#    Auto-clones the data repo if not present
+python scripts/backup_data.py
+
+# 7. Test Zerodha login (use manual mode — option 'm')
+python main.py --mode login
+```
+
+### Daily operation
+
+```bash
+# Start a tmux/screen session so the bot survives SSH disconnect
+tmux new -s bot
+
+# Activate venv and run
+source venv/bin/activate
+python main.py --mode trade
+```
+
+When Zerodha login is needed, the bot prompts with a URL. Open it on your phone/laptop, log in, then paste the redirect URL back into SSH. After that you can detach (`Ctrl+B, D`) and disconnect.
+
+```bash
+# Re-attach later to check status
+tmux attach -t bot
+
+# Sync data back to GitHub after the trading day
+python scripts/backup_data.py
+```
+
+> **Tip:** Zerodha access tokens are IP-specific. Delete `data/access_token.json` if you switch between local and VM — the bot will prompt for a fresh login.
 
 ---
 
