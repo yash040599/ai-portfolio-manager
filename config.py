@@ -33,12 +33,12 @@ class Config:
     # DYNAMIC BUDGET: The bot fetches your actual Zerodha account
     # balance at startup and displays it. The trading budget is:
     #   min(available_funds, MAX_BUDGET_INR)
-    # So even if you have ₹50K in Zerodha, the bot only risks ₹10K.
+    # So even if you have ₹50K in Zerodha, the bot only risks MAX_BUDGET_INR.
     # Increase this when you're confident in the bot's performance.
     #
     # MAX_BUDGET_INR: absolute cap on how much capital the bot can
     # deploy in a single day, regardless of account balance.
-    MAX_BUDGET_INR: int = 10_000
+    MAX_BUDGET_INR: int = 20_000
 
     # MIN_BALANCE_TO_TRADE: minimum Zerodha account balance required
     # to start trading. If your funds are below this, the bot logs

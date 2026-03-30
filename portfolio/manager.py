@@ -657,6 +657,18 @@ class PortfolioManager:
         if actions:
             self.engine.apply_review_actions(actions, quotes)
 
+        # Re-fetch quotes to include any newly added positions
+        all_open = self.engine.open_positions()
+        if all_open:
+            open_symbols = [
+                {"symbol": p["symbol"], "exchange": p["exchange"]}
+                for p in all_open
+            ]
+            try:
+                quotes = self.zerodha.get_quotes(open_symbols)
+            except Exception:
+                pass  # fall back to original quotes
+
         # Always show per-stock P&L table after Claude review
         self.engine.print_position_status(quotes)
 
