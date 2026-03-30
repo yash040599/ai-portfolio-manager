@@ -81,11 +81,11 @@ class ReportWriter:
         for path in glob.glob("reports/portfolio/*/*/portfolio_data_*.json"):
             path = path.replace("\\", "/")
             parts = path.split("/")
-            # parts: reports / portfolio / <year> / <month> / portfolio_data_DD.json
+            # parts: .../portfolio/<year>/<month>/portfolio_data_DD.json
             try:
-                year  = int(parts[2])
-                month = int(parts[3])
-                day   = int(re.search(r"portfolio_data_(\d+)\.json", parts[4]).group(1))
+                year  = int(parts[-3])
+                month = int(parts[-2])
+                day   = int(re.search(r"portfolio_data_(\d+)\.json", parts[-1]).group(1))
                 d     = datetime.date(year, month, day)
             except (ValueError, IndexError, AttributeError):
                 continue

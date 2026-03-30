@@ -10,7 +10,8 @@ After syncing, commits and pushes changes to the backup repo.
 
 Usage
 ─────
-    python scripts/backup_data.py              # full two-way sync
+    python scripts/backup_data.py              # full two-way sync (HTTPS)
+    python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/backup_data.py --dry-run    # show what would change (no writes)
 """
 
@@ -24,7 +25,8 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_ROOT  = os.path.join(os.path.dirname(PROJECT_ROOT), "ai-portfolio-manager-data")
 
-GITHUB_REPO_URL = "https://github.com/yash040599/ai-portfolio-manager-data.git"
+GITHUB_REPO_URL     = "https://github.com/yash040599/ai-portfolio-manager-data.git"
+GITHUB_REPO_URL_SSH = "git@github.com:yash040599/ai-portfolio-manager-data.git"
 
 # Folders/files to sync (relative to PROJECT_ROOT / BACKUP_ROOT)
 SYNC_ITEMS = [
@@ -131,19 +133,26 @@ def main():
     parser = argparse.ArgumentParser(description="Two-way sync data with private backup repo.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would change without making any writes.")
+    parser.add_argument("--ssh", action="store_true",
+                        help="Use SSH URL for cloning (for VMs with SSH key auth).")
     args = parser.parse_args()
 
     if not os.path.isdir(BACKUP_ROOT):
+        clone_url = GITHUB_REPO_URL_SSH if args.ssh else GITHUB_REPO_URL
         print(f"\n  Backup repo not found at: {BACKUP_ROOT}")
-        print(f"  Cloning from {GITHUB_REPO_URL} ...")
+        print(f"  Cloning from {clone_url} ...")
         parent_dir = os.path.dirname(BACKUP_ROOT)
         result = subprocess.run(
-            ["git", "clone", GITHUB_REPO_URL],
+            ["git", "clone", clone_url],
             cwd=parent_dir, capture_output=True, text=True,
         )
         if result.returncode != 0:
-            print(f"  ✗ Clone failed: {result.stderr.strip()}")
-            print(f"  Make sure you're authenticated with GitHub (run: gh auth login)")
+            print(f"  \u2717 Clone failed: {result.stderr.strip()}")
+            if args.ssh:
+                print(f"  Make sure your SSH key is added to GitHub.")
+            else:
+                print(f"  Make sure you're authenticated with GitHub (run: gh auth login)")
+                print(f"  On Linux VMs with SSH keys, use: python scripts/backup_data.py --ssh")
             sys.exit(1)
         print(f"  ✓ Cloned successfully.")
 

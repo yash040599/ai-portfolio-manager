@@ -72,10 +72,10 @@ def list_available_dates():
         return
     print(f"\n  Available portfolio report dates:\n")
     for f in files:
-        # Extract date from path: reports/portfolio/YYYY/MM/portfolio_data_DD.json
+        # Extract date from path: .../portfolio/YYYY/MM/portfolio_data_DD.json
         parts = f.replace("\\", "/").split("/")
-        year, month = parts[2], parts[3]
-        day = re.search(r"portfolio_data_(\d+)\.json", parts[4])
+        year, month = parts[-3], parts[-2]
+        day = re.search(r"portfolio_data_(\d+)\.json", parts[-1])
         if day:
             print(f"    {year}-{month}-{int(day.group(1)):02d}")
     print()

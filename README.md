@@ -372,8 +372,8 @@ CLAUDE_API_KEY=your_key_here
 EOF
 
 # 6. Sync data (reports, DB, logs) from the backup repo
-#    Auto-clones the data repo if not present
-python scripts/backup_data.py
+#    --ssh uses SSH key auth (required on Linux VMs)
+python scripts/backup_data.py --ssh
 
 # 7. Test Zerodha login (use manual mode — option 'm')
 python main.py --mode login
@@ -397,7 +397,7 @@ When Zerodha login is needed, the bot prompts with a URL. Open it on your phone/
 tmux attach -t bot
 
 # Sync data back to GitHub after the trading day
-python scripts/backup_data.py
+python scripts/backup_data.py --ssh
 ```
 
 > **Tip:** Zerodha access tokens are IP-specific. Delete `data/access_token.json` if you switch between local and VM — the bot will prompt for a fresh login.
@@ -563,7 +563,8 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
 
 2. **Sync** — run whenever you want to sync your data:
    ```bash
-   python scripts/backup_data.py              # two-way sync + push
+   python scripts/backup_data.py              # two-way sync + push (HTTPS)
+   python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs with SSH keys)
    python scripts/backup_data.py --dry-run    # preview changes
    ```
    If the data repo isn't cloned yet, the script auto-clones it into the parent folder on first run.
@@ -572,7 +573,8 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
    ```bash
    git clone https://github.com/your-username/ai-portfolio-manager.git
    cd ai-portfolio-manager
-   python scripts/backup_data.py   # auto-clones data repo + pulls remote data
+   python scripts/backup_data.py         # HTTPS (Windows/macOS)
+   python scripts/backup_data.py --ssh   # SSH (Linux VMs)
    ```
 
 ### How sync works
