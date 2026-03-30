@@ -1,18 +1,21 @@
 """
-Backup all gitignored data to a separate private Git repo.
+Two-way sync between local project data and a private Git backup repo.
 
-Copies data/, reports/, and logs/ to the companion repo at
-../ai-portfolio-manager-data/ and pushes the changes.
+Pulls the latest backup repo, then syncs in both directions:
+  - Files only in local  → copied to backup repo
+  - Files only in remote → copied to local project
+  - Files in both but different → asks which to keep (l/r)
 
-Excludes: .env, access_token.json, __pycache__, IDE files, OS junk.
+After syncing, commits and pushes changes to the backup repo.
 
 Usage
 ─────
-    python scripts/backup_data.py              # sync + commit + push
-    python scripts/backup_data.py --dry-run    # show what would be copied (no git)
+    python scripts/backup_data.py              # full two-way sync
+    python scripts/backup_data.py --dry-run    # show what would change (no writes)
 """
 
 import argparse
+import filecmp
 import os
 import shutil
 import subprocess
@@ -21,14 +24,16 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_ROOT  = os.path.join(os.path.dirname(PROJECT_ROOT), "ai-portfolio-manager-data")
 
-# Folders/files to back up (relative to PROJECT_ROOT)
-BACKUP_ITEMS = [
+GITHUB_REPO_URL = "https://github.com/yash040599/ai-portfolio-manager-data.git"
+
+# Folders/files to sync (relative to PROJECT_ROOT / BACKUP_ROOT)
+SYNC_ITEMS = [
     "data",
     "reports",
     "logs",
 ]
 
-# Skip these within the backed-up folders
+# Skip these within synced folders
 SKIP_NAMES = {
     "__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini",
     "access_token.json",
@@ -39,83 +44,70 @@ def should_skip(name: str) -> bool:
     return name in SKIP_NAMES or name.endswith((".pyc", ".pyo", ".swp", ".swo"))
 
 
-def sync_tree(src: str, dst: str, dry_run: bool) -> int:
-    """Recursively copy src → dst, skipping unwanted files. Returns file count."""
-    count = 0
-    for root, dirs, files in os.walk(src):
-        # Filter out skipped directories in-place
+def collect_files(base: str, folder: str) -> dict[str, str]:
+    """
+    Walk a folder and return {relative_path: absolute_path} for all
+    non-skipped files, relative to `base`.
+    """
+    result = {}
+    full = os.path.join(base, folder)
+    if not os.path.isdir(full):
+        return result
+    for root, dirs, files in os.walk(full):
         dirs[:] = [d for d in dirs if not should_skip(d)]
-
-        rel = os.path.relpath(root, src)
-        dst_dir = os.path.join(dst, rel) if rel != "." else dst
-
-        if not dry_run:
-            os.makedirs(dst_dir, exist_ok=True)
-
         for f in files:
             if should_skip(f):
                 continue
-            src_file = os.path.join(root, f)
-            dst_file = os.path.join(dst_dir, f)
-
-            # Only copy if source is newer or dest doesn't exist
-            if not os.path.exists(dst_file) or \
-               os.path.getmtime(src_file) > os.path.getmtime(dst_file):
-                if dry_run:
-                    rel_path = os.path.relpath(src_file, PROJECT_ROOT)
-                    print(f"    → {rel_path}")
-                else:
-                    shutil.copy2(src_file, dst_file)
-                count += 1
-
-    return count
+            abs_path = os.path.join(root, f)
+            rel_path = os.path.relpath(abs_path, base)
+            result[rel_path] = abs_path
+    return result
 
 
-def clean_deleted(src: str, dst: str, dry_run: bool) -> int:
-    """Remove files from dst that no longer exist in src."""
-    removed = 0
-    for root, dirs, files in os.walk(dst, topdown=False):
-        rel = os.path.relpath(root, dst)
-        src_dir = os.path.join(src, rel) if rel != "." else src
-
-        for f in files:
-            src_file = os.path.join(src_dir, f)
-            if not os.path.exists(src_file):
-                dst_file = os.path.join(root, f)
-                if dry_run:
-                    print(f"    ✕ (deleted) {os.path.relpath(dst_file, BACKUP_ROOT)}")
-                else:
-                    os.remove(dst_file)
-                removed += 1
-
-        # Remove empty directories
-        if not dry_run and os.path.isdir(root) and not os.listdir(root):
-            os.rmdir(root)
-
-    return removed
+def copy_file(src: str, dst: str, dry_run: bool):
+    """Copy src to dst, creating parent dirs as needed."""
+    if dry_run:
+        return
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy2(src, dst)
 
 
-def git_push(msg: str):
-    """Pull remote changes, stage all, commit, and push in the backup repo."""
+def git_pull():
+    """Pull latest from the backup repo. Returns True on success."""
+    result = subprocess.run(
+        ["git", "pull", "--no-rebase"], cwd=BACKUP_ROOT,
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        # First push to empty repo — pull fails, that's fine
+        if "couldn't find remote ref" in result.stderr.lower() or \
+           "no such ref" in result.stderr.lower():
+            print("  Backup repo is empty (first sync).")
+            return True
+        print(f"  ⚠ git pull failed: {result.stderr.strip()}")
+        return False
+    msg = result.stdout.strip()
+    if "Already up to date" in msg:
+        print("  Backup repo already up to date.")
+    else:
+        print("  Pulled latest from backup repo.")
+    return True
+
+
+def git_push(msg: str) -> bool:
+    """Stage all, commit, and push in the backup repo."""
     def run(cmd):
         subprocess.run(cmd, cwd=BACKUP_ROOT, check=True,
                        capture_output=True, text=True)
 
-    # Pull any data pushed from another machine first
-    try:
-        run(["git", "pull", "--no-rebase"])
-    except subprocess.CalledProcessError:
-        pass  # first push to empty repo — pull fails, that's fine
-
     run(["git", "add", "-A"])
 
-    # Check if there's anything to commit
     result = subprocess.run(
         ["git", "status", "--porcelain"],
         cwd=BACKUP_ROOT, capture_output=True, text=True,
     )
     if not result.stdout.strip():
-        print("\n  No changes to push — backup is already up to date.")
+        print("\n  No changes to push — backup repo is already up to date.")
         return False
 
     run(["git", "commit", "-m", msg])
@@ -123,54 +115,112 @@ def git_push(msg: str):
     return True
 
 
+def ask_conflict(rel_path: str) -> str:
+    """Ask user which version to keep for a conflicting file."""
+    while True:
+        choice = input(
+            f"    ≠ {rel_path}\n"
+            f"      Keep (l)ocal or (r)emote? [l/r]: "
+        ).strip().lower()
+        if choice in ("l", "r"):
+            return choice
+        print("      Please enter 'l' or 'r'.")
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Backup gitignored data to private repo.")
+    parser = argparse.ArgumentParser(description="Two-way sync data with private backup repo.")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be copied without making changes.")
+                        help="Show what would change without making any writes.")
     args = parser.parse_args()
 
     if not os.path.isdir(BACKUP_ROOT):
         print(f"\n  Backup repo not found at: {BACKUP_ROOT}")
-        print(f"  Clone it first:")
-        print(f"    git clone https://github.com/yash040599/-ai-portfolio-manager-data.git")
-        sys.exit(1)
+        print(f"  Cloning from {GITHUB_REPO_URL} ...")
+        parent_dir = os.path.dirname(BACKUP_ROOT)
+        result = subprocess.run(
+            ["git", "clone", GITHUB_REPO_URL],
+            cwd=parent_dir, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"  ✗ Clone failed: {result.stderr.strip()}")
+            print(f"  Make sure you're authenticated with GitHub (run: gh auth login)")
+            sys.exit(1)
+        print(f"  ✓ Cloned successfully.")
 
     if not os.path.isdir(os.path.join(BACKUP_ROOT, ".git")):
         print(f"\n  {BACKUP_ROOT} exists but is not a git repo.")
         sys.exit(1)
 
-    mode = "DRY RUN" if args.dry_run else "BACKUP"
-    print(f"\n  [{mode}] Syncing data → {os.path.basename(BACKUP_ROOT)}/")
+    mode = "DRY RUN" if args.dry_run else "SYNC"
+    print(f"\n  [{mode}] Two-way sync: local ↔ {os.path.basename(BACKUP_ROOT)}/")
 
-    total_copied = 0
-    total_removed = 0
+    # Step 1: Pull latest remote data
+    if not args.dry_run:
+        if not git_pull():
+            sys.exit(1)
+    print()
 
-    for item in BACKUP_ITEMS:
-        src = os.path.join(PROJECT_ROOT, item)
-        dst = os.path.join(BACKUP_ROOT, item)
+    # Step 2: Collect all files from both sides
+    local_files  = {}
+    remote_files = {}
+    for item in SYNC_ITEMS:
+        local_files.update(collect_files(PROJECT_ROOT, item))
+        remote_files.update(collect_files(BACKUP_ROOT, item))
 
-        if not os.path.exists(src):
-            continue
+    all_paths = sorted(set(local_files) | set(remote_files))
 
-        if os.path.isfile(src):
-            if not args.dry_run:
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copy2(src, dst)
-            print(f"    → {item}")
-            total_copied += 1
+    # Step 3: Classify and sync each file
+    copied_to_remote = 0
+    copied_to_local  = 0
+    conflicts        = 0
+    unchanged        = 0
+
+    for rel in all_paths:
+        in_local  = rel in local_files
+        in_remote = rel in remote_files
+
+        if in_local and not in_remote:
+            # Only in local → copy to backup repo
+            print(f"    → remote:  {rel}")
+            copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), args.dry_run)
+            copied_to_remote += 1
+
+        elif in_remote and not in_local:
+            # Only in remote → copy to local project
+            print(f"    ← local:   {rel}")
+            copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), args.dry_run)
+            copied_to_local += 1
+
         else:
-            copied = sync_tree(src, dst, args.dry_run)
-            removed = clean_deleted(src, dst, args.dry_run) if os.path.exists(dst) else 0
-            total_copied += copied
-            total_removed += removed
+            # Both exist — check if they differ
+            if filecmp.cmp(local_files[rel], remote_files[rel], shallow=False):
+                unchanged += 1
+                continue
+
+            # Content differs — ask user
+            conflicts += 1
+            if args.dry_run:
+                print(f"    ≠ conflict: {rel}")
+            else:
+                choice = ask_conflict(rel)
+                if choice == "l":
+                    copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), False)
+                    print(f"      → kept local")
+                    copied_to_remote += 1
+                else:
+                    copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), False)
+                    print(f"      ← kept remote")
+                    copied_to_local += 1
+
+    # Summary
+    print(f"\n  Summary: {copied_to_remote} → remote, {copied_to_local} ← local, "
+          f"{conflicts} conflict(s), {unchanged} unchanged")
 
     if args.dry_run:
-        print(f"\n  Would copy/update {total_copied} file(s), remove {total_removed} file(s).")
         return
 
-    print(f"\n  Synced {total_copied} file(s), removed {total_removed} stale file(s).")
-
-    if git_push("backup: sync data, reports, logs"):
+    # Step 4: Push changes to backup repo
+    if git_push("sync: two-way data sync"):
         print("  ✓ Pushed to remote.\n")
     else:
         print()

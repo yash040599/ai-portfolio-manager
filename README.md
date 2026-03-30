@@ -248,8 +248,7 @@ ai-portfolio-manager/
 │   ├── view_trades.py              # View all intraday trades from database with P&L summary
 │   ├── view_analyses.py            # View all portfolio analyses from database with action status
 │   ├── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
-│   ├── backup_data.py              # Backup gitignored data (DB, reports, logs) to a private Git repo
-│   └── recover_data.py             # Recover data from the private backup repo
+│   └── backup_data.py              # Two-way sync data (DB, reports, logs) with a private Git repo
 ├── docs/
 │   └── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 ├── data/
@@ -442,44 +441,40 @@ python scripts/tax_summary.py --fy 2025
 
 ---
 
-## Data Backup & Recovery
+## Data Sync
 
-The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain personal trading data). You can back them up to a **separate private Git repo** so your data is safe if you lose your local machine.
+The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain personal trading data). You can sync them with a **separate private Git repo** to keep data safe and portable across machines.
 
 ### Setting it up
 
 1. **Create a private repo** on GitHub (e.g. `your-username/ai-portfolio-manager-data`). Keep it **Private**.
 
-2. **Clone it** next to your main project folder:
+2. **Sync** — run whenever you want to sync your data:
    ```bash
-   cd /path/to/your/projects/   # parent of ai-portfolio-manager/
-   git clone https://github.com/your-username/ai-portfolio-manager-data.git
+   python scripts/backup_data.py              # two-way sync + push
+   python scripts/backup_data.py --dry-run    # preview changes
    ```
-   Your folder structure should look like:
-   ```
-   projects/
-   ├── ai-portfolio-manager/       # main code repo
-   └── ai-portfolio-manager-data/  # private data repo
-   ```
+   If the data repo isn't cloned yet, the script auto-clones it into the parent folder on first run.
 
-3. **Backup** — run whenever you want to sync your data:
+3. **Recover on a new machine:**
    ```bash
-   python scripts/backup_data.py              # sync + commit + push
-   python scripts/backup_data.py --dry-run    # preview what would be copied
-   ```
-
-4. **Recover** — on a new machine or after data loss:
-   ```bash
-   # Clone both repos
    git clone https://github.com/your-username/ai-portfolio-manager.git
-   git clone https://github.com/your-username/ai-portfolio-manager-data.git
-
-   # Restore data
    cd ai-portfolio-manager
-   python scripts/recover_data.py
+   python scripts/backup_data.py   # auto-clones data repo + pulls remote data
    ```
 
-### What gets backed up
+### How sync works
+
+| Scenario | Action |
+|----------|--------|
+| File only in local | Copied to backup repo |
+| File only in remote | Copied to local project |
+| File in both, identical | Skipped |
+| File in both, different | Asks: keep **(l)**ocal or **(r)**emote? |
+
+After syncing, all changes are committed and pushed to the backup repo.
+
+### What gets synced
 
 | Folder | Contents |
 |--------|----------|
@@ -489,7 +484,7 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
 
 **Excluded:** `access_token.json` (expires daily), `__pycache__`, OS junk files.
 
-> **Security:** The backup repo must be **Private** on GitHub. Only you (and any collaborators you explicitly invite) can access it. The main code repo has no link to the data repo — the connection only exists inside the backup/recovery scripts.
+> **Security:** The backup repo must be **Private** on GitHub. The main code repo has no link to the data repo — the connection only exists inside the sync script.
 
 ---
 
