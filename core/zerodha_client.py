@@ -60,28 +60,54 @@ class ZerodhaClient:
                 self._kite.set_access_token(saved["token"])
                 return
 
-        # No valid token — need browser OAuth flow
-        # If interactive, wait for user confirmation before opening browser
+        # No valid token — need OAuth flow
+        login_url = self._kite.login_url()
+
         if interactive:
             self.log.info("Zerodha login required (token expired or missing).")
+            print()
+            print(f"  Choose login method:")
+            print(f"    b = Open browser on this machine (default)")
+            print(f"    m = Manual / headless (paste URL from another device)")
+            print(f"    q = Quit")
             try:
-                answer = input(
-                    "\n  Press ENTER when you're ready to log in via browser "
-                    "(or type 'q' to quit): "
-                ).strip().lower()
+                answer = input("  Choice [b/m/q]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 answer = "q"
 
             if answer == "q":
                 raise RuntimeError("User skipped Zerodha login.")
+            elif answer == "m":
+                self._login_manual(login_url)
+                return
+            # else: fall through to browser login
 
-        login_url = self._kite.login_url()
-        self.log.info(f"Opening Zerodha login in browser...")
+        self._login_browser(login_url)
+
+    # ── Login helpers ─────────────────────────────────────────────
+
+    def _exchange_and_save(self, request_token: str):
+        """Exchange request_token for access_token and persist it."""
+        session = self._kite.generate_session(
+            request_token, api_secret=self.cfg.ZERODHA_API_SECRET
+        )
+        self._kite.set_access_token(session["access_token"])
+
+        with open(self.TOKEN_FILE, "w") as f:
+            json.dump({
+                "token": session["access_token"],
+                "date":  str(datetime.date.today()),
+            }, f)
+
+        self.log.success("Logged in to Zerodha successfully")
+
+    def _login_browser(self, login_url: str):
+        """Browser-based login — opens a local HTTP server to catch the redirect."""
+        self.log.info("Opening Zerodha login in browser...")
         self.log.info(f"If it doesn't open automatically: {login_url}")
 
         captured = []
 
-        # Minimal local server — sole purpose is to catch the redirect token
         class _TokenHandler(BaseHTTPRequestHandler):
             def do_GET(self):
                 params = parse_qs(urlparse(self.path).query)
@@ -92,10 +118,10 @@ class ZerodhaClient:
                     self.end_headers()
                     self.wfile.write(b"<h2>Login successful! Close this tab.</h2>")
             def log_message(self, *args):
-                pass  # Suppress HTTP server noise in terminal
+                pass
 
         server = HTTPServer(("localhost", 8080), _TokenHandler)
-        server.timeout = 300  # 5 minute timeout per request cycle
+        server.timeout = 300
         webbrowser.open(login_url)
 
         self.log.info("Waiting for Zerodha login in browser (5 min timeout)...")
@@ -108,20 +134,47 @@ class ZerodhaClient:
                     "Re-run the script when you can complete the browser login."
                 )
 
-        # Exchange one-time request_token for a reusable access_token
-        session = self._kite.generate_session(
-            captured[0], api_secret=self.cfg.ZERODHA_API_SECRET
-        )
-        self._kite.set_access_token(session["access_token"])
+        self._exchange_and_save(captured[0])
 
-        # Persist for today's subsequent runs
-        with open(self.TOKEN_FILE, "w") as f:
-            json.dump({
-                "token": session["access_token"],
-                "date":  str(datetime.date.today()),
-            }, f)
+    def _login_manual(self, login_url: str):
+        """
+        Headless / manual login for SSH-only VMs.
+        User opens the login URL on any device, completes login,
+        and pastes the redirect URL back into the terminal.
+        """
+        print()
+        print(f"  ┌─ MANUAL LOGIN ──────────────────────────────────────")
+        print(f"  │")
+        print(f"  │  1. Open this URL in any browser (phone/laptop):")
+        print(f"  │")
+        print(f"  │     {login_url}")
+        print(f"  │")
+        print(f"  │  2. Log in to Zerodha (credentials + TOTP)")
+        print(f"  │")
+        print(f"  │  3. After login, the browser will show an error page")
+        print(f"  │     (localhost refused to connect) — that's normal.")
+        print(f"  │     Copy the FULL URL from the browser address bar")
+        print(f"  │     and paste it below.")
+        print(f"  │")
+        print(f"  └────────────────────────────────────────────────────")
+        print()
 
-        self.log.success("Logged in to Zerodha successfully")
+        try:
+            redirect_url = input("  Paste redirect URL: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise RuntimeError("User cancelled manual login.")
+
+        # Extract request_token from the pasted URL
+        params = parse_qs(urlparse(redirect_url).query)
+        request_token = params.get("request_token", [None])[0]
+
+        if not request_token:
+            raise RuntimeError(
+                "Could not find request_token in the URL you pasted. "
+                "Make sure you copied the full URL from the browser address bar."
+            )
+
+        self._exchange_and_save(request_token)
 
     def force_relogin(self):
         """Deletes the cached token and triggers a fresh browser login."""

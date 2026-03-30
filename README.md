@@ -152,7 +152,7 @@ You need: `ZERODHA_API_KEY` and `ZERODHA_API_SECRET`
      - **API Secret** → this is your `ZERODHA_API_SECRET`
    - Keep these safe — don't share them
 
-> **Note:** Zerodha access tokens expire daily at midnight. The bot handles re-login automatically. On first run each day, a browser window opens for you to log in to Zerodha.
+> **Note:** Zerodha access tokens expire daily at midnight. The bot handles re-login automatically. On first run each day, you choose: open a browser on this machine, or **manual/headless mode** (copy the login URL, open it on your phone/laptop, paste the redirect URL back). Manual mode works on SSH-only VMs with no desktop.
 
 ---
 
@@ -239,6 +239,9 @@ python main.py --mode trade
 
 # Intraday trading bot — V2 candle strategy (dry-run by default)
 python main.py --mode trade --v2
+
+# Test Zerodha login only (shows account snapshot)
+python main.py --mode login
 ```
 
 You can start Phase 2 anytime — even the night before. It handles weekends, NSE holidays, late starts, and token expiry automatically. Press **Ctrl+C** to gracefully shut down (squares off all positions first).

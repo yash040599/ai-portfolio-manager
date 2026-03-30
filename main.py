@@ -14,10 +14,12 @@
 
 import sys
 from config              import Config
+from core.logger         import Logger
+from core.zerodha_client import ZerodhaClient
 from portfolio.analyser  import PortfolioAnalyser
 from portfolio.manager   import PortfolioManager
 
-VALID_MODES = {"analyze", "trade"}
+VALID_MODES = {"analyze", "trade", "login"}
 
 
 def main():
@@ -41,10 +43,11 @@ def main():
     use_v2 = "--v2" in sys.argv
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade] [--v2]")
+        print("Usage: python main.py --mode [analyze|trade|login] [--v2]")
         print("  analyze      — read-only portfolio analysis")
         print("  trade        — intraday trading bot (V1)")
         print("  trade --v2   — intraday trading bot (V2 candle strategy)")
+        print("  login        — test Zerodha login only")
         sys.exit(1)
 
     if mode == "analyze":
@@ -58,6 +61,16 @@ def main():
         else:
             runner = PortfolioManager(Config)
         runner.run()
+
+    elif mode == "login":
+        missing = Config.validate()
+        if missing:
+            for key in missing:
+                print(f"Missing in .env: {key}")
+            sys.exit(1)
+        client = ZerodhaClient(Config, Logger("ZerodhaLogin"))
+        client.login()
+        client.print_account_snapshot()
 
 
 if __name__ == "__main__":
