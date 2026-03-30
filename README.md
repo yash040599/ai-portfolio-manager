@@ -323,8 +323,39 @@ ssh your-user@your-vm-ip
 
 # 2. Install Python 3.10+ and pip
 sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
+```
 
-# 3. Clone the code repo
+### Authenticate with GitHub
+
+GitHub doesn't support password auth. Use one of these:
+
+**Option A — GitHub CLI (simplest):**
+```bash
+sudo apt install -y gh
+gh auth login
+# Choose: GitHub.com → HTTPS → Paste an authentication token
+```
+
+**Option B — Personal Access Token:**
+1. On GitHub: Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Generate a token with `repo` scope
+3. Clone using the token:
+   ```bash
+   git clone https://YOUR_USERNAME:YOUR_TOKEN@github.com/your-username/ai-portfolio-manager.git
+   ```
+
+**Option C — SSH key (most permanent):**
+```bash
+ssh-keygen -t ed25519 -C "azure-vm"
+cat ~/.ssh/id_ed25519.pub
+# Copy the output → GitHub: Settings → SSH and GPG keys → New SSH key
+git clone git@github.com:your-username/ai-portfolio-manager.git
+```
+
+### Install and run
+
+```bash
+# 3. Clone the code repo (if not done above)
 git clone https://github.com/your-username/ai-portfolio-manager.git
 cd ai-portfolio-manager
 
