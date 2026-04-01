@@ -392,10 +392,56 @@ ALL_CONTEXT = [
 ]
 
 
+# Freshness decay multipliers — patterns on older candles are less potent.
+# Index 0 = current candle, 1 = one candle back, 2 = two candles back.
+# Source: "Pattern potency decreases rapidly 3-5 bars after completion"
+_FRESHNESS_DECAY = [1.0, 0.7, 0.4]
+
+
+def _volume_factor(candles: list[dict], lookback: int = 10) -> float:
+    """
+    Returns a volume-based multiplier for pattern strength.
+
+    - Volume > 1.5× 10-candle avg → 1.3× (strong confirmation)
+    - Volume 0.5×-1.5× avg        → 1.0× (neutral)
+    - Volume < 0.5× avg           → 0.5× (weak / unreliable pattern)
+
+    Returns 1.0 if volume data is unavailable.
+    """
+    if len(candles) < 2:
+        return 1.0
+
+    current_vol = candles[-1].get("volume", 0)
+    if current_vol <= 0:
+        return 1.0
+
+    past = candles[-min(len(candles), lookback + 1):-1]
+    if not past:
+        return 1.0
+
+    vols = [c.get("volume", 0) for c in past if c.get("volume", 0) > 0]
+    if not vols:
+        return 1.0
+
+    avg_vol = sum(vols) / len(vols)
+    if avg_vol <= 0:
+        return 1.0
+
+    ratio = current_vol / avg_vol
+    if ratio > 1.5:
+        return 1.3
+    elif ratio < 0.5:
+        return 0.5
+    return 1.0
+
+
 def detect_all(candles: list[dict]) -> list[dict]:
     """
     Runs all pattern detectors on the given candle list.
     Returns list of detected pattern dicts, sorted by strength (highest first).
+
+    Applies volume confirmation factor: patterns on high-volume candles
+    get a strength boost; patterns on low volume get penalised.
 
     Example return:
       [{"pattern": "BULLISH_ENGULFING", "signal": "BULLISH", "strength": 3},
@@ -405,19 +451,63 @@ def detect_all(candles: list[dict]) -> list[dict]:
         return []
 
     found = []
+    vol_factor = _volume_factor(candles)
 
     # Single-candle patterns (only need the last candle)
     for fn in ALL_SINGLE:
         result = fn(candles[-1])
         if result:
+            # Apply volume confirmation
+            result["strength"] = result["strength"] * vol_factor
             found.append(result)
 
     # Multi-candle / context-aware patterns
     for fn in ALL_CONTEXT:
         result = fn(candles)
         if result:
+            result["strength"] = result["strength"] * vol_factor
             found.append(result)
 
+    found.sort(key=lambda x: x["strength"], reverse=True)
+    return found
+
+
+def detect_all_with_freshness(
+    candles: list[dict],
+    max_lookback: int = 3,
+) -> list[dict]:
+    """
+    Runs pattern detection on the last `max_lookback` candle slices
+    and applies freshness decay: current candle = 1.0×, one candle
+    ago = 0.7×, two candles ago = 0.4×.
+
+    Deduplicates patterns by name — keeps the freshest (highest score).
+    This prevents double-counting a pattern that persists across candles.
+    """
+    if not candles or len(candles) < 3:
+        return detect_all(candles)
+
+    seen: dict[str, dict] = {}  # pattern_name → best result
+
+    for offset in range(min(max_lookback, len(candles))):
+        if offset == 0:
+            subset = candles
+        else:
+            subset = candles[:-offset]
+
+        if len(subset) < 3:
+            break
+
+        decay = _FRESHNESS_DECAY[offset] if offset < len(_FRESHNESS_DECAY) else 0.3
+        results = detect_all(subset)
+
+        for r in results:
+            decayed_strength = r["strength"] * decay
+            name = r["pattern"]
+            if name not in seen or decayed_strength > seen[name]["strength"]:
+                seen[name] = {**r, "strength": decayed_strength}
+
+    found = list(seen.values())
     found.sort(key=lambda x: x["strength"], reverse=True)
     return found
 
@@ -426,6 +516,7 @@ def summarise_signals(patterns: list[dict]) -> dict:
     """
     Summarises a list of detected patterns into a net signal.
     Bullish patterns add their strength, bearish patterns subtract.
+    Strength values may be fractional (after volume/freshness decay).
 
     Returns:
       {
@@ -443,7 +534,7 @@ def summarise_signals(patterns: list[dict]) -> dict:
     if not patterns:
         return {"net_signal": "NEUTRAL", "score": 0, "patterns": [], "strongest": None}
 
-    score = 0
+    score = 0.0
     names = []
     for p in patterns:
         names.append(p["pattern"])
@@ -461,7 +552,7 @@ def summarise_signals(patterns: list[dict]) -> dict:
 
     return {
         "net_signal": net,
-        "score": score,
+        "score": round(score, 1),
         "patterns": names,
         "strongest": patterns[0] if patterns else None,
     }

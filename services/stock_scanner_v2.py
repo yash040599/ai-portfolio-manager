@@ -40,9 +40,10 @@ from core.logger                     import Logger
 from core.claude_client              import ClaudeClient
 from core.zerodha_client             import ZerodhaClient
 from services.stock_scanner          import StockScanner, _parse_price, _parse_int
-from services.candle_patterns        import detect_all, summarise_signals
+from services.candle_patterns        import detect_all, detect_all_with_freshness, summarise_signals
 from services.technical_indicators   import (
-    compute_technical_score, vwap, rsi, ema_crossover,
+    compute_technical_score, prev_day_sr_score,
+    vwap, rsi, ema_crossover, supertrend,
 )
 
 
@@ -122,8 +123,9 @@ class StockScannerV2(StockScanner):
     ) -> dict | None:
         """
         Runs full technical analysis on one stock:
-        - 15-min candle patterns
-        - Technical indicators (EMA, RSI, VWAP, SuperTrend)
+        - 15-min candle patterns (with freshness decay + volume confirmation)
+        - Technical indicators (EMA, RSI, VWAP, SuperTrend, prev-day S&R)
+        - Relative Volume (RVol) scoring
         - Daily candle context
 
         Returns a scored dict or None if insufficient data.
@@ -134,32 +136,49 @@ class StockScannerV2(StockScanner):
         if len(candles_15m) < 10:
             return None
 
-        # Candle patterns on 15-min chart
-        patterns = detect_all(candles_15m)
+        # Candle patterns with freshness decay and volume confirmation
+        patterns = detect_all_with_freshness(candles_15m)
         pattern_summary = summarise_signals(patterns)
 
-        # Technical indicators
-        tech = compute_technical_score(candles_15m, candles_day)
+        # Current price
+        current_price = candles_15m[-1]["close"] if candles_15m else 0
+
+        # Technical indicators (now includes prev-day S&R)
+        tech = compute_technical_score(candles_15m, candles_day, current_price)
 
         # Combine scores: candle patterns + technical indicators
         combined_score = pattern_summary["score"] + tech["score"]
 
-        # VWAP for the trading day
+        # ── Relative Volume (RVol) bonus/penalty ──────────────
+        # Compare today's volume so far to the average from recent
+        # daily candles. Unusual volume = something happening.
+        rvol = 0.0
         today_candles = self._filter_today_candles(candles_15m)
-        current_vwap = vwap(today_candles) if today_candles else 0
+        if today_candles and candles_day and len(candles_day) >= 5:
+            today_vol = sum(c.get("volume", 0) for c in today_candles)
+            recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
+            if recent_vols:
+                avg_daily_vol = sum(recent_vols) / len(recent_vols)
+                if avg_daily_vol > 0:
+                    rvol = today_vol / avg_daily_vol
+                    if rvol > 2.0:
+                        combined_score += 1   # unusual volume = bonus
+                    elif rvol < 0.3:
+                        combined_score -= 1   # dead volume = penalty
 
-        # Current price
-        current_price = candles_15m[-1]["close"] if candles_15m else 0
+        # VWAP for the trading day
+        current_vwap = vwap(today_candles) if today_candles else 0
 
         return {
             "symbol":          symbol,
             "exchange":        exchange,
             "current_price":   current_price,
-            "combined_score":  combined_score,
+            "combined_score":  round(combined_score, 1),
             "pattern_summary": pattern_summary,
             "technical":       tech,
             "vwap":            current_vwap,
             "candle_count":    len(candles_15m),
+            "rvol":            round(rvol, 2),
         }
 
     def _filter_today_candles(self, candles: list[dict]) -> list[dict]:
@@ -182,15 +201,16 @@ class StockScannerV2(StockScanner):
     # PRE-FILTER SCAN (MATH-BASED, FREE)
     # ================================================================
 
-    def _prefilter_universe(self, quotes: dict) -> list[dict]:
+    def _prefilter_universe(self, quotes: dict, nifty_trend: str = "") -> list[dict]:
         """
         Analyses all stocks in the universe using candle patterns
         and technical indicators. Returns the top candidates ranked
         by combined score.
 
-        NOTE: This makes 2 sequential API calls per stock (15-min +
-        daily candles). For NIFTY100 = ~200 calls, taking 2-3 minutes.
-        This runs once pre-market so latency is acceptable.
+        If nifty_trend is "BEARISH", BUY signals need a higher score
+        threshold (≥5 instead of default). Vice versa for "BULLISH"
+        — SELL signals need ≥5. This prevents trading against the
+        broad market direction with weak signals.
 
         Stocks below V2_MIN_SCORE are filtered out entirely.
         Both bullish AND bearish signals pass through (since we can
@@ -213,23 +233,43 @@ class StockScannerV2(StockScanner):
 
         # Filter out weak signals below V2_MIN_SCORE threshold
         min_score = self.cfg.V2_MIN_SCORE
-        scored = [s for s in scored if abs(s["combined_score"]) >= min_score]
+        filtered = []
+        for s in scored:
+            abs_score = abs(s["combined_score"])
+            if abs_score < min_score:
+                continue
+
+            # Nifty trend hard filter: against-trend trades need stronger signals
+            if nifty_trend == "BEARISH" and s["combined_score"] > 0 and abs_score < 5:
+                continue  # weak BUY in a bearish market — skip
+            if nifty_trend == "BULLISH" and s["combined_score"] < 0 and abs_score < 5:
+                continue  # weak SELL in a bullish market — skip
+
+            filtered.append(s)
+
+        if len(filtered) < len(scored):
+            skipped = len(scored) - len(filtered)
+            self.log.info(
+                f"  Nifty hard filter ({nifty_trend or 'NEUTRAL'}): "
+                f"dropped {skipped} weak against-trend signals"
+            )
 
         # Sort by absolute combined score (strongest signals first)
-        scored.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
+        filtered.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
 
         # Take top candidates
-        top = scored[:MAX_CANDIDATES]
+        top = filtered[:MAX_CANDIDATES]
 
         if top:
             self.log.info(f"  Top {len(top)} candidates by technical score:")
             for r in top:
                 ps = r["pattern_summary"]
                 patterns_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
+                rvol_str = f"  RVol: {r['rvol']:.1f}x" if r.get("rvol", 0) > 0 else ""
                 self.log.info(
                     f"    {r['symbol']:<14} score: {r['combined_score']:>+5.1f}  "
                     f"tech: {r['technical']['signal']:<12} "
-                    f"patterns: {patterns_str}"
+                    f"patterns: {patterns_str}{rvol_str}"
                 )
 
         return top
@@ -243,8 +283,15 @@ class StockScannerV2(StockScanner):
         V2 scan: pre-filter with candle math, then send top candidates
         to Claude with enriched technical data.
         """
-        # Step 1: Math-based pre-filter
-        candidates = self._prefilter_universe(quotes)
+        # Extract Nifty trend from context string for hard filter
+        nifty_trend = ""
+        if "BEARISH" in nifty_context.upper():
+            nifty_trend = "BEARISH"
+        elif "BULLISH" in nifty_context.upper():
+            nifty_trend = "BULLISH"
+
+        # Step 1: Math-based pre-filter (with Nifty trend hard filter)
+        candidates = self._prefilter_universe(quotes, nifty_trend)
 
         if not candidates:
             self.log.warning("V2 pre-filter found no candidates with signals")
@@ -304,16 +351,29 @@ class StockScannerV2(StockScanner):
             ema_info = tech["ema_cross"]
             st_info = tech["supertrend"]
 
+            # Previous day S&R levels
+            sr = tech.get("prev_day_sr", {})
+            sr_str = ""
+            if sr.get("signal") in ("AT_RESISTANCE", "AT_SUPPORT"):
+                sr_str = f"  PrevDay: {sr['signal']}"
+            if sr.get("pivot", 0) > 0:
+                sr_str += f"  Pivot: ₹{sr['pivot']:.2f}"
+
+            # Relative volume
+            rvol_str = ""
+            if c.get("rvol", 0) > 0:
+                rvol_str = f"  RVol: {c['rvol']:.1f}x"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
-                f"Vol: {volume:>12,}  "
+                f"Vol: {volume:>12,}{rvol_str}  "
                 f"VWAP: ₹{c['vwap']:.2f}  "
                 f"RSI: {rsi_val:.0f}  "
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]"
+                f"Patterns: [{patterns}]{sr_str}"
             )
 
         return "\n".join(lines)
@@ -347,6 +407,8 @@ INDICATOR GUIDE:
   BEARISH_CROSS = fast EMA just crossed below slow (strong SELL signal).
 - SuperTrend: UP = bullish trend, DOWN = bearish trend. Trend changes are strong signals.
 - VWAP: price above VWAP = bullish. Below VWAP = bearish. Near VWAP = mean-reversion zone.
+- RVol (Relative Volume): > 2.0× = unusual activity (high conviction). < 0.5× = avoid (no interest).
+- PrevDay S&R: AT_RESISTANCE = near yesterday's high (headwind for BUY). AT_SUPPORT = near yesterday's low (support for BUY). Pivot = (H+L+C)/3 institutional reference.
 - Candle patterns: HAMMER, BULLISH_ENGULFING, MORNING_STAR = bullish reversal.
   SHOOTING_STAR, BEARISH_ENGULFING, EVENING_STAR = bearish reversal.
   THREE_WHITE_SOLDIERS = strong bullish. THREE_BLACK_CROWS = strong bearish.

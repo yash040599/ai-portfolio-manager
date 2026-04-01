@@ -66,13 +66,15 @@ An upgraded version of the intraday trading bot that adds a **mathematical pre-f
 
 **How it works:**
 - **Pre-market**: fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API
-- **14 candlestick patterns** detected per stock (Hammer, Engulfing, Morning Star, Doji, etc.)
-- **4 technical indicators** computed per stock: EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10,3)
-- **Composite score** (-10 to +10) ranks all stocks — only those above `V2_MIN_SCORE` (default: 2.0) pass through
+- **14 candlestick patterns** detected per stock (Hammer, Engulfing, Morning Star, Doji, etc.) — volume-confirmed and freshness-decayed
+- **5 technical indicators** computed per stock: EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10,3), Previous Day S&R
+- **Composite score** (~-18 to +18) ranks all stocks — only those above `V2_MIN_SCORE` (default: 2.0) pass through
+- **RVol filter** — Relative Volume (today vs 5-day avg) adds +1 bonus for unusual activity, -1 penalty for dead stocks
+- **Nifty trend hard filter** — against-market signals need |score| ≥ 5 to pass (trade with the trend)
 - **Top 15 candidates** sent to Claude with their exact indicator values, so Claude can reason about confluences ("RSI oversold + Hammer + SuperTrend UP = strong BUY")
 - **Dynamic poll interval** — polling doubles speed when any position is within 0.5% of SL or target
 - **Candle-aware Claude reviews** — position reviews include fresh 5-min candle patterns, RSI, EMA, VWAP per stock, so Claude can see momentum fading or reversal patterns forming in real-time
-- **Periodic candle re-scan** — every 15 min (free, no Claude cost), re-analyses open positions for strong technical signals
+- **Periodic candle re-scan** — every 15 min (free, no Claude cost), re-analyses open positions for strong technical signals. If candles form a **strong contrary signal** (score ±4 against your position), automatically tightens the stop-loss to lock in profit or move to breakeven — no need to wait for the next Claude review
 
 All V1 features are preserved — ATR-based SL, trailing stops, circuit breaker, crash recovery, etc. V2 is opt-in: if it has issues, just drop the `--v2` flag.
 

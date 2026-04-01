@@ -370,14 +370,23 @@ class PortfolioManagerV2(PortfolioManager):
                 self.log.info("V2 candle re-scan: refreshing technical data for open positions")
                 for pos in self.engine.open_positions():
                     fresh = self.scanner._analyse_stock(pos["symbol"], pos.get("exchange", "NSE"))
-                    if fresh and abs(fresh["combined_score"]) >= 5:
-                        ps = fresh["pattern_summary"]
-                        patterns = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
+                    if not fresh:
+                        continue
+
+                    score = fresh["combined_score"]
+                    ps = fresh["pattern_summary"]
+                    patterns = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
+
+                    if abs(score) >= 5:
                         self.log.info(
-                            f"  {pos['symbol']}: score {fresh['combined_score']:+.1f}  "
+                            f"  {pos['symbol']}: score {score:+.1f}  "
                             f"tech: {fresh['technical']['signal']}  "
                             f"patterns: [{patterns}]"
                         )
+
+                    # Auto-tighten SL on strong contrary signal
+                    self._auto_protect_on_contrary_signal(pos, fresh, quotes)
+
                 self._last_candle_scan = time.time()
 
             # ── Claude review (with candle context) ───────────────
@@ -432,3 +441,79 @@ class PortfolioManagerV2(PortfolioManager):
                 pass
 
         self.engine.print_position_status(quotes)
+
+    # ================================================================
+    # AUTO-PROTECT: TIGHTEN SL ON CONTRARY CANDLE SIGNALS
+    # ================================================================
+
+    def _auto_protect_on_contrary_signal(
+        self,
+        pos: dict,
+        analysis: dict,
+        quotes: dict,
+    ):
+        """
+        When the free candle re-scan detects a strong signal AGAINST
+        an open position, auto-tighten the stop-loss to breakeven or
+        lock in partial profit. This acts immediately — no need to
+        wait for the next Claude review.
+
+        Triggers:
+          - BUY position + score <= -4  (strong bearish signal)
+          - SELL position + score >= +4 (strong bullish signal)
+
+        Action:
+          - If in profit: move SL to lock 50% of current profit
+          - If at breakeven or loss: move SL to entry price (breakeven)
+          - SL only moves in the protective direction (never loosened)
+        """
+        score  = analysis["combined_score"]
+        side   = pos["side"]
+        symbol = pos["symbol"]
+        entry  = pos["entry_price"]
+        old_sl = pos["stop_loss"]
+
+        # Check if signal is contrary to position direction
+        contrary = (side == "BUY" and score <= -4) or \
+                   (side == "SELL" and score >= 4)
+
+        if not contrary:
+            return
+
+        # Get current price from quotes
+        key = f"{pos.get('exchange', 'NSE')}:{symbol}"
+        q = quotes.get(key, {})
+        current_price = q.get("last_price", 0)
+        if current_price <= 0:
+            return
+
+        # Calculate new protective SL
+        if side == "BUY":
+            profit = current_price - entry
+            if profit > 0:
+                # In profit — lock 50%
+                new_sl = round(entry + profit * 0.5, 2)
+            else:
+                # At loss — move SL to breakeven (entry)
+                new_sl = entry
+
+            # SL must only move UP for BUY (never loosen)
+            if new_sl <= old_sl:
+                return
+        else:
+            profit = entry - current_price
+            if profit > 0:
+                new_sl = round(entry - profit * 0.5, 2)
+            else:
+                new_sl = entry
+
+            if new_sl >= old_sl:
+                return
+
+        # Apply the tighter SL
+        pos["stop_loss"] = new_sl
+        patterns = ", ".join(analysis["pattern_summary"]["patterns"][:3])
+        self.log.warning(
+            f"⚠ CANDLE PROTECT {symbol}: contrary signal (score {score:+.1f}, "
+            f"[{patterns}]) → SL tightened ₹{old_sl:.2f} → ₹{new_sl:.2f}"
+        )

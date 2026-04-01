@@ -32,13 +32,18 @@ For each stock in universe (50-200 stocks):
   → Fetch 15-minute candles (last 2 days) from Zerodha Historical API
   → Fetch daily candles (last 30 days) for trend context
   → Run 14 candlestick pattern detectors on 15-min data
+      • Volume confirmation: pattern strength ×1.3 if candle volume > 1.5× avg
+      • Freshness decay: current candle = 1.0×, 1-ago = 0.7×, 2-ago = 0.4×
   → Compute technical indicators:
       • EMA(9) vs EMA(21) crossover — momentum direction
       • RSI(14) — overbought/oversold detection
       • VWAP — institutional fair value (today's candles only)
       • SuperTrend(10, 3.0) — ATR-based trend-following
       • Daily EMA(9/21) — higher timeframe trend bias
-  → Calculate composite score (-10 to +10)
+      • Previous day H/L/C — support/resistance proximity
+  → Calculate composite score (~-18 to +18)
+  → Compute RVol (today's volume / 5-day average) — bonus/penalty
+  → Nifty trend hard filter: against-trend signals need |score| >= 5
   → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
   → Rank by absolute score (strongest signals first)
   → Take top 15 candidates
@@ -56,6 +61,8 @@ Build enriched snapshot for each of the 15 candidates:
   → EMA(9/21) signal (BULLISH_CROSS / BEARISH_CROSS / NONE)
   → SuperTrend direction (UP / DOWN)
   → Detected candle patterns ([BULLISH_ENGULFING, HAMMER])
+  → Previous day S&R signal + pivot price
+  → RVol (relative volume vs 5-day avg)
   → Composite score (+5.2)
   → Send to Claude with indicator guide
 
@@ -79,7 +86,10 @@ Every 10 seconds (or 5 seconds when near SL/target):
 Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
   → Re-run candle pattern analysis on all open positions
   → Log positions with |score| >= 5 (strong signal forming)
-  → This is early warning before Claude review (no API cost)
+  → AUTO-PROTECT: if contrary signal score reaches ±4 against position:
+      BUY pos + score ≤ -4  → tighten SL (lock 50% profit or move to breakeven)
+      SELL pos + score ≥ +4 → tighten SL (lock 50% profit or move to breakeven)
+    This is immediate, rule-based protection — no Claude cost, no 10-min wait
 
 Every 25 minutes — PAID:
   → Fetch fresh 5-MINUTE candles for each open position
@@ -131,6 +141,30 @@ Every 25 minutes — PAID:
 - **Why it works:** Intraday trades that align with the daily trend have higher win rates
 - **Score contribution:** ±1 (only if spread > 1%)
 
+### Previous Day High/Low as Support/Resistance
+- **What:** Yesterday's high, low, and pivot (H+L+C)/3 are natural support/resistance levels
+- **Why it works:** Institutional traders and algorithms use these levels actively. A stock near yesterday's high faces selling pressure (resistance); near yesterday's low finds buyers (support)
+- **Score contribution:** AT_RESISTANCE = -1, AT_SUPPORT = +1, ABOVE/BELOW_PIVOT = ±0.5
+
+### Volume Confirmation (applied to candle patterns)
+- **What:** Pattern candle volume compared to 10-candle rolling average
+- **Why it works:** A hammer on high volume is a real reversal signal; on low volume it's noise. Investopedia and Zerodha Varsity both emphasise volume as the "single most important confirmation"
+- **Effect:** High volume (>1.5× avg) → pattern strength ×1.3. Low volume (<0.5× avg) → strength ×0.5
+
+### Pattern Freshness Decay
+- **What:** Patterns detected on older candles carry less weight
+- **Why it works:** "Pattern potency decreases rapidly 3-5 bars after completion" (Investopedia). A hammer forming right now is more actionable than one from 45 minutes ago
+- **Decay:** Current candle = 1.0×, 1 candle ago = 0.7×, 2 candles ago = 0.4×
+
+### Relative Volume (RVol)
+- **What:** Today's volume so far compared to the 5-day daily average
+- **Why it works:** RVol > 2.0 = unusual activity (news, institutional flow, catalyst). High RVol stocks are more likely to make meaningful moves
+- **Score contribution:** RVol > 2.0× = +1 bonus, RVol < 0.3× = -1 penalty
+
+### Nifty Trend Hard Filter
+- **What:** When NIFTY 50 is BEARISH, against-trend BUY signals need score ≥ 5 (instead of ≥ 2). When BULLISH, against-trend SELL signals need ≥ 5
+- **Why it works:** Institutional practice: trade with the broader market. Weak counter-trend signals fail much more often than with-trend signals
+
 ---
 
 ## Candlestick Patterns Detected
@@ -166,10 +200,12 @@ Every 25 minutes — PAID:
 The composite score combines candle patterns + technical indicators:
 
 ```
-Candle pattern score:  -6 to +6 (multiple patterns can stack)
-Technical score:       -10 to +10
+Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
+Technical score:       -11 to +11
+  (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1, Prev Day S&R ±1)
+RVol bonus/penalty:    -1 to +1
 
-Total range:           ~-16 to +16
+Total range:           ~-18 to +18
 ```
 
 **Score interpretation:**
@@ -184,8 +220,10 @@ RSI(14) = 25 (oversold)           → +3
 EMA(9) crossed above EMA(21)       → +2
 SuperTrend just flipped to UP      → +3
 Price above VWAP                   → +1
-HAMMER pattern detected            → +2
-                              Total: +11 → STRONG_BUY
+Prev day: AT_SUPPORT               → +1
+HAMMER pattern (high vol, fresh)   → +2.6  (2 × 1.3)
+RVol = 2.5×                        → +1
+                              Total: +13.6 → STRONG_BUY
 ```
 
 **Example scoring for a strong SHORT setup:**
@@ -194,9 +232,11 @@ RSI(14) = 82 (overbought)         → -3
 EMA(9) crossed below EMA(21)      → -2
 SuperTrend flipped to DOWN         → -3
 Price below VWAP                   → -1
-SHOOTING_STAR pattern detected     → -2
-EVENING_STAR pattern detected      → -3
-                              Total: -14 → STRONG_SELL
+Prev day: AT_RESISTANCE            → -1
+SHOOTING_STAR (high vol, fresh)    → -2.6  (2 × 1.3)
+EVENING_STAR (low vol, 1-ago)      → -1.05 (3 × 0.5 × 0.7)
+RVol = 0.2×                        → -1
+                              Total: -14.65 → STRONG_SELL
 ```
 
 ---

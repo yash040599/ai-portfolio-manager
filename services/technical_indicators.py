@@ -344,12 +344,83 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
 
 
 # ================================================================
+# PREVIOUS DAY SUPPORT / RESISTANCE
+# ================================================================
+
+def prev_day_sr_score(
+    candles_day: list[dict],
+    current_price: float,
+    proximity_pct: float = 0.5,
+) -> dict:
+    """
+    Checks if the current price is near the previous day's high, low,
+    or pivot point — natural support/resistance levels.
+
+    - Near prev day's high (within proximity_pct%) → resistance for longs
+    - Near prev day's low  (within proximity_pct%) → support for shorts
+    - Pivot = (H + L + C) / 3 — institutional reference level.
+
+    Returns:
+      {
+        "score": float,       # positive = support (bullish), negative = resistance (bearish)
+        "prev_high": float,
+        "prev_low": float,
+        "pivot": float,
+        "signal": "AT_RESISTANCE" | "AT_SUPPORT" | "ABOVE_PIVOT" | "BELOW_PIVOT" | "NONE",
+      }
+    """
+    if not candles_day or len(candles_day) < 2 or current_price <= 0:
+        return {"score": 0, "prev_high": 0, "prev_low": 0, "pivot": 0, "signal": "NONE"}
+
+    prev = candles_day[-2]  # second-to-last = previous completed day
+    prev_high = prev["high"]
+    prev_low = prev["low"]
+    prev_close = prev["close"]
+    pivot = round((prev_high + prev_low + prev_close) / 3, 2)
+
+    score = 0.0
+    signal = "NONE"
+
+    # Check proximity to previous day's high (resistance)
+    if prev_high > 0:
+        dist_high_pct = abs(current_price - prev_high) / prev_high * 100
+        if dist_high_pct <= proximity_pct:
+            score -= 1  # at resistance — headwind for longs
+            signal = "AT_RESISTANCE"
+
+    # Check proximity to previous day's low (support)
+    if prev_low > 0:
+        dist_low_pct = abs(current_price - prev_low) / prev_low * 100
+        if dist_low_pct <= proximity_pct:
+            score += 1  # at support — tailwind for longs
+            signal = "AT_SUPPORT"
+
+    # Pivot bias (if not already near H/L)
+    if signal == "NONE" and pivot > 0:
+        if current_price > pivot:
+            score += 0.5
+            signal = "ABOVE_PIVOT"
+        elif current_price < pivot:
+            score -= 0.5
+            signal = "BELOW_PIVOT"
+
+    return {
+        "score": score,
+        "prev_high": prev_high,
+        "prev_low": prev_low,
+        "pivot": pivot,
+        "signal": signal,
+    }
+
+
+# ================================================================
 # COMPOSITE SCORE
 # ================================================================
 
 def compute_technical_score(
     candles_15m: list[dict],
     candles_day: list[dict] | None = None,
+    current_price: float | None = None,
 ) -> dict:
     """
     Computes a composite technical score from multiple indicators
@@ -368,6 +439,7 @@ def compute_technical_score(
         "rsi": dict,
         "vwap": dict,
         "supertrend": dict,
+        "prev_day_sr": dict,
       }
     """
     score = 0.0
@@ -416,6 +488,13 @@ def compute_technical_score(
         elif day_ema["spread_pct"] < -1:
             score -= 1
 
+    # Previous day's high/low as support/resistance
+    price = current_price or (candles_15m[-1]["close"] if candles_15m else 0)
+    sr_data = prev_day_sr_score(candles_day, price) if candles_day else {
+        "score": 0, "prev_high": 0, "prev_low": 0, "pivot": 0, "signal": "NONE"
+    }
+    score += sr_data["score"]
+
     # Map score to signal
     if score >= 5:
         signal = "STRONG_BUY"
@@ -435,4 +514,5 @@ def compute_technical_score(
         "rsi": rsi_data,
         "vwap": vwap_data,
         "supertrend": st_data,
+        "prev_day_sr": sr_data,
     }
