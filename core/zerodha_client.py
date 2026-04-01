@@ -216,14 +216,20 @@ class ZerodhaClient:
         self,
         symbol:    str,
         exchange:  str,
-        from_date: datetime.date,
-        to_date:   datetime.date,
+        from_date: datetime.date | datetime.datetime,
+        to_date:   datetime.date | datetime.datetime,
         interval:  str = "day",
     ) -> list[dict]:
         """
-        Fetches OHLCV daily candles for one stock over a date range.
+        Fetches OHLCV candles for one stock over a date range.
         Returns list of dicts: {date, open, high, low, close, volume}.
         Requires connect_paid plan — raises RuntimeError otherwise.
+
+        Supported intervals:
+          minute, 3minute, 5minute, 10minute, 15minute,
+          30minute, 60minute, day
+        For intraday intervals, pass datetime objects with time
+        components for from_date/to_date.
         """
         self._require_login()
 

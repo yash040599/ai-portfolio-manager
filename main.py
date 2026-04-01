@@ -4,8 +4,9 @@
 # Entry point. Run this file to start the portfolio manager.
 #
 # Usage:
-#   python main.py --mode analyze  ← portfolio analysis (read-only)
-#   python main.py --mode trade    ← intraday trading bot
+#   python main.py --mode analyze     ← portfolio analysis (read-only)
+#   python main.py --mode trade       ← intraday trading bot (V1)
+#   python main.py --mode trade --v2  ← intraday trading bot (V2 candle strategy)
 #
 # To change plans or budget:
 #   Edit config.py — nothing else needs to change.
@@ -36,10 +37,14 @@ def main():
         except (IndexError, ValueError):
             pass
 
+    # Check for --v2 flag
+    use_v2 = "--v2" in sys.argv
+
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade]")
-        print("  analyze  — read-only portfolio analysis")
-        print("  trade    — intraday trading bot")
+        print("Usage: python main.py --mode [analyze|trade] [--v2]")
+        print("  analyze      — read-only portfolio analysis")
+        print("  trade        — intraday trading bot (V1)")
+        print("  trade --v2   — intraday trading bot (V2 candle strategy)")
         sys.exit(1)
 
     if mode == "analyze":
@@ -47,7 +52,11 @@ def main():
         runner.run()
 
     elif mode == "trade":
-        runner = PortfolioManager(Config)
+        if use_v2:
+            from portfolio.manager_v2 import PortfolioManagerV2
+            runner = PortfolioManagerV2(Config)
+        else:
+            runner = PortfolioManager(Config)
         runner.run()
 
 

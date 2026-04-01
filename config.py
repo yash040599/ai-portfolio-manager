@@ -209,6 +209,34 @@ class Config:
     MIN_MINUTES_FOR_ENTRY: int = 60
 
     # ══════════════════════════════════════════════════════════════
+    # V2 — CANDLE STRATEGY SETTINGS (used with --v2 flag)
+    # ══════════════════════════════════════════════════════════════
+    # V2 pre-filters stocks using candlestick patterns and technical
+    # indicators (EMA, RSI, VWAP, SuperTrend) before sending the
+    # top candidates to Claude. This gives Claude richer technical
+    # context and higher signal-to-noise ratio.
+    #
+    # These settings only apply when running: python main.py --mode trade --v2
+
+    # V2_CANDLE_RESCAN_MINUTES: how often to re-run candle analysis
+    # on the universe during monitoring (separate from Claude review).
+    # This is FREE (no Claude cost) — just Zerodha historical API calls.
+    # Lower = detect new setups faster, but more API calls.
+    V2_CANDLE_RESCAN_MINUTES: int = 15
+
+    # V2_MIN_SCORE: minimum absolute technical score for a stock to
+    # pass the pre-filter. Lower = more candidates for Claude to
+    # choose from (more Claude context). Higher = fewer but stronger signals.
+    # Range: 1-5 recommended. Default 2 = mild signal required.
+    V2_MIN_SCORE: float = 2.0
+
+    # V2_CANDLE_INTERVAL: primary candle interval for pattern detection.
+    # Options: "5minute", "10minute", "15minute", "30minute"
+    # 15minute = good balance of signal clarity vs responsiveness.
+    # 5minute = more signals but noisier patterns.
+    V2_CANDLE_INTERVAL: str = "15minute"
+
+    # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════
     # These are used to calculate the REAL net profit after all

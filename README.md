@@ -60,6 +60,30 @@ A fully automated intraday trading bot that:
 python main.py --mode trade
 ```
 
+### Phase 2b — V2 Candle Strategy (trade mode with `--v2`)
+
+An upgraded version of the intraday trading bot that adds a **mathematical pre-filtering layer** before Claude. Instead of sending 100 raw stock prices to Claude, V2 first analyses every stock using candlestick patterns and technical indicators (free — no Claude API cost), then sends only the top 15 strongest setups to Claude with rich technical data.
+
+**How it works:**
+- **Pre-market**: fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API
+- **14 candlestick patterns** detected per stock (Hammer, Engulfing, Morning Star, Doji, etc.)
+- **4 technical indicators** computed per stock: EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10,3)
+- **Composite score** (-10 to +10) ranks all stocks — only those above `V2_MIN_SCORE` (default: 2.0) pass through
+- **Top 15 candidates** sent to Claude with their exact indicator values, so Claude can reason about confluences ("RSI oversold + Hammer + SuperTrend UP = strong BUY")
+- **Dynamic poll interval** — polling doubles speed when any position is within 0.5% of SL or target
+- **Candle-aware Claude reviews** — position reviews include fresh 5-min candle patterns, RSI, EMA, VWAP per stock, so Claude can see momentum fading or reversal patterns forming in real-time
+- **Periodic candle re-scan** — every 15 min (free, no Claude cost), re-analyses open positions for strong technical signals
+
+All V1 features are preserved — ATR-based SL, trailing stops, circuit breaker, crash recovery, etc. V2 is opt-in: if it has issues, just drop the `--v2` flag.
+
+```bash
+python main.py --mode trade --v2
+```
+
+For detailed strategy documentation, see:
+- **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture and trade flow
+- **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** — V2 candle strategy with indicator explanations and scoring system
+
 **Dry-run mode** is ON by default — no real orders are placed. Set `DRY_RUN = False` in `config.py` only after reviewing dry-run results.
 
 ---
@@ -194,6 +218,9 @@ Open `config.py` and review these key settings:
 | `TARGET_DECAY_AFTER_HOUR` | `14` | After 2 PM, start reducing targets (24h format) |
 | `TARGET_DECAY_PCT` | `40.0%` | How much to reduce targets after decay hour |
 | `MIN_MINUTES_FOR_ENTRY` | `60` | Don't open new trades if fewer than this many min remain |
+| `V2_CANDLE_RESCAN_MINUTES` | `15` | V2 only: how often to re-run candle analysis (free, no Claude cost) |
+| `V2_MIN_SCORE` | `2.0` | V2 only: minimum technical score to pass pre-filter |
+| `V2_CANDLE_INTERVAL` | `15minute` | V2 only: primary candle interval for pattern detection |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 | `ZERODHA_PLAN` | `connect_paid` | Zerodha plan: personal_free or connect_paid |
 
@@ -207,8 +234,11 @@ All settings are thoroughly commented in `config.py` — read the comments for d
 # Analyse existing portfolio
 python main.py --mode analyze
 
-# Intraday trading bot (dry-run by default)
+# Intraday trading bot — V1 (dry-run by default)
 python main.py --mode trade
+
+# Intraday trading bot — V2 candle strategy (dry-run by default)
+python main.py --mode trade --v2
 ```
 
 You can start Phase 2 anytime — even the night before. It handles weekends, NSE holidays, late starts, and token expiry automatically. Press **Ctrl+C** to gracefully shut down (squares off all positions first).
@@ -230,11 +260,15 @@ ai-portfolio-manager/
 │   └── logger.py            # Coloured terminal output + rotating log file
 ├── portfolio/
 │   ├── analyser.py          # Phase 1 orchestrator (read-only analysis)
-│   └── manager.py           # Phase 2 orchestrator (intraday trading loop)
+│   ├── manager.py           # Phase 2 orchestrator — V1 intraday trading loop
+│   └── manager_v2.py        # Phase 2 orchestrator — V2 candle strategy (extends V1)
 ├── services/
 │   ├── analysis_queue.py    # Per-stock Claude analysis with retry logic
 │   ├── market_data.py       # Enriches portfolio with live prices + history
-│   ├── stock_scanner.py     # Pre-market Claude scan + mid-day review + price parsing helpers
+│   ├── stock_scanner.py     # V1 pre-market Claude scan + mid-day review
+│   ├── stock_scanner_v2.py  # V2 candle pre-filter + enriched Claude scan (extends V1)
+│   ├── candle_patterns.py   # 14 candlestick pattern detectors (pure math, no dependencies)
+│   ├── technical_indicators.py # EMA, RSI, VWAP, SuperTrend, composite scoring
 │   ├── order_engine.py      # Order execution, position tracking, SL/target monitoring, P&L + taxes
 │   ├── report_writer.py     # Generates .txt reports and .json data dumps
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
@@ -251,7 +285,9 @@ ai-portfolio-manager/
 │   ├── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
 │   └── backup_data.py              # Two-way sync data (DB, reports, logs) with a private Git repo
 ├── docs/
-│   └── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
+│   ├── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
+│   ├── STRATEGY_V1.md       # V1 trading strategy — architecture, flow, risk layers
+│   └── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
 │   └── access_token.json    # Zerodha session token (auto-created on login)
