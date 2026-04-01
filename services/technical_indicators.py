@@ -17,13 +17,17 @@
 #       Provides dynamic support/resistance levels that adapt to
 #       volatility. Widely used in Indian market algo trading.
 #
-# The composite score (-10 to +10) weights indicators by reliability:
+# The composite score weights indicators by reliability:
 #   SuperTrend change: ±3  (strongest — captures trend reversals)
 #   EMA crossover:     ±2  (confirmed momentum shift)
 #   RSI extreme:       ±1-3 (overbought/oversold, scaled by severity)
 #   VWAP position:     ±1  (institutional bias)
 #   Daily EMA bias:    ±1  (higher timeframe confluence)
+#   Prev-day S&R:      ±0.5-1 (support/resistance proximity)
+#   → Technical score range: ~-12 to +12
 # ================================================================
+
+import datetime
 
 
 # ================================================================
@@ -369,10 +373,13 @@ def prev_day_sr_score(
         "signal": "AT_RESISTANCE" | "AT_SUPPORT" | "ABOVE_PIVOT" | "BELOW_PIVOT" | "NONE",
       }
     """
-    if not candles_day or len(candles_day) < 2 or current_price <= 0:
+    if not candles_day or len(candles_day) < 1 or current_price <= 0:
         return {"score": 0, "prev_high": 0, "prev_low": 0, "pivot": 0, "signal": "NONE"}
 
-    prev = candles_day[-2]  # second-to-last = previous completed day
+    # Zerodha daily API returns only completed candles (no today partial).
+    # So [-1] is the most recent completed trading day (= yesterday),
+    # which is what we want for previous-day S&R levels.
+    prev = candles_day[-1]
     prev_high = prev["high"]
     prev_low = prev["low"]
     prev_close = prev["close"]
@@ -434,7 +441,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: -10 to +10
+    Score range: ~-12 to +12
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal
@@ -470,8 +477,17 @@ def compute_technical_score(
     elif rsi_data["signal"] == "OVERBOUGHT":
         score -= rsi_data["strength"]
 
-    # VWAP
-    vwap_data = vwap_signal(candles_15m)
+    # VWAP — must use today's candles only (VWAP resets daily)
+    today = datetime.date.today()
+    today_candles = []
+    for c in candles_15m:
+        dt = c.get("date")
+        if dt is None:
+            continue
+        cdate = dt.date() if hasattr(dt, "date") else dt
+        if cdate == today:
+            today_candles.append(c)
+    vwap_data = vwap_signal(today_candles) if today_candles else vwap_signal(candles_15m)
     if vwap_data["signal"] == "ABOVE_VWAP":
         score += 1
     elif vwap_data["signal"] == "BELOW_VWAP":

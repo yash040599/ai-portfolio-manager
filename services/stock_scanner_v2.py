@@ -158,18 +158,22 @@ class StockScannerV2(StockScanner):
         today_candles = self._filter_today_candles(candles_15m)
         if today_candles and candles_day and len(candles_day) >= 5:
             n_today = len(today_candles)
-            today_vol = sum(c.get("volume", 0) for c in today_candles)
-            # Pro-rate to full-day estimate (25 fifteen-min candles per session)
-            prorated_vol = today_vol * (25 / n_today) if n_today > 0 else 0
-            recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
-            if recent_vols:
-                avg_daily_vol = sum(recent_vols) / len(recent_vols)
-                if avg_daily_vol > 0:
-                    rvol = prorated_vol / avg_daily_vol
-                    if rvol > 2.0:
-                        combined_score += 1   # unusual volume = bonus
-                    elif rvol < 0.3:
-                        combined_score -= 1   # dead volume = penalty
+            # Need at least 4 candles (~1 hour) for reliable pro-rating.
+            # The first 1-2 candles carry disproportionate volume from
+            # the NSE opening auction, making early pro-rating unreliable.
+            if n_today >= 4:
+                today_vol = sum(c.get("volume", 0) for c in today_candles)
+                # Pro-rate to full-day estimate (25 fifteen-min candles per session)
+                prorated_vol = today_vol * (25 / n_today)
+                recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
+                if recent_vols:
+                    avg_daily_vol = sum(recent_vols) / len(recent_vols)
+                    if avg_daily_vol > 0:
+                        rvol = prorated_vol / avg_daily_vol
+                        if rvol > 2.0:
+                            combined_score += 1   # unusual volume = bonus
+                        elif rvol < 0.3:
+                            combined_score -= 1   # dead volume = penalty
 
         # VWAP for the trading day
         current_vwap = vwap(today_candles) if today_candles else 0
@@ -366,8 +370,9 @@ class StockScannerV2(StockScanner):
             # Previous day S&R levels
             sr = tech.get("prev_day_sr", {})
             sr_str = ""
-            if sr.get("signal") in ("AT_RESISTANCE", "AT_SUPPORT"):
-                sr_str = f"  PrevDay: {sr['signal']}"
+            sr_signal = sr.get("signal", "NONE")
+            if sr_signal in ("AT_RESISTANCE", "AT_SUPPORT", "ABOVE_PIVOT", "BELOW_PIVOT"):
+                sr_str = f"  PrevDay: {sr_signal}"
             if sr.get("pivot", 0) > 0:
                 sr_str += f"  Pivot: ₹{sr['pivot']:.2f}"
 

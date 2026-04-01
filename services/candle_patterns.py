@@ -481,8 +481,8 @@ def detect_all_with_freshness(
     and applies freshness decay: current candle = 1.0×, one candle
     ago = 0.7×, two candles ago = 0.4×.
 
-    Deduplicates patterns by name — keeps the freshest (highest score).
-    This prevents double-counting a pattern that persists across candles.
+    Deduplicates patterns by name — keeps the strongest (highest score
+    after volume × decay). Prevents double-counting persistent patterns.
     """
     if not candles or len(candles) < 3:
         return detect_all(candles)

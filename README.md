@@ -91,6 +91,7 @@ python main.py --mode trade --v2 --test
 For detailed strategy documentation, see:
 - **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture and trade flow
 - **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** — V2 candle strategy with indicator explanations and scoring system
+- **[docs/V2_IMPROVEMENTS.md](docs/V2_IMPROVEMENTS.md)** — V2 improvement roadmap with research-backed enhancements
 
 **Dry-run mode** is ON by default — no real orders are placed. Set `DRY_RUN = False` in `config.py` only after reviewing dry-run results.
 
@@ -311,7 +312,8 @@ ai-portfolio-manager/
 ├── docs/
 │   ├── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 │   ├── STRATEGY_V1.md       # V1 trading strategy — architecture, flow, risk layers
-│   └── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
+│   ├── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
+│   └── V2_IMPROVEMENTS.md   # V2 improvement roadmap — research-backed enhancements
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
 │   └── access_token.json    # Zerodha session token (auto-created on login)
