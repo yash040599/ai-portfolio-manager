@@ -152,6 +152,16 @@ You need: `ZERODHA_API_KEY` and `ZERODHA_API_SECRET`
      - **API Secret** → this is your `ZERODHA_API_SECRET`
    - Keep these safe — don't share them
 
+5. **Whitelist your IP address** (mandatory from 1 April 2026)
+   - SEBI now requires all API-based trading to originate from a whitelisted IP address
+   - On the [Kite Connect developer console](https://developers.kite.trade), open your app
+   - Scroll to the **"Whitelisted IPs"** field and add the **public IP** of every machine that will run the bot
+   - For a cloud VM (e.g. Azure Ubuntu), use the VM's **static public IP** — a dynamic IP will break after reboot
+   - For a home machine, add your ISP-assigned public IP (check with `curl ifconfig.me`)
+   - You can add multiple IPs (comma-separated) — e.g. one for your VM and one for your laptop
+   - Click **Save** — changes take effect immediately
+   - If you get `403 Forbidden` or `IP not whitelisted` errors from Kite, your current IP isn't in this list
+
 > **Note:** Zerodha access tokens expire daily at midnight. The bot handles re-login automatically. On first run each day, you choose: open a browser on this machine, or **manual/headless mode** (copy the login URL, open it on your phone/laptop, paste the redirect URL back). Manual mode works on SSH-only VMs with no desktop.
 
 ---
@@ -314,6 +324,8 @@ ai-portfolio-manager/
 ## Running on a VM (Azure Ubuntu)
 
 Run the bot 24/7 on a headless Ubuntu VM. Zerodha login uses manual mode — paste the redirect URL from your phone/laptop via SSH.
+
+> **Why a VM?** From 1 April 2026, SEBI requires API-based trading to originate from a whitelisted IP. A cloud VM with a **static public IP** gives a fixed address you can whitelist once on the [Kite developer console](https://developers.kite.trade) and never worry about again. Azure's free tier (B1s, 1 month) covers this at zero cost to start.
 
 ### One-time setup
 
@@ -654,6 +666,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Market condition awareness** — detects high-volatility regimes and adjusts position sizing
 - **Performance memory** — learns from past trades via SQLite DB to avoid repeating mistakes
 - **Order API retry + circuit breaker** — each Zerodha order retries 3× with backoff; 3 consecutive failures = stop Claude calls, square off, shutdown
+- **Market protection on orders** — all MARKET and SL-M orders include `market_protection = -1`, a Zerodha-mandated safeguard (w.e.f. April 2026) that caps execution at exchange-defined price bands to prevent runaway fills. Requires `kiteconnect ≥ 5.1.0`
 - **Fill price sanity check** — rejects corrupted fill prices (>5% deviation from expected quote)
 - **Time-decay targets** — reduces targets after 2 PM to lock in profits before square-off
 - **Late entry guard** — blocks new positions when insufficient time remains in session
