@@ -53,6 +53,7 @@ A fully automated intraday trading bot that:
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
 - **Tax ledger & capital gains** — full tax infrastructure with separate DB tables, verification against Zerodha's official Tax P&L report, and combined tax summary. See the **[Taxation](#taxation)** section below
+- **Order API failure protection** — if Zerodha's order API fails 3 consecutive times (after retrying each order 3 times with backoff), the bot stops calling Claude immediately (no more wasted API money), closes any open positions, and shuts down gracefully. Prevents the scenario where broken Zerodha APIs cause the bot to loop endlessly asking Claude for new recommendations
 - **Crash recovery** — if the bot is stopped (Ctrl+C, crash, terminal closed) while positions are still open on Zerodha, restarting it will automatically detect and resume monitoring those positions. Fetches open MIS positions from Zerodha, recalculates ATR-based SL/targets, and jumps straight to the monitor loop — no duplicate orders, no orphaned positions
 
 ```bash
@@ -90,7 +91,7 @@ This installs:
 | Package | Purpose |
 |---------|---------|
 | `anthropic` | Claude AI API client |
-| `kiteconnect` | Zerodha Kite trading API client |
+| `kiteconnect` | Zerodha Kite trading API client (≥5.1.0 required for `market_protection` support) |
 | `python-dotenv` | Loads API keys from `.env` file |
 | `openpyxl` | Read Zerodha Tax P&L xlsx reports |
 
@@ -275,20 +276,27 @@ ai-portfolio-manager/
 
 If you want to keep the bot running 24/7:
 
-1. Use a **Windows VM with RDP access** (needed for Zerodha browser login)
+1. Use a **Windows VM with RDP access** or a **Linux VM** (needed for Zerodha browser login)
 2. Zip the project folder (exclude `__pycache__/`, `logs/`, `reports/`)
 3. On the VM:
    ```bash
    pip install -r requirements.txt
    ```
-4. Create your `.env` file with API keys
-5. Delete any old `data/access_token.json` (tokens are IP-specific)
-6. RDP into the VM and run:
+4. **Set the VM timezone to India** (critical — the bot uses local time for market hours):
+   ```bash
+   # Check current timezone
+   timedatectl status
+   # Set to IST
+   sudo timedatectl set-timezone Asia/Kolkata
+   ```
+5. Create your `.env` file with API keys
+6. Delete any old `data/access_token.json` (tokens are IP-specific)
+7. RDP/SSH into the VM and run:
    ```bash
    python main.py --mode trade
    ```
-7. The bot will wait for market open, trade the full day, and generate reports
-8. Zerodha login pops up in the browser once per day — keep the RDP session alive until login completes, then you can disconnect
+8. The bot will wait for market open, trade the full day, and generate reports
+9. Zerodha login pops up in the browser once per day — keep the RDP session alive until login completes, then you can disconnect
 
 ---
 

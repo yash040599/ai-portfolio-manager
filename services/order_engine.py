@@ -63,9 +63,24 @@ class OrderEngine:
         # Running order counter for dry-run IDs
         self._dry_run_counter: int = 0
 
+        # ── Order failure tracking ────────────────────────────────
+        # Consecutive order placement failures (resets on success).
+        # When this reaches ORDER_FAILURE_LIMIT, the engine signals
+        # the manager to stop calling Claude and gracefully shut down.
+        self._consecutive_order_failures: int = 0
+        self.ORDER_FAILURE_LIMIT: int = 3
+        self._order_api_broken: bool = False
+
     def set_budget(self, amount: float):
         """Sets the trading budget (called by PortfolioManager after fetching funds)."""
         self._budget = amount
+
+    def is_order_api_broken(self) -> bool:
+        """
+        Returns True if Zerodha order API has failed consecutively
+        and the engine should stop placing new orders.
+        """
+        return self._order_api_broken
 
     # ================================================================
     # RESUME — LOAD EXISTING POSITIONS FROM ZERODHA
@@ -333,12 +348,21 @@ class OrderEngine:
                 f"SL: ₹{sl:.2f} | Target: ₹{target:.2f} | "
                 f"Cost: ₹{cost:,.0f}"
             )
+        elif self._order_api_broken:
+            self.log.error(
+                f"Skipping {symbol}: Zerodha order API is broken "
+                f"({self._consecutive_order_failures} consecutive failures)"
+            )
+            return False
         else:
             try:
                 order_id = self.zerodha.place_order(
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=side, order_type="MARKET",
                 )
+                # Order succeeded — reset failure counter
+                self._consecutive_order_failures = 0
+
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(order_id)
                 if fill_price:
@@ -375,8 +399,19 @@ class OrderEngine:
                         f"Order ID: {order_id} — using estimated price"
                     )
             except Exception as e:
-                self.log.error(f"Order FAILED for {symbol}: {e}")
+                self._consecutive_order_failures += 1
+                self.log.error(
+                    f"Order FAILED for {symbol}: {e} "
+                    f"(failure {self._consecutive_order_failures}/{self.ORDER_FAILURE_LIMIT})"
+                )
                 self._log_action("ORDER_FAILED", symbol, side, qty, entry, str(e))
+                if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
+                    self._order_api_broken = True
+                    self.log.error(
+                        f"ORDER API BROKEN: {self.ORDER_FAILURE_LIMIT} consecutive "
+                        f"failures — halting all new orders. Will close open "
+                        f"positions and shut down."
+                    )
                 return False
 
         # ── Track the position ────────────────────────────────────
@@ -450,6 +485,9 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=exit_side, order_type="MARKET",
                 )
+                # Exit order succeeded — reset failure counter
+                self._consecutive_order_failures = 0
+
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(exit_order_id)
                 if fill_price:
@@ -483,10 +521,19 @@ class OrderEngine:
                     f"Actual P&L for {symbol}: {pnl_color}₹{pnl:+,.2f}\033[0m"
                 )
             except Exception as e:
+                self._consecutive_order_failures += 1
                 self.log.error(
                     f"Exit order FAILED for {symbol}: {e} — "
-                    f"MANUAL INTERVENTION NEEDED"
+                    f"MANUAL INTERVENTION NEEDED "
+                    f"(failure {self._consecutive_order_failures}/{self.ORDER_FAILURE_LIMIT})"
                 )
+                if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
+                    self._order_api_broken = True
+                    self.log.error(
+                        f"ORDER API BROKEN: {self.ORDER_FAILURE_LIMIT} consecutive "
+                        f"failures — Zerodha API may be down. "
+                        f"Open positions may need manual closure."
+                    )
                 # Don't mark as CLOSED — the position is still open on Zerodha.
                 # Resume feature will pick it up on next restart.
                 self._log_action("EXIT_FAILED", symbol, exit_side, qty, exit_price, str(e))

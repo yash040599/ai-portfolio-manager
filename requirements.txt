@@ -1,4 +1,4 @@
 anthropic
-kiteconnect
+kiteconnect>=5.1.0
 python-dotenv
 openpyxl

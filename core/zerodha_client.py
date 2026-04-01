@@ -13,6 +13,7 @@
 
 import os
 import json
+import time
 import datetime
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -296,9 +297,10 @@ class ZerodhaClient:
         side:       str,           # "BUY" or "SELL"
         order_type: str = "MARKET",
         price:      float = 0,
+        max_retries: int = 3,
     ) -> str:
         """
-        Places an intraday (MIS) order on Zerodha.
+        Places an intraday (MIS) order on Zerodha with retry logic.
 
         Args:
             symbol:     Trading symbol e.g. "RELIANCE"
@@ -307,12 +309,13 @@ class ZerodhaClient:
             side:       "BUY" or "SELL"
             order_type: "MARKET" or "LIMIT"
             price:      Required if order_type is "LIMIT"
+            max_retries: Number of times to retry on failure (default 3)
 
         Returns:
             Zerodha order ID string on success.
 
         Raises:
-            RuntimeError if order placement fails.
+            RuntimeError if order placement fails after all retries.
 
         Note: product="MIS" means intraday — Zerodha auto-squares
         any MIS position at 3:20 PM if you don't close it yourself.
@@ -339,19 +342,44 @@ class ZerodhaClient:
             order_params["order_type"] = self._kite.ORDER_TYPE_LIMIT
             order_params["price"] = price
 
-        try:
-            order_id = self._kite.place_order(
-                variety=self._kite.VARIETY_REGULAR,
-                **order_params,
-            )
-            self.log.success(
-                f"Zerodha order placed: {side} {qty}x {symbol} | ID: {order_id}"
-            )
-            return str(order_id)
+        # Market protection is mandatory for MARKET/SL-M orders via API.
+        # -1 = automatic protection applied by Zerodha per their guidelines.
+        if order_params["order_type"] in (
+            self._kite.ORDER_TYPE_MARKET,
+            getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
+        ):
+            order_params["market_protection"] = -1
 
-        except Exception as e:
-            self.log.error(f"Zerodha order failed: {side} {qty}x {symbol} — {e}")
-            raise RuntimeError(f"Order placement failed: {e}") from e
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                order_id = self._kite.place_order(
+                    variety=self._kite.VARIETY_REGULAR,
+                    **order_params,
+                )
+                self.log.success(
+                    f"Zerodha order placed: {side} {qty}x {symbol} | ID: {order_id}"
+                )
+                return str(order_id)
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = attempt * 2  # 2s, 4s backoff
+                    self.log.warning(
+                        f"Zerodha order failed (attempt {attempt}/{max_retries}): "
+                        f"{side} {qty}x {symbol} — {e} | Retrying in {wait}s..."
+                    )
+                    time.sleep(wait)
+                else:
+                    self.log.error(
+                        f"Zerodha order FAILED after {max_retries} attempts: "
+                        f"{side} {qty}x {symbol} — {e}"
+                    )
+
+        raise RuntimeError(
+            f"Order placement failed after {max_retries} retries: {last_error}"
+        ) from last_error
 
     def cancel_order(self, order_id: str):
         """

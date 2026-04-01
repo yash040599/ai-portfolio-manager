@@ -234,8 +234,17 @@ class PortfolioManager:
             # ── Step 7: Observation period + Enter positions ──────────
             self._observe_and_enter()
 
-            # ── Step 8: Monitor loop ──────────────────────────────────
-            self._run_monitor_loop()
+            # If order API broke during entry, skip monitor and shut down
+            if self.engine.is_order_api_broken():
+                self.log.error(
+                    "Order API broken during entry — shutting down. "
+                    "No Claude calls will be made."
+                )
+                if self.engine.open_positions():
+                    self._square_off()
+            else:
+                # ── Step 8: Monitor loop ──────────────────────────────────
+                self._run_monitor_loop()
 
         # ── Step 9: Square off (if not already done) ──────────────
         # Always attempt square-off — even on Ctrl+C. Real money
@@ -333,12 +342,20 @@ class PortfolioManager:
         Enters all trade plans at market open.
         Each trade goes through OrderEngine which checks budget and
         position limits before placing/logging the order.
+
+        Stops immediately if Zerodha order API is broken (consecutive
+        failures hit the limit).
         """
         self.log.section("ENTERING POSITIONS")
 
         plans = trades if trades is not None else self._trade_plans
         for trade in plans:
             if self._shutdown_requested:
+                break
+            if self.engine.is_order_api_broken():
+                self.log.error(
+                    "Zerodha order API is broken — aborting remaining entries"
+                )
                 break
             self.engine.enter_trade(trade)
             time.sleep(0.5)  # small gap between order placements
@@ -552,6 +569,14 @@ class PortfolioManager:
 
             # ── Check if all positions are already closed ─────────
             if not self.engine.open_positions():
+                # If order API is broken, don't scan for more trades
+                if self.engine.is_order_api_broken():
+                    self.log.error(
+                        "All positions closed and order API is broken — "
+                        "stopping (not scanning for new trades)"
+                    )
+                    break
+
                 # Check if there's enough time to re-scan and trade more
                 sq_now = datetime.datetime.now()
                 sq_off = sq_now.replace(
@@ -612,6 +637,19 @@ class PortfolioManager:
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
                 self.log.info(f"{closed} position(s) auto-closed")
+
+            # ── Check if Zerodha order API is broken ──────────────
+            # If consecutive order failures hit the limit, stop
+            # calling Claude (wastes money) and shut down gracefully.
+            if self.engine.is_order_api_broken():
+                self.log.error(
+                    "ZERODHA ORDER API BROKEN — stopping all trading. "
+                    "Will not call Claude again. "
+                    "Attempting to close any open positions..."
+                )
+                if self.engine.open_positions():
+                    self._square_off()
+                break
 
             # ── Circuit breaker check ─────────────────────────────
             if self.engine.check_circuit_breaker():
