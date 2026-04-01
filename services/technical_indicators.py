@@ -381,19 +381,27 @@ def prev_day_sr_score(
     score = 0.0
     signal = "NONE"
 
-    # Check proximity to previous day's high (resistance)
-    if prev_high > 0:
-        dist_high_pct = abs(current_price - prev_high) / prev_high * 100
-        if dist_high_pct <= proximity_pct:
-            score -= 1  # at resistance — headwind for longs
-            signal = "AT_RESISTANCE"
+    dist_high_pct = abs(current_price - prev_high) / prev_high * 100 if prev_high > 0 else 999
+    dist_low_pct = abs(current_price - prev_low) / prev_low * 100 if prev_low > 0 else 999
 
-    # Check proximity to previous day's low (support)
-    if prev_low > 0:
-        dist_low_pct = abs(current_price - prev_low) / prev_low * 100
-        if dist_low_pct <= proximity_pct:
-            score += 1  # at support — tailwind for longs
+    # If near both (tiny-range day), pick whichever level is closer
+    near_high = dist_high_pct <= proximity_pct
+    near_low = dist_low_pct <= proximity_pct
+
+    if near_high and near_low:
+        # Near both — pick the closer level
+        if dist_high_pct <= dist_low_pct:
+            score -= 1
+            signal = "AT_RESISTANCE"
+        else:
+            score += 1
             signal = "AT_SUPPORT"
+    elif near_high:
+        score -= 1  # at resistance — headwind for longs
+        signal = "AT_RESISTANCE"
+    elif near_low:
+        score += 1  # at support — tailwind for longs
+        signal = "AT_SUPPORT"
 
     # Pivot bias (if not already near H/L)
     if signal == "NONE" and pivot > 0:

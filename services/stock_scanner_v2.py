@@ -151,16 +151,21 @@ class StockScannerV2(StockScanner):
 
         # ── Relative Volume (RVol) bonus/penalty ──────────────
         # Compare today's volume so far to the average from recent
-        # daily candles. Unusual volume = something happening.
+        # daily candles, pro-rated to full day. Without pro-rating,
+        # early-morning scans (1-2 candles) would show tiny RVol.
+        # NSE session: 9:15 AM – 3:30 PM = 375 min = 25 × 15-min candles.
         rvol = 0.0
         today_candles = self._filter_today_candles(candles_15m)
         if today_candles and candles_day and len(candles_day) >= 5:
+            n_today = len(today_candles)
             today_vol = sum(c.get("volume", 0) for c in today_candles)
+            # Pro-rate to full-day estimate (25 fifteen-min candles per session)
+            prorated_vol = today_vol * (25 / n_today) if n_today > 0 else 0
             recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
             if recent_vols:
                 avg_daily_vol = sum(recent_vols) / len(recent_vols)
                 if avg_daily_vol > 0:
-                    rvol = today_vol / avg_daily_vol
+                    rvol = prorated_vol / avg_daily_vol
                     if rvol > 2.0:
                         combined_score += 1   # unusual volume = bonus
                     elif rvol < 0.3:
@@ -233,25 +238,32 @@ class StockScannerV2(StockScanner):
 
         # Filter out weak signals below V2_MIN_SCORE threshold
         min_score = self.cfg.V2_MIN_SCORE
-        filtered = []
+        passed_score = []
         for s in scored:
-            abs_score = abs(s["combined_score"])
-            if abs_score < min_score:
-                continue
+            if abs(s["combined_score"]) >= min_score:
+                passed_score.append(s)
 
-            # Nifty trend hard filter: against-trend trades need stronger signals
+        dropped_score = len(scored) - len(passed_score)
+        if dropped_score:
+            self.log.info(f"  Score filter: dropped {dropped_score} stocks below |score| {min_score}")
+
+        # Nifty trend hard filter: against-trend trades need stronger signals
+        filtered = []
+        dropped_trend = 0
+        for s in passed_score:
+            abs_score = abs(s["combined_score"])
             if nifty_trend == "BEARISH" and s["combined_score"] > 0 and abs_score < 5:
+                dropped_trend += 1
                 continue  # weak BUY in a bearish market — skip
             if nifty_trend == "BULLISH" and s["combined_score"] < 0 and abs_score < 5:
+                dropped_trend += 1
                 continue  # weak SELL in a bullish market — skip
-
             filtered.append(s)
 
-        if len(filtered) < len(scored):
-            skipped = len(scored) - len(filtered)
+        if dropped_trend:
             self.log.info(
-                f"  Nifty hard filter ({nifty_trend or 'NEUTRAL'}): "
-                f"dropped {skipped} weak against-trend signals"
+                f"  Nifty trend filter ({nifty_trend}): "
+                f"dropped {dropped_trend} weak against-trend signals"
             )
 
         # Sort by absolute combined score (strongest signals first)

@@ -201,6 +201,7 @@ class PortfolioManagerV2(PortfolioManager):
             ema = tech["ema_cross"]
             st = tech["supertrend"]
             rsi_data = tech["rsi"]
+            sr = tech.get("prev_day_sr", {})
 
             print(f"\n  {'-'*50}")
             print(f"  {r['symbol']}  --  Combined Score: {r['combined_score']:+.1f}  ({tech['signal']})")
@@ -210,6 +211,11 @@ class PortfolioManagerV2(PortfolioManager):
             print(f"  RSI(14)  : {rsi_data['rsi']:.1f}  ({rsi_data['signal']}, strength: {rsi_data['strength']})")
             print(f"  EMA(9/21): {ema['signal']}  (spread: {ema['spread_pct']:+.2f}%)")
             print(f"  SuperTrnd: {st['trend']}  (signal: {st['signal']})")
+            if r.get("rvol", 0) > 0:
+                print(f"  RVol     : {r['rvol']:.1f}x  ({'HIGH' if r['rvol'] > 2 else 'LOW' if r['rvol'] < 0.3 else 'normal'})")
+            if sr.get("signal", "NONE") != "NONE":
+                pivot_str = f"  Pivot: Rs.{sr['pivot']:.2f}" if sr.get("pivot") else ""
+                print(f"  PrevDayS&R: {sr['signal']}  (score: {sr['score']:+.1f}){pivot_str}")
 
             if ps["patterns"]:
                 print(f"  Patterns : {', '.join(ps['patterns'])}")
@@ -221,6 +227,18 @@ class PortfolioManagerV2(PortfolioManager):
                 print(f"  Patterns : none detected")
 
             print(f"  Candles  : {r['candle_count']} (15-min candles used)")
+
+        # ── Step 6b: Nifty hard filter simulation ─────────────────
+        #    Test mode doesn't have nifty_context, but show what WOULD
+        #    happen if market was bearish/bullish to validate the filter.
+        would_drop_bear = sum(1 for s in filtered if s["combined_score"] > 0 and abs(s["combined_score"]) < 5)
+        would_drop_bull = sum(1 for s in filtered if s["combined_score"] < 0 and abs(s["combined_score"]) < 5)
+        if would_drop_bear or would_drop_bull:
+            print(f"\n  Nifty hard filter impact (if applied):")
+            if would_drop_bear:
+                print(f"    BEARISH market → would drop {would_drop_bear} weak BUY signals (score < 5)")
+            if would_drop_bull:
+                print(f"    BULLISH market → would drop {would_drop_bull} weak SELL signals (score < 5)")
 
         # ── Step 7: Show what would be sent to Claude ─────────────
         snapshot = self.scanner._build_enriched_snapshot(top, quotes)
