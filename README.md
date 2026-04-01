@@ -80,6 +80,12 @@ All V1 features are preserved — ATR-based SL, trailing stops, circuit breaker,
 python main.py --mode trade --v2
 ```
 
+**Test mode** — verify the candle pipeline works end-to-end without any Claude API calls or trades. Logs into Zerodha, runs the full technical analysis (candle patterns + EMA/RSI/VWAP/SuperTrend) on every stock in the universe, and prints a detailed breakdown of scores, filtered candidates, and the enriched snapshot that would be sent to Claude. Zero cost.
+
+```bash
+python main.py --mode trade --v2 --test
+```
+
 For detailed strategy documentation, see:
 - **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture and trade flow
 - **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** — V2 candle strategy with indicator explanations and scoring system
@@ -249,6 +255,9 @@ python main.py --mode trade
 
 # Intraday trading bot — V2 candle strategy (dry-run by default)
 python main.py --mode trade --v2
+
+# Test V2 candle pipeline only (no Claude calls, no trades, no cost)
+python main.py --mode trade --v2 --test
 
 # Test Zerodha login only (shows account snapshot)
 python main.py --mode login

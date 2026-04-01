@@ -86,6 +86,164 @@ class PortfolioManagerV2(PortfolioManager):
         print(f"{'='*58}\n")
 
     # ================================================================
+    # TEST MODE — run V2 candle pipeline end-to-end, no Claude
+    # ================================================================
+
+    def run_test(self):
+        """
+        Runs the full V2 candle-pattern + technical-indicator pipeline
+        without any Claude API calls or order placement. Useful for
+        verifying that the math layer works end-to-end.
+
+        Steps:
+          1. Validate config + log into Zerodha
+          2. Fetch live quotes for the stock universe
+          3. Run V2 pre-filter (candle patterns + technical indicators)
+          4. Print detailed results for every analysed stock
+          5. Show what would have been sent to Claude
+        """
+        from services.stock_scanner_v2 import MAX_CANDIDATES
+
+        print(f"\n{'='*58}")
+        print("  V2 CANDLE PIPELINE — TEST MODE")
+        print(f"  No Claude calls. No trades. Just math.")
+        print(f"{'='*58}\n")
+
+        # ── Step 1: Validate config ───────────────────────────────
+        missing = self.cfg.validate()
+        if missing:
+            for key in missing:
+                self.log.error(f"Missing in .env file: {key}")
+            return
+
+        # ── Step 2: Login to Zerodha ──────────────────────────────
+        self.log.section("ZERODHA LOGIN")
+        try:
+            self.zerodha.login()
+        except Exception as e:
+            self.log.error(f"Zerodha login failed: {e}")
+            return
+
+        self.zerodha.print_account_snapshot()
+
+        # ── Step 3: Fetch live quotes ─────────────────────────────
+        universe = self.scanner.get_universe()
+        self.log.section(f"SCANNING {len(universe)} STOCKS ({self.cfg.SCAN_UNIVERSE})")
+
+        stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
+        quotes = self.zerodha.get_quotes_safe(stocks)
+        if quotes is None:
+            self.log.error("Could not fetch market data. Aborting.")
+            return
+
+        # ── Step 4: Run V2 pre-filter (math only) ────────────────
+        self.log.section("V2 PRE-FILTER — Candle Patterns + Technical Indicators")
+        self.log.info(f"Interval: {self.cfg.V2_CANDLE_INTERVAL}")
+        self.log.info(f"Min score threshold: {self.cfg.V2_MIN_SCORE}")
+        self.log.info(f"Max candidates: {MAX_CANDIDATES}")
+        self.log.info("")
+
+        scored = []
+        skipped = 0
+        for i, symbol in enumerate(universe):
+            if (i + 1) % 20 == 0 or (i + 1) == len(universe):
+                self.log.info(f"  Analysed {i + 1}/{len(universe)} stocks...")
+
+            result = self.scanner._analyse_stock(symbol)
+            if result:
+                scored.append(result)
+            else:
+                skipped += 1
+
+        self.log.info(f"\nAnalysed {len(scored)} stocks | Skipped {skipped} (insufficient candle data)")
+
+        # ── Step 5: Show ALL results (not just filtered) ──────────
+        scored.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
+
+        self.log.section("ALL STOCKS BY TECHNICAL SCORE")
+        print(f"{'Symbol':<14} {'Score':>6}  {'Signal':<12} {'RSI':>5}  "
+              f"{'EMA(9/21)':<16} {'SuperTrend':<12} {'VWAP':>10}  "
+              f"{'Price':>10}  {'Patterns'}")
+        print("-" * 120)
+
+        for r in scored:
+            tech = r["technical"]
+            ps = r["pattern_summary"]
+            rsi_val = tech["rsi"]["rsi"]
+            ema_sig = tech["ema_cross"]["signal"]
+            st_trend = tech["supertrend"]["trend"]
+            patterns = ", ".join(ps["patterns"][:4]) if ps["patterns"] else "-"
+
+            score = r["combined_score"]
+            passed = abs(score) >= self.cfg.V2_MIN_SCORE
+
+            marker = "*" if passed else " "
+            print(
+                f"{marker} {r['symbol']:<12} {score:>+6.1f}  {tech['signal']:<12} "
+                f"{rsi_val:>5.0f}  {ema_sig:<16} {st_trend:<12} "
+                f"Rs.{r['vwap']:>9.2f}  Rs.{r['current_price']:>9.2f}  "
+                f"[{patterns}]"
+            )
+
+        # ── Step 6: Show filtered candidates ──────────────────────
+        filtered = [s for s in scored if abs(s["combined_score"]) >= self.cfg.V2_MIN_SCORE]
+        top = filtered[:MAX_CANDIDATES]
+
+        self.log.section(f"FILTERED CANDIDATES -- {len(filtered)} passed (score >= {self.cfg.V2_MIN_SCORE}), top {len(top)} shown")
+
+        if not top:
+            self.log.warning("No stocks passed the pre-filter threshold today.")
+            return
+
+        for r in top:
+            tech = r["technical"]
+            ps = r["pattern_summary"]
+            ema = tech["ema_cross"]
+            st = tech["supertrend"]
+            rsi_data = tech["rsi"]
+
+            print(f"\n  {'-'*50}")
+            print(f"  {r['symbol']}  --  Combined Score: {r['combined_score']:+.1f}  ({tech['signal']})")
+            print(f"  {'-'*50}")
+            print(f"  Price    : Rs.{r['current_price']:.2f}")
+            print(f"  VWAP     : Rs.{r['vwap']:.2f}  ({'above' if r['current_price'] > r['vwap'] else 'below'} VWAP)")
+            print(f"  RSI(14)  : {rsi_data['rsi']:.1f}  ({rsi_data['signal']}, strength: {rsi_data['strength']})")
+            print(f"  EMA(9/21): {ema['signal']}  (spread: {ema['spread_pct']:+.2f}%)")
+            print(f"  SuperTrnd: {st['trend']}  (signal: {st['signal']})")
+
+            if ps["patterns"]:
+                print(f"  Patterns : {', '.join(ps['patterns'])}")
+                print(f"  Pat.score: {ps['score']:+.1f}  ({ps['net_signal']})")
+                if ps["strongest"]:
+                    s = ps["strongest"]
+                    print(f"  Strongest: {s['pattern']}  ({s['signal']}, strength: {s['strength']})")
+            else:
+                print(f"  Patterns : none detected")
+
+            print(f"  Candles  : {r['candle_count']} (15-min candles used)")
+
+        # ── Step 7: Show what would be sent to Claude ─────────────
+        snapshot = self.scanner._build_enriched_snapshot(top, quotes)
+        if snapshot:
+            self.log.section("ENRICHED SNAPSHOT (would be sent to Claude)")
+            print(snapshot)
+
+        # ── Summary ───────────────────────────────────────────────
+        self.log.section("TEST SUMMARY")
+        bulls = sum(1 for s in top if s["combined_score"] > 0)
+        bears = sum(1 for s in top if s["combined_score"] < 0)
+        print(f"  Universe       : {len(universe)} stocks ({self.cfg.SCAN_UNIVERSE})")
+        print(f"  Analysed       : {len(scored)}")
+        print(f"  Skipped        : {skipped} (not enough candle data)")
+        print(f"  Passed filter  : {len(filtered)} (|score| >= {self.cfg.V2_MIN_SCORE})")
+        print(f"  Top candidates : {len(top)} (max {MAX_CANDIDATES})")
+        print(f"  Bullish setups : {bulls}")
+        print(f"  Bearish setups : {bears}")
+        print(f"\n  Claude calls   : 0  (test mode -- no API cost)")
+        print(f"  Orders placed  : 0  (test mode -- no trades)")
+        print()
+
+    # ================================================================
     # OVERRIDE: MONITOR LOOP (V2 — with dynamic polling + candle re-scan)
     # ================================================================
 

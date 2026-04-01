@@ -39,15 +39,17 @@ def main():
         except (IndexError, ValueError):
             pass
 
-    # Check for --v2 flag
-    use_v2 = "--v2" in sys.argv
+    # Check for --v2 and --test flags
+    use_v2   = "--v2"   in sys.argv
+    use_test = "--test" in sys.argv
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|login] [--v2]")
-        print("  analyze      — read-only portfolio analysis")
-        print("  trade        — intraday trading bot (V1)")
-        print("  trade --v2   — intraday trading bot (V2 candle strategy)")
-        print("  login        — test Zerodha login only")
+        print("Usage: python main.py --mode [analyze|trade|login] [--v2] [--test]")
+        print("  analyze           — read-only portfolio analysis")
+        print("  trade             — intraday trading bot (V1)")
+        print("  trade --v2        — intraday trading bot (V2 candle strategy)")
+        print("  trade --v2 --test — test V2 candle pipeline (no Claude calls, no trades)")
+        print("  login             — test Zerodha login only")
         sys.exit(1)
 
     if mode == "analyze":
@@ -58,9 +60,16 @@ def main():
         if use_v2:
             from portfolio.manager_v2 import PortfolioManagerV2
             runner = PortfolioManagerV2(Config)
+            if use_test:
+                runner.run_test()
+            else:
+                runner.run()
         else:
+            if use_test:
+                print("--test is only supported with --v2 (candle strategy)")
+                sys.exit(1)
             runner = PortfolioManager(Config)
-        runner.run()
+            runner.run()
 
     elif mode == "login":
         missing = Config.validate()
