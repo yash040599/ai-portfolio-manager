@@ -5,6 +5,8 @@ Pulls the latest backup repo, then syncs in both directions:
   - Files only in local  → copied to backup repo
   - Files only in remote → copied to local project
   - Files in both but different → asks which to keep (l/r)
+  - SQLite databases (.db) → MERGED row-by-row (new rows from each
+    side are added to the other, nothing is deleted)
 
 After syncing, commits and pushes changes to the backup repo.
 
@@ -19,6 +21,7 @@ import argparse
 import filecmp
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 
@@ -129,6 +132,162 @@ def ask_conflict(rel_path: str) -> str:
         print("      Please enter 'l' or 'r'.")
 
 
+# ================================================================
+# SQLITE DATABASE MERGING
+# ================================================================
+
+# Tables with UNIQUE constraints — use INSERT OR IGNORE
+UNIQUE_TABLES = {
+    "intraday_tax_ledger",
+    "capital_gains_ledger",
+}
+
+# Tables without UNIQUE constraints — deduplicate on all data columns
+APPEND_TABLES = {
+    "trades":             ("date", "symbol", "side", "entry_price", "exit_price",
+                           "qty", "pnl", "exit_reason"),
+    "portfolio_analyses": ("date", "symbol", "action", "conviction", "current_price",
+                           "invested_value", "current_value"),
+}
+
+
+def _get_user_tables(conn: sqlite3.Connection) -> list[str]:
+    """Return all user-created table names in a SQLite DB."""
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _get_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    """Return column names for a table (excluding 'id' autoincrement PK)."""
+    rows = conn.execute(f"PRAGMA table_info('{table}')").fetchall()
+    return [r[1] for r in rows if r[1] != "id"]
+
+
+def _merge_table(
+    dst_conn: sqlite3.Connection,
+    src_conn: sqlite3.Connection,
+    table: str,
+    direction: str,
+) -> int:
+    """
+    Merge rows from src into dst for one table.
+    Returns the number of new rows inserted.
+    """
+    cols = _get_columns(dst_conn, table)
+    if not cols:
+        return 0
+
+    if table in UNIQUE_TABLES:
+        # Tables with UNIQUE constraints — INSERT OR IGNORE handles dedup
+        rows = src_conn.execute(
+            f"SELECT {', '.join(cols)} FROM {table}"
+        ).fetchall()
+        if not rows:
+            return 0
+        placeholders = ", ".join("?" for _ in cols)
+        before = dst_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        dst_conn.executemany(
+            f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) "
+            f"VALUES ({placeholders})",
+            rows,
+        )
+        after = dst_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        return after - before
+
+    elif table in APPEND_TABLES:
+        # Tables without UNIQUE constraints — deduplicate on key columns
+        key_cols = APPEND_TABLES[table]
+        key_cols_sql = ", ".join(key_cols)
+        placeholders_key = " AND ".join(f"{c}=?" for c in key_cols)
+        all_placeholders = ", ".join("?" for _ in cols)
+
+        rows = src_conn.execute(
+            f"SELECT {', '.join(cols)} FROM {table}"
+        ).fetchall()
+        col_idx = {c: i for i, c in enumerate(cols)}
+        inserted = 0
+        for row in rows:
+            key_vals = tuple(row[col_idx[c]] for c in key_cols)
+            exists = dst_conn.execute(
+                f"SELECT 1 FROM {table} WHERE {placeholders_key}",
+                key_vals,
+            ).fetchone()
+            if not exists:
+                dst_conn.execute(
+                    f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({all_placeholders})",
+                    row,
+                )
+                inserted += 1
+        return inserted
+
+    else:
+        # Unknown table — skip merge (copy as-is would be handled by file sync)
+        return 0
+
+
+def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
+    """
+    Merge two SQLite databases bidirectionally:
+      1. New rows from remote → local
+      2. Copy merged local → remote (so remote gets all rows too)
+    Returns True if any rows were merged.
+    """
+    if not os.path.isfile(local_db) or not os.path.isfile(remote_db):
+        return False
+
+    if dry_run:
+        print(f"    ↔ merge:   data/trades.db (would merge rows from both sides)")
+        return True
+
+    total_inserted = 0
+
+    # Open both databases
+    local_conn = sqlite3.connect(local_db)
+    remote_conn = sqlite3.connect(remote_db)
+
+    try:
+        # Ensure tables exist in local (in case remote has tables local doesn't)
+        local_tables = set(_get_user_tables(local_conn))
+        remote_tables = set(_get_user_tables(remote_conn))
+
+        mergeable = (UNIQUE_TABLES | set(APPEND_TABLES.keys()))
+
+        for table in sorted(mergeable):
+            if table not in remote_tables:
+                continue
+            if table not in local_tables:
+                # Table exists in remote but not local — create it from remote schema
+                schema = remote_conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if schema:
+                    local_conn.execute(schema[0])
+                    local_tables.add(table)
+
+            if table in local_tables:
+                n = _merge_table(local_conn, remote_conn, table, "remote→local")
+                if n > 0:
+                    print(f"    ← {n} new row(s) from remote: {table}")
+                    total_inserted += n
+
+        local_conn.commit()
+    finally:
+        remote_conn.close()
+        local_conn.close()
+
+    if total_inserted > 0:
+        print(f"    ↔ merged {total_inserted} total new row(s) into local DB")
+
+    # Copy merged local → remote so both sides are identical
+    shutil.copy2(local_db, remote_db)
+
+    return total_inserted > 0 or not filecmp.cmp(local_db, remote_db, shallow=False)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Two-way sync data with private backup repo.")
     parser.add_argument("--dry-run", action="store_true",
@@ -183,6 +342,7 @@ def main():
     copied_to_local  = 0
     conflicts        = 0
     unchanged        = 0
+    db_merged        = False
 
     for rel in all_paths:
         in_local  = rel in local_files
@@ -204,6 +364,17 @@ def main():
             # Both exist — check if they differ
             if filecmp.cmp(local_files[rel], remote_files[rel], shallow=False):
                 unchanged += 1
+                continue
+
+            # SQLite databases — merge rows instead of overwriting
+            if rel.endswith(".db"):
+                db_merged = merge_databases(
+                    local_files[rel], remote_files[rel], args.dry_run,
+                )
+                if not args.dry_run and not db_merged:
+                    unchanged += 1
+                else:
+                    copied_to_remote += 1
                 continue
 
             # Content differs — ask user

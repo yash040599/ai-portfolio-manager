@@ -91,7 +91,7 @@ For detailed strategy documentation, see:
 ## Prerequisites
 
 - **Python 3.10+** (uses modern type syntax)
-- **Windows/Linux/Mac** with a desktop environment (browser needed for Zerodha login)
+- **Windows/Linux/Mac** — works on headless servers too (Zerodha login supports manual/paste mode for SSH-only VMs)
 - A **Zerodha trading account** with Kite Connect API access
 - A **Claude API key** from Anthropic
 
@@ -606,7 +606,10 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
 | File only in local | Copied to backup repo |
 | File only in remote | Copied to local project |
 | File in both, identical | Skipped |
-| File in both, different | Asks: keep **(l)**ocal or **(r)**emote? |
+| SQLite database (`.db`) in both, different | **Merged row-by-row** — new rows from each side are added to the other. Nothing is deleted. Both DBs end up identical with the union of all rows |
+| Other file in both, different | Asks: keep **(l)**ocal or **(r)**emote? |
+
+This means you can trade on a VM, trade on your laptop, and sync — all trades from both machines end up in both databases. The merge uses each table's unique key (`date + order_id` for tax ledger, `date + symbol + side + price` for trades, etc.) to avoid duplicates.
 
 After syncing, all changes are committed and pushed to the backup repo.
 
@@ -614,7 +617,7 @@ After syncing, all changes are committed and pushed to the backup repo.
 
 | Folder | Contents |
 |--------|----------|
-| `data/` | SQLite database (`trades.db`), Zerodha Tax P&L xlsx files |
+| `data/` | SQLite database (`trades.db`) — **merged**, not overwritten. Zerodha Tax P&L xlsx files |
 | `reports/` | All trading and portfolio reports (txt + json) |
 | `logs/` | Log files |
 
@@ -650,6 +653,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Delayed entry filter** — skips indecisive stocks that haven't moved after market open
 - **Market condition awareness** — detects high-volatility regimes and adjusts position sizing
 - **Performance memory** — learns from past trades via SQLite DB to avoid repeating mistakes
+- **Order API retry + circuit breaker** — each Zerodha order retries 3× with backoff; 3 consecutive failures = stop Claude calls, square off, shutdown
 - **Fill price sanity check** — rejects corrupted fill prices (>5% deviation from expected quote)
 - **Time-decay targets** — reduces targets after 2 PM to lock in profits before square-off
 - **Late entry guard** — blocks new positions when insufficient time remains in session
