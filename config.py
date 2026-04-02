@@ -38,7 +38,7 @@ class Config:
     #
     # MAX_BUDGET_INR: absolute cap on how much capital the bot can
     # deploy in a single day, regardless of account balance.
-    MAX_BUDGET_INR: int = 10_000
+    MAX_BUDGET_INR: int = 20_000
 
     # MIN_BALANCE_TO_TRADE: minimum Zerodha account balance required
     # to start trading. If your funds are below this, the bot logs
