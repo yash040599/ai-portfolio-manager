@@ -461,12 +461,21 @@ class PortfolioManager:
         if self._shutdown_requested:
             return
 
-        # Fetch live quotes after observation period
-        try:
-            current_quotes = self.zerodha.get_quotes(plan_symbols)
-        except Exception as e:
-            self.log.warning(f"Quote fetch failed after observation: {e}")
-            self.log.info("Entering all trades without observation filter")
+        # Fetch live quotes after observation period (retry up to 3 times)
+        current_quotes = None
+        for attempt in range(1, 4):
+            try:
+                current_quotes = self.zerodha.get_quotes(plan_symbols)
+                break
+            except Exception as e:
+                self.log.warning(
+                    f"Quote fetch failed after observation (attempt {attempt}/3): {e}"
+                )
+                if attempt < 3:
+                    time.sleep(2 * attempt)
+
+        if current_quotes is None:
+            self.log.info("All retries failed — entering all trades without observation filter")
             self._enter_positions()
             return
 
