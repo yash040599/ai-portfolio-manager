@@ -349,6 +349,10 @@ class PortfolioManager:
         """
         self.log.section("ENTERING POSITIONS")
 
+        # Sync with Zerodha to detect any positions opened manually
+        # between the scan and now (affects budget + slot limits)
+        self.engine.sync_external_positions()
+
         plans = trades if trades is not None else self._trade_plans
         for trade in plans:
             if self._shutdown_requested:
@@ -591,7 +595,7 @@ class PortfolioManager:
                 self.log.info("Square-off time reached")
                 break
 
-            # ── Check if all positions are already closed ─────────
+            # ── Check if all positions are closed ─────────────────
             if not self.engine.open_positions():
                 # If order API is broken, don't scan for more trades
                 if self.engine.is_order_api_broken():
@@ -615,6 +619,10 @@ class PortfolioManager:
                         f"All positions closed with {mins_remaining:.0f} min left — "
                         f"scanning for new opportunities..."
                     )
+                    # Sync with Zerodha before re-scan (detect manual trades, refresh budget)
+                    self.engine.sync_external_positions()
+                    self.engine.refresh_budget()
+
                     # Build session context for the re-scan so Claude knows
                     # what already happened today (P&L, traded symbols)
                     closed_trades = self.engine.closed_positions()
@@ -662,6 +670,9 @@ class PortfolioManager:
             if closed > 0:
                 self.log.info(f"{closed} position(s) auto-closed")
                 # ── Partial re-scan: fill empty slots with new trades ─
+                # Sync with Zerodha to detect manual trades before counting slots
+                self.engine.sync_external_positions()
+                self.engine.refresh_budget()
                 open_count = len(self.engine.open_positions())
                 rescan_cooldown = 120  # min 2 min between partial re-scans
                 time_since_rescan = time.time() - self._last_partial_rescan

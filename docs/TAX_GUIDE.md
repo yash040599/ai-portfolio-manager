@@ -1,7 +1,7 @@
 # Intraday Trading — Tax Guide (India)
 
 > **Applies to:** Indian residents doing equity intraday (MIS) trading on NSE.
-> **Last updated:** March 2026. Verify rates each year before filing ITR.
+> **Last updated:** April 2026 (FY 2026-27 / AY 2027-28). Verify rates each year before filing ITR.
 
 ---
 
@@ -23,19 +23,27 @@ total income** (salary + other sources) and taxed per your applicable slab.
 
 ### New Tax Regime (Default from FY 2023-24 onwards)
 
+**Updated per Union Budget 2025 (effective FY 2025-26 onwards):**
+
 | Taxable Income (₹)    | Tax Rate |
 |------------------------|----------|
-| Up to 3,00,000         | Nil      |
-| 3,00,001 – 7,00,000   | 5%       |
-| 7,00,001 – 10,00,000  | 10%      |
-| 10,00,001 – 12,00,000 | 15%      |
-| 12,00,001 – 15,00,000 | 20%      |
-| Above 15,00,000        | 30%      |
+| Up to 4,00,000         | Nil      |
+| 4,00,001 – 8,00,000   | 5%       |
+| 8,00,001 – 12,00,000  | 10%      |
+| 12,00,001 – 16,00,000 | 15%      |
+| 16,00,001 – 20,00,000 | 20%      |
+| 20,00,001 – 24,00,000 | 25%      |
+| Above 24,00,000        | 30%      |
 
 Plus **4% Health & Education Cess** on total tax.
 
-> **Tip:** If your salary already puts you in the 30% bracket, every rupee
-> of intraday profit is taxed at ~31.2% (30% + 4% cess).
+**Tax rebate under Section 87A:** No tax payable if total income ≤ ₹12,00,000
+(effectively zero tax up to ₹12L under new regime).
+
+**Standard deduction for salaried:** ₹75,000 (raised from ₹50,000 in Budget 2024).
+
+> **Tip:** If your salary already puts you in the 30% bracket (above ₹24L),
+> every rupee of intraday profit is taxed at ~31.2% (30% + 4% cess).
 
 ---
 
@@ -139,8 +147,8 @@ To carry forward losses, you **must file ITR before the due date** (July 31).
 |-----------|-----------------|
 | Turnover > ₹10 Cr (digital transactions) | **Yes** — mandatory CA audit |
 | Turnover < ₹10 Cr AND profit ≥ 6% of turnover | No |
-| Turnover < ₹10 Cr AND profit < 6% AND total income > ₹2.5L | **Yes** |
-| Turnover < ₹10 Cr AND total income < ₹2.5L | No |
+| Turnover < ₹10 Cr AND profit < 6% AND total income > basic exemption (₹4L new regime) | **Yes** |
+| Turnover < ₹10 Cr AND total income < basic exemption | No |
 
 **Turnover for intraday** = Absolute sum of settlement profits and losses
 (NOT buy+sell value). For small accounts like ours (₹10K budget), turnover

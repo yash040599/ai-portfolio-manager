@@ -45,10 +45,86 @@ from services.technical_indicators   import (
     compute_technical_score, prev_day_sr_score,
     vwap, rsi, ema_crossover, supertrend,
 )
+from services.candle_cache           import CandleCache
 
 
 # Maximum candidates to send to Claude (rest are filtered out by math)
 MAX_CANDIDATES = 15
+
+# Maximum positions allowed per sector (prevents correlated drawdowns)
+MAX_PER_SECTOR = 2
+
+# ================================================================
+# SECTOR MAPPING — NSE NIFTY STOCKS
+# ================================================================
+# Used by the sector diversification filter.
+# Stocks not in this map default to "OTHER".
+# ================================================================
+
+SECTOR_MAP = {
+    # Banking & Financial Services
+    "HDFCBANK": "BANKING", "ICICIBANK": "BANKING", "KOTAKBANK": "BANKING",
+    "AXISBANK": "BANKING", "SBIN": "BANKING", "BANKBARODA": "BANKING",
+    "PNB": "BANKING", "CANBK": "BANKING", "UNIONBANK": "BANKING",
+    "IDFCFIRSTB": "BANKING", "FEDERALBNK": "BANKING", "YESBANK": "BANKING",
+    "INDUSINDBK": "BANKING",
+    # NBFC / Financial
+    "BAJFINANCE": "FINANCE", "BAJAJFINSV": "FINANCE", "CHOLAFIN": "FINANCE",
+    "SHRIRAMFIN": "FINANCE", "MUTHOOTFIN": "FINANCE", "JIOFIN": "FINANCE",
+    "HDFCLIFE": "FINANCE", "SBILIFE": "FINANCE", "HDFCAMC": "FINANCE",
+    "PFC": "FINANCE", "RECLTD": "FINANCE", "IRFC": "FINANCE",
+    "CANFINHOME": "FINANCE", "MFSL": "FINANCE", "LICHSGFIN": "FINANCE",
+    "TATACAP": "FINANCE",
+    # IT / Tech
+    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
+    "TECHM": "IT", "LTIM": "IT", "NAUKRI": "IT", "OFSS": "IT",
+    # Pharma / Healthcare
+    "SUNPHARMA": "PHARMA", "DRREDDY": "PHARMA", "CIPLA": "PHARMA",
+    "APOLLOHOSP": "PHARMA", "DIVISLAB": "PHARMA", "TORNTPHARM": "PHARMA",
+    "MAXHEALTH": "PHARMA", "BIOCON": "PHARMA", "AUROPHARMA": "PHARMA",
+    "ZYDUSLIFE": "PHARMA",
+    # Auto
+    "MARUTI": "AUTO", "BAJAJ-AUTO": "AUTO", "EICHERMOT": "AUTO",
+    "M&M": "AUTO", "TVSMOTOR": "AUTO", "HYUNDAI": "AUTO",
+    "HEROMOTOCO": "AUTO", "TATAMOTORS": "AUTO",
+    "MOTHERSON": "AUTO", "ESCORTS": "AUTO",
+    # Oil & Gas / Energy
+    "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
+    "IOC": "ENERGY", "GAIL": "ENERGY", "PETRONET": "ENERGY",
+    "ADANIENT": "ENERGY", "ADANIPORTS": "ENERGY",
+    "ADANIGREEN": "ENERGY", "ADANIENSOL": "ENERGY", "ADANIPOWER": "ENERGY",
+    # Metals & Mining
+    "TATASTEEL": "METALS", "JSWSTEEL": "METALS", "HINDALCO": "METALS",
+    "VEDL": "METALS", "COALINDIA": "METALS", "NMDC": "METALS",
+    "JINDALSTEL": "METALS", "SAIL": "METALS", "HINDZINC": "METALS",
+    # FMCG / Consumer
+    "HINDUNILVR": "FMCG", "ITC": "FMCG", "NESTLEIND": "FMCG",
+    "BRITANNIA": "FMCG", "TATACONSUM": "FMCG", "GODREJCP": "FMCG",
+    "DMART": "FMCG", "VBL": "FMCG", "UNITDSPR": "FMCG",
+    "TRENT": "FMCG", "TITAN": "FMCG", "PAGEIND": "FMCG",
+    "ASIANPAINT": "FMCG",
+    # Infra / Construction / Power
+    "LT": "INFRA", "NTPC": "INFRA", "POWERGRID": "INFRA",
+    "TATAPOWER": "INFRA", "ULTRACEMCO": "INFRA", "GRASIM": "INFRA",
+    "SHREECEM": "INFRA", "AMBUJACEM": "INFRA", "DLF": "INFRA",
+    "OBEROIRLTY": "INFRA", "LODHA": "INFRA",
+    # Telecom
+    "BHARTIARTL": "TELECOM", "TATACOMM": "TELECOM",
+    "INDUSTOWER": "TELECOM",
+    # Aviation
+    "INDIGO": "OTHER",  # InterGlobe Aviation — airline, not telecom
+    # Capital Goods / Engineering
+    "ABB": "CAPGOODS", "SIEMENS": "CAPGOODS", "HAL": "CAPGOODS",
+    "BEL": "CAPGOODS", "CUMMINSIND": "CAPGOODS", "CGPOWER": "CAPGOODS",
+    "BOSCHLTD": "CAPGOODS", "MAZDOCK": "CAPGOODS", "POLYCAB": "CAPGOODS",
+    "PIDILITIND": "CAPGOODS", "SOLARINDS": "CAPGOODS",
+    # Specialty
+    "ETERNAL": "OTHER", "JUBLFOOD": "OTHER", "MRF": "OTHER",
+    "NAVINFLUOR": "OTHER", "PIIND": "OTHER", "VOLTAS": "OTHER",
+    "CONCOR": "OTHER", "GMRINFRA": "OTHER", "TORNTPOWER": "OTHER",
+    "ENRIN": "OTHER", "BALKRISIND": "OTHER", "BHARATFORG": "OTHER",
+    "INDHOTEL": "OTHER", "BAJAJHLDNG": "OTHER",
+}
 
 
 class StockScannerV2(StockScanner):
@@ -66,6 +142,15 @@ class StockScannerV2(StockScanner):
     ):
         super().__init__(config, claude, log)
         self.zerodha = zerodha
+        self._cache = CandleCache()
+
+        # Cleanup old cached data on startup (keep 45 days)
+        try:
+            cleaned = self._cache.cleanup_old(keep_days=45)
+            if cleaned:
+                self.log.info(f"Candle cache: cleaned {cleaned} old entries")
+        except Exception:
+            pass
 
     # ================================================================
     # CANDLE DATA FETCHER
@@ -80,19 +165,71 @@ class StockScannerV2(StockScanner):
     ) -> list[dict]:
         """
         Fetches intraday candles for one stock.
+        Previous days' candles are served from cache; today's are always
+        fetched live from Zerodha (they update every 15 min).
         Returns list of candle dicts: {date, open, high, low, close, volume}.
         Returns empty list on failure (non-blocking).
         """
-        to_dt = datetime.datetime.now()
-        from_dt = to_dt - datetime.timedelta(days=days_back)
+        today = datetime.date.today()
+        from_date = today - datetime.timedelta(days=days_back)
 
-        try:
-            candles = self.zerodha.get_historical(
-                symbol, exchange, from_dt, to_dt, interval,
-            )
-            return candles if candles else []
-        except Exception:
+        # Get cached candles for previous days (before today)
+        cached = self._cache.get_cached_candles(
+            symbol, exchange, interval, from_date, today,
+        )
+
+        if not cached and days_back > 0:
+            # Cold cache — single Zerodha call for full range (avoids
+            # a wasted live-only call that the fallback would duplicate)
+            try:
+                from_dt = datetime.datetime.combine(
+                    from_date, datetime.time(9, 0),
+                )
+                all_candles = self.zerodha.get_historical(
+                    symbol, exchange, from_dt, datetime.datetime.now(), interval,
+                )
+                if all_candles:
+                    self._cache.store_candles(symbol, exchange, interval, all_candles)
+                    return all_candles
+            except Exception:
+                pass
             return []
+
+        # Cache hit — check for corporate action (split/bonus) before using
+        if cached:
+            last_cached_close = cached[-1]["close"]
+            try:
+                today_start = datetime.datetime.combine(today, datetime.time(9, 0))
+                now = datetime.datetime.now()
+                live = self.zerodha.get_historical(
+                    symbol, exchange, today_start, now, interval,
+                )
+                live = live if live else []
+            except Exception:
+                live = []
+
+            # Detect price discontinuity (>35% gap = likely corporate action)
+            if live and last_cached_close > 0:
+                first_live_open = live[0]["open"]
+                gap = abs(first_live_open - last_cached_close) / last_cached_close
+                if gap > 0.35:
+                    # Likely split/bonus — invalidate cache, refetch everything
+                    self._cache.invalidate_symbol(symbol, exchange)
+                    try:
+                        from_dt = datetime.datetime.combine(
+                            from_date, datetime.time(9, 0),
+                        )
+                        all_candles = self.zerodha.get_historical(
+                            symbol, exchange, from_dt, datetime.datetime.now(), interval,
+                        )
+                        if all_candles:
+                            self._cache.store_candles(symbol, exchange, interval, all_candles)
+                            return all_candles
+                    except Exception:
+                        pass
+                    return live
+
+            return cached + live
 
     def _fetch_daily_candles(
         self,
@@ -100,15 +237,39 @@ class StockScannerV2(StockScanner):
         exchange: str = "NSE",
         days_back: int = 30,
     ) -> list[dict]:
-        """Fetches daily candles for trend context."""
-        to_dt = datetime.date.today()
-        from_dt = to_dt - datetime.timedelta(days=days_back)
+        """
+        Fetches daily candles for trend context.
+        Previous days' candles are served from cache; only missing
+        dates are fetched from Zerodha.
+        """
+        today = datetime.date.today()
+        from_date = today - datetime.timedelta(days=days_back)
 
+        # Check cache for previous days
+        cached = self._cache.get_cached_candles(
+            symbol, exchange, "day", from_date, today,
+        )
+
+        if cached:
+            # Cache has data — return it (daily candles for past days don't change)
+            # Corporate action detection is handled by _fetch_intraday_candles
+            # (called first in _analyse_stock) which invalidates ALL intervals
+            # for the symbol if a >35% price gap is detected.
+            return cached
+
+        # Nothing cached — fetch full range from Zerodha and cache
         try:
             candles = self.zerodha.get_historical(
-                symbol, exchange, from_dt, to_dt, "day",
+                symbol, exchange, from_date, today, "day",
             )
-            return candles if candles else []
+            if candles:
+                self._cache.store_candles(symbol, exchange, "day", candles)
+                # Exclude today's partial daily candle (matches cached behaviour)
+                return [
+                    c for c in candles
+                    if (c["date"].date() if hasattr(c["date"], "date") else c["date"]) < today
+                ]
+            return []
         except Exception:
             return []
 
@@ -273,8 +434,27 @@ class StockScannerV2(StockScanner):
         # Sort by absolute combined score (strongest signals first)
         filtered.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
 
+        # Sector diversification: limit to MAX_PER_SECTOR per sector
+        sector_diversified = []
+        sector_counts: dict[str, int] = {}
+        dropped_sector = 0
+        for s in filtered:
+            sector = SECTOR_MAP.get(s["symbol"], "OTHER")
+            count = sector_counts.get(sector, 0)
+            if count >= MAX_PER_SECTOR:
+                dropped_sector += 1
+                continue
+            sector_counts[sector] = count + 1
+            sector_diversified.append(s)
+
+        if dropped_sector:
+            self.log.info(
+                f"  Sector diversification: dropped {dropped_sector} stocks "
+                f"(max {MAX_PER_SECTOR} per sector)"
+            )
+
         # Take top candidates
-        top = filtered[:MAX_CANDIDATES]
+        top = sector_diversified[:MAX_CANDIDATES]
 
         if top:
             self.log.info(f"  Top {len(top)} candidates by technical score:")
@@ -392,10 +572,18 @@ class StockScannerV2(StockScanner):
                 skip_symbols |= {s.strip() for s in m.group(1).split(",")}
 
         trades = []
+        noai_sector_counts: dict[str, int] = {}
         for c in top:
             symbol = c["symbol"]
             if symbol in skip_symbols:
                 continue
+
+            # Sector limit for NoAI trades
+            sector = SECTOR_MAP.get(symbol, "OTHER")
+            sec_count = noai_sector_counts.get(sector, 0)
+            if sec_count >= MAX_PER_SECTOR:
+                continue
+            noai_sector_counts[sector] = sec_count + 1
 
             price = c["current_price"]
             if price <= 0:
@@ -424,6 +612,15 @@ class StockScannerV2(StockScanner):
             parts.append(f"RSI {tech['rsi']['rsi']:.0f}")
             parts.append(f"EMA {tech['ema_cross']['signal']}")
             parts.append(f"ST {tech['supertrend']['trend']}")
+            macd_info = tech.get("macd", {})
+            if macd_info.get("signal", "NONE") != "NONE":
+                parts.append(f"MACD {macd_info['signal']}/{macd_info['momentum']}")
+            orb_info = tech.get("orb", {})
+            if orb_info.get("signal", "NONE") not in ("NONE", "INSIDE_RANGE"):
+                parts.append(f"ORB {orb_info['signal']}")
+            gap_info = tech.get("gap", {})
+            if gap_info.get("signal", "NO_GAP") != "NO_GAP":
+                parts.append(f"Gap {gap_info['signal']}")
             if ps["patterns"]:
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
@@ -492,6 +689,24 @@ class StockScannerV2(StockScanner):
             if c.get("rvol", 0) > 0:
                 rvol_str = f"  RVol: {c['rvol']:.1f}x"
 
+            # MACD
+            macd = tech.get("macd", {})
+            macd_str = ""
+            if macd.get("signal", "NONE") != "NONE":
+                macd_str = f"  MACD: {macd['signal']}/{macd['momentum']}"
+
+            # ORB
+            orb = tech.get("orb", {})
+            orb_str = ""
+            if orb.get("signal", "NONE") not in ("NONE", "INSIDE_RANGE"):
+                orb_str = f"  ORB: {orb['signal']}"
+
+            # Gap
+            gap = tech.get("gap", {})
+            gap_str = ""
+            if gap.get("signal", "NO_GAP") != "NO_GAP":
+                gap_str = f"  Gap: {gap['signal']}({gap['gap_pct']:+.1f}%)"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -501,7 +716,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}"
             )
 
         return "\n".join(lines)
@@ -541,6 +756,9 @@ INDICATOR GUIDE:
   SHOOTING_STAR, BEARISH_ENGULFING, EVENING_STAR = bearish reversal.
   THREE_WHITE_SOLDIERS = strong bullish. THREE_BLACK_CROWS = strong bearish.
 - Score: positive = net bullish, negative = net bearish. Higher absolute value = stronger signal.
+- MACD: BULLISH/GROWING = momentum accelerating up. BEARISH/GROWING = momentum accelerating down. SHRINKING = momentum fading (warning).
+- ORB: BREAKOUT_UP = price above first 15-min range (strong BUY). BREAKOUT_DOWN = below (strong SELL).
+- Gap: GAP_UP_STRONG = gap-up with volume (continuation). GAP_UP_WEAK = gap-up without volume (gap fill risk). Same for DOWN.
 
 CRITICAL RULES — MUST FOLLOW:
 1. ALIGN WITH INDICATORS: if RSI says overbought and candle shows SHOOTING_STAR, that's a strong SHORT setup. If RSI is oversold with a HAMMER, that's a strong BUY.

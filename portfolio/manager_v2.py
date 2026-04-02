@@ -99,25 +99,53 @@ class PortfolioManagerV2(PortfolioManager):
     # TEST MODE — run V2 candle pipeline end-to-end, no Claude
     # ================================================================
 
-    def run_test(self):
+    def run_test(self, noai: bool = False):
         """
-        Runs the full V2 candle-pattern + technical-indicator pipeline
-        without any Claude API calls or order placement. Useful for
-        verifying that the math layer works end-to-end.
+        Runs the full V2 strategy analysis pipeline and shows what the
+        bot does at each step — without any Claude API calls or orders.
+
+        Purpose: educate the user on how the strategy works, verify the
+        pipeline is functioning correctly, and show what trades the bot
+        would consider today.
+
+        When noai=True, also shows the NoAI auto-selection logic
+        (which trades would be auto-entered without Claude).
 
         Steps:
           1. Validate config + log into Zerodha
           2. Fetch live quotes for the stock universe
           3. Run V2 pre-filter (candle patterns + technical indicators)
           4. Print detailed results for every analysed stock
-          5. Show what would have been sent to Claude
+          5. Show sector diversification filter results
+          6. Show what would be sent to Claude (V2) or auto-selected (NoAI)
         """
-        from services.stock_scanner_v2 import MAX_CANDIDATES
+        from services.stock_scanner_v2 import MAX_CANDIDATES, SECTOR_MAP, MAX_PER_SECTOR
 
+        mode_label = "NoAI" if noai else "V2"
         print(f"\n{'='*58}")
-        print("  V2 CANDLE PIPELINE — TEST MODE")
-        print(f"  No Claude calls. No trades. Just math.")
+        print(f"  {mode_label} STRATEGY ANALYSIS — TEST MODE")
+        print(f"  Shows how the bot analyses and selects trades.")
+        print(f"  No Claude calls. No trades. No cost.")
         print(f"{'='*58}\n")
+
+        print("  STRATEGY PIPELINE:")
+        print("  ┌─────────────────────────────────────────────────┐")
+        print("  │ 1. Fetch candle data (15-min + daily)           │")
+        print("  │ 2. Run 14 candlestick pattern detectors         │")
+        print("  │ 3. Compute 9 technical indicators               │")
+        print("  │    EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap,  │")
+        print("  │    Daily EMA, Previous Day S&R                   │")
+        print("  │ 4. Score each stock (~-22 to +22)               │")
+        print("  │ 5. Filter by min score threshold                │")
+        print("  │ 6. Apply Nifty trend hard filter                │")
+        print("  │ 7. Apply sector diversification (max 2/sector)  │")
+        if noai:
+            print("  │ 8. Auto-select top candidates → BUY/SELL       │")
+            print("  │    (score > 0 = BUY, score < 0 = SELL)         │")
+        else:
+            print("  │ 8. Send top 15 to Claude for final selection    │")
+        print("  └─────────────────────────────────────────────────┘")
+        print()
 
         # ── Step 1: Validate config ───────────────────────────────
         missing = self.cfg.validate(require_claude=False)
@@ -138,7 +166,7 @@ class PortfolioManagerV2(PortfolioManager):
 
         # ── Step 3: Fetch live quotes ─────────────────────────────
         universe = self.scanner.get_universe()
-        self.log.section(f"SCANNING {len(universe)} STOCKS ({self.cfg.SCAN_UNIVERSE})")
+        self.log.section(f"STEP 1: SCANNING {len(universe)} STOCKS ({self.cfg.SCAN_UNIVERSE})")
 
         stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
         quotes = self.zerodha.get_quotes_safe(stocks)
@@ -147,10 +175,11 @@ class PortfolioManagerV2(PortfolioManager):
             return
 
         # ── Step 4: Run V2 pre-filter (math only) ────────────────
-        self.log.section("V2 PRE-FILTER — Candle Patterns + Technical Indicators")
-        self.log.info(f"Interval: {self.cfg.V2_CANDLE_INTERVAL}")
-        self.log.info(f"Min score threshold: {self.cfg.V2_MIN_SCORE}")
-        self.log.info(f"Max candidates: {MAX_CANDIDATES}")
+        self.log.section("STEP 2: TECHNICAL ANALYSIS (free — no API cost)")
+        self.log.info(f"Candle interval : {self.cfg.V2_CANDLE_INTERVAL}")
+        self.log.info(f"Min score       : {self.cfg.V2_MIN_SCORE}")
+        self.log.info(f"Max candidates  : {MAX_CANDIDATES}")
+        self.log.info(f"Sector limit    : {MAX_PER_SECTOR} per sector")
         self.log.info("")
 
         scored = []
@@ -170,7 +199,7 @@ class PortfolioManagerV2(PortfolioManager):
         # ── Step 5: Show ALL results (not just filtered) ──────────
         scored.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
 
-        self.log.section("ALL STOCKS BY TECHNICAL SCORE")
+        self.log.section("STEP 3: SCORING RESULTS (all stocks ranked)")
         print(f"{'Symbol':<14} {'Score':>6}  {'Signal':<12} {'RSI':>5}  "
               f"{'EMA(9/21)':<16} {'SuperTrend':<12} {'VWAP':>10}  "
               f"{'Price':>10}  {'Patterns'}")
@@ -197,9 +226,29 @@ class PortfolioManagerV2(PortfolioManager):
 
         # ── Step 6: Show filtered candidates ──────────────────────
         filtered = [s for s in scored if abs(s["combined_score"]) >= self.cfg.V2_MIN_SCORE]
-        top = filtered[:MAX_CANDIDATES]
 
-        self.log.section(f"FILTERED CANDIDATES -- {len(filtered)} passed (score >= {self.cfg.V2_MIN_SCORE}), top {len(top)} shown")
+        # Apply sector diversification (same as real scan)
+        sector_diversified = []
+        sector_counts: dict[str, int] = {}
+        dropped_sector = 0
+        for s in filtered:
+            sector = SECTOR_MAP.get(s["symbol"], "OTHER")
+            count = sector_counts.get(sector, 0)
+            if count >= MAX_PER_SECTOR:
+                dropped_sector += 1
+                continue
+            sector_counts[sector] = count + 1
+            sector_diversified.append(s)
+
+        top = sector_diversified[:MAX_CANDIDATES]
+
+        self.log.section(f"STEP 4: FILTERING — {len(filtered)} passed score, {dropped_sector} dropped by sector limit, top {len(top)} shown")
+
+        if dropped_sector:
+            self.log.info(f"  Sector caps applied (max {MAX_PER_SECTOR}/sector):")
+            for sec, cnt in sorted(sector_counts.items()):
+                if cnt >= MAX_PER_SECTOR:
+                    self.log.info(f"    {sec}: {cnt} (capped)")
 
         if not top:
             self.log.warning("No stocks passed the pre-filter threshold today.")
@@ -212,9 +261,10 @@ class PortfolioManagerV2(PortfolioManager):
             st = tech["supertrend"]
             rsi_data = tech["rsi"]
             sr = tech.get("prev_day_sr", {})
+            sector = SECTOR_MAP.get(r["symbol"], "OTHER")
 
             print(f"\n  {'-'*50}")
-            print(f"  {r['symbol']}  --  Combined Score: {r['combined_score']:+.1f}  ({tech['signal']})")
+            print(f"  {r['symbol']}  --  Score: {r['combined_score']:+.1f}  ({tech['signal']})  [Sector: {sector}]")
             print(f"  {'-'*50}")
             print(f"  Price    : Rs.{r['current_price']:.2f}")
             print(f"  VWAP     : Rs.{r['vwap']:.2f}  ({'above' if r['current_price'] > r['vwap'] else 'below'} VWAP)")
@@ -226,6 +276,20 @@ class PortfolioManagerV2(PortfolioManager):
             if sr.get("signal", "NONE") != "NONE":
                 pivot_str = f"  Pivot: Rs.{sr['pivot']:.2f}" if sr.get("pivot") else ""
                 print(f"  PrevDayS&R: {sr['signal']}  (score: {sr['score']:+.1f}){pivot_str}")
+
+            macd_data = tech.get("macd", {})
+            if macd_data.get("signal", "NONE") != "NONE":
+                print(f"  MACD     : {macd_data['signal']} / {macd_data['momentum']}  (hist: {macd_data['histogram']:.4f})")
+
+            orb_data = tech.get("orb", {})
+            if orb_data.get("signal", "NONE") not in ("NONE", "INSIDE_RANGE"):
+                print(f"  ORB      : {orb_data['signal']}  (range: Rs.{orb_data['or_low']:.2f} - Rs.{orb_data['or_high']:.2f})")
+            elif orb_data.get("or_high", 0) > 0:
+                print(f"  ORB      : INSIDE_RANGE  (Rs.{orb_data['or_low']:.2f} - Rs.{orb_data['or_high']:.2f})")
+
+            gap_data = tech.get("gap", {})
+            if gap_data.get("signal", "NO_GAP") != "NO_GAP":
+                print(f"  Gap      : {gap_data['signal']}  ({gap_data['gap_pct']:+.1f}%)")
 
             if ps["patterns"]:
                 print(f"  Patterns : {', '.join(ps['patterns'])}")
@@ -239,8 +303,6 @@ class PortfolioManagerV2(PortfolioManager):
             print(f"  Candles  : {r['candle_count']} (15-min candles used)")
 
         # ── Step 6b: Nifty hard filter simulation ─────────────────
-        #    Test mode doesn't have nifty_context, but show what WOULD
-        #    happen if market was bearish/bullish to validate the filter.
         would_drop_bear = sum(1 for s in filtered if s["combined_score"] > 0 and abs(s["combined_score"]) < 3)
         would_drop_bull = sum(1 for s in filtered if s["combined_score"] < 0 and abs(s["combined_score"]) < 3)
         if would_drop_bear or would_drop_bull:
@@ -250,25 +312,74 @@ class PortfolioManagerV2(PortfolioManager):
             if would_drop_bull:
                 print(f"    BULLISH market → would drop {would_drop_bull} weak SELL signals (score < 3)")
 
-        # ── Step 7: Show what would be sent to Claude ─────────────
-        snapshot = self.scanner._build_enriched_snapshot(top, quotes)
-        if snapshot:
-            self.log.section("ENRICHED SNAPSHOT (would be sent to Claude)")
-            print(snapshot)
+        # ── Step 7: Show next step (Claude vs Auto-select) ────────
+        if noai:
+            self.log.section("STEP 5: NoAI AUTO-SELECTION (what would be traded)")
+            max_trades = self.cfg.MAX_POSITIONS
+            auto_picks = top[:max_trades]
+            print(f"  Max positions: {max_trades}")
+            print(f"  Auto-selected: {len(auto_picks)} trades\n")
+
+            for i, r in enumerate(auto_picks, 1):
+                side = "BUY" if r["combined_score"] > 0 else "SELL"
+                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+                price = r["current_price"]
+                if side == "BUY":
+                    sl = round(price * (1 - sl_pct), 2)
+                    target = round(price * (1 + tgt_pct), 2)
+                else:
+                    sl = round(price * (1 + sl_pct), 2)
+                    target = round(price * (1 - tgt_pct), 2)
+
+                tech = r["technical"]
+                ps = r["pattern_summary"]
+                rationale_parts = [f"Score {r['combined_score']:+.1f}"]
+                rationale_parts.append(f"RSI {tech['rsi']['rsi']:.0f}")
+                rationale_parts.append(f"EMA {tech['ema_cross']['signal']}")
+                rationale_parts.append(f"ST {tech['supertrend']['trend']}")
+                macd_data = tech.get("macd", {})
+                if macd_data.get("signal", "NONE") != "NONE":
+                    rationale_parts.append(f"MACD {macd_data['signal']}")
+                if ps["patterns"]:
+                    rationale_parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
+
+                print(f"  Trade {i}: {side} {r['symbol']} @ Rs.{price:.2f}")
+                print(f"           SL: Rs.{sl:.2f}  Target: Rs.{target:.2f}")
+                print(f"           {' | '.join(rationale_parts)}")
+                print()
+
+            print(f"  ℹ️  In live NoAI mode, ATR-based SL/target would override")
+            print(f"      the defaults shown above with volatility-adapted levels.")
+        else:
+            snapshot = self.scanner._build_enriched_snapshot(top, quotes)
+            if snapshot:
+                self.log.section("STEP 5: ENRICHED SNAPSHOT (would be sent to Claude)")
+                print(snapshot)
+                print(f"\n  ℹ️  In live V2 mode, Claude would analyse this data and")
+                print(f"      pick the best {self.cfg.MAX_POSITIONS} trades with specific entry/SL/target.")
 
         # ── Summary ───────────────────────────────────────────────
         self.log.section("TEST SUMMARY")
         bulls = sum(1 for s in top if s["combined_score"] > 0)
         bears = sum(1 for s in top if s["combined_score"] < 0)
+        print(f"  Mode           : {mode_label} Strategy Test")
         print(f"  Universe       : {len(universe)} stocks ({self.cfg.SCAN_UNIVERSE})")
         print(f"  Analysed       : {len(scored)}")
         print(f"  Skipped        : {skipped} (not enough candle data)")
         print(f"  Passed filter  : {len(filtered)} (|score| >= {self.cfg.V2_MIN_SCORE})")
+        print(f"  Sector dropped : {dropped_sector}")
         print(f"  Top candidates : {len(top)} (max {MAX_CANDIDATES})")
         print(f"  Bullish setups : {bulls}")
         print(f"  Bearish setups : {bears}")
-        print(f"\n  Claude calls   : 0  (test mode -- no API cost)")
-        print(f"  Orders placed  : 0  (test mode -- no trades)")
+        print(f"\n  Claude calls   : 0  (test mode — no API cost)")
+        print(f"  Orders placed  : 0  (test mode — no trades)")
+        if noai:
+            print(f"\n  To run NoAI live : python main.py --mode trade --noai")
+            print(f"  To dry-run first : python main.py --mode trade --noai --dryrun")
+        else:
+            print(f"\n  To run V2 live   : python main.py --mode trade")
+            print(f"  To dry-run first : python main.py --mode trade --dryrun")
         print()
 
     # ================================================================
@@ -424,6 +535,9 @@ class PortfolioManagerV2(PortfolioManager):
                         f"All positions closed with {mins_remaining:.0f} min left — "
                         f"V2 re-scanning with candle analysis..."
                     )
+                    # Sync with Zerodha before re-scan (detect manual trades, refresh budget)
+                    self.engine.sync_external_positions()
+                    self.engine.refresh_budget()
                     closed_trades = self.engine.closed_positions()
                     traded_symbols = list({p["symbol"] for p in closed_trades})
                     day_pnl = self.engine.day_pnl()
@@ -468,6 +582,9 @@ class PortfolioManagerV2(PortfolioManager):
             if closed > 0:
                 self.log.info(f"{closed} position(s) auto-closed")
                 # ── Partial re-scan: fill empty slots with new trades ─
+                # Sync with Zerodha to detect manual trades before counting slots
+                self.engine.sync_external_positions()
+                self.engine.refresh_budget()
                 open_count = len(self.engine.open_positions())
                 rescan_cooldown = 120  # min 2 min between partial re-scans
                 time_since_rescan = time.time() - self._last_partial_rescan

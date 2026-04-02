@@ -4,9 +4,9 @@
 
 V2 adds a **mathematical pre-filtering layer** before Claude. Instead of sending 100 raw stock prices to Claude, V2 first runs candlestick pattern detection and technical indicator analysis on every stock (for free, using Zerodha's historical candle API). Only the top 15 stocks with the strongest technical setups are sent to Claude — along with their exact RSI, EMA, VWAP, SuperTrend, and detected candle patterns.
 
-**Run with:** `python main.py --mode trade --v2`
+**Run with:** `python main.py --mode trade`
 
-V2 inherits **everything** from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). The only differences are in stock selection and position monitoring.
+V2 is the **default** trading strategy. It inherits everything from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). Use `--v1` for the retired legacy strategy.
 
 ---
 
@@ -41,9 +41,13 @@ For each stock in universe (50-200 stocks):
       • SuperTrend(10, 3.0) — ATR-based trend-following
       • Daily EMA(9/21) — higher timeframe trend bias
       • Previous day H/L/C — support/resistance proximity
-  → Calculate composite score (~-18 to +18)
+      • MACD(12,26,9) histogram — momentum confirmation/divergence
+      • Opening Range Breakout (ORB) — first candle breakout signal
+      • Gap analysis — pre-market gap continuation vs fill
+  → Calculate composite score (~-22 to +22)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 5
+  → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
   → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
   → Rank by absolute score (strongest signals first)
   → Take top 15 candidates
@@ -165,6 +169,36 @@ Every 25 minutes — PAID:
 - **What:** When NIFTY 50 is BEARISH, against-trend BUY signals need score ≥ 5 (instead of ≥ 2). When BULLISH, against-trend SELL signals need ≥ 5
 - **Why it works:** Institutional practice: trade with the broader market. Weak counter-trend signals fail much more often than with-trend signals
 
+### MACD(12,26,9) Histogram
+- **What:** Measures the distance between the MACD line and its signal line. Positive histogram = bullish momentum, negative = bearish
+- **On 15-min candles:** Fast EMA(12) = 3 hours, Slow EMA(26) = 6.5 hours, Signal EMA(9) = 2.25 hours
+- **Signals:** BULLISH + GROWING = strongest buy confirmation, BEARISH + GROWING = strongest sell. SHRINKING = momentum fading (early warning)
+- **Why it works:** MACD histogram captures momentum acceleration/deceleration. A growing histogram confirms the trend; a shrinking histogram warns of reversal before price shows it
+- **Score contribution:** Bullish growing = +1, bearish growing = -1, fading warning = ±0.5
+
+### Opening Range Breakout (ORB)
+- **What:** Compares current price to the first 15-minute candle's high/low (the "opening range")
+- **Signal:** Price above opening range high = breakout up (+2), below opening range low = breakout down (-2), inside range = no signal
+- **Why it works:** The opening 15 minutes captures the initial battle between overnight orders, pre-market positioning, and opening trades. A decisive break above/below this range often sets the trend for the day. Widely used by professional Indian intraday traders
+- **Score contribution:** ±2 (strong signal — directional breakout from opening range)
+
+### Gap Analysis
+- **What:** Measures the gap between today's open and yesterday's close, with volume confirmation
+- **Signals:** Gap-up > 1% with high volume = continuation (+1), gap-up with low volume = fill risk (-1). Symmetric for gap-down
+- **Volume check:** First candle volume vs expected (daily avg / 25) — confirms whether institutional money is backing the gap
+- **Why it works:** Gaps represent overnight information asymmetry. Gap-ups with strong volume are typically institutional, likely to hold. Gap-ups on weak volume are often retail-driven gap fills
+- **Score contribution:** ±1 (confirmation/warning signal)
+
+### Sector Diversification Filter
+- **What:** Maximum 2 stocks per sector (BANKING, IT, PHARMA, AUTO, ENERGY, METALS, FMCG, INFRA, FINANCE, TELECOM, CAPGOODS, OTHER)
+- **Why it works:** Prevents correlated risk. Without this filter, the scanner could pick 5 banking stocks that all drop together on a single RBI announcement. Sector-capping forces diversification across uncorrelated sectors
+- **Implementation:** Applied after score filtering, before final candidate selection
+
+### Partial Profit Taking
+- **What:** At 1× risk profit (TRAIL_AFTER_RISK_MULTIPLE), automatically exits 50% of the position and moves SL to breakeven for the remainder
+- **Why it works:** Locks guaranteed profit on half the position while letting the other half run with a trailing stop. Standard practice in professional Indian intraday trading. The 1× risk trigger is optimal — not too early (0.5× gives back too much edge) and not too late (2× risks giving back unrealised profits)
+- **Edge case:** Only triggers when qty >= 2 (can't split 1 share). Only triggers once per position
+
 ---
 
 ## Candlestick Patterns Detected
@@ -201,11 +235,12 @@ The composite score combines candle patterns + technical indicators:
 
 ```
 Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -11 to +11
-  (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1, Prev Day S&R ±1)
+Technical score:       -16 to +16
+  (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
+   Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1)
 RVol bonus/penalty:    -1 to +1
 
-Total range:           ~-18 to +18
+Total range:           ~-22 to +22
 ```
 
 **Score interpretation:**
@@ -221,9 +256,12 @@ EMA(9) crossed above EMA(21)       → +2
 SuperTrend just flipped to UP      → +3
 Price above VWAP                   → +1
 Prev day: AT_SUPPORT               → +1
+MACD: BULLISH, GROWING             → +1
+ORB: BREAKOUT_UP                   → +2
+Gap: GAP_UP_STRONG (high vol)      → +1
 HAMMER pattern (high vol, fresh)   → +2.6  (2 × 1.3)
 RVol = 2.5×                        → +1
-                              Total: +13.6 → STRONG_BUY
+                              Total: +17.6 → STRONG_BUY
 ```
 
 **Example scoring for a strong SHORT setup:**
@@ -233,10 +271,13 @@ EMA(9) crossed below EMA(21)      → -2
 SuperTrend flipped to DOWN         → -3
 Price below VWAP                   → -1
 Prev day: AT_RESISTANCE            → -1
+MACD: BEARISH, GROWING             → -1
+ORB: BREAKOUT_DOWN                 → -2
+Gap: GAP_DOWN_STRONG (high vol)    → -1
 SHOOTING_STAR (high vol, fresh)    → -2.6  (2 × 1.3)
 EVENING_STAR (low vol, 1-ago)      → -1.05 (3 × 0.5 × 0.7)
 RVol = 0.2×                        → -1
-                              Total: -14.65 → STRONG_SELL
+                              Total: -19.65 → STRONG_SELL
 ```
 
 ---

@@ -132,6 +132,17 @@ class OrderEngine:
                 else:
                     sl     = round(avg_price + multiplier * atr, 2)
                     target = round(avg_price - multiplier * 2 * atr, 2)
+
+                # Cap SL at MAX_INTRADAY_SL_PCT (same as external adoption)
+                max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
+                sl_pct = abs(sl - avg_price) / avg_price * 100
+                if sl_pct > max_sl_pct:
+                    if side == "BUY":
+                        sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
+                        target = round(avg_price * (1 + max_sl_pct * 2 / 100), 2)
+                    else:
+                        sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
+                        target = round(avg_price * (1 - max_sl_pct * 2 / 100), 2)
             else:
                 # Fallback: 2% SL, 4% target
                 if side == "BUY":
@@ -170,6 +181,193 @@ class OrderEngine:
                              "Loaded from existing Zerodha position")
 
         return loaded
+
+    # ================================================================
+    # SYNC — DETECT EXTERNALLY OPENED POSITIONS
+    # ================================================================
+
+    def sync_external_positions(self) -> int:
+        """
+        Checks Zerodha for MIS (intraday) positions that the bot doesn't
+        know about (opened manually via the Zerodha app/web). Loads them
+        into the engine with ATR-based SL/targets so the bot manages
+        them going forward — monitoring, Claude review, and square-off.
+
+        Only considers MIS (intraday) positions. CNC (delivery/long-term)
+        positions are ignored — those are investments, not intraday trades.
+
+        Also detects when a manually-opened position has been closed by the
+        user on Zerodha — marks it EXTERNAL_CLOSE internally.
+
+        Called before re-scans and new trade entry.
+        Returns the number of new external positions detected.
+        """
+        if self.cfg.DRY_RUN:
+            return 0
+
+        try:
+            positions_data = self.zerodha.get_positions()
+        except Exception:
+            return 0
+
+        net_positions = positions_data.get("net", [])
+        loaded = 0
+
+        # Symbols already tracked internally (open)
+        known_symbols = {p["symbol"] for p in self.positions if p["status"] == "OPEN"}
+
+        for pos in net_positions:
+            # ONLY MIS (intraday) — CNC (delivery) is long-term, not our business
+            if pos.get("product") != "MIS":
+                continue
+            qty = pos.get("quantity", 0)
+            if qty == 0:
+                continue
+
+            symbol    = pos.get("tradingsymbol", "")
+            exchange  = pos.get("exchange", "NSE")
+            avg_price = pos.get("average_price", 0)
+
+            if not symbol or avg_price <= 0:
+                continue
+
+            # Already tracking this symbol — skip
+            if symbol in known_symbols:
+                continue
+
+            side = "BUY" if qty > 0 else "SELL"
+            abs_qty = abs(qty)
+
+            # Calculate ATR-based SL/target (same as crash resume)
+            atr = self.calculate_atr(symbol, exchange)
+            if atr and atr > 0:
+                multiplier = self.cfg.ATR_MULTIPLIER
+                if side == "BUY":
+                    sl     = round(avg_price - multiplier * atr, 2)
+                    target = round(avg_price + multiplier * 2 * atr, 2)
+                else:
+                    sl     = round(avg_price + multiplier * atr, 2)
+                    target = round(avg_price - multiplier * 2 * atr, 2)
+
+                # Cap SL at MAX_INTRADAY_SL_PCT
+                max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
+                sl_pct = abs(sl - avg_price) / avg_price * 100
+                if sl_pct > max_sl_pct:
+                    if side == "BUY":
+                        sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
+                        target = round(avg_price * (1 + max_sl_pct * 2 / 100), 2)
+                    else:
+                        sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
+                        target = round(avg_price * (1 - max_sl_pct * 2 / 100), 2)
+            else:
+                # Fallback: default SL/target from config
+                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+                if side == "BUY":
+                    sl     = round(avg_price * (1 - sl_pct), 2)
+                    target = round(avg_price * (1 + tgt_pct), 2)
+                else:
+                    sl     = round(avg_price * (1 + sl_pct), 2)
+                    target = round(avg_price * (1 - tgt_pct), 2)
+
+            position = {
+                "symbol":       symbol,
+                "exchange":     exchange,
+                "side":         side,
+                "qty":          abs_qty,
+                "entry_price":  round(avg_price, 2),
+                "stop_loss":    sl,
+                "target_price": target,
+                "exit_price":   None,
+                "exit_reason":  None,
+                "status":       "OPEN",
+                "pnl":          0.0,
+                "entry_time":   datetime.datetime.now().strftime("%H:%M:%S"),
+                "exit_time":    None,
+                "rationale":    "Manual intraday position (entered via Zerodha app)",
+                "order_id":     "EXTERNAL",
+                "_external":    True,   # origin marker for reports
+            }
+            self.positions.append(position)
+            known_symbols.add(symbol)
+            loaded += 1
+
+            sl_label = f"SL ₹{sl:.2f}" if atr else f"SL ₹{sl:.2f} (fallback)"
+            self.log.success(
+                f"Adopted external MIS position: {side} {abs_qty}x {symbol} "
+                f"@ ₹{avg_price:.2f} | {sl_label} | Target ₹{target:.2f}"
+            )
+            self._log_action("ADOPT_EXTERNAL", symbol, side, abs_qty, avg_price,
+                             "Manual intraday position adopted for management")
+
+        # Detect externally-opened positions that the user has closed
+        # on Zerodha — mark them closed with EXTERNAL_CLOSE reason
+        zerodha_open = {
+            pos.get("tradingsymbol", "")
+            for pos in net_positions
+            if pos.get("product") == "MIS" and pos.get("quantity", 0) != 0
+        }
+        for p in self.positions:
+            if (
+                p["status"] == "OPEN"
+                and p.get("_external")
+                and p["symbol"] not in zerodha_open
+            ):
+                # Fetch exit price from Zerodha's day position data
+                exit_price = p["entry_price"]  # fallback
+                for zp in net_positions:
+                    if zp.get("tradingsymbol") == p["symbol"] and zp.get("product") == "MIS":
+                        if p["side"] == "BUY":
+                            zp_exit = zp.get("sell_price", 0)
+                        else:
+                            zp_exit = zp.get("buy_price", 0)
+                        if zp_exit and zp_exit > 0:
+                            exit_price = zp_exit
+                        else:
+                            self.log.warning(
+                                f"Could not determine exit price for {p['symbol']} — "
+                                f"using entry price as fallback"
+                            )
+                        break
+
+                if p["side"] == "BUY":
+                    pnl = (exit_price - p["entry_price"]) * p["qty"]
+                else:
+                    pnl = (p["entry_price"] - exit_price) * p["qty"]
+
+                p["status"] = "CLOSED"
+                p["exit_price"] = round(exit_price, 2)
+                p["exit_reason"] = "EXTERNAL_CLOSE"
+                p["exit_time"] = datetime.datetime.now().strftime("%H:%M:%S")
+                p["pnl"] = round(pnl, 2)
+                self.log.info(
+                    f"External position closed by user: {p['side']} {p['qty']}x "
+                    f"{p['symbol']} @ ₹{exit_price:.2f} | P&L: ₹{pnl:+,.2f}"
+                )
+                self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
+                                 p["qty"], exit_price, "User closed via Zerodha app")
+
+        return loaded
+
+    def refresh_budget(self) -> float:
+        """
+        Re-queries Zerodha for actual available funds and updates the
+        budget. Called before re-scans to account for margin used by
+        external trades.
+
+        Returns updated budget.
+        """
+        if self.cfg.DRY_RUN:
+            return self._budget
+
+        try:
+            available = self.zerodha.get_available_funds()
+            max_budget = float(self.cfg.MAX_BUDGET_INR)
+            self._budget = min(available, max_budget)
+        except Exception:
+            pass  # keep existing budget on failure
+
+        return self._budget
 
     # ================================================================
     # ATR CALCULATION
@@ -347,8 +545,19 @@ class OrderEngine:
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
         if open_count >= self.cfg.MAX_POSITIONS:
+            ext_count = len([p for p in self.positions if p["status"] == "OPEN" and p.get("_external")])
+            bot_count = open_count - ext_count
+            msg = f"Cannot enter {symbol}: already at max {self.cfg.MAX_POSITIONS} positions"
+            if ext_count:
+                msg += f" ({bot_count} bot + {ext_count} external/manual)"
+            self.log.warning(msg)
+            return False
+
+        # ── Duplicate symbol guard ────────────────────────────────
+        if self._find_open_position(symbol):
             self.log.warning(
-                f"Cannot enter {symbol}: already at max {self.cfg.MAX_POSITIONS} positions"
+                f"Cannot enter {symbol}: already have an open position "
+                f"(bot or external)"
             )
             return False
 
@@ -577,6 +786,61 @@ class OrderEngine:
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
     # ================================================================
+    # PARTIAL EXIT — EXIT SUBSET OF SHARES
+    # ================================================================
+
+    def _place_exit_order(
+        self,
+        position: dict,
+        price: float,
+        qty: int,
+        reason: str,
+    ) -> bool:
+        """
+        Exits a subset of shares from an open position (for partial
+        profit taking). Does NOT mark the position as CLOSED — the
+        remaining shares stay open. Updates the trade log.
+
+        Returns True on success, False on failure.
+        """
+        symbol   = position["symbol"]
+        exchange = position["exchange"]
+        side     = position["side"]
+        exit_side = "SELL" if side == "BUY" else "BUY"
+
+        if self.cfg.DRY_RUN:
+            tag = f"\033[96m[DRY RUN]\033[0m"
+            self.log.info(
+                f"{tag} PARTIAL EXIT {exit_side} {qty}x {symbol} @ ₹{price:.2f} | "
+                f"Reason: {reason}"
+            )
+        else:
+            try:
+                order_id = self.zerodha.place_order(
+                    symbol=symbol, exchange=exchange,
+                    qty=qty, side=exit_side, order_type="MARKET",
+                )
+                self._consecutive_order_failures = 0
+
+                # Fetch actual fill price (same pattern as exit_position)
+                fill_price = self.zerodha.get_order_fill_price(order_id)
+                if fill_price:
+                    price = fill_price
+            except Exception as e:
+                self._consecutive_order_failures += 1
+                self.log.error(
+                    f"Partial exit order FAILED for {symbol}: {e} — "
+                    f"position qty NOT adjusted"
+                )
+                if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
+                    self._order_api_broken = True
+                return False
+
+        self._log_action(reason, symbol, exit_side, qty, price,
+                         f"Partial exit {qty} shares")
+        return True
+
+    # ================================================================
     # MONITOR — CHECK SL/TARGET HITS
     # ================================================================
 
@@ -676,15 +940,16 @@ class OrderEngine:
 
     def _auto_trail_stop(self, pos: dict, current_price: float):
         """
-        Rule-based trailing stop-loss. Runs every price poll (free).
+        Rule-based trailing stop-loss with partial profit taking.
 
         Logic:
           1. Calculate original risk = |entry - initial SL|
-          2. If current profit >= TRAIL_AFTER_RISK_MULTIPLE × risk:
-             move SL to at least breakeven (entry price)
-          3. Then, SL = entry + TRAIL_STEP_PCT% of unrealised profit
+          2. At TRAIL_AFTER_RISK_MULTIPLE × risk profit (default 1.0):
+             a. PARTIAL PROFIT: exit 50% of qty at current price (first time only)
+             b. Move SL to breakeven (entry price) on remaining position
+          3. Beyond breakeven, SL = entry + TRAIL_STEP_PCT% of unrealised profit
              (for BUY; inverted for SELL)
-          4. SL only ever moves in the favorable direction (never down for BUY)
+          4. SL only ever moves in the favorable direction (never loosens)
         """
         entry  = pos["entry_price"]
         sl     = pos["stop_loss"]
@@ -707,6 +972,26 @@ class OrderEngine:
             if profit < initial_risk * trail_after:
                 return  # not enough profit to start trailing
 
+            # ── Partial profit taking (once, at first trail trigger) ──
+            if not pos.get("_partial_taken") and pos["qty"] >= 2:
+                partial_qty = pos["qty"] // 2
+                remaining_qty = pos["qty"] - partial_qty
+                partial_pnl = round((current_price - entry) * partial_qty, 2)
+
+                self.log.success(
+                    f"PARTIAL PROFIT: {symbol} — exiting {partial_qty} of "
+                    f"{pos['qty']} shares @ ₹{current_price:.2f} "
+                    f"(locking ₹{partial_pnl:,.2f} profit)"
+                )
+
+                # Place the partial exit order
+                if self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT"):
+                    pos["qty"] = remaining_qty
+                    pos["_partial_taken"] = True
+                    pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
+                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
+                    pos["_partial_exit_price"] = current_price
+
             # New SL = entry + trail_pct of current profit
             new_sl = round(entry + profit * trail_pct, 2)
 
@@ -724,6 +1009,25 @@ class OrderEngine:
             profit = entry - current_price
             if profit < initial_risk * trail_after:
                 return
+
+            # ── Partial profit taking (once, at first trail trigger) ──
+            if not pos.get("_partial_taken") and pos["qty"] >= 2:
+                partial_qty = pos["qty"] // 2
+                remaining_qty = pos["qty"] - partial_qty
+                partial_pnl = round((entry - current_price) * partial_qty, 2)
+
+                self.log.success(
+                    f"PARTIAL PROFIT: {symbol} — exiting {partial_qty} of "
+                    f"{pos['qty']} shares @ ₹{current_price:.2f} "
+                    f"(locking ₹{partial_pnl:,.2f} profit)"
+                )
+
+                if self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT"):
+                    pos["qty"] = remaining_qty
+                    pos["_partial_taken"] = True
+                    pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
+                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
+                    pos["_partial_exit_price"] = current_price
 
             new_sl = round(entry - profit * trail_pct, 2)
 
@@ -817,17 +1121,19 @@ class OrderEngine:
                     entry  = pos["entry_price"]
                     side   = pos["side"]
 
-                    # Validate direction: SL must be on correct side of entry
-                    if side == "BUY" and new_sl >= entry:
+                    # Validate direction: SL must be on correct side of current price
+                    key_sl = f"{pos['exchange']}:{symbol}"
+                    current_for_sl = quotes.get(key_sl, {}).get("last_price", entry)
+                    if side == "BUY" and new_sl >= current_for_sl:
                         self.log.warning(
                             f"Rejected SL adjustment for {symbol}: "
-                            f"SL ₹{new_sl:.2f} >= entry ₹{entry:.2f} (wrong side for BUY)"
+                            f"SL ₹{new_sl:.2f} >= current ₹{current_for_sl:.2f} (above market for BUY)"
                         )
                         continue
-                    if side == "SELL" and new_sl <= entry:
+                    if side == "SELL" and new_sl <= current_for_sl:
                         self.log.warning(
                             f"Rejected SL adjustment for {symbol}: "
-                            f"SL ₹{new_sl:.2f} <= entry ₹{entry:.2f} (wrong side for SELL)"
+                            f"SL ₹{new_sl:.2f} <= current ₹{current_for_sl:.2f} (below market for SELL)"
                         )
                         continue
 
@@ -964,11 +1270,14 @@ class OrderEngine:
     # ================================================================
 
     def day_pnl(self) -> float:
-        """Total P&L from all closed positions today (before charges)."""
-        return sum(p["pnl"] for p in self.positions if p["status"] == "CLOSED")
+        """Total P&L from all closed positions today (before charges), including partial exits."""
+        return sum(
+            p["pnl"] + p.get("_partial_pnl", 0)
+            for p in self.positions if p["status"] == "CLOSED"
+        )
 
     def unrealised_pnl(self, quotes: dict) -> float:
-        """Unrealised P&L from open positions at current prices."""
+        """Unrealised P&L from open positions at current prices, including partial exits."""
         total = 0.0
         for pos in self.open_positions():
             key = f"{pos['exchange']}:{pos['symbol']}"
@@ -978,6 +1287,7 @@ class OrderEngine:
                 total += (current - pos["entry_price"]) * pos["qty"]
             else:
                 total += (pos["entry_price"] - current) * pos["qty"]
+            total += pos.get("_partial_pnl", 0)
         return round(total, 2)
 
     def calculate_charges(self) -> dict:
@@ -992,17 +1302,20 @@ class OrderEngine:
         num_orders          = 0
 
         for p in closed:
-            entry_value = p["entry_price"] * p["qty"]
+            partial_qty = p.get("_partial_qty", 0)
+            full_qty = p["qty"] + partial_qty
+            entry_value = p["entry_price"] * full_qty
             exit_value  = p["exit_price"]  * p["qty"]
+            partial_exit_value = p.get("_partial_exit_price", p["entry_price"]) * partial_qty
 
             if p["side"] == "BUY":
                 total_buy_turnover  += entry_value
-                total_sell_turnover += exit_value
+                total_sell_turnover += exit_value + partial_exit_value
             else:
                 total_sell_turnover += entry_value
-                total_buy_turnover  += exit_value
+                total_buy_turnover  += exit_value + partial_exit_value
 
-            num_orders += 2
+            num_orders += 2 + (1 if partial_qty > 0 else 0)
 
         return self.cfg.calculate_charges(
             total_buy_turnover, total_sell_turnover,
@@ -1212,6 +1525,18 @@ class OrderEngine:
                 z_qty   = z_sell_qty
 
             if z_entry <= 0 or z_exit <= 0:
+                continue
+
+            # Skip price correction for partial-exit trades — Zerodha's
+            # averaged sell_price can't be split between partial and final exits.
+            if pos.get("_partial_qty", 0) > 0:
+                expected_total = pos["qty"] + pos.get("_partial_qty", 0)
+                if z_qty != expected_total:
+                    self.log.warning(
+                        f"QTY MISMATCH {symbol}: engine {expected_total} vs Zerodha {z_qty}"
+                    )
+                else:
+                    self.log.success(f"{symbol}: ✓ quantities match (partial exit trade)")
                 continue
 
             # Compare and correct

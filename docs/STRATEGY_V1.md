@@ -1,4 +1,6 @@
-# V1 Trading Strategy — Claude AI Intraday Bot
+# V1 Trading Strategy — Claude AI Intraday Bot (RETIRED)
+
+> **Status: RETIRED.** V2 is now the default trading strategy. V1 is kept for comparison only. Use `python main.py --mode trade --v1` to run it.
 
 ## Overview
 

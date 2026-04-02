@@ -21,23 +21,26 @@ All analysis results are stored in a **SQLite database** (`data/trades.db`) for 
 python main.py --mode analyze
 ```
 
-### Phase 2 — Intraday Trading Bot
+### Phase 2 — Intraday Trading Bot (V2 — Default)
 A fully automated intraday trading bot that:
 - Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
-- Asks Claude to pick the best intraday trades from Nifty 50/100/200
+- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 9 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R), and composite scoring (~-22 to +22). Only the top 15 strongest setups are sent to Claude
+- **Sector diversification** — max 2 stocks per sector (BANKING, IT, PHARMA, AUTO, etc.) prevents correlated risk
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from 15-minute intraday candles to set intelligent SL/target levels sized for intraday moves (falls back to Claude's values if data unavailable). SL is hard-capped at 2.5% to prevent swing-trade-sized stops. When both ATR and Claude provide SL levels, the tighter (closer to entry) SL is used
 - **Actual fill prices** — in live mode, after placing a MARKET order, polls Zerodha's order trades API to get the real weighted-average fill price. Entry price, P&L, SL, and target are all recalculated on the actual fill — not the estimated quote price
 - **Live entry price validation** — before placing any order, cross-checks Claude's recommended entry price against Zerodha's live quote. If they differ by >5%, overrides with the live price to prevent hallucinated-price entries
 - **Always trusts Zerodha fills** — after a MARKET order fills, always uses Zerodha's actual fill price (not the pre-order estimate). SL, target, and P&L are recalculated on the real fill. Logs a warning if the fill deviates >5% but never rejects it
 - Enters positions at market open with stop-loss and target prices
-- Monitors prices every 30 seconds, auto-exits on SL/target hits
+- Monitors prices every 10 seconds (or 5s when near SL/target), auto-exits on SL/target hits
 - **Compact live status** — prints a one-line status every poll (time, open/closed count, unrealised/realised P&L). Detailed per-stock table only after Claude review calls
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
+- **Partial profit taking** — at 1× risk profit, automatically exits 50% of position and locks in guaranteed profit. Remaining 50% rides with trailing stop
 - **Time-decay targets** — after 2 PM, reduces open position targets by 40% to lock in profits before square-off
-- Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
+- Claude reviews positions every **25 minutes** for adjustments (with full trade history context + fresh 5-min candle patterns, RSI, EMA, VWAP)
+- **Candle re-scan auto-protect** — every 15 min (free, no Claude cost), re-analyses open positions. If candles form a strong contrary signal (score ±4 against your position), automatically tightens SL
 - **Anti-panic exit** — Claude's review includes a rule against panic-selling: "If a position shows a loss but hasn't hit its numeric SL, do NOT recommend EXIT"
 - **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
 - **Partial re-scan** — when some (but not all) positions close via SL/target, immediately scans for replacement trades to fill empty slots instead of riding remaining losers with no hedge
@@ -56,40 +59,43 @@ A fully automated intraday trading bot that:
 - **Tax ledger & capital gains** — full tax infrastructure with separate DB tables, verification against Zerodha's official Tax P&L report, and combined tax summary. See the **[Taxation](#taxation)** section below
 - **Order API failure protection** — if Zerodha's order API fails 3 consecutive times (after retrying each order 3 times with backoff), the bot stops calling Claude immediately (no more wasted API money), closes any open positions, and shuts down gracefully. Prevents the scenario where broken Zerodha APIs cause the bot to loop endlessly asking Claude for new recommendations
 - **Crash recovery** — if the bot is stopped (Ctrl+C, crash, terminal closed) while positions are still open on Zerodha, restarting it will automatically detect and resume monitoring those positions. Fetches open MIS positions from Zerodha, recalculates ATR-based SL/targets, and jumps straight to the monitor loop — no duplicate orders, no orphaned positions
+- **Manual trade adoption** — if you buy or sell a stock manually on the Zerodha app (intraday/MIS only), the bot automatically detects it on its next sync, assigns ATR-based SL/targets, and manages it like any other position — including monitoring, Claude review, and end-of-day square-off. CNC (delivery/long-term) positions are ignored. If you close a manual trade yourself before the bot does, it's marked as `EXTERNAL_CLOSE` in the report. Manual trades appear in reports with a `[M]` tag
 
 ```bash
 python main.py --mode trade
 ```
 
-### Phase 2b — V2 Candle Strategy (trade mode with `--v2`)
+### V1 Legacy Mode (retired)
 
-An upgraded version of the intraday trading bot that adds a **mathematical pre-filtering layer** before Claude. Instead of sending 100 raw stock prices to Claude, V2 first analyses every stock using candlestick patterns and technical indicators (free — no Claude API cost), then sends only the top 15 strongest setups to Claude with rich technical data.
-
-**How it works:**
-- **Pre-market**: fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API
-- **14 candlestick patterns** detected per stock (Hammer, Engulfing, Morning Star, Doji, etc.) — volume-confirmed and freshness-decayed
-- **5 technical indicators** computed per stock: EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10,3), Previous Day S&R
-- **Composite score** (~-18 to +18) ranks all stocks — only those above `V2_MIN_SCORE` (default: 2.0) pass through
-- **RVol filter** — Relative Volume (today vs 5-day avg) adds +1 bonus for unusual activity, -1 penalty for dead stocks
-- **Nifty trend hard filter** — against-market signals need |score| ≥ 3 to pass (trade with the trend, but allow moderate contrarian setups)
-- **Top 15 candidates** sent to Claude with their exact indicator values, so Claude can reason about confluences ("RSI oversold + Hammer + SuperTrend UP = strong BUY")
-- **Dynamic poll interval** — polling doubles speed when any position is within 0.5% of SL or target
-- **Candle-aware Claude reviews** — position reviews include fresh 5-min candle patterns, RSI, EMA, VWAP per stock, so Claude can see momentum fading or reversal patterns forming in real-time
-- **Periodic candle re-scan** — every 15 min (free, no Claude cost), re-analyses open positions for strong technical signals. If candles form a **strong contrary signal** (score ±4 against your position), automatically tightens the stop-loss to lock in profit or move to breakeven — no need to wait for the next Claude review
-
-All V1 features are preserved — ATR-based SL, trailing stops, circuit breaker, crash recovery, etc. V2 is opt-in: if it has issues, just drop the `--v2` flag.
+The original intraday trading strategy without candle pattern pre-filtering. Sends raw stock prices to Claude for selection. Retired — use V2 (default) instead.
 
 ```bash
-python main.py --mode trade --v2
+python main.py --mode trade --v1
 ```
 
-**Test mode** — verify the candle pipeline works end-to-end without any Claude API calls or trades. Logs into Zerodha, runs the full technical analysis (candle patterns + EMA/RSI/VWAP/SuperTrend) on every stock in the universe, and prints a detailed breakdown of scores, filtered candidates, and the enriched snapshot that would be sent to Claude. Zero cost.
+### Test Mode
+
+Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 9 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
 
 ```bash
-python main.py --mode trade --v2 --test
+# V2 strategy test (shows what Claude would receive)
+python main.py --mode trade --test
+
+# NoAI strategy test (shows what would be auto-traded)
+python main.py --mode trade --noai --test
 ```
 
-### Phase 2c — NoAI Mode (fully automated, zero Claude calls)
+### Dry-Run Mode
+
+Runs the **full trading strategy** (Claude calls, position monitoring, SL/target checks, trailing stops — everything) but doesn't place real orders on Zerodha. Use this to validate trading decisions before going live.
+
+```bash
+python main.py --mode trade --dryrun          # V2 dry run
+python main.py --mode trade --noai --dryrun   # NoAI dry run
+python main.py --mode trade --v1 --dryrun     # V1 dry run
+```
+
+### NoAI Mode (fully automated, zero Claude calls)
 
 A completely Claude-free trading mode that uses the V2 candle pipeline for everything — stock selection, monitoring, and re-scans. Zero API costs beyond Zerodha data.
 
@@ -113,13 +119,20 @@ A completely Claude-free trading mode that uses the V2 candle pipeline for every
 python main.py --mode trade --noai
 ```
 
+### Historical Data Caching
+
+The bot caches previous days' candle data (15-min and daily) in a separate SQLite database (`data/candle_cache.db`) to avoid redundant Zerodha API calls. Today's candles are always fetched live. This significantly speeds up scans when running multiple times or re-scanning during the day.
+
+- **Auto-cleanup:** Entries older than 45 days are pruned on startup.
+- **Corporate action detection:** If a >35% price gap is detected between cached close and live open, the cache for that symbol is automatically invalidated and refetched with Zerodha's adjusted prices.
+- **Git-transferable:** Unlike `trades.db` (personal data), `candle_cache.db` contains only public market data and is committed to Git. Pull on a new machine → cache is ready.
+- **Pre-warm with test mode:** Run `--test` the evening before a trading day to populate the cache. Next day's live scan skips ~200 Zerodha API calls.
+
 For detailed strategy documentation, see:
-- **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture and trade flow
+- **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture (retired)
 - **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** — V2 candle strategy with indicator explanations and scoring system
 - **[docs/STRATEGY_V2_NOAI.md](docs/STRATEGY_V2_NOAI.md)** — NoAI strategy: fully automated, zero Claude calls
-- **[docs/V2_IMPROVEMENTS.md](docs/V2_IMPROVEMENTS.md)** — V2 improvement roadmap with research-backed enhancements
-
-**Dry-run mode** is ON by default — no real orders are placed. Set `DRY_RUN = False` in `config.py` only after reviewing dry-run results.
+- **[docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md)** — Strategy improvement roadmap with research-backed enhancements
 
 ---
 
@@ -245,7 +258,6 @@ Open `config.py` and review these key settings:
 
 | Setting | Default | What it controls |
 |---------|---------|-----------------|
-| `DRY_RUN` | `True` | `True` = simulate orders (safe). `False` = real trading |
 | `MAX_BUDGET_INR` | `10,000` | Maximum capital the bot can deploy per day |
 | `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
@@ -281,19 +293,25 @@ All settings are thoroughly commented in `config.py` — read the comments for d
 # Analyse existing portfolio
 python main.py --mode analyze
 
-# Intraday trading bot — V1 (dry-run by default)
+# Intraday trading — V2 candle strategy (default)
 python main.py --mode trade
 
-# Intraday trading bot — V2 candle strategy (dry-run by default)
-python main.py --mode trade --v2
+# Dry run — full strategy, no real orders
+python main.py --mode trade --dryrun
 
-# Fully automated, no Claude calls (V2 candle pipeline only)
+# Test — see strategy analysis pipeline (no Claude, no trades, no cost)
+python main.py --mode trade --test
+
+# NoAI — fully automated, no Claude calls
 python main.py --mode trade --noai
 
-# Test V2 candle pipeline only (no Claude calls, no trades, no cost)
-python main.py --mode trade --v2 --test
+# NoAI test — see NoAI selection pipeline
+python main.py --mode trade --noai --test
 
-# Test Zerodha login only (shows account snapshot)
+# V1 legacy (retired)
+python main.py --mode trade --v1
+
+# Test Zerodha login only
 python main.py --mode login
 ```
 
@@ -324,7 +342,8 @@ ai-portfolio-manager/
 │   ├── stock_scanner.py     # V1 pre-market Claude scan + mid-day review
 │   ├── stock_scanner_v2.py  # V2 candle pre-filter + enriched Claude scan (extends V1)
 │   ├── candle_patterns.py   # 14 candlestick pattern detectors (pure math, no dependencies)
-│   ├── technical_indicators.py # EMA, RSI, VWAP, SuperTrend, composite scoring
+│   ├── candle_cache.py      # SQLite cache for historical candle data (avoids redundant API calls)
+│   ├── technical_indicators.py # EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, composite scoring
 │   ├── order_engine.py      # Order execution, position tracking, SL/target monitoring, P&L + taxes
 │   ├── report_writer.py     # Generates .txt reports and .json data dumps
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking
@@ -348,6 +367,7 @@ ai-portfolio-manager/
 │   └── V2_IMPROVEMENTS.md   # V2 improvement roadmap — research-backed enhancements
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
+│   ├── candle_cache.db      # Candle cache (git-committed — pure market data)
 │   └── access_token.json    # Zerodha session token (auto-created on login)
 ├── reports/                 # Generated reports, organised by type → year → month
 │   ├── portfolio/           # Phase 1 portfolio analysis reports
@@ -505,9 +525,9 @@ The Phase 2 report includes:
 
 ## Database
 
-All historical data is stored in a single **SQLite database** at `data/trades.db` (auto-created on first run).
+All historical data is stored in a single **SQLite database** at `data/trades.db` (auto-created on first run). Candle cache data is stored separately in `data/candle_cache.db` (also auto-created).
 
-> **Security:** The `data/` directory is excluded from Git via `.gitignore`. Your trading data stays local and is never committed to the repository.
+> **Security:** The `data/` directory is excluded from Git via `.gitignore`, **except** `candle_cache.db` which contains only public market data and is safe to commit.
 
 | Table | Phase | What it stores |
 |---|---|---|
@@ -563,7 +583,7 @@ Intraday equity trading in India has specific tax implications. The bot tracks a
 
 ### How intraday trading is taxed
 
-- **Intraday (speculative) income** — classified as "speculative business income" under Section 43(5) of the Income Tax Act. Taxed at your **personal slab rate** (e.g. 30% + 4% cess = 31.2% for the highest bracket). Reported in **ITR-3 → Schedule BP**. Speculative losses can only be set off against speculative gains and carried forward for 4 years.
+- **Intraday (speculative) income** — classified as "speculative business income" under Section 43(5) of the Income Tax Act. Taxed at your **personal slab rate** (e.g. 30% + 4% cess = 31.2% for income above ₹24L under new regime from FY 2025-26). Reported in **ITR-3 → Schedule BP**. Speculative losses can only be set off against speculative gains and carried forward for 4 years.
 
 - **Short-term capital gains (STCG)** — listed equity held ≤ 12 months. Taxed at a flat **20% + 4% cess = 20.8%** (w.e.f. 23-Jul-2024). Reported in **ITR-3 → Schedule CG**.
 
@@ -674,7 +694,7 @@ After syncing, all changes are committed and pushed to the backup repo.
 
 | Folder | Contents |
 |--------|----------|
-| `data/` | SQLite database (`trades.db`) — **merged**, not overwritten. Zerodha Tax P&L xlsx files |
+| `data/` | SQLite database (`trades.db`) — **merged**, not overwritten. Zerodha Tax P&L xlsx files. `candle_cache.db` is excluded from sync (committed to main repo) |
 | `reports/` | All trading and portfolio reports (txt + json) |
 | `logs/` | Log files |
 

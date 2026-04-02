@@ -61,12 +61,11 @@ class Config:
     # ══════════════════════════════════════════════════════════════
 
     # ── Dry Run Mode ──────────────────────────────────────────────
-    # True  = orders are LOGGED but never sent to Zerodha.
-    #         Position tracking and P&L use real live prices.
-    #         Safe to run anytime — no money at risk.
-    # False = LIVE TRADING. Orders are placed on Zerodha for real.
-    #         Only set this after you've reviewed dry-run results
-    #         and are comfortable with the bot's decisions.
+    # Controlled via CLI: pass --dryrun to run without placing orders.
+    # When True: orders are LOGGED but never sent to Zerodha.
+    #            Position tracking and P&L use real live prices.
+    # When False (default): LIVE TRADING — orders placed on Zerodha.
+    # Do NOT edit this here — use: python main.py --mode trade --dryrun
     DRY_RUN: bool = False
 
     # ── Market Timing (IST) ──────────────────────────────────────
@@ -292,8 +291,8 @@ class Config:
     #
     # TAX_RATE_PCT: Your marginal tax slab rate (%).
     #   Set this to the slab you fall in based on your total income.
-    #   30 = 30% (income above ₹15L in new regime, or ₹10L old regime)
-    #   20 = 20% (₹12-15L new regime)
+    #   30 = 30% (income above ₹24L in new regime from FY 2025-26)
+    #   25 = 25% (₹20-24L new regime)
     #   The bot uses this to show estimated tax liability on each
     #   day's net profit in the trading report. This helps you track
     #   how much you need to set aside for advance tax payments.

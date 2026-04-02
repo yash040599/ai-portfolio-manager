@@ -629,7 +629,7 @@ class ReportWriter:
             f.write("TRADE DETAILS\n")
             f.write(f"{self.SEP_TABLE}\n")
             f.write(
-                f"{'SYMBOL':<12} {'SIDE':<6} {'QTY':>5} "
+                f"{'SYMBOL':<16} {'SIDE':<6} {'QTY':>5} "
                 f"{'ENTRY':>10} {'EXIT':>10} {'P&L':>12} "
                 f"{'REASON':<14} {'ENTRY_T':<10} {'EXIT_T':<10}\n"
             )
@@ -638,8 +638,9 @@ class ReportWriter:
             for p in positions:
                 exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
                 pnl_val = f"₹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
+                origin  = "[M] " if p.get("_external") else ""
                 f.write(
-                    f"{p['symbol']:<12} {p['side']:<6} {p['qty']:>5} "
+                    f"{origin}{p['symbol']:<{16 - len(origin)}} {p['side']:<6} {p['qty']:>5} "
                     f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                     f"{(p.get('exit_reason') or 'OPEN'):<14} "
                     f"{(p.get('entry_time') or '—'):<10} "

@@ -43,9 +43,13 @@ For each stock in universe (50-200 stocks):
   → Compute technical indicators:
       • EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10, 3.0)
       • Daily EMA(9/21) bias, Previous day S&R
-  → Calculate composite score (~-18 to +18)
+      • MACD(12,26,9) histogram — momentum confirmation/divergence
+      • Opening Range Breakout (ORB) — first candle breakout signal
+      • Gap analysis — pre-market gap continuation vs fill
+  → Calculate composite score (~-22 to +22)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
+  → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
   → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
   → Rank by absolute score (strongest signals first)
 ```
@@ -139,6 +143,8 @@ All V1/V2 risk management is preserved. The only layer removed is Claude positio
 | Late entry guard (60 min before close) | Monitor loop | Yes |
 | Max re-entry limit (2×/day per stock) | Order engine | Yes |
 | Order API failure circuit breaker | Order engine | Yes |
+| Partial profit taking (50% at 1×risk) | Order engine | Yes |
+| Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
 | **Claude position reviews** | **V2 monitor (every 25 min)** | **No** |
 | **Claude re-scan stock selection** | **V1/V2 scanner** | **No** |
@@ -150,7 +156,7 @@ All V1/V2 risk management is preserved. The only layer removed is Claude positio
 Since Claude isn't producing qualitative analysis, NoAI builds a machine-readable rationale string from the indicator values:
 
 ```
-Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | Patterns: HAMMER, BULLISH_ENGULFING | RVol 2.3x
+Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | MACD BULLISH/GROWING | ORB BREAKOUT_UP | Gap GAP_UP_STRONG | Patterns: HAMMER, BULLISH_ENGULFING | RVol 2.3x
 ```
 
 This rationale is logged in the trade report and trading data JSON, so you can review what signals drove each trade.
@@ -184,7 +190,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 ### Disadvantages
 - **No qualitative reasoning** — can't consider sector rotation, news catalysts, or earnings proximity
 - **No position management** — relies entirely on rule-based SL/target/trailing/candle-protect. Claude sometimes spots momentum fading or suggests tightening SL before a reversal pattern fully forms
-- **Mechanical selection** — takes top N by score without considering trade correlation (e.g., might pick 5 banking stocks all correlated). Claude naturally diversifies
+- **Mechanical selection** — takes top N by score. Sector diversification filter (max 2 per sector) prevents correlated picks, but Claude adds nuanced qualitative reasoning that math can't replicate
 - **No session awareness** — doesn't adjust risk appetite based on day's P&L or recent performance. Session context is limited to skip-symbols
 
 ### When to Use NoAI vs V2

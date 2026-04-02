@@ -24,7 +24,10 @@
 #   VWAP position:     ±1  (institutional bias)
 #   Daily EMA bias:    ±1  (higher timeframe confluence)
 #   Prev-day S&R:      ±0.5-1 (support/resistance proximity)
-#   → Technical score range: ~-12 to +12
+#   MACD histogram:    ±1-1.5 (momentum confirmation + fading warning)
+#   ORB breakout:      ±2  (opening range breakout — strong intraday signal)
+#   Gap analysis:      ±1  (pre-market gap continuation vs fill)
+#   → Technical score range: ~-16 to +16
 # ================================================================
 
 import datetime
@@ -261,7 +264,7 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
         "signal": "BULLISH" | "BEARISH" | "NONE",  # only on trend change
       }
     """
-    if len(candles) < period + 1:
+    if len(candles) < period + 3:
         return {"value": 0, "trend": "NONE", "signal": "NONE"}
 
     # Calculate ATR
@@ -432,6 +435,205 @@ def prev_day_sr_score(
 # COMPOSITE SCORE
 # ================================================================
 
+def macd_histogram(candles: list[dict], fast: int = 12, slow: int = 26, signal_period: int = 9) -> dict:
+    """
+    MACD histogram: difference between MACD line and signal line.
+    MACD line = EMA(12) - EMA(26). Signal line = EMA(9) of MACD.
+
+    Returns:
+      {
+        "histogram": float,        # current histogram value
+        "prev_histogram": float,   # previous histogram value
+        "signal": "BULLISH" | "BEARISH" | "NONE",
+        "momentum": "GROWING" | "SHRINKING" | "FLAT",
+      }
+    """
+    if len(candles) < slow + signal_period:
+        return {"histogram": 0, "prev_histogram": 0, "signal": "NONE", "momentum": "FLAT"}
+
+    fast_ema = ema(candles, fast)
+    slow_ema = ema(candles, slow)
+
+    # MACD line = fast EMA - slow EMA
+    macd_line = [f - s for f, s in zip(fast_ema, slow_ema)]
+
+    # Signal line = EMA(9) of MACD line (manual computation)
+    if len(macd_line) < signal_period:
+        return {"histogram": 0, "prev_histogram": 0, "signal": "NONE", "momentum": "FLAT"}
+
+    # Compute EMA of macd_line using SMA seed
+    sig = [0.0] * len(macd_line)
+    sig[signal_period - 1] = sum(macd_line[:signal_period]) / signal_period
+    k = 2 / (signal_period + 1)
+    for i in range(signal_period, len(macd_line)):
+        sig[i] = (macd_line[i] - sig[i - 1]) * k + sig[i - 1]
+
+    hist_curr = macd_line[-1] - sig[-1]
+    hist_prev = macd_line[-2] - sig[-2] if len(macd_line) >= 2 else 0
+
+    # Signal: histogram sign
+    if hist_curr > 0:
+        signal = "BULLISH"
+    elif hist_curr < 0:
+        signal = "BEARISH"
+    else:
+        signal = "NONE"
+
+    # Momentum: is histogram growing or shrinking?
+    if abs(hist_curr) > abs(hist_prev) * 1.05:
+        momentum = "GROWING"
+    elif abs(hist_curr) < abs(hist_prev) * 0.95:
+        momentum = "SHRINKING"
+    else:
+        momentum = "FLAT"
+
+    return {
+        "histogram": round(hist_curr, 4),
+        "prev_histogram": round(hist_prev, 4),
+        "signal": signal,
+        "momentum": momentum,
+    }
+
+
+def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
+    """
+    Opening Range Breakout (ORB): uses the first 15-min candle of
+    the trading day as the opening range.
+
+    - Price breaks above OR high → bullish (+2)
+    - Price breaks below OR low → bearish (-2)
+    - Price inside range → neutral (0)
+
+    Returns:
+      {
+        "score": float,
+        "or_high": float,
+        "or_low": float,
+        "signal": "BREAKOUT_UP" | "BREAKOUT_DOWN" | "INSIDE_RANGE" | "NONE",
+      }
+    """
+    if not candles_15m or current_price <= 0:
+        return {"score": 0, "or_high": 0, "or_low": 0, "signal": "NONE"}
+
+    # Find the first candle of today
+    today = datetime.date.today()
+    first_candle = None
+    for c in candles_15m:
+        dt = c.get("date")
+        if dt is None:
+            continue
+        cdate = dt.date() if hasattr(dt, "date") else dt
+        if cdate == today:
+            first_candle = c
+            break
+
+    if first_candle is None:
+        return {"score": 0, "or_high": 0, "or_low": 0, "signal": "NONE"}
+
+    or_high = first_candle["high"]
+    or_low = first_candle["low"]
+
+    if or_high <= 0 or or_low <= 0 or or_high == or_low:
+        return {"score": 0, "or_high": or_high, "or_low": or_low, "signal": "NONE"}
+
+    score = 0.0
+    if current_price > or_high:
+        score = 2.0
+        signal = "BREAKOUT_UP"
+    elif current_price < or_low:
+        score = -2.0
+        signal = "BREAKOUT_DOWN"
+    else:
+        signal = "INSIDE_RANGE"
+
+    return {
+        "score": score,
+        "or_high": round(or_high, 2),
+        "or_low": round(or_low, 2),
+        "signal": signal,
+    }
+
+
+def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict:
+    """
+    Analyses the gap between yesterday's close and today's open.
+
+    - Gap-up >1% → likely continuation if volume confirms (+1)
+    - Gap-up >1% with weak volume → gap fill likely (-1 for longs)
+    - Gap-down >1% → likely continuation if volume confirms (-1)
+    - Gap-down >1% with weak volume → gap fill likely (+1 for shorts)
+
+    Volume confirmation uses today's first candle volume vs avg of last
+    5 days' first candle volume (approximated from daily candles).
+
+    Returns:
+      {
+        "score": float,
+        "gap_pct": float,
+        "signal": "GAP_UP_STRONG" | "GAP_UP_WEAK" | "GAP_DOWN_STRONG" | "GAP_DOWN_WEAK" | "NO_GAP",
+      }
+    """
+    if not candles_day or len(candles_day) < 1 or not candles_15m:
+        return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
+
+    prev_close = candles_day[-1]["close"]
+    if prev_close <= 0:
+        return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
+
+    # Find today's open from first intraday candle
+    today = datetime.date.today()
+    today_open = None
+    today_first_vol = 0
+    for c in candles_15m:
+        dt = c.get("date")
+        if dt is None:
+            continue
+        cdate = dt.date() if hasattr(dt, "date") else dt
+        if cdate == today:
+            today_open = c["open"]
+            today_first_vol = c.get("volume", 0)
+            break
+
+    if today_open is None:
+        return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
+
+    gap_pct = (today_open - prev_close) / prev_close * 100
+
+    if abs(gap_pct) < 1.0:
+        return {"score": 0, "gap_pct": round(gap_pct, 2), "signal": "NO_GAP"}
+
+    # Rough volume check: compare first candle volume to daily avg / 25
+    # (25 fifteen-min candles per session). If first candle has above-avg
+    # share of the daily volume, it's high-volume opening.
+    high_vol_open = False
+    if len(candles_day) >= 5:
+        avg_daily_vol = sum(d.get("volume", 0) for d in candles_day[-5:]) / 5
+        expected_first = avg_daily_vol / 25 if avg_daily_vol > 0 else 0
+        if expected_first > 0 and today_first_vol > expected_first * 1.5:
+            high_vol_open = True
+
+    score = 0.0
+    if gap_pct > 1.0:
+        if high_vol_open:
+            score = 1.0
+            signal = "GAP_UP_STRONG"
+        else:
+            score = -1.0
+            signal = "GAP_UP_WEAK"
+    else:  # gap_pct < -1.0
+        if high_vol_open:
+            score = -1.0
+            signal = "GAP_DOWN_STRONG"
+        else:
+            score = 1.0
+            signal = "GAP_DOWN_WEAK"
+
+    return {
+        "score": score,
+        "gap_pct": round(gap_pct, 2),
+        "signal": signal,
+    }
+
 def compute_technical_score(
     candles_15m: list[dict],
     candles_day: list[dict] | None = None,
@@ -441,7 +643,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: ~-12 to +12
+    Score range: ~-16 to +16
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal
@@ -455,6 +657,9 @@ def compute_technical_score(
         "vwap": dict,
         "supertrend": dict,
         "prev_day_sr": dict,
+        "macd": dict,
+        "orb": dict,
+        "gap": dict,
       }
     """
     score = 0.0
@@ -504,6 +709,19 @@ def compute_technical_score(
     elif st_data["trend"] == "DOWN":
         score -= 1
 
+    # MACD histogram (12,26,9 on 15m candles)
+    macd_data = macd_histogram(candles_15m, fast=12, slow=26, signal_period=9)
+    if macd_data["signal"] == "BULLISH" and macd_data["momentum"] == "GROWING":
+        score += 1
+    elif macd_data["signal"] == "BEARISH" and macd_data["momentum"] == "GROWING":
+        score -= 1
+    # Shrinking momentum = weakening signal (mild warning)
+    if macd_data["momentum"] == "SHRINKING":
+        if macd_data["signal"] == "BULLISH":
+            score -= 0.5  # bullish momentum fading
+        elif macd_data["signal"] == "BEARISH":
+            score += 0.5  # bearish momentum fading
+
     # Daily EMA trend bias (if available)
     if candles_day and len(candles_day) >= 22:
         day_ema = ema_crossover(candles_day, fast=9, slow=21)
@@ -518,6 +736,16 @@ def compute_technical_score(
         "score": 0, "prev_high": 0, "prev_low": 0, "pivot": 0, "signal": "NONE"
     }
     score += sr_data["score"]
+
+    # Opening Range Breakout (first 15-min candle of today)
+    orb_data = opening_range_score(candles_15m, price)
+    score += orb_data["score"]
+
+    # Pre-market gap analysis (yesterday's close vs today's open)
+    gap_data = gap_analysis_score(candles_day, candles_15m) if candles_day else {
+        "score": 0, "gap_pct": 0, "signal": "NO_GAP"
+    }
+    score += gap_data["score"]
 
     # Map score to signal
     if score >= 5:
@@ -539,4 +767,7 @@ def compute_technical_score(
         "vwap": vwap_data,
         "supertrend": st_data,
         "prev_day_sr": sr_data,
+        "macd": macd_data,
+        "orb": orb_data,
+        "gap": gap_data,
     }
