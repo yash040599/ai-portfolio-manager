@@ -357,6 +357,7 @@ ai-portfolio-manager/
 │   ├── tax_summary.py              # Tax summary — intraday, capital gains, or both (with grand total)
 │   ├── view_trades.py              # View all intraday trades from database with P&L summary
 │   ├── view_analyses.py            # View all portfolio analyses from database with action status
+│   ├── view_candle_cache.py        # View candle cache — symbols, intervals, date ranges, OHLCV data
 │   ├── import_reports_to_db.py     # Import existing JSON report files into the SQLite database
 │   └── backup_data.py              # Two-way sync data (DB, reports, logs) with a private Git repo
 ├── docs/
@@ -548,6 +549,7 @@ The bot uses this data to:
 | `python scripts/view_trades.py` | Print all intraday trades — entry/exit, P&L, exit reasons, market conditions, win/loss summary |
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
+| `python scripts/view_candle_cache.py` | View candle cache — symbols cached, date ranges, OHLCV candles. Use `--symbol RELIANCE --candles` for individual candles |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported |
 
 ```bash
@@ -568,6 +570,18 @@ python scripts/generate_sheet.py --list
 
 # Import old JSON reports into the database (one-time)
 python scripts/import_reports_to_db.py
+
+# View candle cache summary (all symbols)
+python scripts/view_candle_cache.py
+
+# View candle cache for a specific symbol
+python scripts/view_candle_cache.py --symbol RELIANCE
+
+# View individual candles for a symbol
+python scripts/view_candle_cache.py --symbol RELIANCE --candles
+
+# Filter by interval (day, 15minute)
+python scripts/view_candle_cache.py --interval day
 ```
 
 Or query directly:

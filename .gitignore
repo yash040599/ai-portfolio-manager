@@ -15,7 +15,7 @@ logs/
 reports/
 
 # ── Database (contains personal trading data) ────────────
-data/
+data/*
 !data/candle_cache.db
 
 # ── IDE / Editor ─────────────────────────────────────────
