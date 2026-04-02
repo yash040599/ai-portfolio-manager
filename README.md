@@ -28,7 +28,7 @@ A fully automated intraday trading bot that:
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
 - Asks Claude to pick the best intraday trades from Nifty 50/100/200
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
-- **ATR-based dynamic stop-losses** — computes Average True Range from historical data to set intelligent SL/target levels (falls back to Claude's values if data unavailable)
+- **ATR-based dynamic stop-losses** — computes Average True Range from 15-minute intraday candles to set intelligent SL/target levels sized for intraday moves (falls back to Claude's values if data unavailable). SL is hard-capped at 2.5% to prevent swing-trade-sized stops. When both ATR and Claude provide SL levels, the tighter (closer to entry) SL is used
 - **Actual fill prices** — in live mode, after placing a MARKET order, polls Zerodha's order trades API to get the real weighted-average fill price. Entry price, P&L, SL, and target are all recalculated on the actual fill — not the estimated quote price
 - **Live entry price validation** — before placing any order, cross-checks Claude's recommended entry price against Zerodha's live quote. If they differ by >5%, overrides with the live price to prevent hallucinated-price entries
 - **Always trusts Zerodha fills** — after a MARKET order fills, always uses Zerodha's actual fill price (not the pre-order estimate). SL, target, and P&L are recalculated on the real fill. Logs a warning if the fill deviates >5% but never rejects it
@@ -40,13 +40,14 @@ A fully automated intraday trading bot that:
 - Claude reviews positions every **15 minutes** for adjustments (with full trade history context)
 - **Anti-panic exit** — Claude's review includes a rule against panic-selling: "If a position shows a loss but hasn't hit its numeric SL, do NOT recommend EXIT"
 - **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
+- **Partial re-scan** — when some (but not all) positions close via SL/target, immediately scans for replacement trades to fill empty slots instead of riding remaining losers with no hedge
 - **Session-aware re-scans** — mid-day re-scans pass current day P&L and already-traded symbols to Claude so it can adjust risk appetite
 - **Late entry guard** — won't open new positions if fewer than 60 minutes remain before square-off
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - **Market condition detection** — classifies the day as BULLISH/BEARISH/NEUTRAL with HIGH_VOLATILITY/NORMAL regime, adjusts strategy accordingly
 - Uses **NIFTY 50 index trend** to bias trade direction with sector-specific advice
-- Anti-momentum-chasing rules — avoids stocks already up >2% at scan time
+- Anti-momentum-chasing rules — avoids stocks already up >2% (for BUY) or already down >2% (for SELL) at scan time. Extended moves are likely to revert
 - **Performance database** — stores every trade in SQLite, feeds recent win rates and P&L history into Claude's next-day stock selection
 - **Slippage model** in dry-run mode for realistic P&L simulation
 - Squares off all positions before market close (3:10 PM)
@@ -70,7 +71,7 @@ An upgraded version of the intraday trading bot that adds a **mathematical pre-f
 - **5 technical indicators** computed per stock: EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10,3), Previous Day S&R
 - **Composite score** (~-18 to +18) ranks all stocks — only those above `V2_MIN_SCORE` (default: 2.0) pass through
 - **RVol filter** — Relative Volume (today vs 5-day avg) adds +1 bonus for unusual activity, -1 penalty for dead stocks
-- **Nifty trend hard filter** — against-market signals need |score| ≥ 5 to pass (trade with the trend)
+- **Nifty trend hard filter** — against-market signals need |score| ≥ 3 to pass (trade with the trend, but allow moderate contrarian setups)
 - **Top 15 candidates** sent to Claude with their exact indicator values, so Claude can reason about confluences ("RSI oversold + Hammer + SuperTrend UP = strong BUY")
 - **Dynamic poll interval** — polling doubles speed when any position is within 0.5% of SL or target
 - **Candle-aware Claude reviews** — position reviews include fresh 5-min candle patterns, RSI, EMA, VWAP per stock, so Claude can see momentum fading or reversal patterns forming in real-time
@@ -88,9 +89,34 @@ python main.py --mode trade --v2
 python main.py --mode trade --v2 --test
 ```
 
+### Phase 2c — NoAI Mode (fully automated, zero Claude calls)
+
+A completely Claude-free trading mode that uses the V2 candle pipeline for everything — stock selection, monitoring, and re-scans. Zero API costs beyond Zerodha data.
+
+**How it works:**
+- Uses the same V2 pre-filter (candlestick patterns + technical indicators) to rank stocks
+- **Auto-selects trades** from top-scoring candidates — `BUY` if score is positive, `SELL` if negative
+- **Auto-generates SL/target** from config defaults (ATR overrides in `enter_trade` still apply)
+- **Auto-sizes positions** to fit budget and per-stock limits
+- All monitoring is rule-based: SL/target checks, trailing stops, auto-protect on contrary candle signals, periodic candle re-scans
+- **No Claude reviews** — no periodic position reviews, no re-scan prompts. Everything is math
+- Partial re-scans when slots free up also use pure technical selection
+- All other V2 features preserved: dynamic poll rate, crash recovery, circuit breaker, etc.
+
+**Trade-offs vs V2:**
+- **Free** — zero Claude API cost per trading day
+- **Faster** — no waiting for Claude responses (~10-30s per call saved)
+- **Less nuanced** — no qualitative reasoning about setups, sector context, or position management
+- **No mid-day position reviews** — relies entirely on rule-based SL/target/trailing/candle-protect
+
+```bash
+python main.py --mode trade --noai
+```
+
 For detailed strategy documentation, see:
 - **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** — V1 strategy architecture and trade flow
 - **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** — V2 candle strategy with indicator explanations and scoring system
+- **[docs/STRATEGY_V2_NOAI.md](docs/STRATEGY_V2_NOAI.md)** — NoAI strategy: fully automated, zero Claude calls
 - **[docs/V2_IMPROVEMENTS.md](docs/V2_IMPROVEMENTS.md)** — V2 improvement roadmap with research-backed enhancements
 
 **Dry-run mode** is ON by default — no real orders are placed. Set `DRY_RUN = False` in `config.py` only after reviewing dry-run results.
@@ -226,8 +252,10 @@ Open `config.py` and review these key settings:
 | `MAX_REENTRIES_PER_STOCK` | `2` | Max times a stock can be traded in one day |
 | `ENTRY_DELAY_MINUTES` | `15` | Observation period after market open before entering trades |
 | `ENTRY_MIN_MOVE_PCT` | `0.3%` | Minimum directional move from open to confirm entry |
-| `ATR_PERIOD` | `14` | Number of days for Average True Range calculation |
+| `ATR_PERIOD` | `14` | Number of candles for Average True Range calculation |
 | `ATR_MULTIPLIER` | `1.5` | ATR multiplier for dynamic SL (2× for target) |
+| `ATR_INTERVAL` | `15minute` | Candle interval for ATR — `15minute` for intraday-appropriate levels |
+| `MAX_INTRADAY_SL_PCT` | `2.5%` | Hard cap on ATR-based SL width — prevents swing-trade-sized stops |
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Fallback SL when ATR data is unavailable |
 | `DEFAULT_TARGET_PCT` | `2.0%` | Fallback target when ATR data is unavailable |
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
@@ -258,6 +286,9 @@ python main.py --mode trade
 
 # Intraday trading bot — V2 candle strategy (dry-run by default)
 python main.py --mode trade --v2
+
+# Fully automated, no Claude calls (V2 candle pipeline only)
+python main.py --mode trade --noai
 
 # Test V2 candle pipeline only (no Claude calls, no trades, no cost)
 python main.py --mode trade --v2 --test
@@ -313,6 +344,7 @@ ai-portfolio-manager/
 │   ├── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 │   ├── STRATEGY_V1.md       # V1 trading strategy — architecture, flow, risk layers
 │   ├── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
+│   ├── STRATEGY_V2_NOAI.md  # NoAI strategy — fully automated, zero Claude calls
 │   └── V2_IMPROVEMENTS.md   # V2 improvement roadmap — research-backed enhancements
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
@@ -673,7 +705,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Smart sizing** — auto-reduces qty to fit remaining budget instead of rejecting the trade
 - **Re-entry limit** — blocks repeated entries into the same stock after stop-losses (`MAX_REENTRIES_PER_STOCK`)
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`
-- **ATR-based dynamic stop-losses** — data-driven SL/target using historical volatility
+- **ATR-based dynamic stop-losses** — data-driven SL/target using 15-minute intraday candles, capped at 2.5%, picks the tighter of ATR vs Claude SL
 - **Auto trailing stop-loss** — rule-based SL tightening as positions move in profit
 - **Delayed entry filter** — skips indecisive stocks that haven't moved after market open
 - **Market condition awareness** — detects high-volatility regimes and adjusts position sizing

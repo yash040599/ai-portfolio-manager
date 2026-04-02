@@ -38,7 +38,7 @@ class Config:
     #
     # MAX_BUDGET_INR: absolute cap on how much capital the bot can
     # deploy in a single day, regardless of account balance.
-    MAX_BUDGET_INR: int = 20_000
+    MAX_BUDGET_INR: int = 10_000
 
     # MIN_BALANCE_TO_TRADE: minimum Zerodha account balance required
     # to start trading. If your funds are below this, the bot logs
@@ -166,12 +166,14 @@ class Config:
     DEFAULT_TARGET_PCT:    float = 2.0
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
 
-    # ATR_MULTIPLIER: multiplier for 14-day ATR to compute dynamic stop-loss.
+    # ATR_MULTIPLIER: multiplier for ATR to compute dynamic stop-loss.
     #   SL = entry - (ATR_MULTIPLIER × ATR) for longs.
     #   Target = entry + (ATR_MULTIPLIER × 2 × ATR) for 2:1 reward:risk.
     #   Falls back to DEFAULT_STOP_LOSS_PCT if historical data is unavailable.
     ATR_MULTIPLIER: float = 1.5
-    ATR_PERIOD:     int   = 14    # number of days for ATR calculation
+    ATR_PERIOD:     int   = 14    # number of candles for ATR calculation
+    ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
+    MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: once the price moves this many
@@ -398,15 +400,17 @@ class Config:
         return cls._ZERODHA_RULES[cls.ZERODHA_PLAN]
 
     @classmethod
-    def validate(cls) -> list[str]:
+    def validate(cls, require_claude: bool = True) -> list[str]:
         """
         Checks all required API keys are present.
         Returns list of missing key names — empty means all good.
+        Set require_claude=False for --noai mode.
         """
         missing = []
         if not cls.ZERODHA_API_KEY:    missing.append("ZERODHA_API_KEY")
         if not cls.ZERODHA_API_SECRET: missing.append("ZERODHA_API_SECRET")
-        if not cls.CLAUDE_API_KEY:     missing.append("CLAUDE_API_KEY")
+        if require_claude and not cls.CLAUDE_API_KEY:
+            missing.append("CLAUDE_API_KEY")
         return missing
 
     @classmethod

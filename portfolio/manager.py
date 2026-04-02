@@ -72,6 +72,7 @@ class PortfolioManager:
         self._budget: float = 0.0          # actual trading budget for the day
         self._scan_failed = False          # true if quote fetch failed
         self._market_condition: str = ""   # BULLISH/BEARISH/NEUTRAL + volatility
+        self._last_partial_rescan: float = 0.0  # cooldown for partial re-scans
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -87,7 +88,7 @@ class PortfolioManager:
         self._print_banner()
 
         # ── Step 1: Validate config ───────────────────────────────
-        missing = self.cfg.validate()
+        missing = self.cfg.validate(require_claude=not getattr(self, '_noai', False))
         if missing:
             self.log.section("CONFIGURATION ERROR")
             for key in missing:
@@ -496,8 +497,15 @@ class PortfolioManager:
                 continue
 
             move_pct = abs(current_price - day_open_price) / day_open_price * 100
+            side = trade["side"]
 
-            if move_pct >= min_move:
+            # Direction must align: BUY needs price moving UP, SELL needs DOWN
+            direction_ok = (
+                (side == "BUY" and current_price > day_open_price) or
+                (side == "SELL" and current_price < day_open_price)
+            )
+
+            if move_pct >= min_move and direction_ok:
                 # Update entry price to current market price
                 trade["entry_price"] = round(current_price, 2)
                 confirmed.append(trade)
@@ -505,6 +513,13 @@ class PortfolioManager:
                 self.log.info(
                     f"  ✓ {symbol}: {direction} {move_pct:.2f}% from open "
                     f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — CONFIRMED"
+                )
+            elif move_pct >= min_move and not direction_ok:
+                skipped.append(trade)
+                direction = "↑" if current_price > day_open_price else "↓"
+                self.log.info(
+                    f"  ✗ {symbol}: {direction} {move_pct:.2f}% but WRONG direction "
+                    f"for {side} — SKIPPED"
                 )
             else:
                 skipped.append(trade)
@@ -646,6 +661,52 @@ class PortfolioManager:
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
                 self.log.info(f"{closed} position(s) auto-closed")
+                # ── Partial re-scan: fill empty slots with new trades ─
+                open_count = len(self.engine.open_positions())
+                rescan_cooldown = 120  # min 2 min between partial re-scans
+                time_since_rescan = time.time() - self._last_partial_rescan
+                if (
+                    open_count > 0
+                    and open_count < self.cfg.MAX_POSITIONS
+                    and not self.engine.is_order_api_broken()
+                    and not self._circuit_broken
+                    and time_since_rescan >= rescan_cooldown
+                ):
+                    sq_now = datetime.datetime.now()
+                    sq_off = sq_now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - sq_now).total_seconds() / 60
+                    slots = self.cfg.MAX_POSITIONS - open_count
+                    if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self.log.info(
+                            f"{slots} slot(s) free, {mins_left:.0f} min left — "
+                            f"scanning for replacement trades..."
+                        )
+                        closed_trades = self.engine.closed_positions()
+                        traded_symbols = list({p["symbol"] for p in closed_trades})
+                        day_pnl = self.engine.day_pnl()
+                        session_ctx = (
+                            f"\nSESSION CONTEXT (partial re-scan — {slots} slot(s) available):\n"
+                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
+                            f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
+                            f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
+                            f"  DO NOT pick any stock already traded or currently held.\n"
+                            f"  If day P&L is negative, only pick high-conviction setups.\n"
+                        )
+                        self._trade_plans = []
+                        self._run_pre_market_scan(session_context=session_ctx)
+                        if self._trade_plans:
+                            # Limit to available slots
+                            self._trade_plans = self._trade_plans[:slots]
+                            self._enter_positions()
+                            last_review_time = time.time()
+                        else:
+                            self.log.info("Partial re-scan: no replacement trades found")
+                        self._last_partial_rescan = time.time()
 
             # ── Check if Zerodha order API is broken ──────────────
             # If consecutive order failures hit the limit, stop

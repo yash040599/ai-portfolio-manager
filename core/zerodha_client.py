@@ -120,19 +120,31 @@ class ZerodhaClient:
             def log_message(self, *args):
                 pass
 
-        server = HTTPServer(("localhost", 8080), _TokenHandler)
+        try:
+            server = HTTPServer(("localhost", 8080), _TokenHandler)
+        except OSError as e:
+            self.log.error(
+                f"Cannot start login server on port 8080: {e}. "
+                f"Port may be in use. Try manual login mode instead."
+            )
+            self._login_manual(login_url)
+            return
+
         server.timeout = 300
         webbrowser.open(login_url)
 
         self.log.info("Waiting for Zerodha login in browser (5 min timeout)...")
         deadline = datetime.datetime.now() + datetime.timedelta(minutes=5)
-        while not captured:
-            server.handle_request()
-            if datetime.datetime.now() >= deadline:
-                raise RuntimeError(
-                    "Zerodha login timed out after 5 minutes. "
-                    "Re-run the script when you can complete the browser login."
-                )
+        try:
+            while not captured:
+                server.handle_request()
+                if datetime.datetime.now() >= deadline:
+                    raise RuntimeError(
+                        "Zerodha login timed out after 5 minutes. "
+                        "Re-run the script when you can complete the browser login."
+                    )
+        finally:
+            server.server_close()
 
         self._exchange_and_save(captured[0])
 

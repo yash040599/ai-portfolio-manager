@@ -177,20 +177,25 @@ class OrderEngine:
 
     def calculate_atr(self, symbol: str, exchange: str = "NSE", period: int = 0) -> float | None:
         """
-        Computes the Average True Range over `period` trading days.
+        Computes the Average True Range over `period` candles.
+        Uses intraday candles (default: 15-minute) for intraday-appropriate levels.
         Returns ATR as a price value, or None if data is unavailable.
 
         True Range = max(high-low, |high-prev_close|, |low-prev_close|)
-        ATR = SMA of True Range over `period` days.
+        ATR = SMA of True Range over `period` candles.
         """
         if period <= 0:
             period = self.cfg.ATR_PERIOD
 
+        interval = getattr(self.cfg, "ATR_INTERVAL", "15minute")
+
         to_date   = datetime.date.today()
-        from_date = to_date - datetime.timedelta(days=period * 2)  # extra buffer for weekends/holidays
+        # For intraday intervals, fetch 5 trading days to get enough candles
+        buffer_days = 5 if "minute" in interval else period * 2
+        from_date = to_date - datetime.timedelta(days=buffer_days)
 
         try:
-            candles = self.zerodha.get_historical(symbol, exchange, from_date, to_date, "day")
+            candles = self.zerodha.get_historical(symbol, exchange, from_date, to_date, interval)
         except Exception as e:
             self.log.info(f"ATR: no historical data for {symbol}: {e}")
             return None
@@ -275,12 +280,34 @@ class OrderEngine:
                 atr_sl     = round(entry + multiplier * atr, 2)
                 atr_target = round(entry - multiplier * 2 * atr, 2)
 
+            # Cap SL at MAX_INTRADAY_SL_PCT to prevent swing-trade-sized stops
+            max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
+            sl_pct = abs(atr_sl - entry) / entry * 100
+            if sl_pct > max_sl_pct:
+                if side == "BUY":
+                    atr_sl     = round(entry * (1 - max_sl_pct / 100), 2)
+                    atr_target = round(entry * (1 + max_sl_pct * 2 / 100), 2)
+                else:
+                    atr_sl     = round(entry * (1 + max_sl_pct / 100), 2)
+                    atr_target = round(entry * (1 - max_sl_pct * 2 / 100), 2)
+                self.log.info(
+                    f"ATR SL was {sl_pct:.1f}% — capped to {max_sl_pct}%: "
+                    f"SL ₹{atr_sl:.2f} | Target ₹{atr_target:.2f}"
+                )
+
             self.log.info(
-                f"ATR({self.cfg.ATR_PERIOD}) for {symbol}: ₹{atr:.2f} | "
+                f"ATR({self.cfg.ATR_PERIOD}, {getattr(self.cfg, 'ATR_INTERVAL', '15minute')}) "
+                f"for {symbol}: ₹{atr:.2f} | "
                 f"Dynamic SL: ₹{atr_sl:.2f} | Target: ₹{atr_target:.2f}"
             )
-            sl     = atr_sl
-            target = atr_target
+
+            # Use tighter of ATR vs Claude SL (don't widen Claude's SL)
+            if side == "BUY":
+                sl     = max(atr_sl, sl)      # pick whichever SL is closer to entry
+                target = min(atr_target, target) if target > entry else atr_target
+            else:
+                sl     = min(atr_sl, sl)      # for shorts, lower SL = tighter
+                target = max(atr_target, target) if target < entry else atr_target
         else:
             self.log.info(
                 f"ATR unavailable for {symbol} — using Claude SL: ₹{sl:.2f} / Target: ₹{target:.2f}"
@@ -786,12 +813,57 @@ class OrderEngine:
                 pos = self._find_open_position(symbol)
                 if pos:
                     old_sl = pos["stop_loss"]
-                    pos["stop_loss"] = action["new_sl"]
+                    new_sl = action["new_sl"]
+                    entry  = pos["entry_price"]
+                    side   = pos["side"]
+
+                    # Validate direction: SL must be on correct side of entry
+                    if side == "BUY" and new_sl >= entry:
+                        self.log.warning(
+                            f"Rejected SL adjustment for {symbol}: "
+                            f"SL ₹{new_sl:.2f} >= entry ₹{entry:.2f} (wrong side for BUY)"
+                        )
+                        continue
+                    if side == "SELL" and new_sl <= entry:
+                        self.log.warning(
+                            f"Rejected SL adjustment for {symbol}: "
+                            f"SL ₹{new_sl:.2f} <= entry ₹{entry:.2f} (wrong side for SELL)"
+                        )
+                        continue
+
+                    # Cap SL width at MAX_INTRADAY_SL_PCT
+                    max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
+                    sl_dist_pct = abs(new_sl - entry) / entry * 100
+                    if sl_dist_pct > max_sl_pct:
+                        if side == "BUY":
+                            new_sl = round(entry * (1 - max_sl_pct / 100), 2)
+                        else:
+                            new_sl = round(entry * (1 + max_sl_pct / 100), 2)
+                        self.log.warning(
+                            f"Claude SL for {symbol} capped: {sl_dist_pct:.1f}% "
+                            f"→ {max_sl_pct}% (₹{new_sl:.2f})"
+                        )
+
+                    # Only allow tightening (SL moves toward entry, not away)
+                    if side == "BUY" and new_sl < old_sl:
+                        self.log.warning(
+                            f"Rejected SL loosening for {symbol}: "
+                            f"₹{old_sl:.2f} → ₹{new_sl:.2f} (would widen risk)"
+                        )
+                        continue
+                    if side == "SELL" and new_sl > old_sl:
+                        self.log.warning(
+                            f"Rejected SL loosening for {symbol}: "
+                            f"₹{old_sl:.2f} → ₹{new_sl:.2f} (would widen risk)"
+                        )
+                        continue
+
+                    pos["stop_loss"] = new_sl
                     self.log.info(
                         f"CLAUDE REVIEW → ADJUST SL {symbol}: "
-                        f"₹{old_sl:.2f} → ₹{action['new_sl']:.2f} | {reason}"
+                        f"₹{old_sl:.2f} → ₹{new_sl:.2f} | {reason}"
                     )
-                    self._log_action("ADJUST_SL", symbol, "", 0, action["new_sl"],
+                    self._log_action("ADJUST_SL", symbol, "", 0, new_sl,
                                      reason)
 
             elif act == "ADJUST_TARGET" and action.get("new_target"):
@@ -835,13 +907,28 @@ class OrderEngine:
 
         self.log.section("SQUARE OFF — Closing all open positions")
 
+        closed_count = 0
         for pos in open_pos:
             key = f"{pos['exchange']}:{pos['symbol']}"
             q   = quotes.get(key, {})
             current_price = q.get("last_price", pos["entry_price"])
-            self.exit_position(pos, current_price, "SQUARE_OFF")
+            try:
+                self.exit_position(pos, current_price, "SQUARE_OFF")
+                if pos["status"] == "CLOSED":
+                    closed_count += 1
+            except Exception as e:
+                self.log.error(
+                    f"Failed to square off {pos['symbol']}: {e} — "
+                    f"position may still be open on Zerodha!"
+                )
 
-        self.log.success(f"Squared off {len(open_pos)} positions")
+        if closed_count == len(open_pos):
+            self.log.success(f"Squared off all {closed_count} positions")
+        else:
+            self.log.error(
+                f"Squared off {closed_count}/{len(open_pos)} positions — "
+                f"{len(open_pos) - closed_count} may still be open on Zerodha!"
+            )
 
     # ================================================================
     # CIRCUIT BREAKER — MAX DAILY LOSS

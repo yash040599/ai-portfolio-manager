@@ -58,6 +58,7 @@ class PortfolioManagerV2(PortfolioManager):
         # V2-specific state
         self._fast_poll = False        # True when near SL/target
         self._last_candle_scan = 0.0   # timestamp of last candle re-scan
+        self._noai = False             # True when running in --noai mode
 
     # ================================================================
     # OVERRIDE: BANNER
@@ -68,21 +69,30 @@ class PortfolioManagerV2(PortfolioManager):
         plan = self.cfg.claude()
         zrd  = self.cfg.zerodha()
         print(f"\n{'='*58}")
-        print("  AI PORTFOLIO MANAGER — V2 CANDLE STRATEGY")
+        if self._noai:
+            print("  AI PORTFOLIO MANAGER — V2 NO-AI MODE")
+        else:
+            print("  AI PORTFOLIO MANAGER — V2 CANDLE STRATEGY")
         print(f"{'='*58}")
-        print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}")
-        print(f"  → {plan['note']}")
-        print()
+        if not self._noai:
+            print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}")
+            print(f"  → {plan['note']}")
+            print()
         print(f"  Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}")
         print(f"  → {zrd['note']}")
         print()
-        print(f"  Claude model   : {plan['model']}")
+        if not self._noai:
+            print(f"  Claude model   : {plan['model']}")
+        else:
+            print(f"  Claude model   : NONE (pure technical signals)")
         print(f"  Price source   : {zrd['price_source'].upper()}")
         print()
         print(f"  \033[96m★ V2 Strategy\033[0m : Candle patterns + Technical indicators")
         print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(10,3)")
         print(f"    Patterns    : Hammer, Engulfing, Morning/Evening Star, etc.")
         print(f"    Dynamic poll: faster near SL/target zones")
+        if self._noai:
+            print(f"    AI calls    : ZERO — fully rule-based trading")
         print(f"{'='*58}\n")
 
     # ================================================================
@@ -110,7 +120,7 @@ class PortfolioManagerV2(PortfolioManager):
         print(f"{'='*58}\n")
 
         # ── Step 1: Validate config ───────────────────────────────
-        missing = self.cfg.validate()
+        missing = self.cfg.validate(require_claude=False)
         if missing:
             for key in missing:
                 self.log.error(f"Missing in .env file: {key}")
@@ -231,14 +241,14 @@ class PortfolioManagerV2(PortfolioManager):
         # ── Step 6b: Nifty hard filter simulation ─────────────────
         #    Test mode doesn't have nifty_context, but show what WOULD
         #    happen if market was bearish/bullish to validate the filter.
-        would_drop_bear = sum(1 for s in filtered if s["combined_score"] > 0 and abs(s["combined_score"]) < 5)
-        would_drop_bull = sum(1 for s in filtered if s["combined_score"] < 0 and abs(s["combined_score"]) < 5)
+        would_drop_bear = sum(1 for s in filtered if s["combined_score"] > 0 and abs(s["combined_score"]) < 3)
+        would_drop_bull = sum(1 for s in filtered if s["combined_score"] < 0 and abs(s["combined_score"]) < 3)
         if would_drop_bear or would_drop_bull:
             print(f"\n  Nifty hard filter impact (if applied):")
             if would_drop_bear:
-                print(f"    BEARISH market → would drop {would_drop_bear} weak BUY signals (score < 5)")
+                print(f"    BEARISH market → would drop {would_drop_bear} weak BUY signals (score < 3)")
             if would_drop_bull:
-                print(f"    BULLISH market → would drop {would_drop_bull} weak SELL signals (score < 5)")
+                print(f"    BULLISH market → would drop {would_drop_bull} weak SELL signals (score < 3)")
 
         # ── Step 7: Show what would be sent to Claude ─────────────
         snapshot = self.scanner._build_enriched_snapshot(top, quotes)
@@ -262,6 +272,96 @@ class PortfolioManagerV2(PortfolioManager):
         print()
 
     # ================================================================
+    # OVERRIDE: PRE-MARKET SCAN (routes to noai when flag is set)
+    # ================================================================
+
+    def _run_pre_market_scan(self, session_context: str = ""):
+        """Routes scan to noai or Claude path based on mode."""
+        if self._noai:
+            self._run_noai_scan(session_context)
+        else:
+            super()._run_pre_market_scan(session_context)
+
+    def _run_claude_review(self, quotes: dict):
+        """Skip Claude review in noai mode (called by V1 run() on resume)."""
+        if self._noai:
+            self.log.info("NoAI mode: skipping Claude review (rule-based only)")
+            return
+        super()._run_claude_review(quotes)
+
+    # ================================================================
+    # NO-AI MODE — fully automated, zero Claude calls
+    # ================================================================
+
+    def run_noai(self):
+        """
+        Runs the full trading day using only technical signals —
+        no Claude API calls at all. Trade selection, monitoring,
+        and re-scans are all rule-based.
+
+        Uses the same lifecycle as run() (login, wait for market,
+        observation period, monitoring, square-off, report) but
+        replaces every Claude call with math-based logic.
+        """
+        self._noai = True
+        self.run()
+
+    def _run_noai_scan(self, session_context: str = ""):
+        """
+        Pre-market scan without Claude — uses scan_noai() which
+        selects trades purely from technical scores.
+        """
+        now = datetime.datetime.now()
+        market_open = now.replace(
+            hour=self.cfg.MARKET_OPEN_HOUR,
+            minute=self.cfg.MARKET_OPEN_MINUTE,
+            second=0, microsecond=0,
+        )
+
+        if now < market_open:
+            self.log.section("PRE-MARKET SCAN (NoAI)")
+        else:
+            self.log.section("MARKET SCAN (NoAI — joined late)")
+
+        self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
+        self.log.info(f"Budget: ₹{self._budget:,.2f}")
+        self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
+        self.log.info("Selection: pure technical signals (no Claude calls)")
+
+        universe = self.scanner.get_universe()
+        self.log.info(f"Scanning {len(universe)} stocks...")
+
+        stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
+        quotes = self.zerodha.get_quotes_safe(stocks)
+        if quotes is None:
+            self.log.error("Could not fetch market data. Aborting scan.")
+            self._scan_failed = True
+            return
+
+        nifty_context = self._build_nifty_context()
+
+        # Determine available slots
+        open_count = len(self.engine.open_positions())
+        max_trades = self.cfg.MAX_POSITIONS - open_count
+
+        self._trade_plans = self.scanner.scan_noai(
+            quotes, nifty_context,
+            max_trades=max_trades,
+            session_context=session_context,
+        )
+
+        if self._trade_plans:
+            self.log.section("TRADE PLAN (NoAI)")
+            for i, t in enumerate(self._trade_plans, 1):
+                self.log.info(
+                    f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
+                    f"@ ₹{t['entry_price']:.2f} | "
+                    f"SL: ₹{t['stop_loss']:.2f} | "
+                    f"Target: ₹{t['target_price']:.2f}"
+                )
+                self.log.info(f"           {t.get('rationale', '')}")
+
+    # ================================================================
     # OVERRIDE: MONITOR LOOP (V2 — with dynamic polling + candle re-scan)
     # ================================================================
 
@@ -272,18 +372,28 @@ class PortfolioManagerV2(PortfolioManager):
         - Periodic candle re-scan (every 15 min) to detect new setups
         - Enhanced Claude review with position candle context
         """
-        self.log.section("V2 MONITORING — Candle-aware price tracking")
+        if self._noai:
+            self.log.section("V2 MONITORING — NoAI (rule-based + candle re-scan)")
+        else:
+            self.log.section("V2 MONITORING — Candle-aware price tracking")
 
         base_poll = self.cfg.PRICE_POLL_SECONDS
         fast_poll = max(5, base_poll // 2)  # halve interval, min 5s
         review_interval = self.cfg.CLAUDE_REVIEW_MINUTES * 60
         candle_rescan_interval = self.cfg.V2_CANDLE_RESCAN_MINUTES * 60
 
-        self.log.info(
-            f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
-            f"Claude review: every {self.cfg.CLAUDE_REVIEW_MINUTES}min | "
-            f"Candle rescan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES}min"
-        )
+        if self._noai:
+            self.log.info(
+                f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
+                f"Claude review: DISABLED (noai) | "
+                f"Candle rescan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES}min"
+            )
+        else:
+            self.log.info(
+                f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
+                f"Claude review: every {self.cfg.CLAUDE_REVIEW_MINUTES}min | "
+                f"Candle rescan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES}min"
+            )
 
         last_review_time = time.time()
         self._last_candle_scan = time.time()
@@ -357,6 +467,52 @@ class PortfolioManagerV2(PortfolioManager):
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
                 self.log.info(f"{closed} position(s) auto-closed")
+                # ── Partial re-scan: fill empty slots with new trades ─
+                open_count = len(self.engine.open_positions())
+                rescan_cooldown = 120  # min 2 min between partial re-scans
+                time_since_rescan = time.time() - self._last_partial_rescan
+                if (
+                    open_count > 0
+                    and open_count < self.cfg.MAX_POSITIONS
+                    and not self.engine.is_order_api_broken()
+                    and not self._circuit_broken
+                    and time_since_rescan >= rescan_cooldown
+                ):
+                    sq_now = datetime.datetime.now()
+                    sq_off = sq_now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - sq_now).total_seconds() / 60
+                    slots = self.cfg.MAX_POSITIONS - open_count
+                    if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self.log.info(
+                            f"{slots} slot(s) free, {mins_left:.0f} min left — "
+                            f"V2 scanning for replacement trades..."
+                        )
+                        closed_trades = self.engine.closed_positions()
+                        traded_symbols = list({p["symbol"] for p in closed_trades})
+                        day_pnl = self.engine.day_pnl()
+                        session_ctx = (
+                            f"\nSESSION CONTEXT (V2 partial re-scan — {slots} slot(s) available):\n"
+                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
+                            f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
+                            f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
+                            f"  DO NOT pick any stock already traded or currently held.\n"
+                            f"  If P&L is negative, only pick high-conviction candle setups.\n"
+                        )
+                        self._trade_plans = []
+                        self._run_pre_market_scan(session_context=session_ctx)
+                        if self._trade_plans:
+                            self._trade_plans = self._trade_plans[:slots]
+                            self._enter_positions()
+                            last_review_time = time.time()
+                            self._last_candle_scan = time.time()
+                        else:
+                            self.log.info("V2 partial re-scan: no replacement trades found")
+                        self._last_partial_rescan = time.time()
 
             # ── Order API broken check ────────────────────────────
             if self.engine.is_order_api_broken():
@@ -410,7 +566,8 @@ class PortfolioManagerV2(PortfolioManager):
             # ── Claude review (with candle context) ───────────────
             elapsed = time.time() - last_review_time
             if elapsed >= review_interval and self.engine.open_positions():
-                self._run_claude_review_v2(quotes)
+                if not self._noai:
+                    self._run_claude_review_v2(quotes)
                 last_review_time = time.time()
 
             # ── Print status ──────────────────────────────────────

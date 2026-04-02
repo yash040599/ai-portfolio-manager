@@ -22,6 +22,7 @@ class ClaudeClient:
     def __init__(self, config: type[Config], log: Logger):
         self.cfg = config
         self.log = log
+        self._client = None  # lazy-init, reuse across calls
 
     # ================================================================
     # API CALL
@@ -36,15 +37,24 @@ class ClaudeClient:
         automatically reflect whichever plan is set in config.py.
         """
         import anthropic
+        import httpx
 
-        plan    = self.cfg.claude()
-        client  = anthropic.Anthropic(api_key=self.cfg.CLAUDE_API_KEY)
+        plan = self.cfg.claude()
 
-        message = client.messages.create(
+        if self._client is None:
+            self._client = anthropic.Anthropic(
+                api_key=self.cfg.CLAUDE_API_KEY,
+                timeout=httpx.Timeout(120.0, connect=10.0),
+            )
+
+        message = self._client.messages.create(
             model      = plan["model"],
             max_tokens = plan["max_tokens"],
             messages   = [{"role": "user", "content": prompt}],
         )
+
+        if not message.content:
+            raise RuntimeError("Claude returned empty response")
 
         return message.content[0].text
 

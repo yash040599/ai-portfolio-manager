@@ -487,7 +487,7 @@ def compute_technical_score(
         cdate = dt.date() if hasattr(dt, "date") else dt
         if cdate == today:
             today_candles.append(c)
-    vwap_data = vwap_signal(today_candles) if today_candles else vwap_signal(candles_15m)
+    vwap_data = vwap_signal(today_candles) if today_candles else {"vwap": 0, "price": 0, "signal": "AT_VWAP", "deviation_pct": 0}
     if vwap_data["signal"] == "ABOVE_VWAP":
         score += 1
     elif vwap_data["signal"] == "BELOW_VWAP":

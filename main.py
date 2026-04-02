@@ -4,9 +4,10 @@
 # Entry point. Run this file to start the portfolio manager.
 #
 # Usage:
-#   python main.py --mode analyze     ← portfolio analysis (read-only)
-#   python main.py --mode trade       ← intraday trading bot (V1)
-#   python main.py --mode trade --v2  ← intraday trading bot (V2 candle strategy)
+#   python main.py --mode analyze       ← portfolio analysis (read-only)
+#   python main.py --mode trade         ← intraday trading bot (V1)
+#   python main.py --mode trade --v2    ← intraday trading bot (V2 candle strategy)
+#   python main.py --mode trade --noai  ← fully automated, no Claude calls
 #
 # To change plans or budget:
 #   Edit config.py — nothing else needs to change.
@@ -39,17 +40,19 @@ def main():
         except (IndexError, ValueError):
             pass
 
-    # Check for --v2 and --test flags
+    # Check for --v2, --test, and --noai flags
     use_v2   = "--v2"   in sys.argv
     use_test = "--test" in sys.argv
+    use_noai = "--noai" in sys.argv
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|login] [--v2] [--test]")
-        print("  analyze           — read-only portfolio analysis")
-        print("  trade             — intraday trading bot (V1)")
-        print("  trade --v2        — intraday trading bot (V2 candle strategy)")
-        print("  trade --v2 --test — test V2 candle pipeline (no Claude calls, no trades)")
-        print("  login             — test Zerodha login only")
+        print("Usage: python main.py --mode [analyze|trade|login] [--v2] [--test] [--noai]")
+        print("  analyze             — read-only portfolio analysis")
+        print("  trade               — intraday trading bot (V1)")
+        print("  trade --v2          — intraday trading bot (V2 candle strategy)")
+        print("  trade --v2 --test   — test V2 candle pipeline (no Claude calls, no trades)")
+        print("  trade --noai        — fully automated: V2 candle strategy, zero Claude calls")
+        print("  login               — test Zerodha login only")
         sys.exit(1)
 
     if mode == "analyze":
@@ -57,7 +60,11 @@ def main():
         runner.run()
 
     elif mode == "trade":
-        if use_v2:
+        if use_noai:
+            from portfolio.manager_v2 import PortfolioManagerV2
+            runner = PortfolioManagerV2(Config)
+            runner.run_noai()
+        elif use_v2:
             from portfolio.manager_v2 import PortfolioManagerV2
             runner = PortfolioManagerV2(Config)
             if use_test:

@@ -294,13 +294,14 @@ MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per st
 {nifty_context}{perf_context}{session_context}
 CRITICAL RULES — MUST FOLLOW:
 1. DO NOT chase stocks already up more than 2% from previous close. These moves are extended and likely to revert.
-2. DO NOT pick a stock just because it gapped up with volume — that move already happened. Look for PULLBACK ENTRIES near intraday support or VWAP.
-3. RISK:REWARD must be at least 1:1.5 for every trade. If you can't find 1.5× upside vs your stop-loss, skip the stock.
-4. Use REALISTIC stop-loss levels — base SL on chart structure (recent swing low for BUY, swing high for SELL), NOT a fixed %. Typical range: {default_sl}% to 2%.
-5. Actively consider SHORT (SELL) trades when the market index is weak or a stock shows bearish structure. Don't default to all-BUY.
-6. Prefer stocks near support (for BUY) or near resistance (for SELL) — mean-reversion setups with tight risk.
-7. Avoid stocks with less than ₹10 average intraday range — too tight for meaningful P&L on small capital.
-8. Total position value across all trades MUST NOT exceed ₹{budget:,}.
+2. DO NOT short stocks already down more than 2% from previous close. The move is extended — mean-reversion bounce is likely.
+3. DO NOT pick a stock just because it gapped up with volume — that move already happened. Look for PULLBACK ENTRIES near intraday support or VWAP.
+4. RISK:REWARD must be at least 1:1.5 for every trade. If you can't find 1.5× upside vs your stop-loss, skip the stock.
+5. Use REALISTIC stop-loss levels — base SL on chart structure (recent swing low for BUY, swing high for SELL), NOT a fixed %. Typical range: {default_sl}% to 2%.
+6. Actively consider SHORT (SELL) trades when the market index is weak or a stock shows bearish structure. Don't default to all-BUY.
+7. Prefer stocks near support (for BUY) or near resistance (for SELL) — mean-reversion setups with tight risk.
+8. Avoid stocks with less than ₹10 average intraday range — too tight for meaningful P&L on small capital.
+9. Total position value across all trades MUST NOT exceed ₹{budget:,}.
 
 STRATEGY FRAMEWORK:
 - Opening Range Breakout (ORB): if within the first 30 minutes, identify stocks that break above/below their opening 15-min high/low with volume.
@@ -513,6 +514,10 @@ RATIONALE: [1 sentence]
         if not all([symbol, side, entry, qty]):
             return None
 
+        # Side must be exactly BUY or SELL
+        if side not in ("BUY", "SELL"):
+            return None
+
         entry_price  = _parse_price(entry)
         stop_loss    = _parse_price(sl) if sl else 0.0
         target_price = _parse_price(target) if target else 0.0
@@ -537,6 +542,22 @@ RATIONALE: [1 sentence]
                 else entry_price * (1 - tgt_pct),
                 2
             )
+
+        # Validate SL/target are on the correct side of entry
+        if side == "BUY":
+            if stop_loss >= entry_price:
+                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+                stop_loss = round(entry_price * (1 - sl_pct), 2)
+            if target_price <= entry_price:
+                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+                target_price = round(entry_price * (1 + tgt_pct), 2)
+        else:  # SELL
+            if stop_loss <= entry_price:
+                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+                stop_loss = round(entry_price * (1 + sl_pct), 2)
+            if target_price >= entry_price:
+                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+                target_price = round(entry_price * (1 - tgt_pct), 2)
 
         return {
             "symbol":       symbol,

@@ -256,10 +256,10 @@ class StockScannerV2(StockScanner):
         dropped_trend = 0
         for s in passed_score:
             abs_score = abs(s["combined_score"])
-            if nifty_trend == "BEARISH" and s["combined_score"] > 0 and abs_score < 5:
+            if nifty_trend == "BEARISH" and s["combined_score"] > 0 and abs_score < 3:
                 dropped_trend += 1
                 continue  # weak BUY in a bearish market — skip
-            if nifty_trend == "BULLISH" and s["combined_score"] < 0 and abs_score < 5:
+            if nifty_trend == "BULLISH" and s["combined_score"] < 0 and abs_score < 3:
                 dropped_trend += 1
                 continue  # weak SELL in a bullish market — skip
             filtered.append(s)
@@ -334,6 +334,117 @@ class StockScannerV2(StockScanner):
             error = ClaudeClient.classify_error(e)
             self.log.error(f"V2 scan failed: {error}")
             return []
+
+    # ================================================================
+    # NO-AI SCAN — AUTO-SELECT FROM TECHNICAL SCORES
+    # ================================================================
+
+    def scan_noai(
+        self, quotes: dict, nifty_context: str = "",
+        max_trades: int = 0, session_context: str = "",
+    ) -> list[dict]:
+        """
+        Selects trades purely from technical scores — no Claude call.
+        Uses the same candle pre-filter as V2, then auto-generates
+        trade plans from the top candidates.
+
+        Returns a list of trade dicts identical to what Claude would
+        produce (same keys: symbol, side, entry_price, stop_loss,
+        target_price, qty, rationale, status).
+        """
+        if max_trades <= 0:
+            max_trades = self.cfg.MAX_POSITIONS
+        if max_trades <= 0:
+            self.log.warning("NoAI scan: MAX_POSITIONS is 0 — cannot select trades")
+            return []
+
+        # Extract Nifty trend for hard filter
+        nifty_trend = ""
+        if "BEARISH" in nifty_context.upper():
+            nifty_trend = "BEARISH"
+        elif "BULLISH" in nifty_context.upper():
+            nifty_trend = "BULLISH"
+
+        # Step 1: Math-based pre-filter
+        candidates = self._prefilter_universe(quotes, nifty_trend)
+        if not candidates:
+            self.log.warning("NoAI scan: no candidates passed pre-filter")
+            return []
+
+        # Step 2: Take the top N candidates by absolute score
+        top = candidates[:max_trades]
+
+        # Step 3: Build trade plans from technical data
+        budget = self._budget
+        max_pct = self.cfg.MAX_POSITION_PCT / 100
+        max_per = budget * max_pct
+        budget_per_slot = min(budget / max_trades, max_per)
+
+        # Parse already-traded symbols from session context
+        skip_symbols: set[str] = set()
+        if session_context:
+            import re as _re
+            m = _re.search(r"Already traded today:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols = {s.strip() for s in m.group(1).split(",")}
+            m = _re.search(r"Currently holding:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols |= {s.strip() for s in m.group(1).split(",")}
+
+        trades = []
+        for c in top:
+            symbol = c["symbol"]
+            if symbol in skip_symbols:
+                continue
+
+            price = c["current_price"]
+            if price <= 0:
+                continue
+
+            score = c["combined_score"]
+            side = "BUY" if score > 0 else "SELL"
+
+            # Default SL/target (ATR will override in enter_trade)
+            sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+            tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+            if side == "BUY":
+                sl = round(price * (1 - sl_pct), 2)
+                target = round(price * (1 + tgt_pct), 2)
+            else:
+                sl = round(price * (1 + sl_pct), 2)
+                target = round(price * (1 - tgt_pct), 2)
+
+            qty = max(1, int(budget_per_slot / price))
+
+            # Build rationale from indicators
+            tech = c["technical"]
+            ps = c["pattern_summary"]
+            parts = []
+            parts.append(f"Score {score:+.1f}")
+            parts.append(f"RSI {tech['rsi']['rsi']:.0f}")
+            parts.append(f"EMA {tech['ema_cross']['signal']}")
+            parts.append(f"ST {tech['supertrend']['trend']}")
+            if ps["patterns"]:
+                parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
+            if c.get("rvol", 0) > 1.5:
+                parts.append(f"RVol {c['rvol']:.1f}x")
+
+            trades.append({
+                "symbol": symbol,
+                "exchange": "NSE",
+                "side": side,
+                "entry_price": round(price, 2),
+                "stop_loss": sl,
+                "target_price": target,
+                "qty": qty,
+                "rationale": " | ".join(parts),
+                "status": "PENDING",
+            })
+
+        # Validate budget (same logic as Claude path)
+        trades = self._validate_budget(trades)
+        self.log.success(f"NoAI scan: selected {len(trades)} trades from {len(candidates)} candidates")
+        return trades
 
     # ================================================================
     # ENRICHED SNAPSHOT BUILDER
@@ -440,6 +551,8 @@ CRITICAL RULES — MUST FOLLOW:
 6. Use REALISTIC stop-loss levels — base SL on chart structure, SuperTrend value, or VWAP. Range: {default_sl}% to 2%.
 7. Total position value across all trades MUST NOT exceed ₹{budget:,}.
 8. Actively consider SHORT (SELL) trades when indicators show bearish signals.
+9. DO NOT chase stocks already up more than 2% from previous close for BUY — the move is extended and likely to revert.
+10. DO NOT short stocks already down more than 2% from previous close — the move is extended and a mean-reversion bounce is likely.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
