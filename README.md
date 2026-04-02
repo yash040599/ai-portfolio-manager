@@ -553,35 +553,26 @@ The bot uses this data to:
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported |
 
 ```bash
-# View all intraday trades with P&L totals
+# ── View trades ──────────────────────────────────────────
 python scripts/view_trades.py
 
-# View all portfolio analyses grouped by date
+# ── View analyses ────────────────────────────────────────
 python scripts/view_analyses.py
 
-# Generate spreadsheet from today's portfolio report
-python scripts/generate_sheet.py
+# ── Generate spreadsheet ─────────────────────────────────
+python scripts/generate_sheet.py                        # today's report
+python scripts/generate_sheet.py 2026-03-16             # specific date
+python scripts/generate_sheet.py --list                 # list available dates
 
-# Generate spreadsheet from a specific date
-python scripts/generate_sheet.py 2026-03-16
+# ── View candle cache ────────────────────────────────────
+python scripts/view_candle_cache.py                     # summary (all symbols)
+python scripts/view_candle_cache.py --symbol RELIANCE   # one symbol
+python scripts/view_candle_cache.py --symbol RELIANCE --candles          # OHLCV candles (last 20)
+python scripts/view_candle_cache.py --symbol RELIANCE --candles --last 50  # more candles
+python scripts/view_candle_cache.py --interval day      # filter by interval
 
-# List all available report dates
-python scripts/generate_sheet.py --list
-
-# Import old JSON reports into the database (one-time)
-python scripts/import_reports_to_db.py
-
-# View candle cache summary (all symbols)
-python scripts/view_candle_cache.py
-
-# View candle cache for a specific symbol
-python scripts/view_candle_cache.py --symbol RELIANCE
-
-# View individual candles for a symbol
-python scripts/view_candle_cache.py --symbol RELIANCE --candles
-
-# Filter by interval (day, 15minute)
-python scripts/view_candle_cache.py --interval day
+# ── Import old reports ───────────────────────────────────
+python scripts/import_reports_to_db.py                  # one-time, safe to re-run
 ```
 
 Or query directly:
