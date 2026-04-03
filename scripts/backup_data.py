@@ -228,6 +228,84 @@ def _merge_table(
         return 0
 
 
+def _parse_log_entries(lines: list[str]) -> list[str]:
+    """
+    Group raw lines into logical log entries.  A new entry starts with a
+    timestamp like '2026-03-16 15:03:29,741'.  Continuation lines (stack
+    traces, multi-line messages) are attached to the preceding entry.
+    Returns a list of entry strings (each may contain embedded newlines).
+    """
+    import re
+    ts_re = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
+    entries: list[str] = []
+    for line in lines:
+        if ts_re.match(line) or not entries:
+            entries.append(line)
+        else:
+            entries[-1] += line
+    return entries
+
+
+def merge_log_files(local_path: str, remote_path: str, dry_run: bool) -> bool:
+    """
+    Merge two log files by combining unique log entries from both sides,
+    sorted naturally (timestamps ensure chronological order).
+    Multi-line entries (stack traces) are kept intact.
+    Returns True if any new entries were added.
+    """
+    if not os.path.isfile(local_path) or not os.path.isfile(remote_path):
+        return False
+
+    rel = os.path.relpath(local_path, PROJECT_ROOT)
+
+    try:
+        with open(local_path, "r", encoding="utf-8", errors="replace") as f:
+            local_entries = _parse_log_entries(f.readlines())
+        with open(remote_path, "r", encoding="utf-8", errors="replace") as f:
+            remote_entries = _parse_log_entries(f.readlines())
+    except OSError as e:
+        print(f"    ⚠ Could not read log file for merge: {rel} ({e})")
+        return False
+
+    local_set = set(local_entries)
+    remote_set = set(remote_entries)
+    merged = sorted(local_set | remote_set)
+
+    new_in_local = len(remote_set - local_set)
+    new_in_remote = len(local_set - remote_set)
+
+    if new_in_local == 0 and new_in_remote == 0:
+        return False
+
+    if dry_run:
+        print(f"    ↔ merge:   {rel} "
+              f"({new_in_local} entry(s) ← remote, {new_in_remote} entry(s) → remote)")
+        return True
+
+    if new_in_local:
+        print(f"    ← {new_in_local} entry(s) from remote: {rel}")
+    if new_in_remote:
+        print(f"    → {new_in_remote} entry(s) to remote:  {rel}")
+
+    try:
+        merged_text = "".join(merged)
+        with open(local_path, "w", encoding="utf-8") as f:
+            f.write(merged_text)
+        with open(remote_path, "w", encoding="utf-8") as f:
+            f.write(merged_text)
+    except OSError as e:
+        print(f"    ⚠ Failed to write merged log: {rel} ({e})")
+        return False
+
+    return True
+
+
+# Log files to merge instead of asking l/r
+MERGE_LOG_FILES = {
+    os.path.join("logs", "portfolio.log"),
+}
+
+
 def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
     """
     Merge two SQLite databases bidirectionally:
@@ -372,6 +450,17 @@ def main():
                     local_files[rel], remote_files[rel], args.dry_run,
                 )
                 if not args.dry_run and not db_merged:
+                    unchanged += 1
+                else:
+                    copied_to_remote += 1
+                continue
+
+            # Log files — merge lines from both sides
+            if rel in MERGE_LOG_FILES:
+                log_merged = merge_log_files(
+                    local_files[rel], remote_files[rel], args.dry_run,
+                )
+                if not args.dry_run and not log_merged:
                     unchanged += 1
                 else:
                     copied_to_remote += 1
