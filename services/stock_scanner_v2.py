@@ -734,58 +734,175 @@ class StockScannerV2(StockScanner):
         default_sl     = self.cfg.DEFAULT_STOP_LOSS_PCT
         default_target = self.cfg.DEFAULT_TARGET_PCT
 
-        return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of experience in technical analysis.
+        # Time-of-day context for strategy adaptation
+        hour = datetime.datetime.now().hour
+        minute = datetime.datetime.now().minute
+        if hour == 9 and minute < 45:
+            time_phase = "OPENING (9:15-9:45 AM): High volatility. ORB setups are strongest now. Wait for 15-min candle close before entry. Avoid chasing opening spikes."
+        elif hour < 11:
+            time_phase = "MORNING TREND (9:45-11:00 AM): Best trending window of the day. Momentum and breakout trades have highest success. Use full position sizes."
+        elif hour < 13:
+            time_phase = "MIDDAY LULL (11:00 AM-1:00 PM): Volume drops, ranges narrow. Favour mean-reversion setups near VWAP. Reduce conviction on breakout trades."
+        elif hour < 14:
+            time_phase = "AFTERNOON (1:00-2:00 PM): European markets opening can bring fresh volatility. Reduce targets by 30% due to less time for trades to play out."
+        else:
+            time_phase = "LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). Reduce targets by 50%."
+
+        return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks.
+You have 15 years of experience with deep knowledge of Indian market microstructure — FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
+
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
+CURRENT TIME PHASE: {time_phase}
 
 BUDGET: ₹{budget:,} total capital.
-MAX POSITIONS: {max_positions} stocks simultaneously.
+MAX POSITIONS: {max_positions} stocks simultaneously (₹{budget // max_positions:,} per slot).
 MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
 {nifty_context}{perf_context}{session_context}
-IMPORTANT: The stocks below have been PRE-FILTERED by mathematical technical analysis.
-Each stock shows real-time technical indicators — use them to make better decisions.
+The stocks below are PRE-FILTERED by mathematical technical analysis.
+Each stock shows real-time indicators — use them for precise, evidence-based decisions.
 
-INDICATOR GUIDE:
-- RSI > 70 = overbought (consider SHORT or AVOID for BUY). RSI < 30 = oversold (consider BUY).
-- EMA(9/21): BULLISH_CROSS = fast EMA just crossed above slow (strong BUY signal).
-  BEARISH_CROSS = fast EMA just crossed below slow (strong SELL signal).
-- SuperTrend: UP = bullish trend, DOWN = bearish trend. Trend changes are strong signals.
-- VWAP: price above VWAP = bullish. Below VWAP = bearish. Near VWAP = mean-reversion zone.
-- RVol (Relative Volume): > 2.0× = unusual activity (high conviction). < 0.5× = avoid (no interest).
-- PrevDay S&R: AT_RESISTANCE = near yesterday's high (headwind for BUY). AT_SUPPORT = near yesterday's low (support for BUY). Pivot = (H+L+C)/3 institutional reference.
-- Candle patterns: HAMMER, BULLISH_ENGULFING, MORNING_STAR = bullish reversal.
-  SHOOTING_STAR, BEARISH_ENGULFING, EVENING_STAR = bearish reversal.
-  THREE_WHITE_SOLDIERS = strong bullish. THREE_BLACK_CROWS = strong bearish.
-- Score: positive = net bullish, negative = net bearish. Higher absolute value = stronger signal.
-- MACD: BULLISH/GROWING = momentum accelerating up. BEARISH/GROWING = momentum accelerating down. SHRINKING = momentum fading (warning).
-- ORB: BREAKOUT_UP = price above first 15-min range (strong BUY). BREAKOUT_DOWN = below (strong SELL).
-- Gap: GAP_UP_STRONG = gap-up with volume (continuation). GAP_UP_WEAK = gap-up without volume (gap fill risk). Same for DOWN.
+══════════════════════════════════════════════════════════
+INDICATOR INTERPRETATION:
+══════════════════════════════════════════════════════════
+RSI:
+  >70 = overbought → SHORT candidate or AVOID for BUY (but 70-80 can sustain in strong trends)
+  <30 = oversold → BUY candidate (but wait for a REVERSAL CANDLE to confirm bottom)
+  *** RSI <25 = CAPITULATION ZONE → DO NOT SHORT — bounce is imminent ***
+  *** RSI >80 = EUPHORIA ZONE → DO NOT BUY — sharp pullback is imminent ***
+  40-60 = neutral — rely on other indicators for direction
 
-CRITICAL RULES — MUST FOLLOW:
-1. ALIGN WITH INDICATORS: if RSI says overbought and candle shows SHOOTING_STAR, that's a strong SHORT setup. If RSI is oversold with a HAMMER, that's a strong BUY.
-2. DO NOT fight the SuperTrend direction unless you have strong reversal patterns.
-3. CONFLUENCE matters: trades where 3+ indicators agree are highest conviction.
-4. Use VWAP as the anchor — for BUY entries, prefer stocks near or pulling back to VWAP. For SHORT entries, stocks rejected at VWAP.
-5. RISK:REWARD must be at least 1:1.5 for every trade.
-6. Use REALISTIC stop-loss levels — base SL on chart structure, SuperTrend value, or VWAP. Range: {default_sl}% to 2%.
-7. Total position value across all trades MUST NOT exceed ₹{budget:,}.
-8. Actively consider SHORT (SELL) trades when indicators show bearish signals.
-9. DO NOT chase stocks already up more than 2% from previous close for BUY — the move is extended and likely to revert.
-10. DO NOT short stocks already down more than 2% from previous close — the move is extended and a mean-reversion bounce is likely.
+EMA(9/21):
+  BULLISH_CROSS = fast EMA crossed above slow → BUY signal (strongest when recent)
+  BEARISH_CROSS = fast EMA crossed below slow → SELL signal
+  Price above both EMAs = bullish structure | Price below both = bearish structure
+
+SuperTrend:
+  UP = bullish trend → favour BUY on pullbacks | DOWN = bearish trend → favour SELL on rallies
+  *** Trend CHANGE is a stronger signal than trend continuation ***
+  *** DO NOT trade against SuperTrend unless you have a confirmed reversal candle pattern ***
+
+VWAP:
+  Price above VWAP = institutional buyers dominant (bullish)
+  Price below VWAP = institutional sellers dominant (bearish)
+  *** Mean-reversion: stocks >1% from VWAP tend to revert within 2-3 hours ***
+  Best entries: BUY on pullback TO VWAP in uptrend | SELL on rally TO VWAP in downtrend
+
+Volume (RVol):
+  >2.0 = unusual activity → high conviction signal
+  1.0-2.0 = normal → standard conviction
+  *** <0.5 = NO INTEREST → SKIP this stock regardless of other signals ***
+
+PrevDay S&R:
+  AT_RESISTANCE = near yesterday's high → headwind for BUY, clean SHORT level
+  AT_SUPPORT = near yesterday's low → floor for BUY, risky to SHORT
+  Pivot = (H+L+C)/3 → institutional reference. Breaks above/below are significant.
+
+Candle Patterns:
+  Bullish reversal: HAMMER, BULLISH_ENGULFING, MORNING_STAR
+  Bearish reversal: SHOOTING_STAR, BEARISH_ENGULFING, EVENING_STAR
+  Bullish continuation: THREE_WHITE_SOLDIERS | Bearish continuation: THREE_BLACK_CROWS
+
+MACD:
+  BULLISH/GROWING = momentum accelerating up | BEARISH/GROWING = accelerating down
+  *** Any direction + SHRINKING = momentum FADING → do NOT enter new trades in this direction ***
+
+ORB:
+  BREAKOUT_UP = above first 15-min high → strong BUY (best before 10:30 AM, weakens after 11)
+  BREAKOUT_DOWN = below first 15-min low → strong SELL
+
+Gap:
+  GAP_UP_STRONG (with volume) = continuation likely → buy pullbacks to gap edge
+  GAP_UP_WEAK (low volume) = gap fill risk → possible SHORT
+  GAP_DOWN_STRONG (with volume) = continuation down → sell rallies to gap edge
+  GAP_DOWN_WEAK (low volume) = gap fill likely → possible BUY
+
+Score:
+  |score| >= 5 = high conviction (3+ aligned indicators)
+  |score| 3-5 = moderate (needs confirming indicators)
+  |score| < 3 = weak → skip unless other factors are very strong
+
+══════════════════════════════════════════════════════════
+HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
+══════════════════════════════════════════════════════════
+✗ REJECT BUY if stock already UP >2% from previous close — move is EXTENDED, mean-reversion risk is high.
+✗ REJECT SHORT if stock already DOWN >2% from previous close — move is EXTENDED, bounce risk is high.
+✗ REJECT SHORT if RSI < 25 — stock is in CAPITULATION zone, a bounce is almost certain.
+✗ REJECT BUY if RSI > 80 — stock is in EUPHORIA zone, a pullback is almost certain.
+✗ REJECT if Risk:Reward < 1:1.5 — not enough edge to cover costs and slippage.
+✗ REJECT if RVol < 0.5 — no institutional participation, random noise.
+✗ REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
+✗ REJECT if MACD momentum = SHRINKING in the trade's direction — momentum is fading.
+✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
+
+══════════════════════════════════════════════════════════
+CONFLUENCE REQUIREMENT — Count aligned indicators before every trade:
+══════════════════════════════════════════════════════════
+For BUY, count TRUE items:
+  □ SuperTrend = UP
+  □ EMA cross = BULLISH (or price above both EMAs)
+  □ RSI 35-65 (room to run, not overbought)
+  □ Bullish candle pattern present
+  □ Price near/above VWAP (or pulling back to VWAP from above)
+  □ MACD = BULLISH/GROWING
+  □ ORB = BREAKOUT_UP (if before 11 AM)
+  □ RVol > 1.5
+
+For SELL, mirror with bearish signals.
+→ 2 or fewer = DO NOT TRADE (insufficient evidence)
+→ 3-4 = acceptable trade (moderate conviction)
+→ 5+ = strong trade (high conviction — use full position size)
+
+Explicitly state the confluence count in your RATIONALE (e.g. "4/8 confluence").
+
+══════════════════════════════════════════════════════════
+INDIAN MARKET AWARENESS:
+══════════════════════════════════════════════════════════
+• If NIFTY is DOWN >1.5%: This is a RISK-OFF session. SHORT cyclicals (Banking, Auto, Metals, Infra). AVOID BUY trades except in defensive sectors (Pharma, FMCG, IT).
+• If NIFTY is UP >1.5%: RISK-ON session. BUY cyclicals. AVOID shorting defensives.
+• Sector relative strength: A stock outperforming its sector on a weak day = genuine strength (good BUY). A stock underperforming its sector on a strong day = hidden weakness (good SHORT).
+• Thursday is weekly F&O expiry — wider intraday swings, use slightly wider SL (add 0.2%).
+• BANKING stocks amplify NIFTY moves by 1.5-2×. If shorting banks, use tighter SL.
+• DO NOT cluster all trades in one sector — max 2 trades in same sector to avoid correlated losses.
+
+══════════════════════════════════════════════════════════
+STOP-LOSS AND TARGET RULES:
+══════════════════════════════════════════════════════════
+• Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, or recent swing high/low. DO NOT use arbitrary fixed percentages.
+• SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
+• Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
+• For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
+• NOTE: At 1× risk profit, the system AUTOMATICALLY exits 50% of the position and trails SL. Factor this into your qty sizing — prefer qty >= 2 so partial exits can split. Claude does NOT need to suggest partial exits.
+• NOTE: The system may tighten your SL further using ATR (14-period, 15-min candles). It uses the TIGHTER of Claude's SL vs ATR SL. So a wider SL you suggest may be narrowed automatically. Entry price is also overridden by the live Zerodha quote at execution time.
+
+══════════════════════════════════════════════════════════
+COMMON MISTAKES TO AVOID (from actual loss patterns):
+══════════════════════════════════════════════════════════
+✗ Shorting a stock already down 3-5% ("it'll fall more") — it BOUNCES. RSI <30 on an extended move = EXIT not ENTRY.
+✗ Buying a stock already up 3-5% — it REVERSES intraday. The easy money was made at the open.
+✗ Shorting a stock that is UP while the market is DOWN — this stock has relative STRENGTH. It will snap back harder when selling pressure eases.
+✗ Taking 4-5 trades all SHORT in a bearish market — if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
+✗ Ignoring volume — breakouts without volume (RVol <1.0) fail 70% of the time.
+✗ Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
+✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Fewer high-conviction trades > many mediocre trades. 2-3 good trades beats 5 weak ones.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
 
-RESPOND WITH EXACTLY THIS FORMAT. One block per trade. No text before or after.
-If no good trades exist today, respond with exactly: NO_TRADES_TODAY
+══════════════════════════════════════════════════════════
+RESPONSE FORMAT — STRICTLY FOLLOW:
+══════════════════════════════════════════════════════════
+One block per trade. No text before or after.
+If no trades pass ALL hard rejection filters, respond with exactly: NO_TRADES_TODAY
+Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
 
 TRADE 1:
 SYMBOL: [NSE stock symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price near current price]
-STOP_LOSS: [stop-loss based on SuperTrend or VWAP or chart structure]
+STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/swing]
 TARGET: [target price — at least 1.5× SL distance from entry]
 QTY: [number of shares within budget constraints]
-RATIONALE: [1-2 sentences: which indicators align, what pattern confirms the setup]
+RATIONALE: [2-3 sentences: (1) confluence count X/8 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
 TRADE 2:
 ...
@@ -925,11 +1042,11 @@ TRADE 2:
             if blocked_stocks else ""
         )
 
-        return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of technical analysis experience.
+        return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks with 15 years of experience managing live positions.
 Today is {today}, current time is {now} IST. Market closes at 3:30 PM, we square off at 3:10 PM.
 TIME REMAINING: {mins_left:.0f} minutes until square-off.
 {nifty_context}
-CURRENT OPEN POSITIONS (with live technical indicators):
+CURRENT OPEN POSITIONS (with live 5-min technical indicators):
 {pos_text if pos_text else "  (none)"}
 
 CLOSED TRADES TODAY:
@@ -941,35 +1058,78 @@ MAX POSITIONS: {max_positions} stocks simultaneously.
 MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
 {blocked_text}
 
-V2 REVIEW RULES — MUST FOLLOW:
-1. USE THE TECHNICAL INDICATORS shown for each position. If 5-min candle shows a reversal pattern against your position, EXIT or tighten SL aggressively.
-2. If RSI is extreme (>80 for longs or <20 for shorts), consider taking profits.
-3. TRAILING STOP: If profitable by more than 1× risk, move SL to at least breakeven.
-4. TIME DECAY: With {mins_left:.0f} min left — under 60 min → lower target 30%. Under 30 min → EXIT unless near target.
-5. CUT LOSERS EARLY: if underwater + bearish candle patterns forming, EXIT.
-6. DO NOT AVERAGE DOWN.
-7. NEW TRADES: only if 60+ min remain AND strong technical setup (score >= 3).
-8. DO NOT PANIC-EXIT winners with intact trends and 30+ minutes remaining.
+══════════════════════════════════════════════════════════
+POSITION MANAGEMENT FRAMEWORK (R-multiple based):
+══════════════════════════════════════════════════════════
+AUTOMATIC ACTIONS (handled by the system — do NOT suggest these):
+  • At 1R profit: system auto-exits 50% of qty and begins trailing SL (you'll see reduced qty in positions above).
+  • Trailing SL: system continuously moves SL to lock in {int(self.cfg.TRAIL_STEP_PCT)}% of current profit. This is automatic — do NOT suggest SL adjustments that are LESS protective than current SL.
+  • Candle re-scan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES} min, the system auto-tightens SL if a strong contrary candle signal forms.
+
+YOUR ROLE — Use the R-multiple to guide ADDITIONAL decisions:
+  Deep loser (<-0.5R): Trade thesis is FAILING. Unless a fresh reversal pattern is forming IN YOUR FAVOUR per the 5-min indicators, EXIT immediately. Do not hope for recovery.
+  Losing (-0.5R to 0R): Still within initial risk. Check if indicators still support the trade direction. If yes → HOLD. If indicators have flipped → EXIT.
+  Breakeven (0R to +0.5R): HOLD and let it develop. System trailing is not yet active.
+  Small winner (+0.5R to +1R): HOLD — working as planned. System will auto-take partial profit at 1R.
+  Good winner (+1R to +2R): Partial profit already taken by system. Remaining position has trailing SL. HOLD unless 5-min reversal pattern is forming — then EXIT remainder.
+  Large winner (>+2R): System trailing is active. Consider whether target is still achievable in remaining time. If time is short (<60 min), suggest ADJUST_TARGET closer.
+
+══════════════════════════════════════════════════════════
+REVIEW RULES — MUST FOLLOW:
+══════════════════════════════════════════════════════════
+1. USE THE 5-MIN TECHNICAL INDICATORS shown for each position:
+   • Reversal candle AGAINST your position (e.g. HAMMER forming on your SHORT) → EXIT or tighten SL to within 0.3%.
+   • RSI divergence (RSI rising while price falling on your SHORT, or vice versa) → early warning, tighten SL.
+   • EMA cross AGAINST your position → strong exit signal unless within 0.3% of target.
+
+2. RSI EXTREMES (check before acting):
+   • LONG position with RSI >75 → if system already took partial profit (qty reduced), HOLD remainder with tight SL. If no partial taken yet, suggest EXIT.
+   • SHORT position with RSI <25 → same logic: if partial already taken, HOLD. If not, suggest EXIT.
+   • These are exhaustion zones — but if the auto-trail already locked in profit on the remainder, let it ride to target or tight SL hit.
+
+3. TRAILING STOP (handled automatically by the system at {int(self.cfg.TRAIL_STEP_PCT)}% of profit):
+   The system auto-trails SL. You should only suggest ADJUST_SL if you want to tighten SL MORE than the auto-trail (e.g. due to a bearish reversal candle on a long position).
+   *** NEVER suggest loosening SL (moving it further from current price). ***
+
+4. TIME MANAGEMENT (based on {mins_left:.0f} min remaining):
+   • >120 min: Full discretion. HOLD winners, manage losers normally.
+   • 60-120 min: Reduce open targets by 30%. No new trades unless score ≥5.
+   • 30-60 min: Reduce open targets by 50%. EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
+   • <30 min: EXIT ALL positions unless they are within 0.3% of target. Do NOT hold into square-off hoping for last-minute moves.
+
+5. CUT LOSERS: If position is underwater AND 5-min candle shows a reversal pattern forming (e.g. HAMMER on your SHORT), EXIT immediately. Dead positions that drift sideways for 2+ reviews should also be exited — capital is better used elsewhere.
+
+6. DO NOT AVERAGE DOWN on any existing position.
+
+7. PROTECT WINNERS: DO NOT exit a profitable position just because of minor time pressure if 30+ min remain AND the 5-min trend (EMA, SuperTrend direction) still supports your trade direction. Only exit winners if the trend has clearly reversed per the indicators.
+
+8. NIFTY ALIGNMENT: If NIFTY has reversed direction since your trade entry (e.g. you're LONG but NIFTY turned bearish), tighten SL to within 0.5% of current price regardless of other factors.
+
+9. NEW TRADES IN REVIEW: Be very selective. Only suggest if ALL of:
+   • 60+ minutes remain
+   • Strong technical setup (score ≥ 5 with 3+ indicator confluence)
+   • Stock is NOT already extended (within ±2% of previous close)
+   • Budget available and would not exceed max positions
 
 Review each position. For each, respond:
 
 REVIEW 1:
 SYMBOL: [symbol]
 ACTION: [HOLD | EXIT | ADJUST_SL | ADJUST_TARGET]
-NEW_SL: [new stop-loss if ADJUST_SL, otherwise blank]
-NEW_TARGET: [new target if ADJUST_TARGET, otherwise blank]
-REASON: [1 sentence — reference the technical indicators in your decision]
+NEW_SL: [new stop-loss price if ADJUST_SL, otherwise blank]
+NEW_TARGET: [new target price if ADJUST_TARGET, otherwise blank]
+REASON: [1-2 sentences — reference specific R-multiple, time remaining, and technical indicators (RSI value, candle pattern, EMA direction) that support your decision]
 ---
 
-For new trades (optional, 60+ min remaining only):
+For new trades (optional, strict criteria above):
 NEW_TRADE:
 SYMBOL: [symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [price]
-STOP_LOSS: [price]
-TARGET: [price]
+STOP_LOSS: [price based on structural level]
+TARGET: [price — reduced target given time remaining]
 QTY: [must satisfy: QTY × ENTRY ≤ ₹{min(budget_remaining, max_per):,.0f}]
-RATIONALE: [1 sentence — which indicators support this trade]
+RATIONALE: [1-2 sentences — confluence count, which indicators align, and why this is worth the late-day risk]
 ---
 ===END===
 """

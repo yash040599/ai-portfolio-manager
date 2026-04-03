@@ -258,8 +258,8 @@ Open `config.py` and review these key settings:
 
 | Setting | Default | What it controls |
 |---------|---------|-----------------|
-| `MAX_BUDGET_INR` | `10,000` | Maximum capital the bot can deploy per day |
-| `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY50` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
+| `MAX_BUDGET_INR` | `20,000` | Maximum capital the bot can deploy per day |
+| `MIN_BALANCE_TO_TRADE` | `3,000` | Minimum Zerodha balance to start trading || `CUTOFF_MINUTES_BEFORE_CLOSE` | `30` | Skip trading if less than this many minutes to square-off || `SCAN_UNIVERSE` | `NIFTY100` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
 | `MAX_POSITIONS` | `5` | Max simultaneous trades |
 | `MAX_REENTRIES_PER_STOCK` | `2` | Max times a stock can be traded in one day |
 | `ENTRY_DELAY_MINUTES` | `15` | Observation period after market open before entering trades |
@@ -365,7 +365,7 @@ ai-portfolio-manager/
 │   ├── STRATEGY_V1.md       # V1 trading strategy — architecture, flow, risk layers
 │   ├── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
 │   ├── STRATEGY_V2_NOAI.md  # NoAI strategy — fully automated, zero Claude calls
-│   └── V2_IMPROVEMENTS.md   # V2 improvement roadmap — research-backed enhancements
+│   └── STRATEGY_ROADMAP.md  # Strategy improvement roadmap — research-backed enhancements
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
 │   ├── candle_cache.db      # Candle cache (git-committed — pure market data)

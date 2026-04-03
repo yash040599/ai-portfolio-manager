@@ -144,13 +144,15 @@ class OrderEngine:
                         sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
                         target = round(avg_price * (1 - max_sl_pct * 2 / 100), 2)
             else:
-                # Fallback: 2% SL, 4% target
+                # Fallback: use config defaults (same as sync_external_positions)
+                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
                 if side == "BUY":
-                    sl     = round(avg_price * 0.98, 2)
-                    target = round(avg_price * 1.04, 2)
+                    sl     = round(avg_price * (1 - sl_pct), 2)
+                    target = round(avg_price * (1 + tgt_pct), 2)
                 else:
-                    sl     = round(avg_price * 1.02, 2)
-                    target = round(avg_price * 0.96, 2)
+                    sl     = round(avg_price * (1 + sl_pct), 2)
+                    target = round(avg_price * (1 - tgt_pct), 2)
 
             position = {
                 "symbol":       symbol,
