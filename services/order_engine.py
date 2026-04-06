@@ -797,13 +797,13 @@ class OrderEngine:
         price: float,
         qty: int,
         reason: str,
-    ) -> bool:
+    ) -> float | None:
         """
         Exits a subset of shares from an open position (for partial
         profit taking). Does NOT mark the position as CLOSED — the
         remaining shares stay open. Updates the trade log.
 
-        Returns True on success, False on failure.
+        Returns the actual fill price on success, None on failure.
         """
         symbol   = position["symbol"]
         exchange = position["exchange"]
@@ -836,11 +836,11 @@ class OrderEngine:
                 )
                 if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
                     self._order_api_broken = True
-                return False
+                return None
 
         self._log_action(reason, symbol, exit_side, qty, price,
                          f"Partial exit {qty} shares")
-        return True
+        return price
 
     # ================================================================
     # MONITOR — CHECK SL/TARGET HITS
@@ -987,12 +987,15 @@ class OrderEngine:
                 )
 
                 # Place the partial exit order
-                if self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT"):
+                fill = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
+                if fill is not None:
+                    # Recalculate P&L with actual fill price
+                    partial_pnl = round((fill - entry) * partial_qty, 2)
                     pos["qty"] = remaining_qty
                     pos["_partial_taken"] = True
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
                     pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
-                    pos["_partial_exit_price"] = current_price
+                    pos["_partial_exit_price"] = fill
 
             # New SL = entry + trail_pct of current profit
             new_sl = round(entry + profit * trail_pct, 2)
@@ -1024,12 +1027,14 @@ class OrderEngine:
                     f"(locking ₹{partial_pnl:,.2f} profit)"
                 )
 
-                if self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT"):
+                fill = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
+                if fill is not None:
+                    partial_pnl = round((entry - fill) * partial_qty, 2)
                     pos["qty"] = remaining_qty
                     pos["_partial_taken"] = True
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
                     pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
-                    pos["_partial_exit_price"] = current_price
+                    pos["_partial_exit_price"] = fill
 
             new_sl = round(entry - profit * trail_pct, 2)
 

@@ -15,6 +15,7 @@ Usage
     python scripts/backup_data.py              # full two-way sync (HTTPS)
     python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/backup_data.py --dry-run    # show what would change (no writes)
+    python scripts/backup_data.py --overwrite-db  # overwrite remote DB with local (skip merge)
 """
 
 import argparse
@@ -372,6 +373,9 @@ def main():
                         help="Show what would change without making any writes.")
     parser.add_argument("--ssh", action="store_true",
                         help="Use SSH URL for cloning (for VMs with SSH key auth).")
+    parser.add_argument("--overwrite-db", action="store_true",
+                        help="Overwrite remote DB with local copy instead of merging. "
+                             "Use when local DB has corrected data that should replace remote.")
     args = parser.parse_args()
 
     if not os.path.isdir(BACKUP_ROOT):
@@ -444,15 +448,23 @@ def main():
                 unchanged += 1
                 continue
 
-            # SQLite databases — merge rows instead of overwriting
+            # SQLite databases — merge rows (or overwrite if --overwrite-db)
             if rel.endswith(".db"):
-                db_merged = merge_databases(
-                    local_files[rel], remote_files[rel], args.dry_run,
-                )
-                if not args.dry_run and not db_merged:
-                    unchanged += 1
-                else:
+                if args.overwrite_db:
+                    if args.dry_run:
+                        print(f"    → overwrite: {rel} (local → remote)")
+                    else:
+                        print(f"    → overwrite: {rel} (local → remote, skipping merge)")
+                        copy_file(local_files[rel], remote_files[rel], False)
                     copied_to_remote += 1
+                else:
+                    db_merged = merge_databases(
+                        local_files[rel], remote_files[rel], args.dry_run,
+                    )
+                    if not args.dry_run and not db_merged:
+                        unchanged += 1
+                    else:
+                        copied_to_remote += 1
                 continue
 
             # Log files — merge lines from both sides

@@ -637,10 +637,12 @@ class ReportWriter:
 
             for p in positions:
                 exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
-                pnl_val = f"₹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
+                total_pnl = p.get('pnl', 0) + p.get('_partial_pnl', 0)
+                pnl_val = f"₹{total_pnl:+,.2f}" if p.get("exit_price") else "—"
                 origin  = "[M] " if p.get("_external") else ""
+                display_qty = p['qty'] + p.get('_partial_qty', 0)
                 f.write(
-                    f"{origin}{p['symbol']:<{16 - len(origin)}} {p['side']:<6} {p['qty']:>5} "
+                    f"{origin}{p['symbol']:<{16 - len(origin)}} {p['side']:<6} {display_qty:>5} "
                     f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                     f"{(p.get('exit_reason') or 'OPEN'):<14} "
                     f"{(p.get('entry_time') or '—'):<10} "
@@ -781,24 +783,30 @@ class ReportWriter:
         """
         closed = [p for p in all_positions if p.get("status") == "CLOSED"]
 
-        gross_pnl = sum(p.get("pnl", 0) for p in closed)
+        gross_pnl = sum(
+            p.get("pnl", 0) + p.get("_partial_pnl", 0)
+            for p in closed
+        )
 
         total_buy_turnover  = 0.0
         total_sell_turnover = 0.0
         num_orders          = 0
 
         for p in closed:
-            entry_value = p.get("entry_price", 0) * p.get("qty", 0)
+            partial_qty = p.get("_partial_qty", 0)
+            full_qty    = p.get("qty", 0) + partial_qty
+            entry_value = p.get("entry_price", 0) * full_qty
             exit_value  = p.get("exit_price", 0)  * p.get("qty", 0)
+            partial_exit_value = p.get("_partial_exit_price", p.get("entry_price", 0)) * partial_qty
 
             if p.get("side") == "BUY":
                 total_buy_turnover  += entry_value
-                total_sell_turnover += exit_value
+                total_sell_turnover += exit_value + partial_exit_value
             else:
                 total_sell_turnover += entry_value
-                total_buy_turnover  += exit_value
+                total_buy_turnover  += exit_value + partial_exit_value
 
-            num_orders += 2
+            num_orders += 2 + (1 if partial_qty > 0 else 0)
 
         # Reverse-calculate claude_calls from cost (for merged reports)
         claude_calls = int(claude_api_cost / self.cfg.CLAUDE_COST_PER_CALL) if self.cfg.CLAUDE_COST_PER_CALL > 0 else 0

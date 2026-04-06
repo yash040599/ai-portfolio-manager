@@ -113,6 +113,8 @@ class PerformanceTracker:
 
         with self._connect() as conn:
             for p in closed:
+                total_pnl = p.get("pnl", 0) + p.get("_partial_pnl", 0)
+                total_qty = p.get("qty", 0) + p.get("_partial_qty", 0)
                 conn.execute(
                     """INSERT INTO trades
                        (date, symbol, side, entry_price, exit_price, qty,
@@ -124,8 +126,8 @@ class PerformanceTracker:
                         p.get("side", ""),
                         p.get("entry_price", 0),
                         p.get("exit_price", 0),
-                        p.get("qty", 0),
-                        p.get("pnl", 0),
+                        total_qty,
+                        total_pnl,
                         p.get("exit_reason", ""),
                         p.get("claude_confidence", ""),
                         market_condition,

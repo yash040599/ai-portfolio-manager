@@ -46,14 +46,19 @@ def load_json(path: str) -> dict | None:
 
 def per_trade_charges(position: dict, day_charges: dict) -> dict:
     """Apportion day-level charges to a single trade by turnover share."""
-    qty    = position.get("qty", 0)
+    remaining_qty = position.get("qty", 0)
+    partial_qty   = position.get("_partial_qty", 0)
+    total_qty     = remaining_qty + partial_qty
     entry  = position.get("entry_price", 0)
     exit_p = position.get("exit_price", 0)
+    partial_exit = position.get("_partial_exit_price", entry)
 
     if position.get("side") == "BUY":
-        buy_val, sell_val = entry * qty, exit_p * qty
+        buy_val  = entry * total_qty
+        sell_val = exit_p * remaining_qty + partial_exit * partial_qty
     else:
-        sell_val, buy_val = entry * qty, exit_p * qty
+        sell_val = entry * total_qty
+        buy_val  = exit_p * remaining_qty + partial_exit * partial_qty
 
     trade_turnover = buy_val + sell_val
     total_turnover = day_charges.get("total_turnover", 0)
@@ -112,8 +117,9 @@ def fill_fy(fy_start: int) -> int:
                 continue
 
             tc = per_trade_charges(pos, day_charges)
-            gross_pnl = round(pos.get("pnl", 0), 2)
+            gross_pnl = round(pos.get("pnl", 0) + pos.get("_partial_pnl", 0), 2)
             net_pnl   = round(gross_pnl - tc["total_charges"], 2)
+            total_qty = pos.get("qty", 0) + pos.get("_partial_qty", 0)
 
             conn.execute(
                 """INSERT INTO intraday_tax_ledger
@@ -127,7 +133,7 @@ def fill_fy(fy_start: int) -> int:
                    VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?)""",
                 (
                     date_str, pos.get("symbol", ""), pos.get("exchange", "NSE"),
-                    pos.get("side", ""), pos.get("qty", 0),
+                    pos.get("side", ""), total_qty,
                     pos.get("entry_price", 0), pos.get("exit_price", 0),
                     pos.get("entry_time", ""), pos.get("exit_time", ""),
                     pos.get("exit_reason", ""), gross_pnl,
