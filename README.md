@@ -49,7 +49,10 @@ A fully automated intraday trading bot that:
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - **Market condition detection** — classifies the day as BULLISH/BEARISH/NEUTRAL with HIGH_VOLATILITY/NORMAL regime, adjusts strategy accordingly
+- **Continuous NIFTY monitoring** — re-checks NIFTY 50 index every 15 minutes during trading, detects intraday regime shifts (e.g. morning dip → afternoon recovery), and updates market bias for re-scans and Claude reviews
 - Uses **NIFTY 50 index trend** to bias trade direction with sector-specific advice
+- **Periodic opportunity scanning** — every 30 minutes, if position slots are free, proactively scans for new trades instead of waiting for existing positions to close. Ensures capital doesn't sit idle when the initial scan picked few stocks
+- **Minimum capital deployment** — ensures at least 60% of budget is deployed by instructing Claude to size positions larger and auto-boosting qty when Claude under-sizes. Prevents scenarios where only a fraction of capital is used
 - Anti-momentum-chasing rules — avoids stocks already up >2% (for BUY) or already down >2% (for SELL) at scan time. Extended moves are likely to revert
 - **Performance database** — stores every trade in SQLite, feeds recent win rates and P&L history into Claude's next-day stock selection
 - **Slippage model** in dry-run mode for realistic P&L simulation
@@ -282,6 +285,9 @@ Open `config.py` and review these key settings:
 | `V2_CANDLE_RESCAN_MINUTES` | `15` | V2 only: how often to re-run candle analysis (free, no Claude cost) |
 | `V2_MIN_SCORE` | `2.0` | V2 only: minimum technical score to pass pre-filter |
 | `V2_CANDLE_INTERVAL` | `15minute` | V2 only: primary candle interval for pattern detection |
+| `OPPORTUNITY_RESCAN_MINUTES` | `30` | V2 only: scan for new trades every N min when slots are free (0 = disable) |
+| `NIFTY_RECHECK_MINUTES` | `15` | V2 only: re-check NIFTY regime every N min during trading (0 = disable) |
+| `MIN_BUDGET_UTILISATION_PCT` | `60.0%` | V2 only: auto-boost qty if total deployment is below this % of budget |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 | `ZERODHA_PLAN` | `connect_paid` | Zerodha plan: personal_free or connect_paid |
 

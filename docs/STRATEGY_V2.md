@@ -95,6 +95,19 @@ Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
       SELL pos + score ≥ +4 → tighten SL (lock 50% profit or move to breakeven)
     This is immediate, rule-based protection — no Claude cost, no 10-min wait
 
+Every NIFTY_RECHECK_MINUTES (default: 15 min) — FREE:
+  → Re-fetch NIFTY 50 index quote from Zerodha
+  → Update market condition (BULLISH/BEARISH/NEUTRAL + volatility)
+  → Log regime shifts (e.g. "BEARISH_NORMAL → NEUTRAL_NORMAL")
+  → Updated condition feeds into subsequent re-scans and Claude reviews
+
+Every OPPORTUNITY_RESCAN_MINUTES (default: 30 min) — PAID (1 Claude call):
+  → Triggers ONLY when open_positions < MAX_POSITIONS (free slots exist)
+  → Independent of position close events — proactively fills empty slots
+  → Includes fresh market condition + day P&L in session context
+  → If day P&L is negative, only picks high-conviction setups
+  → Skipped if circuit breaker active or insufficient time remains
+
 Every 25 minutes — PAID:
   → Fetch fresh 5-MINUTE candles for each open position
   → Run pattern detection + RSI + EMA + VWAP on fresh data

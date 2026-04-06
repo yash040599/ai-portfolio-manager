@@ -516,6 +516,7 @@ class StockScannerV2(StockScanner):
         try:
             raw = self.claude.call(prompt)
             trades = self._parse_scan_response(raw)
+            trades = self._boost_underdeployed(trades)
             self.log.success(f"Claude recommended {len(trades)} trades from {len(candidates)} candidates")
             return trades
         except Exception as e:
@@ -648,7 +649,78 @@ class StockScannerV2(StockScanner):
 
         # Validate budget (same logic as Claude path)
         trades = self._validate_budget(trades)
+        trades = self._boost_underdeployed(trades)
         self.log.success(f"NoAI scan: selected {len(trades)} trades from {len(candidates)} candidates")
+        return trades
+
+    # ================================================================
+    # MINIMUM CAPITAL DEPLOYMENT BOOST
+    # ================================================================
+
+    def _boost_underdeployed(self, trades: list[dict]) -> list[dict]:
+        """
+        If total trade cost is below MIN_BUDGET_UTILISATION_PCT of
+        budget, proportionally increase qty on each trade to reach
+        the minimum. Respects MAX_POSITION_PCT per-stock limit.
+        """
+        min_util_pct = self.cfg.MIN_BUDGET_UTILISATION_PCT
+        if min_util_pct <= 0 or not trades:
+            return trades
+
+        budget = self._budget
+        min_deploy = budget * min_util_pct / 100
+        max_pct = self.cfg.MAX_POSITION_PCT / 100
+        max_per = budget * max_pct
+
+        total_cost = sum(t["entry_price"] * t["qty"] for t in trades)
+        if total_cost >= min_deploy:
+            return trades  # already meeting minimum
+
+        self.log.info(
+            f"Capital under-deployed: ₹{total_cost:,.0f} / ₹{budget:,.0f} "
+            f"({total_cost / budget * 100:.0f}%) — minimum is {min_util_pct:.0f}%"
+        )
+
+        # Boost each trade proportionally, respecting per-stock cap
+        scale = min_deploy / total_cost if total_cost > 0 else 1
+        new_total = 0
+        for t in trades:
+            entry = t["entry_price"]
+            if entry <= 0:
+                continue
+            target_cost = min(entry * t["qty"] * scale, max_per)
+            new_qty = max(t["qty"], int(target_cost / entry))
+            # Don't exceed budget cap for this single stock
+            if new_qty * entry > max_per:
+                new_qty = int(max_per / entry)
+            if new_qty > t["qty"]:
+                self.log.info(
+                    f"  {t['symbol']}: qty {t['qty']} → {new_qty} "
+                    f"(₹{t['qty'] * entry:,.0f} → ₹{new_qty * entry:,.0f})"
+                )
+                t["qty"] = new_qty
+            new_total += t["entry_price"] * t["qty"]
+
+        # Final budget check — don't exceed total budget
+        if new_total > budget:
+            # Scale back the last trade(s) to fit
+            excess = new_total - budget
+            for t in reversed(trades):
+                entry = t["entry_price"]
+                if entry <= 0:
+                    continue
+                reduce_qty = min(t["qty"] - 1, int(excess / entry) + 1)
+                if reduce_qty > 0:
+                    t["qty"] -= reduce_qty
+                    excess -= reduce_qty * entry
+                if excess <= 0:
+                    break
+
+        final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
+        self.log.info(
+            f"After boost: ₹{final_cost:,.0f} / ₹{budget:,.0f} "
+            f"({final_cost / budget * 100:.0f}%)"
+        )
         return trades
 
     # ================================================================
@@ -756,6 +828,8 @@ class StockScannerV2(StockScanner):
         else:
             time_phase = "LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). Reduce targets by 50%."
 
+        min_util = self.cfg.MIN_BUDGET_UTILISATION_PCT
+
         return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks.
 You have 15 years of experience with deep knowledge of Indian market microstructure — FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
 
@@ -765,6 +839,7 @@ CURRENT TIME PHASE: {time_phase}
 BUDGET: ₹{budget:,} total capital.
 MAX POSITIONS: {max_positions} stocks simultaneously (₹{budget // max_positions:,} per slot).
 MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
+MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= ₹{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty — NOT by adding mediocre trades. Idle capital earns nothing intraday.
 {nifty_context}{perf_context}{session_context}
 The stocks below are PRE-FILTERED by mathematical technical analysis.
 Each stock shows real-time indicators — use them for precise, evidence-based decisions.
@@ -891,7 +966,7 @@ COMMON MISTAKES TO AVOID (from actual loss patterns):
 ✗ Taking 4-5 trades all SHORT in a bearish market — if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
 ✗ Ignoring volume — breakouts without volume (RVol <1.0) fail 70% of the time.
 ✗ Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
-✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Fewer high-conviction trades > many mediocre trades. 2-3 good trades beats 5 weak ones.
+✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Fewer high-conviction trades > many mediocre trades. 2-3 good trades with large qty beats 5 small trades. Meet deployment target by sizing up your best picks, not adding filler trades.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
@@ -1020,10 +1095,13 @@ TRADE 2:
             risk_per_share = abs(entry - sl) if sl else 0
             r_multiple = (pnl / (risk_per_share * pos.get("qty", 1))) if risk_per_share > 0 else 0
 
+            entry_time = pos.get('entry_time', '')
+            entry_time_str = f"  Entered: {entry_time}" if entry_time else ""
             pos_text += (
                 f"  {pos['symbol']}: {pos['side']} {pos['qty']} shares @ ₹{entry:.2f}  "
                 f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
-                f"SL: ₹{pos.get('stop_loss', 'N/A')}  Target: ₹{pos.get('target_price', 'N/A')}\n"
+                f"SL: ₹{pos.get('stop_loss', 'N/A')}  Target: ₹{pos.get('target_price', 'N/A')}"
+                f"{entry_time_str}\n"
             )
             if tech_ctx:
                 pos_text += f"  {tech_ctx}\n"

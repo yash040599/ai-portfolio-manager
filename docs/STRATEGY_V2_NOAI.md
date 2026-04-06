@@ -24,6 +24,9 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | Position reviews | Claude reviews every 25 min | None — rule-based SL/target/trailing only |
 | Mid-day re-scan | Claude picks from new candidates | Auto-select from new candidates (same as initial scan) |
 | Candle re-scan | Every 15 min, auto-protect + Claude can see patterns | Every 15 min, auto-protect only (no Claude review) |
+| NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
+| Opportunity scan | Every 30 min, fills free slots (1 Claude call) | Every 30 min, fills free slots (0 cost — uses scan_noai) |
+| Min deployment | Claude prompted to deploy ≥60% + code boost | Code boost only (same _boost_underdeployed logic) |
 | API cost | ~₹50-100/day (Claude) | ₹0 |
 | Latency | 10-30s per Claude call | Instant |
 
@@ -100,6 +103,17 @@ Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
   → Re-run candle pattern analysis on all open positions
   → AUTO-PROTECT: contrary signal score ±4 → tighten SL
   → No Claude review call (skipped in NoAI mode)
+
+Every NIFTY_RECHECK_MINUTES (default: 15 min) — FREE:
+  → Re-fetch NIFTY 50 and update market condition
+  → Detects intraday regime shifts (e.g. morning dip → recovery)
+  → Updated condition feeds into subsequent re-scans
+
+Every OPPORTUNITY_RESCAN_MINUTES (default: 30 min) — FREE (NoAI):
+  → Triggers when open_positions < MAX_POSITIONS (free slots exist)
+  → Uses scan_noai() — zero Claude cost
+  → Proactively fills empty slots without waiting for position closes
+  → Skipped if circuit breaker active or insufficient time remains
 
 Partial re-scan (when slots free up):
   → When a position closes via SL/target and empty slots exist

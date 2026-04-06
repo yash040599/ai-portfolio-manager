@@ -237,6 +237,25 @@ class Config:
     # 5minute = more signals but noisier patterns.
     V2_CANDLE_INTERVAL: str = "15minute"
 
+    # OPPORTUNITY_RESCAN_MINUTES: how often to scan for new trades
+    # when there are free position slots. Independent of position
+    # close events. Only triggers when open_positions < MAX_POSITIONS.
+    # Costs 1 Claude call per rescan (V2) or 0 (NoAI).
+    # Set to 0 to disable periodic opportunity scanning.
+    OPPORTUNITY_RESCAN_MINUTES: int = 30
+
+    # NIFTY_RECHECK_MINUTES: how often to re-fetch NIFTY index and
+    # update market condition (BULLISH/BEARISH/NEUTRAL) during the
+    # monitoring loop. Detects intraday regime shifts (e.g. morning
+    # dip → afternoon recovery). Set to 0 to disable.
+    NIFTY_RECHECK_MINUTES: int = 15
+
+    # MIN_BUDGET_UTILISATION_PCT: minimum % of budget that Claude
+    # should deploy across all trades. If Claude picks trades that
+    # only use 30% of budget, the bot will auto-increase qty to
+    # reach this minimum. Set to 0 to disable.
+    MIN_BUDGET_UTILISATION_PCT: float = 60.0
+
     # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════

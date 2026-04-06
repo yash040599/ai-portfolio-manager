@@ -77,37 +77,62 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
+## HIGH PRIORITY — Intraday Capital Efficiency
+
+### 11. Periodic Opportunity Scanning (Free Slots)
+- **Versions**: V2, NoAI
+- **Gap**: After the initial scan, the bot only looks for new trades when a position **closes** (SL/target hit). If it starts the day with 2 trades and 3 empty slots, it never proactively fills those slots. If a partial re-scan finds nothing, it doesn't try again later even though market conditions change.
+- **Fix**: Every `OPPORTUNITY_RESCAN_MINUTES` (default 30 min), if `open_positions < MAX_POSITIONS` and sufficient time remains, run a fresh V2 scan for available slots. Independent of position close events. Capped to avoid API spam.
+- **Source**: Professional day traders continuously scan for setups, not just at market open.
+- **Effort**: Low | **Impact**: High (directly addresses under-deployment of capital)
+
+### 12. Continuous Market Regime Monitoring
+- **Versions**: V2, NoAI
+- **Gap**: NIFTY trend is checked once at pre-market scan and again only during re-scans. If the market drops 1% at open but recovers 0.5% by 11 AM, the bot still thinks it's BEARISH. Claude gets stale market context during reviews.
+- **Fix**: Re-fetch NIFTY quote and update `_market_condition` every `V2_CANDLE_RESCAN_MINUTES` (15 min). Pass updated market condition to Claude reviews and re-scans. Log regime changes: "Market shifted BEARISH → NEUTRAL at 11:15 AM".
+- **Source**: Institutional traders track index continuously for regime shifts — the most basic edge.
+- **Effort**: Low | **Impact**: High (prevents holding bearish bias all day after a morning dip)
+
+### 13. Minimum Capital Deployment Guidance
+- **Versions**: V2 (Claude path)
+- **Gap**: Claude prompt tells the budget but doesn't enforce minimum deployment. Claude can pick 2 tiny positions using 30% of capital, leaving 70% idle all day.
+- **Fix**: Add prompt guidance: "Deploy at least 60% of budget across your trades. If you pick 2 trades, each should use ~₹X. Unused capital earns nothing intraday." Also add a code-level fallback that increases qty if Claude under-sizes.
+- **Source**: Capital efficiency — idle capital is a drag on returns. Even 0% return is a cost when capital is locked in the trading account.
+- **Effort**: Low | **Impact**: Medium
+
+---
+
 ## MEDIUM PRIORITY — Proven, moderate effort
 
-### 11. Multi-Timeframe Alignment (Hourly)
+### 14. Multi-Timeframe Alignment (Hourly)
 - **Versions**: V2, NoAI
 - **Gap**: 15-min candles + daily EMA = two timeframes. Missing intermediate (hourly).
 - **Fix**: Compute hourly EMA(9/21) from 15-min candles. All 3 aligned → +1. Conflict → -1.
 - **Source**: Professional traders use 3 timeframes (higher for direction, middle for setup, lower for entry).
 - **Effort**: Medium | **Impact**: Medium
 
-### 12. Bollinger Band Squeeze Detection
+### 15. Bollinger Band Squeeze Detection
 - **Versions**: V2, NoAI
 - **Gap**: No volatility-based entry signal.
 - **Fix**: BB(20,2) bandwidth below historical avg → squeeze → impending breakout.
 - **Source**: Popular on Indian platforms. Zerodha's Karthik Rangappa calls BB a personal favorite for intraday.
 - **Effort**: Medium | **Impact**: Medium-Low
 
-### 13. Volatility Regime Detection (India VIX)
+### 16. Volatility Regime Detection (India VIX)
 - **Versions**: V1 (retired), V2, NoAI
 - **Gap**: Every market day treated the same. Low-vol days and high-vol days need different strategies.
 - **Fix**: Fetch India VIX at open. VIX < 13 → tighten targets, widen SL slightly. VIX > 22 → widen targets, reduce position size.
 - **Source**: Institutional practice — volatility-adaptive position sizing.
 - **Effort**: Medium | **Impact**: Medium
 
-### 14. Backtesting Framework
+### 17. Backtesting Framework
 - **Versions**: All (infrastructure)
 - **Gap**: No way to measure which indicators actually contribute to winning trades. Flying blind.
 - **Fix**: Replay V2 scoring on historical 15-min data, simulate ATR-based entries/exits, compute win rate per indicator combination.
 - **Source**: Every professional quant desk backtests before going live.
 - **Effort**: High | **Impact**: Highest (enables all other improvements to be measured)
 
-### 15. Trade Journaling & Performance Analytics
+### 18. Trade Journaling & Performance Analytics
 - **Versions**: All (infrastructure)
 - **Gap**: Daily reports exist but no systematic analysis of which patterns/indicators/times win.
 - **Fix**: Write full indicator snapshot at entry to SQLite. Weekly script to compute stats: win rate by pattern, by time of day, by RVol bucket, by score range.
@@ -130,8 +155,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 8 | Sector diversification | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
 | 9 | Pre-market gap analysis | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 10 | Partial profit taking | V1, V2, NoAI | ✅ Done | `order_engine.py` |
-| 11 | Multi-timeframe (hourly) | V2, NoAI | ⬜ Pending | — |
-| 12 | BB squeeze | V2, NoAI | ⬜ Pending | — |
-| 13 | VIX-based sizing | All | ⬜ Pending | — |
-| 14 | Backtesting framework | All | ⬜ Pending | — |
-| 15 | Trade journaling | All | ⬜ Pending | — |
+| 11 | Periodic opportunity scan | V2, NoAI | ✅ Done | `manager_v2.py`, `config.py` |
+| 12 | Continuous market regime | V2, NoAI | ✅ Done | `manager_v2.py` |
+| 13 | Min capital deployment | V2 | ✅ Done | `stock_scanner_v2.py`, `order_engine.py` |
+| 14 | Multi-timeframe (hourly) | V2, NoAI | ⬜ Pending | — |
+| 15 | BB squeeze | V2, NoAI | ⬜ Pending | — |
+| 16 | VIX-based sizing | All | ⬜ Pending | — |
+| 17 | Backtesting framework | All | ⬜ Pending | — |
+| 18 | Trade journaling | All | ⬜ Pending | — |

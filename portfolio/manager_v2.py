@@ -59,6 +59,8 @@ class PortfolioManagerV2(PortfolioManager):
         self._fast_poll = False        # True when near SL/target
         self._last_candle_scan = 0.0   # timestamp of last candle re-scan
         self._noai = False             # True when running in --noai mode
+        self._last_nifty_check = 0.0   # timestamp of last NIFTY regime re-check
+        self._last_opportunity_scan = 0.0  # timestamp of last periodic opportunity scan
 
     # ================================================================
     # OVERRIDE: BANNER
@@ -508,6 +510,8 @@ class PortfolioManagerV2(PortfolioManager):
 
         last_review_time = time.time()
         self._last_candle_scan = time.time()
+        self._last_nifty_check = time.time()
+        self._last_opportunity_scan = time.time()
 
         while not self._shutdown_requested:
             now = datetime.datetime.now()
@@ -543,10 +547,11 @@ class PortfolioManagerV2(PortfolioManager):
                     day_pnl = self.engine.day_pnl()
                     session_ctx = (
                         f"\nSESSION CONTEXT (V2 mid-day re-scan):\n"
+                        f"  Market condition: {self._market_condition}.\n"
                         f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                         f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                         f"  DO NOT pick any stock already traded today unless opposite direction.\n"
-                        f"  If P&L is negative, only pick high-conviction candle setups.\n"
+                        f"  {'If P&L is negative, only pick high-conviction candle setups with tight stops.' if day_pnl < 0 else f'All capital is free — deploy at least {self.cfg.MIN_BUDGET_UTILISATION_PCT:.0f}% on high-conviction setups.'}\n"
                     )
                     self._trade_plans = []
                     self._run_pre_market_scan(session_context=session_ctx)
@@ -554,6 +559,8 @@ class PortfolioManagerV2(PortfolioManager):
                         self._enter_positions()
                         last_review_time = time.time()
                         self._last_candle_scan = time.time()
+                        self._last_nifty_check = time.time()
+                        self._last_opportunity_scan = time.time()
                         continue
                     else:
                         self.log.info("V2 re-scan: no new trades — done for the day")
@@ -613,12 +620,13 @@ class PortfolioManagerV2(PortfolioManager):
                         day_pnl = self.engine.day_pnl()
                         session_ctx = (
                             f"\nSESSION CONTEXT (V2 partial re-scan — {slots} slot(s) available):\n"
+                            f"  Market condition: {self._market_condition}.\n"
                             f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                             f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                             f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
                             f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
                             f"  DO NOT pick any stock already traded or currently held.\n"
-                            f"  If P&L is negative, only pick high-conviction candle setups.\n"
+                            f"  If P&L is negative, only pick high-conviction candle setups with tight stops.\n"
                         )
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
@@ -630,6 +638,7 @@ class PortfolioManagerV2(PortfolioManager):
                         else:
                             self.log.info("V2 partial re-scan: no replacement trades found")
                         self._last_partial_rescan = time.time()
+                        self._last_opportunity_scan = time.time()  # sync timers
 
             # ── Order API broken check ────────────────────────────
             if self.engine.is_order_api_broken():
@@ -679,6 +688,70 @@ class PortfolioManagerV2(PortfolioManager):
                     self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
                 self._last_candle_scan = time.time()
+
+            # ── Periodic NIFTY regime re-check (free) ─────────────
+            nifty_recheck_interval = self.cfg.NIFTY_RECHECK_MINUTES * 60
+            if nifty_recheck_interval > 0:
+                nifty_elapsed = time.time() - self._last_nifty_check
+                if nifty_elapsed >= nifty_recheck_interval:
+                    old_condition = self._market_condition
+                    self._build_nifty_context()  # updates self._market_condition
+                    if self._market_condition and self._market_condition != old_condition:
+                        self.log.info(
+                            f"📊 Market regime shifted: {old_condition} → {self._market_condition}"
+                        )
+                    self._last_nifty_check = time.time()
+
+            # ── Periodic opportunity scan (fill free slots) ───────
+            opp_rescan_interval = self.cfg.OPPORTUNITY_RESCAN_MINUTES * 60
+            if opp_rescan_interval > 0:
+                open_count = len(self.engine.open_positions())
+                opp_elapsed = time.time() - self._last_opportunity_scan
+                if (
+                    open_count > 0
+                    and open_count < self.cfg.MAX_POSITIONS
+                    and opp_elapsed >= opp_rescan_interval
+                    and not self.engine.is_order_api_broken()
+                    and not self._circuit_broken
+                ):
+                    sq_now = datetime.datetime.now()
+                    sq_off = sq_now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - sq_now).total_seconds() / 60
+                    slots = self.cfg.MAX_POSITIONS - open_count
+                    if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self.log.info(
+                            f"⏰ Periodic opportunity scan: {slots} slot(s) free, "
+                            f"{mins_left:.0f} min left — scanning for new trades..."
+                        )
+                        self.engine.sync_external_positions()
+                        self.engine.refresh_budget()
+                        closed_trades = self.engine.closed_positions()
+                        traded_symbols = list({p["symbol"] for p in closed_trades})
+                        day_pnl = self.engine.day_pnl()
+                        session_ctx = (
+                            f"\nSESSION CONTEXT (periodic opportunity scan — {slots} slot(s) available):\n"
+                            f"  Market condition: {self._market_condition}.\n"
+                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
+                            f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
+                            f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
+                            f"  DO NOT pick any stock already traded or currently held.\n"
+                            f"  {'If day P&L is negative, only pick high-conviction setups with tight stops.' if day_pnl < 0 else 'Actively look for good setups to fill slots — size positions to use capital effectively.'}\n"
+                        )
+                        self._trade_plans = []
+                        self._run_pre_market_scan(session_context=session_ctx)
+                        if self._trade_plans:
+                            self._trade_plans = self._trade_plans[:slots]
+                            self._enter_positions()
+                            last_review_time = time.time()
+                            self._last_candle_scan = time.time()
+                        else:
+                            self.log.info("Periodic opportunity scan: no new trades found")
+                    self._last_opportunity_scan = time.time()
 
             # ── Claude review (with candle context) ───────────────
             elapsed = time.time() - last_review_time
