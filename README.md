@@ -698,7 +698,7 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
 | File only in remote | Copied to local project |
 | File in both, identical | Skipped |
 | SQLite database (`.db`) in both, different | **Merged row-by-row** — new rows from each side are added to the other. Nothing is deleted. Both DBs end up identical with the union of all rows |
-| SQLite database with `--overwrite-db` | **Local overwrites remote** — skips merge entirely. Use when local DB has corrected data (e.g. fixed P&L values) that should replace the remote copy |
+| SQLite database with `--overwrite-db` | **One-direction overwrite** — asks which side to keep (local/remote) with a confirmation prompt, then copies that DB to the other side. Use when one side has corrected data (e.g. fixed P&L values) |
 | Other file in both, different | Asks: keep **(l)**ocal or **(r)**emote? |
 
 This means you can trade on a VM, trade on your laptop, and sync — all trades from both machines end up in both databases. The merge uses each table's unique key (`date + order_id` for tax ledger, `date + symbol + side + price` for trades, etc.) to avoid duplicates.

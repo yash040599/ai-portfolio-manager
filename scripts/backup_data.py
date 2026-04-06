@@ -15,7 +15,7 @@ Usage
     python scripts/backup_data.py              # full two-way sync (HTTPS)
     python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/backup_data.py --dry-run    # show what would change (no writes)
-    python scripts/backup_data.py --overwrite-db  # overwrite remote DB with local (skip merge)
+    python scripts/backup_data.py --overwrite-db  # overwrite DB in one direction (asks l/r)
 """
 
 import argparse
@@ -374,8 +374,8 @@ def main():
     parser.add_argument("--ssh", action="store_true",
                         help="Use SSH URL for cloning (for VMs with SSH key auth).")
     parser.add_argument("--overwrite-db", action="store_true",
-                        help="Overwrite remote DB with local copy instead of merging. "
-                             "Use when local DB has corrected data that should replace remote.")
+                        help="Overwrite DB in one direction instead of merging. "
+                             "Asks which side to keep (l/r) with confirmation.")
     args = parser.parse_args()
 
     if not os.path.isdir(BACKUP_ROOT):
@@ -452,11 +452,41 @@ def main():
             if rel.endswith(".db"):
                 if args.overwrite_db:
                     if args.dry_run:
-                        print(f"    → overwrite: {rel} (local → remote)")
+                        print(f"    ≠ overwrite-db: {rel} (will ask l/r)")
+                        copied_to_remote += 1
                     else:
-                        print(f"    → overwrite: {rel} (local → remote, skipping merge)")
-                        copy_file(local_files[rel], remote_files[rel], False)
-                    copied_to_remote += 1
+                        # Ask which side to keep
+                        while True:
+                            choice = input(
+                                f"    ≠ {rel}\n"
+                                f"      Keep (l)ocal or (r)emote? [l/r]: "
+                            ).strip().lower()
+                            if choice in ("l", "r"):
+                                break
+                            print("      Please enter 'l' or 'r'.")
+                        # Confirm — this is destructive
+                        src = "LOCAL" if choice == "l" else "REMOTE"
+                        dst = "remote" if choice == "l" else "local"
+                        while True:
+                            confirm = input(
+                                f"      ⚠ This will OVERWRITE the {dst} DB with {src}. "
+                                f"Are you sure? [y/n]: "
+                            ).strip().lower()
+                            if confirm in ("y", "n"):
+                                break
+                            print("      Please enter 'y' or 'n'.")
+                        if confirm == "y":
+                            if choice == "l":
+                                copy_file(local_files[rel], remote_files[rel], False)
+                                print(f"      → overwrote remote with local")
+                                copied_to_remote += 1
+                            else:
+                                copy_file(remote_files[rel], local_files[rel], False)
+                                print(f"      ← overwrote local with remote")
+                                copied_to_local += 1
+                        else:
+                            print(f"      ✗ skipped (no overwrite)")
+                            unchanged += 1
                 else:
                     db_merged = merge_databases(
                         local_files[rel], remote_files[rel], args.dry_run,
