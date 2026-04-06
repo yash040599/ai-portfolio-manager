@@ -444,7 +444,8 @@ def main():
 
         else:
             # Both exist — check if they differ
-            if filecmp.cmp(local_files[rel], remote_files[rel], shallow=False):
+            identical = filecmp.cmp(local_files[rel], remote_files[rel], shallow=False)
+            if identical and not (args.overwrite_db and rel.endswith(".db")):
                 unchanged += 1
                 continue
 
