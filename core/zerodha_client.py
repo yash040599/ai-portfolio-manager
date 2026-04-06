@@ -36,6 +36,9 @@ class ZerodhaClient:
         self._nse_tokens: dict | None = None
         self._bse_tokens: dict | None = None
 
+        # Rate-limit throttle for historical API (Zerodha ~3 req/sec)
+        self._last_historical_call: float = 0.0
+
     # ================================================================
     # LOGIN
     # ================================================================
@@ -290,6 +293,10 @@ class ZerodhaClient:
         Returns list of dicts: {date, open, high, low, close, volume}.
         Requires connect_paid plan — raises RuntimeError otherwise.
 
+        Rate-limited to ~3 req/sec to stay within Zerodha's API limits.
+        Uses a simple timestamp-based throttle (no sleep if enough time
+        has passed since the last call).
+
         Supported intervals:
           minute, 3minute, 5minute, 10minute, 15minute,
           30minute, 60minute, day
@@ -308,6 +315,14 @@ class ZerodhaClient:
         if not token:
             self.log.warning(f"No instrument token found for {symbol} ({exchange})")
             return []
+
+        # Throttle: ensure at least 350ms between historical API calls
+        # (Zerodha rate limit is ~3 req/sec)
+        now = time.time()
+        elapsed = now - self._last_historical_call
+        if elapsed < 0.35:
+            time.sleep(0.35 - elapsed)
+        self._last_historical_call = time.time()
 
         return self._kite.historical_data(
             instrument_token = token,

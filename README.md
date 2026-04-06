@@ -124,7 +124,9 @@ python main.py --mode trade --noai
 The bot caches previous days' candle data (15-min and daily) in a separate SQLite database (`data/candle_cache.db`) to avoid redundant Zerodha API calls. Today's candles are always fetched live. This significantly speeds up scans when running multiple times or re-scanning during the day.
 
 - **Auto-cleanup:** Entries older than 45 days are pruned on startup.
+- **Weekend/holiday-aware lookback:** Cache queries automatically widen the date range (up to +3 days) to find the last trading day's data. Handles weekends, single-day holidays, and long weekends (e.g. Friday holiday + Sat + Sun) without needing a holiday calendar.
 - **Corporate action detection:** If a >35% price gap is detected between cached close and live open, the cache for that symbol is automatically invalidated and refetched with Zerodha's adjusted prices.
+- **API rate limiting:** All Zerodha historical API calls are throttled to ~3 req/sec (350ms minimum between calls) to stay within Zerodha's rate limits. This prevents bulk scans (100 stocks) from getting rate-limited.
 - **Git-transferable:** Unlike `trades.db` (personal data), `candle_cache.db` contains only public market data and is committed to Git. Pull on a new machine → cache is ready.
 - **Pre-warm with test mode:** Run `--test` the evening before a trading day to populate the cache. Next day's live scan skips ~200 Zerodha API calls.
 

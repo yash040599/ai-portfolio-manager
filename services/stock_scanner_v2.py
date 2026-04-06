@@ -171,12 +171,20 @@ class StockScannerV2(StockScanner):
         Returns empty list on failure (non-blocking).
         """
         today = datetime.date.today()
-        from_date = today - datetime.timedelta(days=days_back)
 
-        # Get cached candles for previous days (before today)
-        cached = self._cache.get_cached_candles(
-            symbol, exchange, interval, from_date, today,
-        )
+        # Dynamic lookback: start with days_back, widen up to +3 extra
+        # days if cache returns nothing (handles weekends, holidays,
+        # long weekends like Fri holiday + Sat + Sun).
+        from_date = today - datetime.timedelta(days=days_back)
+        cached = []
+        if days_back > 0:
+            for extra in range(4):  # try 0, +1, +2, +3 extra days
+                from_date = today - datetime.timedelta(days=days_back + extra)
+                cached = self._cache.get_cached_candles(
+                    symbol, exchange, interval, from_date, today,
+                )
+                if cached:
+                    break
 
         if not cached and days_back > 0:
             # Cold cache — single Zerodha call for full range (avoids
@@ -191,8 +199,8 @@ class StockScannerV2(StockScanner):
                 if all_candles:
                     self._cache.store_candles(symbol, exchange, interval, all_candles)
                     return all_candles
-            except Exception:
-                pass
+            except Exception as e:
+                self.log.info(f"Candle fetch failed for {symbol}: {e}")
             return []
 
         # Cache hit — check for corporate action (split/bonus) before using
