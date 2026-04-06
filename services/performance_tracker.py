@@ -138,6 +138,24 @@ class PerformanceTracker:
     # QUERIES
     # ================================================================
 
+    def get_today_previous_runs(self) -> dict:
+        """
+        Returns today's trades from previous runs (already in DB).
+        Used to show cumulative daily totals across bot restarts.
+        """
+        today = str(datetime.date.today())
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol, side, qty, pnl, exit_reason FROM trades WHERE date = ?",
+                (today,),
+            ).fetchall()
+
+        return {
+            "trade_count": len(rows),
+            "realised_pnl": round(sum(r["pnl"] for r in rows), 2),
+            "symbols": [r["symbol"] for r in rows],
+        }
+
     def get_yesterday_summary(self) -> dict | None:
         """
         Returns a summary of the previous trading day's results.

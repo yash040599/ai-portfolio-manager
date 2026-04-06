@@ -73,6 +73,7 @@ class PortfolioManager:
         self._scan_failed = False          # true if quote fetch failed
         self._market_condition: str = ""   # BULLISH/BEARISH/NEUTRAL + volatility
         self._last_partial_rescan: float = 0.0  # cooldown for partial re-scans
+        self._prev_runs: dict | None = None     # cached previous-run totals for today
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -1274,7 +1275,7 @@ class PortfolioManager:
         print(f"{'='*58}\n")
 
     def _print_status(self, quotes: dict):
-        """Compact one-line status during monitor loop — overwrites in place."""
+        """Compact status during monitor loop — current run + cumulative daily totals."""
         open_pos   = self.engine.open_positions()
         closed_pos = self.engine.closed_positions()
         unrealised = self.engine.unrealised_pnl(quotes)
@@ -1292,8 +1293,26 @@ class PortfolioManager:
             f"Unrealised: {u_color}₹{unrealised:+,.2f}\033[0m  "
             f"Realised: {r_color}₹{realised:+,.2f}\033[0m"
         )
+
+        # Cumulative daily totals (previous runs from DB + current run)
+        if self._prev_runs is None:
+            self._prev_runs = self.tracker.get_today_previous_runs()
+
+        prev = self._prev_runs
+        if prev["trade_count"] > 0:
+            total_closed = prev["trade_count"] + len(closed_pos)
+            total_realised = prev["realised_pnl"] + realised
+            total_combined = total_realised + unrealised
+            t_color = "\033[92m" if total_combined >= 0 else "\033[91m"
+            tr_color = "\033[92m" if total_realised >= 0 else "\033[91m"
+            line += (
+                f"  │  Today: {total_closed} trades  "
+                f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
+                f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
+            )
+
         # Clear with spaces then overwrite — prevents leftover characters
-        print(f"\r{' ' * 100}\r{line}", end="", flush=True)
+        print(f"\r{' ' * 160}\r{line}", end="", flush=True)
 
     def _print_pnl_summary(self, pnl: dict):
         """Prints the final P&L breakdown to terminal."""

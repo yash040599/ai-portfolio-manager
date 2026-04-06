@@ -35,7 +35,7 @@ A fully automated intraday trading bot that:
 - **Always trusts Zerodha fills** — after a MARKET order fills, always uses Zerodha's actual fill price (not the pre-order estimate). SL, target, and P&L are recalculated on the real fill. Logs a warning if the fill deviates >5% but never rejects it
 - Enters positions at market open with stop-loss and target prices
 - Monitors prices every 10 seconds (or 5s when near SL/target), auto-exits on SL/target hits
-- **Compact live status** — prints a one-line status every poll (time, open/closed count, unrealised/realised P&L). Detailed per-stock table only after Claude review calls
+- **Compact live status** — prints a one-line status every poll (time, open/closed count, unrealised/realised P&L). When restarting mid-day, also shows cumulative daily totals (all runs combined) from the trade database
 - **Auto trailing stop-loss** — automatically moves SL in your favour as profit grows
 - **Partial profit taking** — at 1× risk profit, automatically exits 50% of position and locks in guaranteed profit. Remaining 50% rides with trailing stop
 - **Time-decay targets** — after 2 PM, reduces open position targets by 40% to lock in profits before square-off
