@@ -74,6 +74,7 @@ class PortfolioManager:
         self._market_condition: str = ""   # BULLISH/BEARISH/NEUTRAL + volatility
         self._last_partial_rescan: float = 0.0  # cooldown for partial re-scans
         self._prev_runs: dict | None = None     # cached previous-run totals for today
+        self._status_lines_printed = False       # tracks 2-line status display
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -593,6 +594,7 @@ class PortfolioManager:
 
             # ── Check if it's square-off time ─────────────────────
             if self._is_square_off_time(now):
+                self._clear_status_line()
                 self.log.info("Square-off time reached")
                 break
 
@@ -600,6 +602,7 @@ class PortfolioManager:
             if not self.engine.open_positions():
                 # If order API is broken, don't scan for more trades
                 if self.engine.is_order_api_broken():
+                    self._clear_status_line()
                     self.log.error(
                         "All positions closed and order API is broken — "
                         "stopping (not scanning for new trades)"
@@ -616,6 +619,7 @@ class PortfolioManager:
                 mins_remaining = (sq_off - sq_now).total_seconds() / 60
 
                 if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                    self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
                         f"scanning for new opportunities..."
@@ -648,6 +652,7 @@ class PortfolioManager:
                         self.log.info("No new trades found — done for the day")
                         break
                 else:
+                    self._clear_status_line()
                     self.log.info(
                         f"All positions closed — only {mins_remaining:.0f} min left, "
                         f"not enough time for new trades"
@@ -669,6 +674,7 @@ class PortfolioManager:
             # ── Rule-based SL/target check (free) ─────────────────
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
+                self._clear_status_line()
                 self.log.info(f"{closed} position(s) auto-closed")
                 # ── Partial re-scan: fill empty slots with new trades ─
                 # Sync with Zerodha to detect manual trades before counting slots
@@ -724,6 +730,7 @@ class PortfolioManager:
             # If consecutive order failures hit the limit, stop
             # calling Claude (wastes money) and shut down gracefully.
             if self.engine.is_order_api_broken():
+                self._clear_status_line()
                 self.log.error(
                     "ZERODHA ORDER API BROKEN — stopping all trading. "
                     "Will not call Claude again. "
@@ -742,6 +749,7 @@ class PortfolioManager:
             # ── Periodic Claude review (paid) ─────────────────────
             elapsed = time.time() - last_review_time
             if elapsed >= review_interval and self.engine.open_positions():
+                self._clear_status_line()
                 self._run_claude_review(quotes)
                 last_review_time = time.time()
 
@@ -1275,7 +1283,7 @@ class PortfolioManager:
         print(f"{'='*58}\n")
 
     def _print_status(self, quotes: dict):
-        """Compact status during monitor loop — current run + cumulative daily totals."""
+        """Compact 2-line status during monitor loop — session P&L + net daily totals."""
         open_pos   = self.engine.open_positions()
         closed_pos = self.engine.closed_positions()
         unrealised = self.engine.unrealised_pnl(quotes)
@@ -1286,7 +1294,7 @@ class PortfolioManager:
         u_color = "\033[92m" if unrealised >= 0 else "\033[91m"
         r_color = "\033[92m" if realised >= 0 else "\033[91m"
 
-        line = (
+        session_line = (
             f"  [{now}]  "
             f"Open: {len(open_pos)}  "
             f"Closed: {len(closed_pos)}  "
@@ -1299,20 +1307,35 @@ class PortfolioManager:
             self._prev_runs = self.tracker.get_today_previous_runs()
 
         prev = self._prev_runs
-        if prev["trade_count"] > 0:
-            total_closed = prev["trade_count"] + len(closed_pos)
-            total_realised = prev["realised_pnl"] + realised
-            total_combined = total_realised + unrealised
-            t_color = "\033[92m" if total_combined >= 0 else "\033[91m"
-            tr_color = "\033[92m" if total_realised >= 0 else "\033[91m"
-            line += (
-                f"  │  Today: {total_closed} trades  "
-                f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
-                f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
-            )
+        total_closed = prev["trade_count"] + len(closed_pos)
+        total_realised = prev["realised_pnl"] + realised
+        total_combined = total_realised + unrealised
+        t_color = "\033[92m" if total_combined >= 0 else "\033[91m"
+        tr_color = "\033[92m" if total_realised >= 0 else "\033[91m"
 
-        # Clear with spaces then overwrite — prevents leftover characters
-        print(f"\r{' ' * 160}\r{line}", end="", flush=True)
+        net_line = (
+            f"           "
+            f"Net today: {total_closed} trades  "
+            f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
+            f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
+        )
+
+        # Use ANSI cursor-up to overwrite both lines on each poll
+        if self._status_lines_printed:
+            # Move cursor up 1 line (back to session_line), then overwrite both
+            print(f"\033[1A\r\033[2K{session_line}", flush=True)
+            print(f"\r\033[2K{net_line}", end="", flush=True)
+        else:
+            # First print — no cursor-up needed
+            print(f"\r\033[2K{session_line}", flush=True)
+            print(f"\r\033[2K{net_line}", end="", flush=True)
+            self._status_lines_printed = True
+
+    def _clear_status_line(self):
+        """Call before any log/print that interrupts the 2-line status display."""
+        if self._status_lines_printed:
+            print()  # finish the partial line so log output starts clean
+            self._status_lines_printed = False
 
     def _print_pnl_summary(self, pnl: dict):
         """Prints the final P&L breakdown to terminal."""

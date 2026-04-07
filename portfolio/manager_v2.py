@@ -518,12 +518,14 @@ class PortfolioManagerV2(PortfolioManager):
 
             # ── Square-off check ──────────────────────────────────
             if self._is_square_off_time(now):
+                self._clear_status_line()
                 self.log.info("Square-off time reached")
                 break
 
-            # ── All positions closed? ─────────────────────────────
+            # ── All positions closed? ─────────────────────────
             if not self.engine.open_positions():
                 if self.engine.is_order_api_broken():
+                    self._clear_status_line()
                     self.log.error("All positions closed, order API broken — stopping")
                     break
 
@@ -535,6 +537,7 @@ class PortfolioManagerV2(PortfolioManager):
                 mins_remaining = (sq_off - now).total_seconds() / 60
 
                 if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                    self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
                         f"V2 re-scanning with candle analysis..."
@@ -566,6 +569,7 @@ class PortfolioManagerV2(PortfolioManager):
                         self.log.info("V2 re-scan: no new trades — done for the day")
                         break
                 else:
+                    self._clear_status_line()
                     self.log.info(
                         f"All positions closed — {mins_remaining:.0f} min left, "
                         f"not enough for new trades"
@@ -587,6 +591,7 @@ class PortfolioManagerV2(PortfolioManager):
             # ── SL/target check (free, rule-based) ────────────────
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
+                self._clear_status_line()
                 self.log.info(f"{closed} position(s) auto-closed")
                 # ── Partial re-scan: fill empty slots with new trades ─
                 # Sync with Zerodha to detect manual trades before counting slots
@@ -642,6 +647,7 @@ class PortfolioManagerV2(PortfolioManager):
 
             # ── Order API broken check ────────────────────────────
             if self.engine.is_order_api_broken():
+                self._clear_status_line()
                 self.log.error("Order API broken — shutting down")
                 if self.engine.open_positions():
                     self._square_off()
@@ -660,6 +666,7 @@ class PortfolioManagerV2(PortfolioManager):
                 )
                 if near_trigger and not self._fast_poll:
                     self._fast_poll = True
+                    self._clear_status_line()
                     self.log.info("⚡ Position near SL/target — increasing poll rate")
                 elif not near_trigger and self._fast_poll:
                     self._fast_poll = False
@@ -667,6 +674,7 @@ class PortfolioManagerV2(PortfolioManager):
             # ── Periodic candle re-scan (free, no Claude cost) ──
             candle_elapsed = time.time() - self._last_candle_scan
             if candle_elapsed >= candle_rescan_interval and self.engine.open_positions():
+                self._clear_status_line()
                 self.log.info("V2 candle re-scan: refreshing technical data for open positions")
                 for pos in self.engine.open_positions():
                     fresh = self.scanner._analyse_stock(pos["symbol"], pos.get("exchange", "NSE"))
@@ -697,6 +705,7 @@ class PortfolioManagerV2(PortfolioManager):
                     old_condition = self._market_condition
                     self._build_nifty_context()  # updates self._market_condition
                     if self._market_condition and self._market_condition != old_condition:
+                        self._clear_status_line()
                         self.log.info(
                             f"📊 Market regime shifted: {old_condition} → {self._market_condition}"
                         )
@@ -723,6 +732,7 @@ class PortfolioManagerV2(PortfolioManager):
                     mins_left = (sq_off - sq_now).total_seconds() / 60
                     slots = self.cfg.MAX_POSITIONS - open_count
                     if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self._clear_status_line()
                         self.log.info(
                             f"⏰ Periodic opportunity scan: {slots} slot(s) free, "
                             f"{mins_left:.0f} min left — scanning for new trades..."
@@ -757,6 +767,7 @@ class PortfolioManagerV2(PortfolioManager):
             elapsed = time.time() - last_review_time
             if elapsed >= review_interval and self.engine.open_positions():
                 if not self._noai:
+                    self._clear_status_line()
                     self._run_claude_review_v2(quotes)
                 last_review_time = time.time()
 
