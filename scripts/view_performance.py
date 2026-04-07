@@ -14,13 +14,17 @@ Usage
 """
 
 import argparse
+import datetime
 import json
 import sqlite3
 import os
 import sys
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def get_trades(date_filter: str | None = None, last_n_days: int | None = None) -> list:
@@ -42,9 +46,11 @@ def get_trades(date_filter: str | None = None, last_n_days: int | None = None) -
             "SELECT * FROM trades WHERE date=? ORDER BY entry_time, id", (date_filter,)
         ).fetchall()
     elif last_n_days:
+        today_ist = datetime.datetime.now(_IST).date()
+        cutoff = (today_ist - datetime.timedelta(days=last_n_days)).isoformat()
         rows = conn.execute(
-            "SELECT * FROM trades WHERE date >= date('now', ?) ORDER BY date, entry_time, id",
-            (f"-{last_n_days} days",),
+            "SELECT * FROM trades WHERE date >= ? ORDER BY date, entry_time, id",
+            (cutoff,),
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM trades ORDER BY date, entry_time, id").fetchall()

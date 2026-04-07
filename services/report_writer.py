@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 # services/report_writer.py
 # ================================================================
 # Generates the human-readable .txt report and .json data dump.
@@ -28,10 +28,10 @@ from core.logger import Logger
 
 class ReportWriter:
 
-    # Separator widths â€” used throughout for consistent alignment
+    # Separator widths — used throughout for consistent alignment
     SEP_MAJOR = "=" * 58
-    SEP_MINOR = "â”€" * 58
-    SEP_TABLE = "â”€" * 86
+    SEP_MINOR = "─" * 58
+    SEP_TABLE = "─" * 86
 
     def __init__(self, config: type[Config], log: Logger):
         self.cfg = config
@@ -189,7 +189,7 @@ class ReportWriter:
 
     def _write_header(self, f, today: datetime.date):
         f.write(f"{self.SEP_MAJOR}\n")
-        f.write(f"  PORTFOLIO ANALYSIS REPORT â€” {today}\n")
+        f.write(f"  PORTFOLIO ANALYSIS REPORT — {today}\n")
         f.write(f"{self.SEP_MAJOR}\n\n")
 
     def _write_config_section(self, f):
@@ -211,9 +211,9 @@ class ReportWriter:
         f.write(f"Total stocks   : {len(portfolio)}\n")
         f.write(f"Analysed       : {len(analyses)}\n")
         f.write(f"Skipped        : {len(skipped)}\n")
-        f.write(f"Total invested : â‚¹{invested:,.2f}\n")
-        f.write(f"Current value  : â‚¹{current:,.2f}\n")
-        f.write(f"Overall P&L    : â‚¹{pnl:,.2f}  ({pnl_pct:.1f}%)\n\n")
+        f.write(f"Total invested : ₹{invested:,.2f}\n")
+        f.write(f"Current value  : ₹{current:,.2f}\n")
+        f.write(f"Overall P&L    : ₹{pnl:,.2f}  ({pnl_pct:.1f}%)\n\n")
 
     def _write_quick_reference(self, f, analyses: list[dict], skipped: list[str]):
         """
@@ -235,7 +235,7 @@ class ReportWriter:
                 f"{p.get('TARGET_PRICE','N/A')}\n"
             )
         for sym in skipped:
-            f.write(f"{sym:<14} {'SKIPPED':<16} {'â€”':<12} {'â€”':<22} â€”\n")
+            f.write(f"{sym:<14} {'SKIPPED':<16} {'—':<12} {'—':<22} —\n")
 
         f.write("\n\n")
 
@@ -249,7 +249,7 @@ class ReportWriter:
             return
 
         for a in analyses:
-            # Every stock goes through the same template â€” consistent formatting
+            # Every stock goes through the same template — consistent formatting
             f.write(self._format_section(
                 symbol   = a["symbol"],
                 parsed   = a["parsed"],
@@ -264,7 +264,7 @@ class ReportWriter:
         f.write(f"{self.SEP_MINOR}\n")
         f.write("Re-run the script to retry these.\n\n")
         for sym in skipped_symbols:
-            f.write(f"  â€¢ {sym}\n")
+            f.write(f"  • {sym}\n")
         f.write("\n")
 
     def _write_failed_log(self, f, failed_log: list[dict]):
@@ -272,7 +272,7 @@ class ReportWriter:
         f.write("FAILED STOCKS LOG\n")
         f.write(f"{self.SEP_MINOR}\n")
         for entry in failed_log:
-            f.write(f"  â€¢ {entry['symbol']}: {entry['error']}\n")
+            f.write(f"  • {entry['symbol']}: {entry['error']}\n")
         f.write("\n")
 
     def _write_portfolio_review(self, f, review_text: str):
@@ -298,23 +298,23 @@ class ReportWriter:
         Formats one stock's analysis into a fixed-template text block.
 
         This is the single function responsible for report consistency.
-        Every stock â€” whether it was analysed on the first attempt or
-        the third retry â€” goes through this exact same template.
+        Every stock — whether it was analysed on the first attempt or
+        the third retry — goes through this exact same template.
         The parsed dict always has the same keys (guaranteed by the
         parser in AnalysisQueue), so this function never breaks.
         """
         lines = [self.SEP_MINOR]
 
-        # â”€â”€ Stock header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Stock header ──────────────────────────────────────────
         lines.append(f"  STOCK      : {symbol} ({stock.get('exchange','NSE')})")
         lines.append(
             f"  HELD       : {stock['quantity']} shares  "
-            f"Avg â‚¹{stock['avg_buy_price']}  "
-            f"Current â‚¹{stock['current_price']}"
+            f"Avg ₹{stock['avg_buy_price']}  "
+            f"Current ₹{stock['current_price']}"
         )
-        lines.append(f"  P&L        : â‚¹{stock['pnl']}  ({stock['pnl_percent']}%)")
+        lines.append(f"  P&L        : ₹{stock['pnl']}  ({stock['pnl_percent']}%)")
         lines.append(
-            f"  52-WEEK    : â‚¹{stock.get('52w_low','N/A')} â€“ â‚¹{stock.get('52w_high','N/A')}  "
+            f"  52-WEEK    : ₹{stock.get('52w_low','N/A')} – ₹{stock.get('52w_high','N/A')}  "
             f"Trend: {stock.get('price_trend','N/A')}  "
             f"Momentum: {stock.get('momentum','N/A')}"
         )
@@ -323,7 +323,7 @@ class ReportWriter:
 
         lines.append(self.SEP_MINOR)
 
-        # â”€â”€ Analysis fields â€” always in this exact order â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Analysis fields — always in this exact order ──────────
         lines.append(f"  ACTION       : {parsed['ACTION']}")
         lines.append(f"  CONVICTION   : {parsed['CONVICTION']}")
         lines.append(f"  HORIZON      : {parsed['HORIZON']}")
@@ -359,9 +359,9 @@ class ReportWriter:
 
     @staticmethod
     def _parse_target_range(target_str: str) -> tuple[str, str]:
-        """Extract low and high from target price string like 'â‚¹450-500' or 'â‚¹1,320â€“â‚¹1,380'."""
-        # Remove â‚¹ and commas, find all numbers
-        cleaned = target_str.replace("â‚¹", "").replace(",", "")
+        """Extract low and high from target price string like '₹450-500' or '₹1,320–₹1,380'."""
+        # Remove ₹ and commas, find all numbers
+        cleaned = target_str.replace("₹", "").replace(",", "")
         numbers = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
         if len(numbers) >= 2:
             return numbers[0], numbers[1]
@@ -377,8 +377,8 @@ class ReportWriter:
 
     @staticmethod
     def _parse_price_field(value: str) -> str:
-        """Extract the first number from a price field like 'â‚¹840' or '1200'."""
-        cleaned = value.replace("â‚¹", "").replace(",", "")
+        """Extract the first number from a price field like '₹840' or '1200'."""
+        cleaned = value.replace("₹", "").replace(",", "")
         nums = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
         return nums[0] if nums else "0"
 
@@ -433,7 +433,7 @@ class ReportWriter:
             # Target range
             target_low, target_high = self._parse_target_range(p.get("TARGET_PRICE", ""))
 
-            # Next steps â€” join into single cell, replace newlines with semicolons
+            # Next steps — join into single cell, replace newlines with semicolons
             next_steps = p.get("NEXT_STEPS", "").replace("\n", " ").replace("\t", " ").strip()
 
             # Trigger fields
@@ -479,9 +479,9 @@ class ReportWriter:
             row = [
                 symbol,
                 rec.get("horizon", ""),
-                f"NEW BUY â€” {rec.get('rationale', '')}",
+                f"NEW BUY — {rec.get('rationale', '')}",
                 "BUY",
-                "",   # num_stocks (unknown â€” not in portfolio yet)
+                "",   # num_stocks (unknown — not in portfolio yet)
                 "",   # value
                 "",   # avg_buy_price (no holding)
                 "",   # current_price (not fetched)
@@ -501,7 +501,7 @@ class ReportWriter:
                 f.write("\t".join(row) + "\n")
 
     # ================================================================
-    # PHASE 2 â€” TRADING DAY REPORT
+    # PHASE 2 — TRADING DAY REPORT
     # ================================================================
     # Generates a full end-of-day report for intraday trading.
     # Includes: trade log, position details, P&L breakdown,
@@ -542,7 +542,7 @@ class ReportWriter:
         txt_path  = self.trading_report_path(today)
         json_path = self.trading_data_path(today)
 
-        # â”€â”€ Merge with existing session data if report exists â”€â”€â”€â”€â”€
+        # ── Merge with existing session data if report exists ─────
         session_count = 1
         prev_claude_cost = 0.0
         curr_claude_cost = pnl.get("charges", {}).get("claude_api_cost", 0.0)
@@ -564,7 +564,7 @@ class ReportWriter:
                     "side":   "",
                     "qty":    0,
                     "price":  0,
-                    "detail": f"â•â•â• SESSION {session_count} START â•â•â•",
+                    "detail": f"═══ SESSION {session_count} START ═══",
                 }
 
                 # Merge: previous data + separator + current session data
@@ -580,26 +580,26 @@ class ReportWriter:
                     f"Merging with existing report (session {session_count})"
                 )
             except (json.JSONDecodeError, KeyError, TypeError) as e:
-                self.log.warning(f"Could not merge with existing report: {e} â€” overwriting")
+                self.log.warning(f"Could not merge with existing report: {e} — overwriting")
                 session_count = 1
 
         mode_label = "DRY RUN (simulated)" if dry_run else "LIVE TRADING"
         charges    = pnl["charges"]
 
         with open(txt_path, "w", encoding="utf-8") as f:
-            # â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Header ────────────────────────────────────────────
             f.write(f"{self.SEP_MAJOR}\n")
-            f.write(f"  INTRADAY TRADING REPORT â€” {today}\n")
+            f.write(f"  INTRADAY TRADING REPORT — {today}\n")
             f.write(f"  Mode: {mode_label}\n")
             if session_count > 1:
                 f.write(f"  Sessions: {session_count} (combined)\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
-            # â”€â”€ Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Configuration ─────────────────────────────────────
             f.write("CONFIGURATION\n")
             f.write(f"{self.SEP_MINOR}\n")
             f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
-            f.write(f"Budget          : â‚¹{budget:,.2f} (from Zerodha funds)\n")
+            f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
             if market_condition:
                 f.write(f"Market condition: {market_condition}\n")
@@ -608,7 +608,7 @@ class ReportWriter:
             f.write(f"Target          : {self.cfg.DEFAULT_TARGET_PCT}%\n")
             f.write(f"Circuit breaker : {self.cfg.MAX_LOSS_PER_DAY_PCT}%\n\n")
 
-            # â”€â”€ Trade Summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Trade Summary ─────────────────────────────────────
             closed = [p for p in positions if p.get("status") == "CLOSED"]
             open_p = [p for p in positions if p.get("status") == "OPEN"]
             winners = [p for p in closed if p.get("pnl", 0) > 0]
@@ -625,7 +625,7 @@ class ReportWriter:
                 f.write(f"Win rate        : {win_rate:.1f}%\n")
             f.write("\n")
 
-            # â”€â”€ Trade Details Table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Trade Details Table ───────────────────────────────
             f.write("TRADE DETAILS\n")
             f.write(f"{self.SEP_TABLE}\n")
             f.write(
@@ -636,61 +636,61 @@ class ReportWriter:
             f.write(f"{self.SEP_TABLE}\n")
 
             for p in positions:
-                exit_p  = f"â‚¹{p['exit_price']:.2f}" if p.get("exit_price") else "â€”"
+                exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
                 total_pnl = p.get('pnl', 0) + p.get('_partial_pnl', 0)
-                pnl_val = f"â‚¹{total_pnl:+,.2f}" if p.get("exit_price") else "â€”"
+                pnl_val = f"₹{total_pnl:+,.2f}" if p.get("exit_price") else "—"
                 origin  = "[M] " if p.get("_external") else ""
                 display_qty = p['qty'] + p.get('_partial_qty', 0)
                 f.write(
                     f"{origin}{p['symbol']:<{16 - len(origin)}} {p['side']:<6} {display_qty:>5} "
-                    f"â‚¹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
+                    f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                     f"{(p.get('exit_reason') or 'OPEN'):<14} "
-                    f"{(p.get('entry_time') or 'â€”'):<10} "
-                    f"{(p.get('exit_time') or 'â€”'):<10}\n"
+                    f"{(p.get('entry_time') or '—'):<10} "
+                    f"{(p.get('exit_time') or '—'):<10}\n"
                 )
 
             f.write("\n")
 
-            # â”€â”€ Rationales â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Rationales ────────────────────────────────────────
             f.write("TRADE RATIONALES\n")
             f.write(f"{self.SEP_MINOR}\n")
             for p in positions:
-                f.write(f"  {p['symbol']}: {p.get('rationale', 'â€”')}\n")
+                f.write(f"  {p['symbol']}: {p.get('rationale', '—')}\n")
             f.write("\n")
 
-            # â”€â”€ P&L Breakdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── P&L Breakdown ─────────────────────────────────────
             f.write(f"{self.SEP_MAJOR}\n")
             f.write("P&L BREAKDOWN\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
-            f.write(f"Gross P&L               : â‚¹{pnl['gross_pnl']:+,.2f}\n\n")
+            f.write(f"Gross P&L               : ₹{pnl['gross_pnl']:+,.2f}\n\n")
 
             f.write("CHARGES & TAXES:\n")
-            f.write(f"  Brokerage             : â‚¹{charges['brokerage']:,.2f}\n")
-            f.write(f"  STT (sell side)       : â‚¹{charges['stt']:,.2f}\n")
-            f.write(f"  Exchange transaction  : â‚¹{charges['exchange_txn']:,.2f}\n")
-            f.write(f"  GST (18%)             : â‚¹{charges['gst']:,.2f}\n")
-            f.write(f"  SEBI charges          : â‚¹{charges['sebi_charges']:,.4f}\n")
-            f.write(f"  Stamp duty (buy side) : â‚¹{charges['stamp_duty']:,.2f}\n")
-            f.write(f"  {'â”€' * 40}\n")
-            f.write(f"  Total tax & charges   : â‚¹{charges['total_tax_and_charges']:,.2f}\n\n")
+            f.write(f"  Brokerage             : ₹{charges['brokerage']:,.2f}\n")
+            f.write(f"  STT (sell side)       : ₹{charges['stt']:,.2f}\n")
+            f.write(f"  Exchange transaction  : ₹{charges['exchange_txn']:,.2f}\n")
+            f.write(f"  GST (18%)             : ₹{charges['gst']:,.2f}\n")
+            f.write(f"  SEBI charges          : ₹{charges['sebi_charges']:,.4f}\n")
+            f.write(f"  Stamp duty (buy side) : ₹{charges['stamp_duty']:,.2f}\n")
+            f.write(f"  {'─' * 40}\n")
+            f.write(f"  Total tax & charges   : ₹{charges['total_tax_and_charges']:,.2f}\n\n")
 
             f.write("CLAUDE API COST:\n")
-            f.write(f"  Claude API usage      : â‚¹{charges['claude_api_cost']:,.2f}  (est. â‚¹{self.cfg.CLAUDE_COST_PER_CALL}/call Ã— actual calls)\n")
-            f.write(f"  {'â”€' * 40}\n")
-            f.write(f"  Total all costs       : â‚¹{charges['total_costs']:,.2f}\n\n")
+            f.write(f"  Claude API usage      : ₹{charges['claude_api_cost']:,.2f}  (est. ₹{self.cfg.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
+            f.write(f"  {'─' * 40}\n")
+            f.write(f"  Total all costs       : ₹{charges['total_costs']:,.2f}\n\n")
 
             f.write(f"{'=' * 42}\n")
-            f.write(f"  NET PROFIT AFTER ALL  : â‚¹{pnl['net_profit']:+,.2f}\n")
+            f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
             f.write(f"{'=' * 42}\n")
-            profitable = "YES âœ“" if pnl["is_profitable"] else "NO âœ—"
+            profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
             f.write(f"  Profitable?           : {profitable}\n")
             if budget > 0:
                 returns_pct = pnl["net_profit"] / budget * 100
-                f.write(f"  Day returns           : {returns_pct:+.2f}% on â‚¹{budget:,.0f} budget\n")
+                f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
             f.write("\n")
 
-            # â”€â”€ Estimated Income Tax â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Estimated Income Tax ──────────────────────────────
             tax_rate_pct = pnl.get("tax_rate_pct", 0)
             estimated_tax = pnl.get("estimated_tax", 0)
             profit_after_tax = pnl.get("profit_after_tax", pnl["net_profit"])
@@ -698,37 +698,37 @@ class ReportWriter:
             f.write(f"{self.SEP_MINOR}\n")
             f.write(f"  Tax slab rate         : {self.cfg.TAX_RATE_PCT}% + {self.cfg.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
             if pnl["net_profit"] > 0:
-                f.write(f"  Estimated tax         : â‚¹{estimated_tax:,.2f}\n")
-                f.write(f"  Profit after tax      : â‚¹{profit_after_tax:+,.2f}\n")
+                f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
+                f.write(f"  Profit after tax      : ₹{profit_after_tax:+,.2f}\n")
             else:
-                f.write(f"  Estimated tax         : â‚¹0.00 (no tax on losses)\n")
+                f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
                 f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
             f.write("\n")
 
-            f.write(f"  FYI: Zerodha Kite Connect subscription is â‚¹{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
+            f.write(f"  FYI: Zerodha Kite Connect subscription is ₹{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
             f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
-            # â”€â”€ Turnover Details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Turnover Details ──────────────────────────────────
             f.write("TURNOVER DETAILS\n")
             f.write(f"{self.SEP_MINOR}\n")
-            f.write(f"  Buy turnover          : â‚¹{charges['buy_turnover']:,.2f}\n")
-            f.write(f"  Sell turnover         : â‚¹{charges['sell_turnover']:,.2f}\n")
-            f.write(f"  Total turnover        : â‚¹{charges['total_turnover']:,.2f}\n")
+            f.write(f"  Buy turnover          : ₹{charges['buy_turnover']:,.2f}\n")
+            f.write(f"  Sell turnover         : ₹{charges['sell_turnover']:,.2f}\n")
+            f.write(f"  Total turnover        : ₹{charges['total_turnover']:,.2f}\n")
             f.write(f"  Total orders          : {charges['num_orders']}\n\n")
 
-            # â”€â”€ Chronological Trade Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Chronological Trade Log ───────────────────────────
             f.write("CHRONOLOGICAL TRADE LOG\n")
             f.write(f"{self.SEP_MINOR}\n")
             for entry in trade_log:
                 f.write(
                     f"  [{entry['time']}] {entry['action']:<14} "
                     f"{entry['symbol']:<12} {entry['side']:<5} "
-                    f"{entry['qty']:>5}  â‚¹{entry['price']:>10}  "
+                    f"{entry['qty']:>5}  ₹{entry['price']:>10}  "
                     f"{entry['detail']}\n"
                 )
             f.write("\n")
 
-        # â”€â”€ JSON data dump â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── JSON data dump ────────────────────────────────────────
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump({
                 "date":             str(today),
@@ -752,7 +752,7 @@ class ReportWriter:
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
 
-        # â”€â”€ Auto-fill intraday tax ledger for live trading days â”€â”€â”€
+        # ── Auto-fill intraday tax ledger for live trading days ───
         if not dry_run:
             try:
                 import sys as _sys, os as _os

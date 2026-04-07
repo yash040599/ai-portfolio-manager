@@ -72,7 +72,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 10. ✅ Partial Profit Taking (Scale-Out)
 - **Versions**: V1 (retired), V2, NoAI
 - **Gap**: All-or-nothing exits — full position until SL or target. Professional traders scale out.
-- **Fix**: At 1.5× risk profit, exit 33% of qty (1/3) and move SL to breakeven on remainder. Trail remainder at 65% step. Locks in guaranteed profit while letting winners run. Min qty threshold: 3.
+- **Fix**: At 1.5× risk profit, exit 33% of qty (1/3) and move SL to breakeven on remainder. Trail remainder at 50% step. Locks in guaranteed profit while letting winners run. Min qty threshold: 3.
 - **Source**: Universal risk management principle — "Take some off the table."
 
 ---

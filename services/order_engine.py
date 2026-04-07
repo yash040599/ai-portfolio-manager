@@ -1,13 +1,13 @@
-﻿# ================================================================
+# ================================================================
 # services/order_engine.py
 # ================================================================
 # Manages order execution, position tracking, SL/target monitoring,
 # and P&L calculation for Phase 2 intraday trading.
 #
 # Two modes controlled by Config.DRY_RUN:
-#   True  â†’ orders are LOGGED to terminal + log file. No Zerodha
+#   True  → orders are LOGGED to terminal + log file. No Zerodha
 #            API calls. P&L is simulated using real live prices.
-#   False â†’ orders are sent to Zerodha via ZerodhaClient.place_order().
+#   False → orders are sent to Zerodha via ZerodhaClient.place_order().
 #
 # Responsibilities:
 #   1. Execute or simulate trade entries (buy/sell)
@@ -18,7 +18,7 @@
 #   6. Calculate full P&L with taxes and charges
 #
 # Position lifecycle:
-#   PENDING â†’ OPEN â†’ CLOSED (via SL, target, review, or square-off)
+#   PENDING → OPEN → CLOSED (via SL, target, review, or square-off)
 #
 # Every action is logged with timestamps so the end-of-day report
 # can reconstruct the full trade history.
@@ -45,7 +45,7 @@ class OrderEngine:
         self.zerodha = zerodha
         self.log     = log
 
-        # â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── State ─────────────────────────────────────────────────
         # All positions tracked for the day.
         # Each position dict has:
         #   symbol, exchange, side, qty,
@@ -58,23 +58,23 @@ class OrderEngine:
         self.trade_log:   list[dict] = []   # chronological log of all actions
         self.claude_calls: int       = 0    # tracks Claude API call count for cost calc
 
-        # Dynamic budget â€” set by PortfolioManager after fetching Zerodha funds.
+        # Dynamic budget — set by PortfolioManager after fetching Zerodha funds.
         # Falls back to MAX_BUDGET_INR if not set.
         self._budget: float = float(config.MAX_BUDGET_INR)
 
         # Running order counter for dry-run IDs
         self._dry_run_counter: int = 0
 
-        # Circuit breaker baseline â€” after cooldown, only re-trip on
+        # Circuit breaker baseline — after cooldown, only re-trip on
         # NEW losses exceeding the threshold (not cumulative day losses).
         self._cb_pnl_baseline: float = 0.0
         self._cb_trip_count:   int   = 0    # how many times CB tripped today
 
-        # Consecutive SL counter â€” triggers a pause after N straight SL hits
+        # Consecutive SL counter — triggers a pause after N straight SL hits
         self._consecutive_sl_count: int = 0
         self._sl_pause_until: float = 0.0   # time.time() when pause ends
 
-        # â”€â”€ Order failure tracking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Order failure tracking ────────────────────────────────
         # Consecutive order placement failures (resets on success).
         # When this reaches ORDER_FAILURE_LIMIT, the engine signals
         # the manager to stop calling Claude and gracefully shut down.
@@ -89,8 +89,8 @@ class OrderEngine:
             new_max = self.cfg.dynamic_max_positions(amount)
             if new_max != self.cfg.MAX_POSITIONS:
                 self.log.info(
-                    f"MAX_POSITIONS adjusted: {self.cfg.MAX_POSITIONS} â†’ {new_max} "
-                    f"(budget â‚¹{amount:,.0f})"
+                    f"MAX_POSITIONS adjusted: {self.cfg.MAX_POSITIONS} → {new_max} "
+                    f"(budget ₹{amount:,.0f})"
                 )
                 self.cfg.MAX_POSITIONS = new_max
 
@@ -102,7 +102,7 @@ class OrderEngine:
         return self._order_api_broken
 
     # ================================================================
-    # RESUME â€” LOAD EXISTING POSITIONS FROM ZERODHA
+    # RESUME — LOAD EXISTING POSITIONS FROM ZERODHA
     # ================================================================
 
     def load_existing_positions(self) -> int:
@@ -194,10 +194,10 @@ class OrderEngine:
             self.positions.append(position)
             loaded += 1
 
-            sl_label = f"SL â‚¹{sl:.2f}" if atr else f"SL â‚¹{sl:.2f} (fallback)"
+            sl_label = f"SL ₹{sl:.2f}" if atr else f"SL ₹{sl:.2f} (fallback)"
             self.log.success(
-                f"Resumed: {side} {abs_qty}x {symbol} @ â‚¹{avg_price:.2f} | "
-                f"{sl_label} | Target â‚¹{target:.2f}"
+                f"Resumed: {side} {abs_qty}x {symbol} @ ₹{avg_price:.2f} | "
+                f"{sl_label} | Target ₹{target:.2f}"
             )
             self._log_action("RESUME", symbol, side, abs_qty, avg_price,
                              "Loaded from existing Zerodha position")
@@ -205,7 +205,7 @@ class OrderEngine:
         return loaded
 
     # ================================================================
-    # SYNC â€” DETECT EXTERNALLY OPENED POSITIONS
+    # SYNC — DETECT EXTERNALLY OPENED POSITIONS
     # ================================================================
 
     def sync_external_positions(self) -> int:
@@ -213,13 +213,13 @@ class OrderEngine:
         Checks Zerodha for MIS (intraday) positions that the bot doesn't
         know about (opened manually via the Zerodha app/web). Loads them
         into the engine with ATR-based SL/targets so the bot manages
-        them going forward â€” monitoring, Claude review, and square-off.
+        them going forward — monitoring, Claude review, and square-off.
 
         Only considers MIS (intraday) positions. CNC (delivery/long-term)
-        positions are ignored â€” those are investments, not intraday trades.
+        positions are ignored — those are investments, not intraday trades.
 
         Also detects when a manually-opened position has been closed by the
-        user on Zerodha â€” marks it EXTERNAL_CLOSE internally.
+        user on Zerodha — marks it EXTERNAL_CLOSE internally.
 
         Called before re-scans and new trade entry.
         Returns the number of new external positions detected.
@@ -239,7 +239,7 @@ class OrderEngine:
         known_symbols = {p["symbol"] for p in self.positions if p["status"] == "OPEN"}
 
         for pos in net_positions:
-            # ONLY MIS (intraday) â€” CNC (delivery) is long-term, not our business
+            # ONLY MIS (intraday) — CNC (delivery) is long-term, not our business
             if pos.get("product") != "MIS":
                 continue
             qty = pos.get("quantity", 0)
@@ -253,7 +253,7 @@ class OrderEngine:
             if not symbol or avg_price <= 0:
                 continue
 
-            # Already tracking this symbol â€” skip
+            # Already tracking this symbol — skip
             if symbol in known_symbols:
                 continue
 
@@ -315,16 +315,16 @@ class OrderEngine:
             known_symbols.add(symbol)
             loaded += 1
 
-            sl_label = f"SL â‚¹{sl:.2f}" if atr else f"SL â‚¹{sl:.2f} (fallback)"
+            sl_label = f"SL ₹{sl:.2f}" if atr else f"SL ₹{sl:.2f} (fallback)"
             self.log.success(
                 f"Adopted external MIS position: {side} {abs_qty}x {symbol} "
-                f"@ â‚¹{avg_price:.2f} | {sl_label} | Target â‚¹{target:.2f}"
+                f"@ ₹{avg_price:.2f} | {sl_label} | Target ₹{target:.2f}"
             )
             self._log_action("ADOPT_EXTERNAL", symbol, side, abs_qty, avg_price,
                              "Manual intraday position adopted for management")
 
         # Detect externally-opened positions that the user has closed
-        # on Zerodha â€” mark them closed with EXTERNAL_CLOSE reason
+        # on Zerodha — mark them closed with EXTERNAL_CLOSE reason
         zerodha_open = {
             pos.get("tradingsymbol", "")
             for pos in net_positions
@@ -348,7 +348,7 @@ class OrderEngine:
                             exit_price = zp_exit
                         else:
                             self.log.warning(
-                                f"Could not determine exit price for {p['symbol']} â€” "
+                                f"Could not determine exit price for {p['symbol']} — "
                                 f"using entry price as fallback"
                             )
                         break
@@ -365,7 +365,7 @@ class OrderEngine:
                 p["pnl"] = round(pnl, 2)
                 self.log.info(
                     f"External position closed by user: {p['side']} {p['qty']}x "
-                    f"{p['symbol']} @ â‚¹{exit_price:.2f} | P&L: â‚¹{pnl:+,.2f}"
+                    f"{p['symbol']} @ ₹{exit_price:.2f} | P&L: ₹{pnl:+,.2f}"
                 )
                 self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
                                  p["qty"], exit_price, "User closed via Zerodha app")
@@ -441,7 +441,7 @@ class OrderEngine:
         return round(atr, 2)
 
     # ================================================================
-    # ENTRY â€” OPEN A NEW POSITION
+    # ENTRY — OPEN A NEW POSITION
     # ================================================================
 
     def enter_trade(self, trade: dict) -> bool:
@@ -459,14 +459,14 @@ class OrderEngine:
         Entry pipeline (each step can reject the trade):
           1. Validate entry price vs live Zerodha quote
           2. Bid-ask spread check (illiquid stocks)
-          3. ATR-based SL/target â†’ merge wider of ATR vs Claude
+          3. ATR-based SL/target → merge wider of ATR vs Claude
           4. Late-entry target reduction (13:00 / 14:00 cutoffs)
           5. R:R floor check (post late-entry)
           6. Minimum profit check (must cover round-trip charges)
           7. Slippage simulation (dry-run only)
           8. Budget / max positions / duplicate / sector / direction guards
           9. Short entry cutoff / max re-entries per stock
-         10. Place order â†’ scale SL/target to actual fill price
+         10. Place order → scale SL/target to actual fill price
          11. Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
@@ -480,7 +480,7 @@ class OrderEngine:
 
         now = now_ist()
 
-        # â”€â”€ Validate entry price against live quote â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Validate entry price against live quote ───────────────
         # Claude can hallucinate prices. Always use Zerodha as source of truth.
         live_quotes = {}
         try:
@@ -497,14 +497,14 @@ class OrderEngine:
             deviation = abs(entry - live_price) / live_price
             if deviation > 0.05:
                 self.log.warning(
-                    f"Entry price override: {symbol} Claude said â‚¹{entry:.2f} "
-                    f"but live quote is â‚¹{live_price:.2f} "
-                    f"({deviation*100:.1f}% off) â€” using live price"
+                    f"Entry price override: {symbol} Claude said ₹{entry:.2f} "
+                    f"but live quote is ₹{live_price:.2f} "
+                    f"({deviation*100:.1f}% off) — using live price"
                 )
                 entry = live_price
                 trade["entry_price"] = entry
 
-        # â”€â”€ Bid-ask spread check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Bid-ask spread check ──────────────────────────────────
         max_spread = getattr(self.cfg, "MAX_SPREAD_PCT", 0)
         if max_spread > 0 and not self.cfg.DRY_RUN:
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
@@ -516,12 +516,12 @@ class OrderEngine:
                 if spread_pct > max_spread:
                     self.log.warning(
                         f"{symbol}: bid-ask spread {spread_pct:.2f}% exceeds "
-                        f"MAX_SPREAD_PCT ({max_spread}%) â€” skipping "
-                        f"(bid â‚¹{best_bid:.2f} / ask â‚¹{best_ask:.2f})"
+                        f"MAX_SPREAD_PCT ({max_spread}%) — skipping "
+                        f"(bid ₹{best_bid:.2f} / ask ₹{best_ask:.2f})"
                     )
                     return False
 
-        # â”€â”€ ATR-based dynamic stop-loss / target â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
         if atr and atr > 0:
             multiplier = self.cfg.ATR_MULTIPLIER
@@ -544,14 +544,14 @@ class OrderEngine:
                     atr_sl     = round(entry * (1 + max_sl_pct / 100), 2)
                     atr_target = round(entry * (1 - max_sl_pct * rr_mult / 100), 2)
                 self.log.info(
-                    f"ATR SL was {sl_pct:.1f}% â€” capped to {max_sl_pct}%: "
-                    f"SL â‚¹{atr_sl:.2f} | Target â‚¹{atr_target:.2f}"
+                    f"ATR SL was {sl_pct:.1f}% — capped to {max_sl_pct}%: "
+                    f"SL ₹{atr_sl:.2f} | Target ₹{atr_target:.2f}"
                 )
 
             self.log.info(
                 f"ATR({self.cfg.ATR_PERIOD}, {getattr(self.cfg, 'ATR_INTERVAL', '15minute')}) "
-                f"for {symbol}: â‚¹{atr:.2f} | "
-                f"Dynamic SL: â‚¹{atr_sl:.2f} | Target: â‚¹{atr_target:.2f}"
+                f"for {symbol}: ₹{atr:.2f} | "
+                f"Dynamic SL: ₹{atr_sl:.2f} | Target: ₹{atr_target:.2f}"
             )
 
             # Merge: use WIDER (less protective) of ATR vs Claude SL.
@@ -566,10 +566,10 @@ class OrderEngine:
                 target = max(atr_target, target) if target < entry else atr_target
         else:
             self.log.info(
-                f"ATR unavailable for {symbol} â€” using Claude SL: â‚¹{sl:.2f} / Target: â‚¹{target:.2f}"
+                f"ATR unavailable for {symbol} — using Claude SL: ₹{sl:.2f} / Target: ₹{target:.2f}"
             )
 
-        # â”€â”€ SL sanity check: ensure SL is on the correct side of entry â”€
+        # ── SL sanity check: ensure SL is on the correct side of entry ─
         # Can happen when entry was overridden to live price but SL was
         # calculated by Claude using a stale/hallucinated entry price.
         if side == "BUY" and sl >= entry:
@@ -577,22 +577,22 @@ class OrderEngine:
             sl = round(entry * (1 - default_sl_pct / 100), 2)
             target = round(entry * (1 + default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
             self.log.warning(
-                f"{symbol}: SL was above entry (invalid for BUY) â€” "
-                f"reset to default {default_sl_pct}%: SL â‚¹{sl:.2f} | Target â‚¹{target:.2f}"
+                f"{symbol}: SL was above entry (invalid for BUY) — "
+                f"reset to default {default_sl_pct}%: SL ₹{sl:.2f} | Target ₹{target:.2f}"
             )
         elif side == "SELL" and sl <= entry:
             default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
             sl = round(entry * (1 + default_sl_pct / 100), 2)
             target = round(entry * (1 - default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
             self.log.warning(
-                f"{symbol}: SL was below entry (invalid for SELL) â€” "
-                f"reset to default {default_sl_pct}%: SL â‚¹{sl:.2f} | Target â‚¹{target:.2f}"
+                f"{symbol}: SL was below entry (invalid for SELL) — "
+                f"reset to default {default_sl_pct}%: SL ₹{sl:.2f} | Target ₹{target:.2f}"
             )
 
-        # â”€â”€ Late-entry target reduction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Late-entry target reduction ───────────────────────────
         # Two-tier cutoffs based on time remaining before 3:10 PM square-off:
-        #   13:00+ â†’ 20% target reduction (still ~2h to hit target)
-        #   14:00+ â†’ 35% target reduction (only ~1h, aggressive trades fail)
+        #   13:00+ → 20% target reduction (still ~2h to hit target)
+        #   14:00+ → 35% target reduction (only ~1h, aggressive trades fail)
         # This prevents entering with unreachable targets that end up
         # hitting time-decay or square-off instead of target.
         hour_now = now.hour
@@ -610,12 +610,12 @@ class OrderEngine:
                 distance = entry - target
                 target = round(entry - distance * (1 - late_reduction / 100), 2)
             self.log.info(
-                f"Late entry ({hour_now}:xx): target reduced by {late_reduction:.0f}% â†’ â‚¹{target:.2f}"
+                f"Late entry ({hour_now}:xx): target reduced by {late_reduction:.0f}% → ₹{target:.2f}"
             )
             # Mark position so time-decay doesn't stack on top
             trade["_late_entry_reduced"] = True
 
-        # â”€â”€ Minimum R:R floor for late entries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Minimum R:R floor for late entries ────────────────────
         # If target is too close after late-entry reduction, skip the trade
         if late_reduction > 0:
             sl_distance = abs(entry - sl)
@@ -623,23 +623,23 @@ class OrderEngine:
             if sl_distance > 0 and tgt_distance / sl_distance < 1.2:
                 self.log.warning(
                     f"{symbol}: R:R {tgt_distance/sl_distance:.1f}:1 after late-entry "
-                    f"reduction â€” below 1.2:1 minimum, skipping"
+                    f"reduction — below 1.2:1 minimum, skipping"
                 )
                 return False
 
-        # â”€â”€ Pre-trade minimum profit check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Pre-trade minimum profit check ────────────────────────
         # Skip trades where expected profit doesn't cover charges.
-        # Round-trip charges for small intraday trades ~â‚¹40-50.
+        # Round-trip charges for small intraday trades ~₹40-50.
         min_profit = getattr(self.cfg, 'MIN_EXPECTED_PROFIT', 50)
         expected_profit = abs(target - entry) * qty
         if expected_profit < min_profit:
             self.log.warning(
-                f"{symbol}: expected profit â‚¹{expected_profit:.0f} "
-                f"< min â‚¹{min_profit} (charges will eat it). Skipping."
+                f"{symbol}: expected profit ₹{expected_profit:.0f} "
+                f"< min ₹{min_profit} (charges will eat it). Skipping."
             )
             return False
 
-        # â”€â”€ Apply slippage in dry-run mode for realism â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
             slip_pct = self._adjusted_slippage(now.hour)
             slip = entry * slip_pct / 100
@@ -648,7 +648,7 @@ class OrderEngine:
             else:
                 entry = round(entry - slip, 2)   # sell slightly lower
 
-        # â”€â”€ Budget check before entering â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Budget check before entering ──────────────────────────
         # If qty doesn't fit, reduce to what fits (preserves trade conviction).
         # Only reject if even 1 share exceeds remaining budget.
         cost = entry * qty
@@ -658,21 +658,21 @@ class OrderEngine:
             max_qty = int(remaining / entry) if entry > 0 else 0
             if max_qty >= 1:
                 self.log.warning(
-                    f"{symbol}: {qty}x @ â‚¹{entry:.2f} = â‚¹{cost:,.0f} exceeds budget. "
-                    f"Reducing qty to {max_qty} (â‚¹{max_qty * entry:,.0f})"
+                    f"{symbol}: {qty}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds budget. "
+                    f"Reducing qty to {max_qty} (₹{max_qty * entry:,.0f})"
                 )
                 qty = max_qty
                 trade["qty"] = qty
                 cost = entry * qty
             else:
                 self.log.warning(
-                    f"Cannot enter {symbol}: â‚¹{cost:,.0f} would exceed "
-                    f"budget (current exposure: â‚¹{current_exposure:,.0f}, "
-                    f"remaining: â‚¹{remaining:,.0f})"
+                    f"Cannot enter {symbol}: ₹{cost:,.0f} would exceed "
+                    f"budget (current exposure: ₹{current_exposure:,.0f}, "
+                    f"remaining: ₹{remaining:,.0f})"
                 )
                 return False
 
-        # â”€â”€ Max positions check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
         if open_count >= self.cfg.MAX_POSITIONS:
             ext_count = len([p for p in self.positions if p["status"] == "OPEN" and p.get("_external")])
@@ -683,7 +683,7 @@ class OrderEngine:
             self.log.warning(msg)
             return False
 
-        # â”€â”€ Duplicate symbol guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Duplicate symbol guard ────────────────────────────────
         if self._find_open_position(symbol):
             self.log.warning(
                 f"Cannot enter {symbol}: already have an open position "
@@ -691,7 +691,7 @@ class OrderEngine:
             )
             return False
 
-        # â”€â”€ Sector concentration guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Sector concentration guard ────────────────────────────
         sector = SECTOR_MAP.get(symbol, "OTHER")
         sector_open = sum(
             1 for p in self.positions
@@ -705,7 +705,7 @@ class OrderEngine:
             )
             return False
 
-        # â”€â”€ Direction diversification guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Direction diversification guard ───────────────────────
         # Prevent all positions being in the same direction.
         # With MAX_POSITIONS=3, allow max 2 in same direction.
         max_same_dir = max(1, self.cfg.MAX_POSITIONS - 1)
@@ -716,26 +716,26 @@ class OrderEngine:
         if same_dir_count >= max_same_dir:
             self.log.warning(
                 f"Cannot enter {symbol} ({side}): already have {same_dir_count} "
-                f"{side} position(s) â€” max {max_same_dir} in same direction "
+                f"{side} position(s) — max {max_same_dir} in same direction "
                 f"to maintain diversification"
             )
             return False
 
-        # â”€â”€ Short entry time cutoff â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Short entry time cutoff ───────────────────────────────
         # Don't open new SHORT positions after cutoff hour.
         # Short delivery if cover fails is extremely expensive
-        # (â‚¹500-5000+ in penalties). Early cutoff gives time to
+        # (₹500-5000+ in penalties). Early cutoff gives time to
         # handle order failures before Zerodha's 3:25 auto-square.
         short_cutoff = getattr(self.cfg, 'SHORT_ENTRY_CUTOFF_HOUR', 13)
         if side == "SELL" and now.hour >= short_cutoff:
             self.log.warning(
-                f"Cannot short {symbol} after {short_cutoff}:00 â€” "
+                f"Cannot short {symbol} after {short_cutoff}:00 — "
                 f"short delivery risk too high if cover fails. "
                 f"Current time: {now.strftime('%H:%M')}"
             )
             return False
 
-        # â”€â”€ Max re-entries per stock check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Max re-entries per stock check ────────────────────────
         max_reentries = self.cfg.MAX_REENTRIES_PER_STOCK
         if max_reentries > 0:
             past_entries = sum(
@@ -748,16 +748,16 @@ class OrderEngine:
                 )
                 return False
 
-        # â”€â”€ Place or simulate the order â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Place or simulate the order ───────────────────────────
         estimated_entry = entry  # Save pre-fill price for proportional SL/target scaling
         if self.cfg.DRY_RUN:
             self._dry_run_counter += 1
             order_id = f"DRY_RUN_{self._dry_run_counter:04d}"
             tag = f"\033[96m[DRY RUN]\033[0m"
             self.log.info(
-                f"{tag} {side} {qty}x {symbol} @ â‚¹{entry:.2f} | "
-                f"SL: â‚¹{sl:.2f} | Target: â‚¹{target:.2f} | "
-                f"Cost: â‚¹{cost:,.0f}"
+                f"{tag} {side} {qty}x {symbol} @ ₹{entry:.2f} | "
+                f"SL: ₹{sl:.2f} | Target: ₹{target:.2f} | "
+                f"Cost: ₹{cost:,.0f}"
             )
         elif self._order_api_broken:
             self.log.error(
@@ -771,7 +771,7 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=side, order_type="MARKET",
                 )
-                # Order succeeded â€” reset failure counter
+                # Order succeeded — reset failure counter
                 self._consecutive_order_failures = 0
 
                 # Fetch actual fill price from Zerodha
@@ -780,14 +780,14 @@ class OrderEngine:
                     deviation = abs(fill_price - entry) / entry if entry > 0 else 0
                     if deviation > 0.05:
                         self.log.warning(
-                            f"Fill price differs: {symbol} estimated â‚¹{entry:.2f} "
-                            f"â†’ actual â‚¹{fill_price:.2f} ({deviation*100:.1f}% off) "
-                            f"â€” using actual fill (Zerodha is source of truth)"
+                            f"Fill price differs: {symbol} estimated ₹{entry:.2f} "
+                            f"→ actual ₹{fill_price:.2f} ({deviation*100:.1f}% off) "
+                            f"— using actual fill (Zerodha is source of truth)"
                         )
                     else:
                         self.log.success(
                             f"Fill confirmed: Order {order_id} | "
-                            f"Avg price: â‚¹{fill_price:.2f}"
+                            f"Avg price: ₹{fill_price:.2f}"
                         )
                     # Always use the actual Zerodha fill price
                     entry = fill_price
@@ -811,15 +811,15 @@ class OrderEngine:
                                 sl = round(entry * (1 + max_sl_pct / 100), 2)
                                 target = round(entry * (1 - max_sl_pct * rr_mult / 100), 2)
                             self.log.info(
-                                f"SL re-capped after fill scaling: {actual_sl_pct:.1f}% â†’ {max_sl_pct}%"
+                                f"SL re-capped after fill scaling: {actual_sl_pct:.1f}% → {max_sl_pct}%"
                             )
                         self.log.info(
-                            f"SL/Target scaled to fill: SL â‚¹{sl:.2f} | Target â‚¹{target:.2f}"
+                            f"SL/Target scaled to fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
                         )
                 else:
                     self.log.warning(
-                        f"ORDER PLACED but fill price unknown: {side} {qty}x {symbol} @ â‚¹{entry:.2f} | "
-                        f"Order ID: {order_id} â€” using estimated price"
+                        f"ORDER PLACED but fill price unknown: {side} {qty}x {symbol} @ ₹{entry:.2f} | "
+                        f"Order ID: {order_id} — using estimated price"
                     )
             except Exception as e:
                 self._consecutive_order_failures += 1
@@ -832,12 +832,12 @@ class OrderEngine:
                     self._order_api_broken = True
                     self.log.error(
                         f"ORDER API BROKEN: {self.ORDER_FAILURE_LIMIT} consecutive "
-                        f"failures â€” halting all new orders. Will close open "
+                        f"failures — halting all new orders. Will close open "
                         f"positions and shut down."
                     )
                 return False
 
-        # â”€â”€ Track the position â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Track the position ────────────────────────────────────
         position = {
             "symbol":       symbol,
             "exchange":     exchange,
@@ -859,16 +859,16 @@ class OrderEngine:
             "_entry_rsi":   trade.get("_entry_rsi"),
             "_entry_time":  now.strftime("%H:%M:%S"),
             "_indicator_snapshot": trade.get("_indicator_snapshot"),
-            # Late-entry flag â€” prevents time-decay from stacking
+            # Late-entry flag — prevents time-decay from stacking
             "_late_entry_reduced": trade.get("_late_entry_reduced", False),
             # Store initial SL at entry for correct trailing risk calculation
             "initial_sl": sl,
         }
 
-        # â”€â”€ Place SL-M order on exchange for instant SL execution â”€
-        # Exchange SL-M triggers instantly at trigger_price â€” no polling delay.
+        # ── Place SL-M order on exchange for instant SL execution ─
+        # Exchange SL-M triggers instantly at trigger_price — no polling delay.
         # Software monitoring (check_stops_and_targets) is the fallback;
-        # it handles targets, trailing, and time-decay â€” things SL-M can't do.
+        # it handles targets, trailing, and time-decay — things SL-M can't do.
         use_exchange_sl = getattr(self.cfg, 'USE_EXCHANGE_SL', False)
         if use_exchange_sl and not self.cfg.DRY_RUN and hasattr(self.zerodha, 'place_sl_m_order'):
             sl_side = "SELL" if side == "BUY" else "BUY"
@@ -881,11 +881,11 @@ class OrderEngine:
                 position["_sl_order_id"] = sl_order_id
                 self.log.info(
                     f"Exchange SL-M placed for {symbol}: {sl_side} {qty}x "
-                    f"trigger â‚¹{sl:.2f} | ID: {sl_order_id}"
+                    f"trigger ₹{sl:.2f} | ID: {sl_order_id}"
                 )
             else:
                 self.log.warning(
-                    f"SL-M placement failed for {symbol} â€” "
+                    f"SL-M placement failed for {symbol} — "
                     f"falling back to software SL monitoring"
                 )
 
@@ -894,7 +894,7 @@ class OrderEngine:
         return True
 
     # ================================================================
-    # EXIT â€” CLOSE A POSITION
+    # EXIT — CLOSE A POSITION
     # ================================================================
 
     def exit_position(
@@ -910,7 +910,7 @@ class OrderEngine:
         "SQUARE_OFF", "CIRCUIT_BREAKER"
 
         In dry-run mode: logs the exit. P&L calculated from entry/exit prices.
-        In live mode: places a counter-order (BUYâ†’SELL or SELLâ†’BUY).
+        In live mode: places a counter-order (BUY→SELL or SELL→BUY).
         """
         symbol   = position["symbol"]
         exchange = position["exchange"]
@@ -940,25 +940,25 @@ class OrderEngine:
         sl_order_id = position.get("_sl_order_id")
         sl_m_handled = False
 
-        # â”€â”€ Handle exchange SL-M order â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Handle exchange SL-M order ────────────────────────────
         if sl_order_id and not self.cfg.DRY_RUN:
             if reason == "STOP_LOSS":
                 # SL-M on exchange should have triggered. Verify fill qty
-                # matches position qty â€” SL-M can partially fill if
+                # matches position qty — SL-M can partially fill if
                 # insufficient liquidity at trigger price.
                 sl_filled_qty = qty  # default: assume full fill
                 try:
                     sl_filled_qty = self.zerodha.get_order_filled_qty(sl_order_id) or qty
                 except Exception:
-                    pass  # API unavailable â€” assume full fill
+                    pass  # API unavailable — assume full fill
 
                 if sl_filled_qty >= qty:
                     self.log.info(
-                        f"SL-M {sl_order_id} triggered for {symbol} â€” "
+                        f"SL-M {sl_order_id} triggered for {symbol} — "
                         f"full fill confirmed ({sl_filled_qty} shares)"
                     )
                 else:
-                    # Partial fill â€” place market exit for remaining shares
+                    # Partial fill — place market exit for remaining shares
                     remaining = qty - sl_filled_qty
                     self.log.warning(
                         f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares. "
@@ -971,13 +971,13 @@ class OrderEngine:
                         )
                     except Exception as e:
                         self.log.error(
-                            f"FAILED to exit remaining {remaining} shares of {symbol}: {e} â€” "
+                            f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
                             f"MANUAL INTERVENTION NEEDED"
                         )
                 position["_sl_order_id"] = None
                 sl_m_handled = True
             else:
-                # Non-SL exit (target, review, square-off) â€” cancel
+                # Non-SL exit (target, review, square-off) — cancel
                 # the pending SL-M before placing our own exit order.
                 self.log.info(
                     f"Cancelling SL-M {sl_order_id} before {reason} exit for {symbol}"
@@ -989,15 +989,15 @@ class OrderEngine:
             tag = f"\033[96m[DRY RUN]\033[0m"
             pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
             self.log.info(
-                f"{tag} EXIT {exit_side} {qty}x {symbol} @ â‚¹{exit_price:.2f} | "
+                f"{tag} EXIT {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
                 f"Reason: {reason} | "
-                f"P&L: {pnl_color}â‚¹{pnl:+,.2f}\033[0m"
+                f"P&L: {pnl_color}₹{pnl:+,.2f}\033[0m"
             )
         elif sl_m_handled:
-            # Exchange SL-M already filled â€” no order to place
+            # Exchange SL-M already filled — no order to place
             pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
             self.log.info(
-                f"Exchange SL exit for {symbol}: {pnl_color}â‚¹{pnl:+,.2f}\033[0m"
+                f"Exchange SL exit for {symbol}: {pnl_color}₹{pnl:+,.2f}\033[0m"
             )
         else:
             try:
@@ -1005,7 +1005,7 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=exit_side, order_type="MARKET",
                 )
-                # Exit order succeeded â€” reset failure counter
+                # Exit order succeeded — reset failure counter
                 self._consecutive_order_failures = 0
 
                 # Fetch actual fill price from Zerodha
@@ -1014,22 +1014,22 @@ class OrderEngine:
                     deviation = abs(fill_price - exit_price) / exit_price if exit_price > 0 else 0
                     if deviation > 0.05:
                         self.log.warning(
-                            f"Exit fill differs: {symbol} estimated â‚¹{exit_price:.2f} "
-                            f"â†’ actual â‚¹{fill_price:.2f} ({deviation*100:.1f}% off) "
-                            f"â€” using actual fill"
+                            f"Exit fill differs: {symbol} estimated ₹{exit_price:.2f} "
+                            f"→ actual ₹{fill_price:.2f} ({deviation*100:.1f}% off) "
+                            f"— using actual fill"
                         )
                     else:
                         self.log.success(
                             f"EXIT FILLED: {exit_side} {qty}x {symbol} | "
-                            f"Estimated: â‚¹{exit_price:.2f} â†’ Actual: â‚¹{fill_price:.2f} | "
+                            f"Estimated: ₹{exit_price:.2f} → Actual: ₹{fill_price:.2f} | "
                             f"Reason: {reason}"
                         )
                     # Always use the actual Zerodha fill price
                     exit_price = fill_price
                 else:
                     self.log.warning(
-                        f"EXIT placed but fill price unknown: {exit_side} {qty}x {symbol} @ â‚¹{exit_price:.2f} | "
-                        f"Reason: {reason} â€” using estimated price"
+                        f"EXIT placed but fill price unknown: {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
+                        f"Reason: {reason} — using estimated price"
                     )
                 # Recalculate P&L with actual fill prices
                 if side == "BUY":
@@ -1038,12 +1038,12 @@ class OrderEngine:
                     pnl = (entry - exit_price) * qty
                 pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
                 self.log.info(
-                    f"Actual P&L for {symbol}: {pnl_color}â‚¹{pnl:+,.2f}\033[0m"
+                    f"Actual P&L for {symbol}: {pnl_color}₹{pnl:+,.2f}\033[0m"
                 )
             except Exception as e:
                 self._consecutive_order_failures += 1
                 self.log.error(
-                    f"Exit order FAILED for {symbol}: {e} â€” "
+                    f"Exit order FAILED for {symbol}: {e} — "
                     f"MANUAL INTERVENTION NEEDED "
                     f"(failure {self._consecutive_order_failures}/{self.ORDER_FAILURE_LIMIT})"
                 )
@@ -1051,10 +1051,10 @@ class OrderEngine:
                     self._order_api_broken = True
                     self.log.error(
                         f"ORDER API BROKEN: {self.ORDER_FAILURE_LIMIT} consecutive "
-                        f"failures â€” Zerodha API may be down. "
+                        f"failures — Zerodha API may be down. "
                         f"Open positions may need manual closure."
                     )
-                # Don't mark as CLOSED â€” the position is still open on Zerodha.
+                # Don't mark as CLOSED — the position is still open on Zerodha.
                 # Resume feature will pick it up on next restart.
                 self._log_action("EXIT_FAILED", symbol, exit_side, qty, exit_price, str(e))
                 return
@@ -1076,7 +1076,7 @@ class OrderEngine:
             self.record_profitable_close()
 
     # ================================================================
-    # PARTIAL EXIT â€” EXIT SUBSET OF SHARES
+    # PARTIAL EXIT — EXIT SUBSET OF SHARES
     # ================================================================
 
     def _place_exit_order(
@@ -1088,7 +1088,7 @@ class OrderEngine:
     ) -> float | None:
         """
         Exits a subset of shares from an open position (for partial
-        profit taking). Does NOT mark the position as CLOSED â€” the
+        profit taking). Does NOT mark the position as CLOSED — the
         remaining shares stay open. Updates the trade log.
 
         Returns the actual fill price on success, None on failure.
@@ -1101,7 +1101,7 @@ class OrderEngine:
         if self.cfg.DRY_RUN:
             tag = f"\033[96m[DRY RUN]\033[0m"
             self.log.info(
-                f"{tag} PARTIAL EXIT {exit_side} {qty}x {symbol} @ â‚¹{price:.2f} | "
+                f"{tag} PARTIAL EXIT {exit_side} {qty}x {symbol} @ ₹{price:.2f} | "
                 f"Reason: {reason}"
             )
         else:
@@ -1119,7 +1119,7 @@ class OrderEngine:
             except Exception as e:
                 self._consecutive_order_failures += 1
                 self.log.error(
-                    f"Partial exit order FAILED for {symbol}: {e} â€” "
+                    f"Partial exit order FAILED for {symbol}: {e} — "
                     f"position qty NOT adjusted"
                 )
                 if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
@@ -1131,7 +1131,7 @@ class OrderEngine:
         return price
 
     # ================================================================
-    # MONITOR â€” CHECK SL/TARGET HITS
+    # MONITOR — CHECK SL/TARGET HITS
     # ================================================================
 
     def check_stops_and_targets(self, quotes: dict) -> int:
@@ -1140,7 +1140,7 @@ class OrderEngine:
         Auto-exits any position where stop-loss or target is hit.
         Also applies auto trailing stop-loss for winning positions.
 
-        This is the rule-based monitoring loop â€” no Claude API calls.
+        This is the rule-based monitoring loop — no Claude API calls.
         Called every PRICE_POLL_SECONDS.
 
         Returns the number of positions that were closed.
@@ -1176,13 +1176,13 @@ class OrderEngine:
                 sl_distance  = (sl - current_price) / current_price * 100
                 tgt_distance = (current_price - target) / current_price * 100
 
-            # â”€â”€ Stop-loss check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Stop-loss check ───────────────────────────────────
             if side == "BUY" and current_price <= sl:
                 loss = (sl - entry) * qty
                 self.log.warning(
-                    f"STOP-LOSS HIT: {symbol} {side} | entry â‚¹{entry:.2f} â†’ "
-                    f"â‚¹{current_price:.2f} (SL: â‚¹{sl:.2f}) | "
-                    f"Loss: â‚¹{loss:,.2f} on {qty} shares"
+                    f"STOP-LOSS HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (SL: ₹{sl:.2f}) | "
+                    f"Loss: ₹{loss:,.2f} on {qty} shares"
                 )
                 exit_price = sl if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "STOP_LOSS")
@@ -1191,21 +1191,21 @@ class OrderEngine:
             elif side == "SELL" and current_price >= sl:
                 loss = (entry - sl) * qty
                 self.log.warning(
-                    f"STOP-LOSS HIT: {symbol} {side} | entry â‚¹{entry:.2f} â†’ "
-                    f"â‚¹{current_price:.2f} (SL: â‚¹{sl:.2f}) | "
-                    f"Loss: â‚¹{loss:,.2f} on {qty} shares"
+                    f"STOP-LOSS HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (SL: ₹{sl:.2f}) | "
+                    f"Loss: ₹{loss:,.2f} on {qty} shares"
                 )
                 exit_price = sl if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "STOP_LOSS")
                 closed += 1
 
-            # â”€â”€ Target check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Target check ─────────────────────────────────────
             elif side == "BUY" and current_price >= target:
                 profit = (target - entry) * qty
                 self.log.success(
-                    f"TARGET HIT: {symbol} {side} | entry â‚¹{entry:.2f} â†’ "
-                    f"â‚¹{current_price:.2f} (Target: â‚¹{target:.2f}) | "
-                    f"Profit: â‚¹{profit:,.2f} on {qty} shares"
+                    f"TARGET HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (Target: ₹{target:.2f}) | "
+                    f"Profit: ₹{profit:,.2f} on {qty} shares"
                 )
                 exit_price = target if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "TARGET_HIT")
@@ -1214,15 +1214,15 @@ class OrderEngine:
             elif side == "SELL" and current_price <= target:
                 profit = (entry - target) * qty
                 self.log.success(
-                    f"TARGET HIT: {symbol} {side} | entry â‚¹{entry:.2f} â†’ "
-                    f"â‚¹{current_price:.2f} (Target: â‚¹{target:.2f}) | "
-                    f"Profit: â‚¹{profit:,.2f} on {qty} shares"
+                    f"TARGET HIT: {symbol} {side} | entry ₹{entry:.2f} → "
+                    f"₹{current_price:.2f} (Target: ₹{target:.2f}) | "
+                    f"Profit: ₹{profit:,.2f} on {qty} shares"
                 )
                 exit_price = target if self.cfg.DRY_RUN else current_price
                 self.exit_position(pos, exit_price, "TARGET_HIT")
                 closed += 1
 
-            # â”€â”€ Auto trailing stop-loss (only for open, winning positions) â”€â”€
+            # ── Auto trailing stop-loss (only for open, winning positions) ──
             else:
                 self._auto_trail_stop(pos, current_price)
 
@@ -1233,16 +1233,16 @@ class OrderEngine:
         Rule-based trailing stop-loss with partial profit taking.
 
         Formula example (BUY):
-          Entry 100, SL 97 â†’ initial_risk = 3
+          Entry 100, SL 97 → initial_risk = 3
           At +1.5R (price 104.50): partial exit 1/3 qty, start trailing
-          New SL = entry + (profit Ã— TRAIL_STEP_PCT%)
-                 = 100 + (4.50 Ã— 0.50) = 102.25 (locks 50% of open profit)
+          New SL = entry + (profit × TRAIL_STEP_PCT%)
+                 = 100 + (4.50 × 0.50) = 102.25 (locks 50% of open profit)
 
         Rules:
-          1. Trigger: profit >= initial_risk Ã— TRAIL_AFTER_RISK_MULTIPLE (1.5)
+          1. Trigger: profit >= initial_risk × TRAIL_AFTER_RISK_MULTIPLE (1.5)
           2. Partial exit: sell 1/3 qty at current price (once only, min 3 shares)
           3. Trail: SL = entry + TRAIL_STEP_PCT% of unrealised profit
-          4. SL ratchets â€” only moves in favorable direction, never loosens
+          4. SL ratchets — only moves in favorable direction, never loosens
         """
         entry  = pos["entry_price"]
         sl     = pos["stop_loss"]
@@ -1265,16 +1265,16 @@ class OrderEngine:
             if profit < initial_risk * trail_after:
                 return  # not enough profit to start trailing
 
-            # â”€â”€ Partial profit taking (once, at first trail trigger) â”€â”€
+            # ── Partial profit taking (once, at first trail trigger) ──
             if not pos.get("_partial_taken") and pos["qty"] >= 3:
                 partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
                 remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((current_price - entry) * partial_qty, 2)
 
                 self.log.success(
-                    f"PARTIAL PROFIT: {symbol} â€” exiting {partial_qty} of "
-                    f"{pos['qty']} shares @ â‚¹{current_price:.2f} "
-                    f"(locking â‚¹{partial_pnl:,.2f} profit)"
+                    f"PARTIAL PROFIT: {symbol} — exiting {partial_qty} of "
+                    f"{pos['qty']} shares @ ₹{current_price:.2f} "
+                    f"(locking ₹{partial_pnl:,.2f} profit)"
                 )
 
                 # Place the partial exit order
@@ -1298,27 +1298,27 @@ class OrderEngine:
                 pos["stop_loss"] = new_sl
                 self._update_exchange_sl(pos, new_sl)
                 self.log.info(
-                    f"AUTO-TRAIL {symbol}: SL â‚¹{sl:.2f} â†’ â‚¹{new_sl:.2f} "
-                    f"(locking {trail_pct*100:.0f}% of â‚¹{profit:.2f} profit)"
+                    f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
+                    f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
                 )
                 self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
-                                 f"Auto trailing: profit â‚¹{profit:.2f}")
+                                 f"Auto trailing: profit ₹{profit:.2f}")
 
         else:  # SELL (short)
             profit = entry - current_price
             if profit < initial_risk * trail_after:
                 return
 
-            # â”€â”€ Partial profit taking (once, at first trail trigger) â”€â”€
+            # ── Partial profit taking (once, at first trail trigger) ──
             if not pos.get("_partial_taken") and pos["qty"] >= 3:
                 partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
                 remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((entry - current_price) * partial_qty, 2)
 
                 self.log.success(
-                    f"PARTIAL PROFIT: {symbol} â€” exiting {partial_qty} of "
-                    f"{pos['qty']} shares @ â‚¹{current_price:.2f} "
-                    f"(locking â‚¹{partial_pnl:,.2f} profit)"
+                    f"PARTIAL PROFIT: {symbol} — exiting {partial_qty} of "
+                    f"{pos['qty']} shares @ ₹{current_price:.2f} "
+                    f"(locking ₹{partial_pnl:,.2f} profit)"
                 )
 
                 fill = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
@@ -1339,11 +1339,11 @@ class OrderEngine:
                 pos["stop_loss"] = new_sl
                 self._update_exchange_sl(pos, new_sl)
                 self.log.info(
-                    f"AUTO-TRAIL {symbol}: SL â‚¹{sl:.2f} â†’ â‚¹{new_sl:.2f} "
-                    f"(locking {trail_pct*100:.0f}% of â‚¹{profit:.2f} profit)"
+                    f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
+                    f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
                 )
                 self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
-                                 f"Auto trailing: profit â‚¹{profit:.2f}")
+                                 f"Auto trailing: profit ₹{profit:.2f}")
 
     def _update_exchange_sl(self, pos: dict, new_trigger: float):
         """Modify the exchange SL-M order trigger price when trailing."""
@@ -1356,7 +1356,7 @@ class OrderEngine:
         if not ok:
             self.log.warning(
                 f"Could not update exchange SL-M for {pos['symbol']} "
-                f"(order {sl_order_id}) â€” software SL still active"
+                f"(order {sl_order_id}) — software SL still active"
             )
 
     def _replace_exchange_sl(self, pos: dict, trigger_price: float):
@@ -1393,11 +1393,11 @@ class OrderEngine:
         if now.hour < self.cfg.TARGET_DECAY_AFTER_HOUR:
             return
 
-        # Already adjusted â€” don't decay again
+        # Already adjusted — don't decay again
         if "original_target" in pos:
             return
 
-        # Skip if late-entry reduction was already applied at entry â€”
+        # Skip if late-entry reduction was already applied at entry —
         # stacking both reductions makes the R:R unviable.
         if pos.get("_late_entry_reduced"):
             return
@@ -1418,11 +1418,11 @@ class OrderEngine:
 
         pos["target_price"] = new_target
         self.log.info(
-            f"TIME-DECAY: {pos['symbol']} target â‚¹{target:.2f} â†’ â‚¹{new_target:.2f} "
+            f"TIME-DECAY: {pos['symbol']} target ₹{target:.2f} → ₹{new_target:.2f} "
             f"(-{self.cfg.TARGET_DECAY_PCT:.0f}% after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00)"
         )
         self._log_action("TIME_DECAY_TARGET", pos["symbol"], "", 0, new_target,
-                         f"Original target: â‚¹{target:.2f}")
+                         f"Original target: ₹{target:.2f}")
 
     # ================================================================
     # STAGNANT POSITION EXIT (NoAI)
@@ -1484,9 +1484,9 @@ class OrderEngine:
                 pnl = (current_price - entry) * pos["qty"] if side == "BUY" \
                     else (entry - current_price) * pos["qty"]
                 self.log.warning(
-                    f"STAGNANT EXIT: {pos['symbol']} {side} â€” open {elapsed:.0f} min, "
+                    f"STAGNANT EXIT: {pos['symbol']} {side} — open {elapsed:.0f} min, "
                     f"moved only {move_pct:+.2f}% (need {min_move_pct}%) | "
-                    f"P&L: â‚¹{pnl:+,.2f}"
+                    f"P&L: ₹{pnl:+,.2f}"
                 )
                 self.exit_position(pos, current_price, "STAGNANT_EXIT")
                 closed += 1
@@ -1527,20 +1527,20 @@ class OrderEngine:
 
             if pnl < 0:
                 self.log.warning(
-                    f"EOD EXIT: {pos['symbol']} {side} â€” losing â‚¹{pnl:+,.2f}, "
+                    f"EOD EXIT: {pos['symbol']} {side} — losing ₹{pnl:+,.2f}, "
                     f"exiting before close"
                 )
                 self.exit_position(pos, current_price, "EOD_EXIT")
                 closed += 1
             elif abs(pnl) < entry * pos["qty"] * 0.001:
-                # Near breakeven â€” tighten SL to entry Â± 0.1%
+                # Near breakeven — tighten SL to entry ± 0.1%
                 if side == "BUY":
                     tight_sl = round(entry * 0.999, 2)
                     if tight_sl > pos["stop_loss"]:
                         pos["stop_loss"] = tight_sl
                         self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
-                            f"EOD TIGHTEN: {pos['symbol']} â€” SL â†’ â‚¹{tight_sl:.2f} (breakeven protect)"
+                            f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
                         )
                 else:
                     tight_sl = round(entry * 1.001, 2)
@@ -1548,7 +1548,7 @@ class OrderEngine:
                         pos["stop_loss"] = tight_sl
                         self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
-                            f"EOD TIGHTEN: {pos['symbol']} â€” SL â†’ â‚¹{tight_sl:.2f} (breakeven protect)"
+                            f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
                         )
 
         return closed
@@ -1602,8 +1602,8 @@ class OrderEngine:
                         else (pos["entry_price"] - price) * pos["qty"]
                     )
                     self.log.info(
-                        f"CLAUDE REVIEW â†’ EXIT {symbol}: {reason} | "
-                        f"Current â‚¹{price:.2f}, Est P&L â‚¹{pnl_est:+,.2f}"
+                        f"CLAUDE REVIEW → EXIT {symbol}: {reason} | "
+                        f"Current ₹{price:.2f}, Est P&L ₹{pnl_est:+,.2f}"
                     )
                     self.exit_position(pos, price, "REVIEW_EXIT")
                 else:
@@ -1623,13 +1623,13 @@ class OrderEngine:
                     if side == "BUY" and new_sl >= current_for_sl:
                         self.log.warning(
                             f"Rejected SL adjustment for {symbol}: "
-                            f"SL â‚¹{new_sl:.2f} >= current â‚¹{current_for_sl:.2f} (above market for BUY)"
+                            f"SL ₹{new_sl:.2f} >= current ₹{current_for_sl:.2f} (above market for BUY)"
                         )
                         continue
                     if side == "SELL" and new_sl <= current_for_sl:
                         self.log.warning(
                             f"Rejected SL adjustment for {symbol}: "
-                            f"SL â‚¹{new_sl:.2f} <= current â‚¹{current_for_sl:.2f} (below market for SELL)"
+                            f"SL ₹{new_sl:.2f} <= current ₹{current_for_sl:.2f} (below market for SELL)"
                         )
                         continue
 
@@ -1643,28 +1643,28 @@ class OrderEngine:
                             new_sl = round(entry * (1 + max_sl_pct / 100), 2)
                         self.log.warning(
                             f"Claude SL for {symbol} capped: {sl_dist_pct:.1f}% "
-                            f"â†’ {max_sl_pct}% (â‚¹{new_sl:.2f})"
+                            f"→ {max_sl_pct}% (₹{new_sl:.2f})"
                         )
 
                     # Only allow tightening (SL moves toward entry, not away)
                     if side == "BUY" and new_sl < old_sl:
                         self.log.warning(
                             f"Rejected SL loosening for {symbol}: "
-                            f"â‚¹{old_sl:.2f} â†’ â‚¹{new_sl:.2f} (would widen risk)"
+                            f"₹{old_sl:.2f} → ₹{new_sl:.2f} (would widen risk)"
                         )
                         continue
                     if side == "SELL" and new_sl > old_sl:
                         self.log.warning(
                             f"Rejected SL loosening for {symbol}: "
-                            f"â‚¹{old_sl:.2f} â†’ â‚¹{new_sl:.2f} (would widen risk)"
+                            f"₹{old_sl:.2f} → ₹{new_sl:.2f} (would widen risk)"
                         )
                         continue
 
                     pos["stop_loss"] = new_sl
                     self._update_exchange_sl(pos, new_sl)
                     self.log.info(
-                        f"CLAUDE REVIEW â†’ ADJUST SL {symbol}: "
-                        f"â‚¹{old_sl:.2f} â†’ â‚¹{new_sl:.2f} | {reason}"
+                        f"CLAUDE REVIEW → ADJUST SL {symbol}: "
+                        f"₹{old_sl:.2f} → ₹{new_sl:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_SL", symbol, "", 0, new_sl,
                                      reason)
@@ -1675,24 +1675,24 @@ class OrderEngine:
                     old_tgt = pos["target_price"]
                     pos["target_price"] = action["new_target"]
                     self.log.info(
-                        f"CLAUDE REVIEW â†’ ADJUST TARGET {symbol}: "
-                        f"â‚¹{old_tgt:.2f} â†’ â‚¹{action['new_target']:.2f} | {reason}"
+                        f"CLAUDE REVIEW → ADJUST TARGET {symbol}: "
+                        f"₹{old_tgt:.2f} → ₹{action['new_target']:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_TARGET", symbol, "", 0, action["new_target"],
                                      reason)
 
             elif act == "NEW":
                 self.log.info(
-                    f"CLAUDE REVIEW â†’ NEW TRADE: {action.get('side', '?')} "
+                    f"CLAUDE REVIEW → NEW TRADE: {action.get('side', '?')} "
                     f"{action.get('symbol', '?')} | {reason}"
                 )
                 self.enter_trade(action)
 
             elif act == "HOLD":
-                self.log.info(f"CLAUDE REVIEW â†’ HOLD {symbol}: {reason}")
+                self.log.info(f"CLAUDE REVIEW → HOLD {symbol}: {reason}")
 
     # ================================================================
-    # SQUARE OFF â€” END OF DAY
+    # SQUARE OFF — END OF DAY
     # ================================================================
 
     def square_off_all(self, quotes: dict):
@@ -1700,7 +1700,7 @@ class OrderEngine:
         Closes ALL open positions at current market prices.
         Called at SQUARE_OFF time or on graceful shutdown.
 
-        This is a safety mechanism â€” intraday positions MUST be
+        This is a safety mechanism — intraday positions MUST be
         closed before 3:20 PM or Zerodha auto-squares with penalty.
         """
         open_pos = self.open_positions()
@@ -1708,7 +1708,7 @@ class OrderEngine:
             self.log.info("No open positions to square off")
             return
 
-        self.log.section("SQUARE OFF â€” Closing all open positions")
+        self.log.section("SQUARE OFF — Closing all open positions")
 
         closed_count = 0
         for pos in open_pos:
@@ -1721,7 +1721,7 @@ class OrderEngine:
                     closed_count += 1
             except Exception as e:
                 self.log.error(
-                    f"Failed to square off {pos['symbol']}: {e} â€” "
+                    f"Failed to square off {pos['symbol']}: {e} — "
                     f"position may still be open on Zerodha!"
                 )
 
@@ -1729,12 +1729,12 @@ class OrderEngine:
             self.log.success(f"Squared off all {closed_count} positions")
         else:
             self.log.error(
-                f"Squared off {closed_count}/{len(open_pos)} positions â€” "
+                f"Squared off {closed_count}/{len(open_pos)} positions — "
                 f"{len(open_pos) - closed_count} may still be open on Zerodha!"
             )
 
     # ================================================================
-    # CIRCUIT BREAKER â€” MAX DAILY LOSS
+    # CIRCUIT BREAKER — MAX DAILY LOSS
     # ================================================================
 
     def check_circuit_breaker(self) -> bool:
@@ -1755,9 +1755,9 @@ class OrderEngine:
 
         if pnl_since_baseline < -max_loss:
             self.log.error(
-                f"CIRCUIT BREAKER: P&L since baseline â‚¹{pnl_since_baseline:,.2f} "
-                f"(day total â‚¹{self.day_pnl():,.2f}) exceeds max loss of "
-                f"â‚¹{max_loss:,.0f} ({max_loss_pct}% of budget). "
+                f"CIRCUIT BREAKER: P&L since baseline ₹{pnl_since_baseline:,.2f} "
+                f"(day total ₹{self.day_pnl():,.2f}) exceeds max loss of "
+                f"₹{max_loss:,.0f} ({max_loss_pct}% of budget). "
                 f"Stopping all trading."
             )
             return True
@@ -1769,7 +1769,7 @@ class OrderEngine:
         self._cb_trip_count += 1
 
     def circuit_breaker_trips_exhausted(self) -> bool:
-        """True if max CB trips reached â€” no more cooldowns allowed."""
+        """True if max CB trips reached — no more cooldowns allowed."""
         max_trips = self.cfg.MAX_CIRCUIT_BREAKER_TRIPS
         return max_trips > 0 and self._cb_trip_count >= max_trips
 
@@ -1785,7 +1785,7 @@ class OrderEngine:
             pause_min = self.cfg.CONSECUTIVE_SL_PAUSE_MINUTES
             self._sl_pause_until = time.time() + pause_min * 60
             self.log.warning(
-                f"WHIPSAW GUARD: {self._consecutive_sl_count} consecutive SL hits â€” "
+                f"WHIPSAW GUARD: {self._consecutive_sl_count} consecutive SL hits — "
                 f"pausing new entries for {pause_min} min"
             )
 
@@ -1875,7 +1875,7 @@ class OrderEngine:
         charges   = self.calculate_charges()
 
         # Net profit = gross P&L minus per-trade charges and Claude API cost.
-        # Zerodha monthly subscription is NOT subtracted here â€” it's FYI.
+        # Zerodha monthly subscription is NOT subtracted here — it's FYI.
         net = gross_pnl - charges["total_costs"]
 
         # Estimated tax liability (only on positive net profit)
@@ -1921,10 +1921,10 @@ class OrderEngine:
 
         # Clear the in-place status line before printing the table
         print(f"\r{' ' * 100}\r")
-        self.log.info(f"{'â”€'*80}")
+        self.log.info(f"{'─'*80}")
         self.log.info(f"  {'SYMBOL':<12} {'SIDE':<5} {'ENTRY':>8} {'CURRENT':>8} "
                        f"{'P&L':>10} {'SL':>8} {'SL%':>6} {'TGT':>8} {'TGT%':>6}")
-        self.log.info(f"  {'â”€'*12} {'â”€'*5} {'â”€'*8} {'â”€'*8} {'â”€'*10} {'â”€'*8} {'â”€'*6} {'â”€'*8} {'â”€'*6}")
+        self.log.info(f"  {'─'*12} {'─'*5} {'─'*8} {'─'*8} {'─'*10} {'─'*8} {'─'*6} {'─'*8} {'─'*6}")
 
         for pos in open_pos:
             key = f"{pos['exchange']}:{pos['symbol']}"
@@ -1953,13 +1953,13 @@ class OrderEngine:
 
             self.log.info(
                 f"  {pos['symbol']:<12} {side:<5} "
-                f"â‚¹{entry:>7.2f} â‚¹{current:>7.2f} "
-                f"{pnl_color}â‚¹{pnl:>+9,.2f}{reset} "
-                f"â‚¹{sl:>7.2f} {sl_dist_pct:>5.1f}% "
-                f"â‚¹{target:>7.2f} {tgt_dist_pct:>5.1f}%"
+                f"₹{entry:>7.2f} ₹{current:>7.2f} "
+                f"{pnl_color}₹{pnl:>+9,.2f}{reset} "
+                f"₹{sl:>7.2f} {sl_dist_pct:>5.1f}% "
+                f"₹{target:>7.2f} {tgt_dist_pct:>5.1f}%"
             )
 
-        self.log.info(f"{'â”€'*80}")
+        self.log.info(f"{'─'*80}")
 
     # ================================================================
     # INTERNAL HELPERS
@@ -1975,14 +1975,14 @@ class OrderEngine:
     def _adjusted_slippage(self, hour: int) -> float:
         """
         Returns time-of-day-adjusted slippage % for dry-run mode.
-        Opening hour has wider spreads (2Ã—), last hour before
-        square-off has moderate widening (1.5Ã—).
+        Opening hour has wider spreads (2×), last hour before
+        square-off has moderate widening (1.5×).
         """
         base = self.cfg.SLIPPAGE_PCT
         if hour == self.cfg.MARKET_OPEN_HOUR:
             return base * 2.0    # opening volatility
         if hour >= self.cfg.SQUARE_OFF_HOUR - 1:
-            return base * 1.5    # last hour â€” reduced liquidity
+            return base * 1.5    # last hour — reduced liquidity
         return base
 
     def _find_open_position(self, symbol: str) -> dict | None:
@@ -2030,14 +2030,14 @@ class OrderEngine:
         if self.cfg.DRY_RUN:
             return 0
 
-        self.log.section("RECONCILIATION â€” Verifying against Zerodha")
+        self.log.section("RECONCILIATION — Verifying against Zerodha")
 
         zerodha_positions = self.zerodha.get_todays_positions()
         if not zerodha_positions:
-            self.log.warning("No position data from Zerodha â€” skipping reconciliation")
+            self.log.warning("No position data from Zerodha — skipping reconciliation")
             return 0
 
-        # Build lookup: symbol â†’ Zerodha position data
+        # Build lookup: symbol → Zerodha position data
         # Only MIS (intraday) positions
         z_lookup: dict[str, dict] = {}
         for zp in zerodha_positions:
@@ -2084,7 +2084,7 @@ class OrderEngine:
             if z_entry <= 0 or z_exit <= 0:
                 continue
 
-            # Skip price correction for partial-exit trades â€” Zerodha's
+            # Skip price correction for partial-exit trades — Zerodha's
             # averaged sell_price can't be split between partial and final exits.
             if pos.get("_partial_qty", 0) > 0:
                 expected_total = pos["qty"] + pos.get("_partial_qty", 0)
@@ -2093,7 +2093,7 @@ class OrderEngine:
                         f"QTY MISMATCH {symbol}: engine {expected_total} vs Zerodha {z_qty}"
                     )
                 else:
-                    self.log.success(f"{symbol}: âœ“ quantities match (partial exit trade)")
+                    self.log.success(f"{symbol}: ✓ quantities match (partial exit trade)")
                 continue
 
             # Compare and correct
@@ -2103,11 +2103,11 @@ class OrderEngine:
             old_pnl   = pos["pnl"]
 
             if abs(z_entry - old_entry) > 0.01:
-                changes.append(f"entry â‚¹{old_entry:.2f}â†’â‚¹{z_entry:.2f}")
+                changes.append(f"entry ₹{old_entry:.2f}→₹{z_entry:.2f}")
                 pos["entry_price"] = round(z_entry, 2)
 
             if old_exit is not None and abs(z_exit - old_exit) > 0.01:
-                changes.append(f"exit â‚¹{old_exit:.2f}â†’â‚¹{z_exit:.2f}")
+                changes.append(f"exit ₹{old_exit:.2f}→₹{z_exit:.2f}")
                 pos["exit_price"] = round(z_exit, 2)
 
             # Recalculate P&L from corrected prices
@@ -2118,7 +2118,7 @@ class OrderEngine:
             new_pnl = round(new_pnl, 2)
 
             if abs(new_pnl - old_pnl) > 0.01:
-                changes.append(f"P&L â‚¹{old_pnl:+,.2f}â†’â‚¹{new_pnl:+,.2f}")
+                changes.append(f"P&L ₹{old_pnl:+,.2f}→₹{new_pnl:+,.2f}")
                 pos["pnl"] = new_pnl
 
             if changes:
@@ -2132,11 +2132,11 @@ class OrderEngine:
                     f"Zerodha correction: {' | '.join(changes)}",
                 )
             else:
-                self.log.success(f"{symbol}: âœ“ matches Zerodha")
+                self.log.success(f"{symbol}: ✓ matches Zerodha")
 
         if corrected:
             self.log.warning(f"Reconciliation: {corrected} position(s) corrected")
         else:
-            self.log.success("Reconciliation: all positions match Zerodha âœ“")
+            self.log.success("Reconciliation: all positions match Zerodha ✓")
 
         return corrected

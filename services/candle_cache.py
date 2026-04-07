@@ -1,18 +1,18 @@
-﻿# ================================================================
+# ================================================================
 # services/candle_cache.py
 # ================================================================
 # SQLite-backed cache for historical candle data from Zerodha.
 #
 # Caches candle data that doesn't change during a trading session:
-#   - Daily candles (previous days only â€” today's daily candle updates)
+#   - Daily candles (previous days only — today's daily candle updates)
 #   - Previous day's 15-min candles (finalized once that day ends)
 #
-# Today's intraday candles are NEVER cached â€” they update every
+# Today's intraday candles are NEVER cached — they update every
 # 15 minutes as new candles form during the live session.
 #
 # Cache is stored in data/candle_cache.db (separate DB for git transferability).
 # One row per candle: (symbol, interval, date, OHLCV).
-# Lookup key: (symbol, interval) â†’ all candles for that combo.
+# Lookup key: (symbol, interval) → all candles for that combo.
 #
 # This saves ~100 Zerodha API calls per scan on a 100-stock universe
 # when daily candles are already cached, and ~100 more when previous
@@ -61,9 +61,9 @@ class CandleCache:
                 )
             """)
 
-    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ────────────────────────────────────────────────────────────────
     # PUBLIC API
-    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ────────────────────────────────────────────────────────────────
 
     def get_cached_candles(
         self,
@@ -79,7 +79,7 @@ class CandleCache:
         Returns empty list if nothing is cached.
         """
         today = now_ist().date()
-        # Never return cached data for today â€” it changes intraday
+        # Never return cached data for today — it changes intraday
         cache_end = min(to_date, today - datetime.timedelta(days=1))
         if cache_end < from_date:
             return []

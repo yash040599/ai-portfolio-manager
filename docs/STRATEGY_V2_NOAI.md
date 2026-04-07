@@ -187,7 +187,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Late entry guard (60 min before close) | Monitor loop | Yes |
 | Max re-entry limit (2×/day per stock) | Order engine | Yes |
 | Order API failure circuit breaker | Order engine | Yes |
-| Partial profit taking (33% at 1.5×risk, trail 65%) | Order engine | Yes |
+| Partial profit taking (33% at 1.5×risk, trail 50%) | Order engine | Yes |
 | Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
 | **Claude position reviews** | **V2 monitor (every 25 min)** | **No (replaced by stagnant exit)** |

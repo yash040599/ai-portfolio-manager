@@ -1,12 +1,12 @@
-﻿# ================================================================
+# ================================================================
 # services/market_data.py
 # ================================================================
 # Enriches a portfolio with live prices and 1-year market history.
 #
 # Routes automatically between two data sources:
-#   Kite live   â†’ when zerodha_plan = "connect_paid"
+#   Kite live   → when zerodha_plan = "connect_paid"
 #                 One API call for ALL stocks (fast)
-#   Yahoo Finance â†’ when zerodha_plan = "personal_free"
+#   Yahoo Finance → when zerodha_plan = "personal_free"
 #                   One HTTP request per stock (slower, free)
 #
 # Both sources produce the same output fields so nothing else in
@@ -41,7 +41,7 @@ class MarketData:
         """
         Enriches every stock in the portfolio with prices and history.
         Routes to Kite or Yahoo based on zerodha_plan in config.py.
-        Always call this method â€” not the private ones below.
+        Always call this method — not the private ones below.
         """
         source = self.cfg.zerodha()["price_source"]
         if source == "kite_live":
@@ -57,17 +57,17 @@ class MarketData:
         """
         Two-step enrichment using Kite's paid APIs:
 
-        Step 1 â€” kite.quote()
+        Step 1 — kite.quote()
           Fetches live prices for ALL stocks in a single API call.
           This is the key speed advantage: 15 stocks = 1 call, not 15.
 
-        Step 2 â€” kite.historical_data()
+        Step 2 — kite.historical_data()
           Fetches 1-year OHLCV per stock for trend + momentum stats.
           Instrument list is loaded once upfront via ZerodhaClient,
           not per stock.
         """
 
-        # â”€â”€ Step 1: Live quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 1: Live quotes ────────────────────────────────────
         self.log.info("Fetching live quotes from Kite (single API call)...")
         quotes = self.zerodha.get_quotes(portfolio)
 
@@ -94,7 +94,7 @@ class MarketData:
 
         self.log.success("Live prices applied")
 
-        # â”€â”€ Step 2: 1-year historical data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2: 1-year historical data ────────────────────────
         self.log.info("Fetching 1-year historical data from Kite...")
         one_year_ago = now_ist().date() - datetime.timedelta(days=365)
 
@@ -131,7 +131,7 @@ class MarketData:
         try:
             import yfinance as yf
         except ImportError:
-            self.log.error("yfinance not installed â€” run: pip install yfinance")
+            self.log.error("yfinance not installed — run: pip install yfinance")
             return portfolio
 
         self.log.info("Fetching data via Yahoo Finance (free, ~15 min delay)...")
@@ -187,7 +187,7 @@ class MarketData:
                 self.log.warning(f"Could not fetch data for {symbol}: {e}")
                 stock["price_source"] = "unavailable"
 
-            time.sleep(0.5)   # Polite pause â€” Yahoo rate-limits aggressive scrapers
+            time.sleep(0.5)   # Polite pause — Yahoo rate-limits aggressive scrapers
 
         self.log.success("Yahoo Finance data applied")
         return portfolio
@@ -202,13 +202,13 @@ class MarketData:
         Computes 52-week range, average volume, 1-year price trend,
         and 30-day momentum from a list of OHLCV records.
 
-        Used by BOTH enrichers â€” same logic, same output fields,
+        Used by BOTH enrichers — same logic, same output fields,
         regardless of whether data came from Kite or Yahoo.
 
         Momentum definition:
-          STRONG  â†’ last 30-day avg > prior 30-day avg by more than 5%
-          WEAK    â†’ last 30-day avg < prior 30-day avg by more than 5%
-          NEUTRAL â†’ within Â±5%
+          STRONG  → last 30-day avg > prior 30-day avg by more than 5%
+          WEAK    → last 30-day avg < prior 30-day avg by more than 5%
+          NEUTRAL → within ±5%
         """
         highs   = [d["high"]   for d in hist]
         lows    = [d["low"]    for d in hist]

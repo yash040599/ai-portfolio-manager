@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 # services/analysis_queue.py
 # ================================================================
 # Per-stock Claude analysis queue with auto-retry and interactive
@@ -10,10 +10,10 @@
 #   - Output format schema (the template Claude must follow)
 #
 # Status lifecycle per stock:
-#   pending â†’ (auto-retry Ã—3) â†’ done
-#                              â†’ failed â†’ (user: r/s/q) â†’ done / skipped
+#   pending → (auto-retry ×3) → done
+#                              → failed → (user: r/s/q) → done / skipped
 #
-# One failure affects exactly one stock â€” the rest continue.
+# One failure affects exactly one stock — the rest continue.
 # ================================================================
 
 import json
@@ -30,7 +30,7 @@ from core.claude_client import ClaudeClient
 # OUTPUT FORMAT SCHEMA
 # ================================================================
 # The exact template Claude must return for every stock.
-# AnalysisQueue._parse() extracts these fields â€” because the schema
+# AnalysisQueue._parse() extracts these fields — because the schema
 # is strict, every stock in the report looks identical regardless
 # of which API call produced it.
 # ================================================================
@@ -42,15 +42,15 @@ ACTION: [HOLD | AVERAGE DOWN | PARTIAL EXIT | FULL EXIT | ADD MORE]
 CONVICTION: [Low | Medium | High]
 REASONING: [2-4 sentences, plain English, no jargon]
 HORIZON: [Short (<6 months) | Medium (6-18 months) | Long (2-3 years)]
-TARGET_PRICE: [specific â‚¹ value or range e.g. â‚¹450-500]
+TARGET_PRICE: [specific ₹ value or range e.g. ₹450-500]
 RISKS:
 1. [first risk]
 2. [second risk]
 3. [third risk]
 WATCH: [one specific trigger or event to monitor]
 NEXT_STEPS:
-1. [first concrete actionable step e.g. "Average down if price drops below â‚¹X"]
-2. [second step e.g. "Set stop-loss at â‚¹Y" or "Book partial profits above â‚¹Z"]
+1. [first concrete actionable step e.g. "Average down if price drops below ₹X"]
+2. [second step e.g. "Set stop-loss at ₹Y" or "Book partial profits above ₹Z"]
 ACTION_DETAIL: [short description e.g. "Sell 50% of position" or "Buy 10 shares" or "Exit all" or "No action"]
 NUM_STOCKS: [number of shares to buy/sell NOW, or 0 if no immediate action]
 TRIGGER_PRICE: [price level to watch for next action, or 0 if none]
@@ -75,8 +75,8 @@ class AnalysisQueue:
         self.claude = claude
         self.log    = log
         self._queue: list[dict] = []
-        self._prev_by_symbol: dict[str, dict] = {}  # symbol â†’ previous analysis
-        self._history_by_symbol: dict[str, list[dict]] = {}  # symbol â†’ all past analyses
+        self._prev_by_symbol: dict[str, dict] = {}  # symbol → previous analysis
+        self._history_by_symbol: dict[str, list[dict]] = {}  # symbol → all past analyses
         self._pending_actions: list[dict] = []  # unacted recommendations
 
     # ================================================================
@@ -111,7 +111,7 @@ class AnalysisQueue:
             for stock in portfolio
         ]
 
-        # Build previous-analysis lookup (latest only â€” backward compat)
+        # Build previous-analysis lookup (latest only — backward compat)
         self._prev_by_symbol = {}
         if previous_data:
             prev_portfolio = {s["symbol"]: s for s in previous_data.get("portfolio", [])}
@@ -139,21 +139,21 @@ class AnalysisQueue:
         """
         Runs the full two-pass analysis.
 
-        Pass 1 â€” Automatic:
+        Pass 1 — Automatic:
           Every stock is sent to Claude with up to MAX_RETRIES attempts.
           Transient errors (rate limits, overloads) are retried automatically.
           Permanent errors (bad key, no credit) skip retries immediately.
 
-        Pass 2 â€” Interactive (only if Pass 1 left failures):
+        Pass 2 — Interactive (only if Pass 1 left failures):
           Shows a red summary of failed stocks. For each one, asks:
-            r â†’ retry once more right now
-            s â†’ skip this stock (logged in report)
-            q â†’ skip this and all remaining failed stocks
+            r → retry once more right now
+            s → skip this stock (logged in report)
+            q → skip this and all remaining failed stocks
 
         Returns: (analyses, skipped_symbols, failed_log)
         """
         total = len(self._queue)
-        self.log.section(f"CLAUDE ANALYSIS â€” {total} stocks  [{self.cfg.claude()['model']}]")
+        self.log.section(f"CLAUDE ANALYSIS — {total} stocks  [{self.cfg.claude()['model']}]")
 
         self._run_pass1(total)
 
@@ -164,7 +164,7 @@ class AnalysisQueue:
         return self._collect_results()
 
     # ================================================================
-    # PASS 1 â€” AUTOMATIC
+    # PASS 1 — AUTOMATIC
     # ================================================================
 
     def _run_pass1(self, total: int):
@@ -175,7 +175,7 @@ class AnalysisQueue:
     def _analyse_with_retry(self, entry: dict, pos: int, total: int):
         """
         Tries one stock up to MAX_RETRIES times.
-        Prints inline progress: [1/15] TCS âœ“ done
+        Prints inline progress: [1/15] TCS ✓ done
         """
         symbol = entry["stock"]["symbol"]
 
@@ -195,15 +195,15 @@ class AnalysisQueue:
             ok, error = self._call_claude(entry)
 
             if ok:
-                print("\033[92mâœ“ done\033[0m")
+                print("\033[92m✓ done\033[0m")
                 return
             else:
-                print("\033[91mâœ—\033[0m ", end="", flush=True)
+                print("\033[91m✗\033[0m ", end="", flush=True)
                 if not ClaudeClient.is_retryable(error):
-                    break   # Permanent error â€” retrying won't help
+                    break   # Permanent error — retrying won't help
 
         print()
-        self.log.error(f"FAILED: {symbol} â€” {entry['error']}")
+        self.log.error(f"FAILED: {symbol} — {entry['error']}")
 
     def _call_claude(self, entry: dict) -> tuple[bool, str | None]:
         """
@@ -230,7 +230,7 @@ class AnalysisQueue:
             return False, error
 
     # ================================================================
-    # PASS 2 â€” INTERACTIVE
+    # PASS 2 — INTERACTIVE
     # ================================================================
 
     def _run_pass2(self):
@@ -238,9 +238,9 @@ class AnalysisQueue:
         Shows failed stocks in red and asks the user what to do
         with each one: retry (r), skip (s), or skip all (q).
         """
-        self.log.section("FAILED STOCKS â€” MANUAL RESOLUTION")
+        self.log.section("FAILED STOCKS — MANUAL RESOLUTION")
         for e in self.failed():
-            self.log.error(f"{e['stock']['symbol']} â€” {e['error']}")
+            self.log.error(f"{e['stock']['symbol']} — {e['error']}")
 
         self._print_progress()
         print("\nSome stocks failed after all auto-retries. Handle them one by one.\n")
@@ -250,7 +250,7 @@ class AnalysisQueue:
                 continue   # Already resolved by a prior 'q'
 
             symbol = entry["stock"]["symbol"]
-            print(f"  \033[91mâœ— \033[1m{symbol}\033[0m")
+            print(f"  \033[91m✗ \033[1m{symbol}\033[0m")
             print(f"    Reason  : {entry['error']}")
             print(f"    Options : \033[1mr\033[0m retry  \033[1ms\033[0m skip  \033[1mq\033[0m skip all remaining")
 
@@ -273,7 +273,7 @@ class AnalysisQueue:
 
                 elif choice == "s":
                     entry["status"] = "skipped"
-                    self.log.warning(f"{symbol} skipped â€” noted in report")
+                    self.log.warning(f"{symbol} skipped — noted in report")
                     break
 
                 elif choice == "q":
@@ -303,9 +303,9 @@ class AnalysisQueue:
         s = len(self.skipped()); p = len(self.pending())
         t = len(self._queue)
         print(
-            f"\n  Progress: \033[92m{d} done\033[0m Â· "
-            f"\033[91m{f} failed\033[0m Â· "
-            f"\033[93m{s} skipped\033[0m Â· "
+            f"\n  Progress: \033[92m{d} done\033[0m · "
+            f"\033[91m{f} failed\033[0m · "
+            f"\033[93m{s} skipped\033[0m · "
             f"{p} pending  (total: {t})\n"
         )
 
@@ -314,9 +314,9 @@ class AnalysisQueue:
         analyses = [
             {
                 "symbol":   e["stock"]["symbol"],
-                "stock":    e["stock"],    # full data dict â€” used by ReportWriter
-                "raw":      e["result"],   # raw Claude text  â€” saved to JSON
-                "parsed":   e["parsed"],   # structured fields â€” used in report
+                "stock":    e["stock"],    # full data dict — used by ReportWriter
+                "raw":      e["result"],   # raw Claude text  — saved to JSON
+                "parsed":   e["parsed"],   # structured fields — used in report
                 "attempts": e["attempts"],
             }
             for e in self.done()
@@ -359,9 +359,9 @@ class AnalysisQueue:
         pnl_pct        = (total_pnl / total_invested * 100) if total_invested > 0 else 0
 
         holdings_section = f"PORTFOLIO OVERVIEW (as of {today}):\n"
-        holdings_section += f"  Total invested : â‚¹{total_invested:,.2f}\n"
-        holdings_section += f"  Current value  : â‚¹{total_current:,.2f}\n"
-        holdings_section += f"  Overall P&L    : â‚¹{total_pnl:,.2f} ({pnl_pct:.1f}%)\n"
+        holdings_section += f"  Total invested : ₹{total_invested:,.2f}\n"
+        holdings_section += f"  Current value  : ₹{total_current:,.2f}\n"
+        holdings_section += f"  Overall P&L    : ₹{total_pnl:,.2f} ({pnl_pct:.1f}%)\n"
         holdings_section += f"  Total stocks   : {len(portfolio)}\n\n"
 
         # Group by sector
@@ -377,7 +377,7 @@ class AnalysisQueue:
             sector_value = sum(s.get("current_value", 0) for s in stocks)
             sector_pct = (sector_value / total_current * 100) if total_current > 0 else 0
             stock_names = ", ".join(s["symbol"] for s in stocks)
-            holdings_section += f"  {sector:<25} : â‚¹{sector_value:>10,.2f}  ({sector_pct:>5.1f}%)  [{stock_names}]\n"
+            holdings_section += f"  {sector:<25} : ₹{sector_value:>10,.2f}  ({sector_pct:>5.1f}%)  [{stock_names}]\n"
 
         # Include individual analysis summaries
         analysis_section = "\nINDIVIDUAL STOCK RECOMMENDATIONS (just completed):\n"
@@ -410,13 +410,13 @@ class AnalysisQueue:
             f"one-line rationale.\n\n"
             f"Keep it practical, specific, and in plain English. Use Indian market context "
             f"(NSE-listed stocks only). Today is {today}.\n\n"
-            f"Format your response as clear sections with the headers above. No strict template needed â€” "
+            f"Format your response as clear sections with the headers above. No strict template needed — "
             f"just be thorough and actionable.\n\n"
             f"IMPORTANT: At the very end of your response, after all sections, add a line "
             f"containing exactly '---RECOMMENDATIONS_JSON---' followed by a JSON array of your "
             f"recommended new stocks. Each object must have these fields:\n"
             f'  {{"symbol": "TICKER", "sector": "Sector Name", "action": "BUY", '
-            f'"horizon": "Short/Medium/Long-term", "target_price": "â‚¹XXX-â‚¹YYY", '
+            f'"horizon": "Short/Medium/Long-term", "target_price": "₹XXX-₹YYY", '
             f'"rationale": "One-line reason"}}\n'
             f"Return ONLY the JSON array after the marker line. No markdown fences.\n"
         )
@@ -460,8 +460,8 @@ class AnalysisQueue:
         Builds the analysis prompt for one stock.
 
         Three things scale with claude_plan (set in config.py):
-          1. Data depth  â€” basic plan omits PE ratios; pro/max include them
-          2. Instruction â€” basic is concise; full is institutional-grade
+          1. Data depth  — basic plan omits PE ratios; pro/max include them
+          2. Instruction — basic is concise; full is institutional-grade
           3. Today's date is always injected so Claude doesn't use
              stale training memory for prices or market conditions
         """
@@ -469,13 +469,13 @@ class AnalysisQueue:
         today = now_ist().date().strftime("%B %d, %Y")
 
         # Stock data block
-        data  = f"Analysis date  : {today} (use this as today â€” ignore training memory for prices)\n\n"
+        data  = f"Analysis date  : {today} (use this as today — ignore training memory for prices)\n\n"
         data += f"Stock          : {stock['symbol']} ({stock.get('exchange','NSE')})\n"
         data += f"Qty held       : {stock['quantity']} shares\n"
-        data += f"Avg buy price  : â‚¹{stock['avg_buy_price']}\n"
-        data += f"Current price  : â‚¹{stock['current_price']}  [source: {stock.get('price_source','')}]\n"
-        data += f"P&L            : â‚¹{stock['pnl']} ({stock['pnl_percent']}%)\n"
-        data += f"52-week range  : â‚¹{stock.get('52w_low','N/A')} â€“ â‚¹{stock.get('52w_high','N/A')}\n"
+        data += f"Avg buy price  : ₹{stock['avg_buy_price']}\n"
+        data += f"Current price  : ₹{stock['current_price']}  [source: {stock.get('price_source','')}]\n"
+        data += f"P&L            : ₹{stock['pnl']} ({stock['pnl_percent']}%)\n"
+        data += f"52-week range  : ₹{stock.get('52w_low','N/A')} – ₹{stock.get('52w_high','N/A')}\n"
         data += f"1-year trend   : {stock.get('price_trend','Unknown')}\n"
         data += f"30-day momentum: {stock.get('momentum','Unknown')}\n"
         data += f"Sector         : {stock.get('sector','Unknown')}\n"
@@ -483,7 +483,7 @@ class AnalysisQueue:
         if plan["include_pe_ratios"]:
             data += f"P/E ratio      : {stock.get('pe_ratio','N/A')}\n"
             data += f"P/B ratio      : {stock.get('pb_ratio','N/A')}\n"
-            data += f"Market cap     : â‚¹{stock.get('market_cap_cr','N/A')} Cr\n"
+            data += f"Market cap     : ₹{stock.get('market_cap_cr','N/A')} Cr\n"
 
         # Previous analysis context (if available)
         prev_block = ""
@@ -499,18 +499,18 @@ class AnalysisQueue:
             if isinstance(prev_qty, (int, float)) and prev_qty != curr_qty:
                 diff = curr_qty - int(prev_qty)
                 if diff < 0:
-                    qty_changed = f"  ** Shares REDUCED by {abs(diff)} (from {prev_qty} â†’ {curr_qty}) â€” user SOLD shares since last analysis **\n"
+                    qty_changed = f"  ** Shares REDUCED by {abs(diff)} (from {prev_qty} → {curr_qty}) — user SOLD shares since last analysis **\n"
                 else:
-                    qty_changed = f"  ** Shares INCREASED by {diff} (from {prev_qty} â†’ {curr_qty}) â€” user BOUGHT more since last analysis **\n"
+                    qty_changed = f"  ** Shares INCREASED by {diff} (from {prev_qty} → {curr_qty}) — user BOUGHT more since last analysis **\n"
             elif isinstance(prev_qty, (int, float)) and prev_qty == curr_qty:
-                qty_changed = f"  ** Shares UNCHANGED at {curr_qty} â€” user did NOT act on previous recommendation **\n"
+                qty_changed = f"  ** Shares UNCHANGED at {curr_qty} — user did NOT act on previous recommendation **\n"
 
             prev_block = (
                 f"\nPREVIOUS ANALYSIS ({prev_date}):\n"
                 f"  Qty then       : {prev_qty} shares\n"
                 f"  Qty now        : {curr_qty} shares\n"
                 f"{qty_changed}"
-                f"  Price then     : â‚¹{prev_stock.get('current_price', 'N/A')}\n"
+                f"  Price then     : ₹{prev_stock.get('current_price', 'N/A')}\n"
                 f"  Action         : {p.get('ACTION', 'N/A')}\n"
                 f"  Conviction     : {p.get('CONVICTION', 'N/A')}\n"
                 f"  Target price   : {p.get('TARGET_PRICE', 'N/A')}\n"
@@ -518,7 +518,7 @@ class AnalysisQueue:
                 f"  Next steps     : {p.get('NEXT_STEPS', 'N/A')}\n"
                 f"  Key watch      : {p.get('WATCH', 'N/A')}\n"
                 f"\nIMPORTANT: Compare the previous quantity with the current quantity above. "
-                f"If shares were reduced, the user already sold â€” acknowledge this and base your "
+                f"If shares were reduced, the user already sold — acknowledge this and base your "
                 f"new recommendation on the CURRENT position size, not the old one. "
                 f"If shares increased, the user bought more. If unchanged, the user did not act. "
                 f"Also note price changes and whether the previous target was hit.\n"
@@ -533,7 +533,7 @@ class AnalysisQueue:
                 taken_label = f" [USER ACTION: {taken}]" if taken not in ("N/A", None) else ""
                 history_block += (
                     f"  {h['date']}: {h.get('action','?')} ({h.get('conviction','?')}) | "
-                    f"Price: â‚¹{h.get('price', 0):.2f} | Target: {h.get('target_price','?')}"
+                    f"Price: ₹{h.get('price', 0):.2f} | Target: {h.get('target_price','?')}"
                     f"{taken_label}\n"
                 )
             history_block += (
@@ -549,7 +549,7 @@ class AnalysisQueue:
                 f"\nPENDING RECOMMENDATION (from {pending['date']}, NOT yet acted on):\n"
                 f"  Previous action  : {pending['action']}\n"
                 f"  Action detail    : {pending.get('action_detail', 'N/A')}\n"
-                f"  Price at time    : â‚¹{pending.get('price_then', 0):.2f}\n"
+                f"  Price at time    : ₹{pending.get('price_then', 0):.2f}\n"
                 f"  Target then      : {pending.get('target_price', 'N/A')}\n"
                 f"  Reasoning then   : {pending.get('reasoning', 'N/A')[:200]}\n"
                 f"\nThe user did NOT act on this recommendation. Evaluate whether it is still valid "
@@ -557,32 +557,32 @@ class AnalysisQueue:
                 f"updated price levels. If no longer valid, explain why and give new advice.\n"
             )
 
-        # Action guide â€” always included so Claude picks the right action
+        # Action guide — always included so Claude picks the right action
         action_guide = (
-            "ACTION GUIDE â€” pick the single best action:\n"
+            "ACTION GUIDE — pick the single best action:\n"
             "  HOLD         : Keep position as-is. Fundamentals intact, no urgency to act.\n"
-            "  AVERAGE DOWN : Stock is beaten down but fundamentals are strong â€” buy more at current "
+            "  AVERAGE DOWN : Stock is beaten down but fundamentals are strong — buy more at current "
             "levels to lower avg cost. Specify buy price levels in NEXT_STEPS.\n"
-            "  ADD MORE     : Stock is performing well and has more upside â€” increase position size. "
+            "  ADD MORE     : Stock is performing well and has more upside — increase position size. "
             "Specify entry price and allocation in NEXT_STEPS.\n"
             "  PARTIAL EXIT : Take some profits or reduce risk. Specify how much to sell (e.g. 25-50%) "
             "and at what price in NEXT_STEPS.\n"
-            "  FULL EXIT    : Sell entire position â€” broken thesis, better alternatives, or terminal decline.\n\n"
-            "CONVICTION â€” how confident you are in the action:\n"
+            "  FULL EXIT    : Sell entire position — broken thesis, better alternatives, or terminal decline.\n\n"
+            "CONVICTION — how confident you are in the action:\n"
             "  Low    : Uncertain, could go either way, limited data.\n"
             "  Medium : Reasonable confidence, some risks remain.\n"
             "  High   : Strong conviction based on clear evidence.\n\n"
-            "NEXT_STEPS â€” give 2 concrete, actionable steps the investor should take right now. "
+            "NEXT_STEPS — give 2 concrete, actionable steps the investor should take right now. "
             "Examples: specific price levels to buy/sell at, stop-loss levels, profit booking targets, "
             "SIP amounts, rebalance triggers, or upcoming events to wait for before acting.\n\n"
             "SPREADSHEET FIELDS (fill these precisely for tracking):\n"
             "  ACTION_DETAIL  : Short description of immediate action, e.g. \"Sell 25 shares (50%)\", "
-            "\"Buy 10 shares at â‚¹840-850\", \"Exit all 17 shares\", or \"No action\" for HOLD.\n"
+            "\"Buy 10 shares at ₹840-850\", \"Exit all 17 shares\", or \"No action\" for HOLD.\n"
             f"  NUM_STOCKS     : Number of shares to buy/sell NOW (integer). 0 if HOLD or waiting for trigger. "
             f"The investor holds {stock['quantity']} shares.\n"
             "  TRIGGER_PRICE  : Specific price level to watch for the NEXT action (e.g. stop-loss, "
             "averaging level, breakout). Use a single number, not a range. 0 if none.\n"
-            "  TRIGGER_ACTION : What to do at TRIGGER_PRICE â€” BUY or SELL. Write NONE if no trigger.\n"
+            "  TRIGGER_ACTION : What to do at TRIGGER_PRICE — BUY or SELL. Write NONE if no trigger.\n"
             "  TRIGGER_NUM_STOCKS : How many shares to buy/sell at trigger price (integer). 0 if none.\n"
         )
 
@@ -609,7 +609,7 @@ class AnalysisQueue:
 
         return (
             f"You are an experienced Indian stock market analyst (NSE/BSE) advising a "
-            f"long-term retail investor. This is a DEMAT holdings review â€” NOT intraday "
+            f"long-term retail investor. This is a DEMAT holdings review — NOT intraday "
             f"or swing trading. Think like a wealth manager: focus on fundamentals, "
             f"business quality, sector outlook, and multi-month/multi-year compounding. "
             f"Avoid day-trading language (no intraday targets, no scalping, no momentum "
@@ -654,7 +654,7 @@ class AnalysisQueue:
             else:
                 parsed[field] = "[Not provided]"
 
-        # Normalise ACTION â€” Claude sometimes adds e.g. "HOLD (with caution)"
+        # Normalise ACTION — Claude sometimes adds e.g. "HOLD (with caution)"
         action = parsed.get("ACTION", "").upper().strip()
         if action not in VALID_ACTIONS:
             for valid in VALID_ACTIONS:
@@ -662,6 +662,6 @@ class AnalysisQueue:
                     parsed["ACTION"] = valid
                     break
             else:
-                parsed["ACTION"] = f"{parsed['ACTION']} âš ï¸"   # flag for review
+                parsed["ACTION"] = f"{parsed['ACTION']} ⚠️"   # flag for review
 
         return parsed

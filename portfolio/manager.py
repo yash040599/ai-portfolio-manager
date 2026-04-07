@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 # portfolio/manager.py
 # ================================================================
 # Phase 2: Intraday trading bot.
@@ -55,7 +55,7 @@ class PortfolioManager:
     def __init__(self, config: type[Config]):
         self.cfg = config
 
-        # â”€â”€ Infrastructure â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Infrastructure ────────────────────────────────────────
         self.log     = Logger("PortfolioManager")
         self.zerodha = ZerodhaClient(config, Logger("ZerodhaClient"))
         self.claude  = ClaudeClient(config,  Logger("ClaudeClient"))
@@ -64,7 +64,7 @@ class PortfolioManager:
         self.report  = ReportWriter(config, Logger("ReportWriter"))
         self.tracker = PerformanceTracker(config, Logger("PerformanceTracker"))
 
-        # â”€â”€ State â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── State ─────────────────────────────────────────────────
         self._shutdown_requested = False   # set by Ctrl+C handler
         self._trade_plans: list[dict] = [] # trades Claude picked pre-market
         self._circuit_broken = False       # true if max daily loss hit
@@ -77,19 +77,19 @@ class PortfolioManager:
         self._status_lines_printed = False       # tracks 2-line status display
 
     # ================================================================
-    # RUN â€” MAIN ENTRY POINT
+    # RUN — MAIN ENTRY POINT
     # ================================================================
 
     def run(self):
         """
-        Full day lifecycle. Can be started anytime â€” even the night
+        Full day lifecycle. Can be started anytime — even the night
         before. It will sleep until pre-market time, then run the
         full trading day, then generate the report and exit.
         """
         self._setup_signal_handler()
         self._print_banner()
 
-        # â”€â”€ Step 1: Validate config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 1: Validate config ───────────────────────────────
         missing = self.cfg.validate(require_claude=not getattr(self, '_noai', False))
         if missing:
             self.log.section("CONFIGURATION ERROR")
@@ -98,7 +98,7 @@ class PortfolioManager:
             self.log.info("Create or edit the .env file in this folder and re-run.")
             return
 
-        # â”€â”€ Step 2: Login to Zerodha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2: Login to Zerodha ──────────────────────────────
         # Login early so we can show account details even on holidays.
         self.log.section("ZERODHA LOGIN")
         try:
@@ -108,10 +108,10 @@ class PortfolioManager:
             self.log.info("Fix your API credentials in .env and try again.")
             return
 
-        # â”€â”€ Step 2b: Show account snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2b: Show account snapshot ─────────────────────────
         self._print_account_snapshot()
 
-        # â”€â”€ Step 3: Wait for next trading day â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 3: Wait for next trading day ─────────────────────
         # Checks weekends + NSE holiday calendar. If today is not a
         # trading day, shows a countdown to the next market open.
         # This prevents wasted Claude API calls on closed days.
@@ -119,12 +119,12 @@ class PortfolioManager:
         if self._shutdown_requested:
             return
 
-        # â”€â”€ Step 4: Fetch account funds & set budget â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 4: Fetch account funds & set budget ──────────────
         self._fetch_and_set_budget()
         if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
-        # â”€â”€ Step 5: Wait for pre-market time â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 5: Wait for pre-market time ─────────────────────
         self._wait_for_pre_market()
         if self._shutdown_requested:
             return
@@ -142,7 +142,7 @@ class PortfolioManager:
         if not self.cfg.DRY_RUN and self._budget <= 0:
             return
 
-        # â”€â”€ Step 6: Stock scan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 6: Stock scan ─────────────────────────────────
         # Check if we're too close to square-off to trade.
         # If too late, wait for the next trading day and retry.
         while not self._shutdown_requested:
@@ -157,20 +157,20 @@ class PortfolioManager:
             if minutes_left <= 0:
                 reason = (
                     f"Square-off time ({self.cfg.SQUARE_OFF_HOUR}:"
-                    f"{self.cfg.SQUARE_OFF_MINUTE:02d}) already passed â€” "
+                    f"{self.cfg.SQUARE_OFF_MINUTE:02d}) already passed — "
                     f"too late to trade today"
                 )
             elif minutes_left < self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE:
                 reason = (
-                    f"Only {minutes_left:.0f} minutes until square-off â€” "
+                    f"Only {minutes_left:.0f} minutes until square-off — "
                     f"need at least {self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE} minutes, "
                     f"skipping today "
                     f"(change CUTOFF_MINUTES_BEFORE_CLOSE in config.py to lower the threshold)"
                 )
             else:
-                break  # Enough time to trade â€” proceed
+                break  # Enough time to trade — proceed
 
-            # Too late â€” wait for the next market open
+            # Too late — wait for the next market open
             self._wait_for_next_market_open(reason)
             if self._shutdown_requested:
                 return
@@ -190,7 +190,7 @@ class PortfolioManager:
         if self._shutdown_requested:
             return
 
-        # â”€â”€ Step 5b: Check for existing positions on Zerodha â”€â”€â”€â”€â”€
+        # ── Step 5b: Check for existing positions on Zerodha ─────
         # If the bot crashed or was stopped while positions were open,
         # resume monitoring them instead of starting fresh.
         resumed = 0
@@ -198,15 +198,15 @@ class PortfolioManager:
             resumed = self.engine.load_existing_positions()
             if resumed > 0:
                 self.log.success(
-                    f"Resumed {resumed} existing position(s) from Zerodha â€” "
+                    f"Resumed {resumed} existing position(s) from Zerodha — "
                     f"skipping to monitor loop"
                 )
 
-        # â”€â”€ Step 5c: Thursday F&O expiry adjustments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 5c: Thursday F&O expiry adjustments ────────────
         self._apply_expiry_day_adjustments()
 
         if resumed > 0:
-            # Already have live positions â€” run an immediate Claude
+            # Already have live positions — run an immediate Claude
             # review so it can assess the resumed positions, then
             # start the normal monitor loop.
             open_symbols = [
@@ -226,49 +226,49 @@ class PortfolioManager:
 
             if not self._trade_plans:
                 if self._scan_failed:
-                    self.log.error("Scan failed â€” could not fetch market data. Exiting.")
+                    self.log.error("Scan failed — could not fetch market data. Exiting.")
                 else:
                     self.log.warning("No trades recommended by Claude. Nothing to do today.")
                 self._generate_report()
                 return
 
-            # â”€â”€ Step 6: Wait for market open â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Step 6: Wait for market open ──────────────────────────
             self._wait_for_market_open()
             if self._shutdown_requested:
                 self._emergency_shutdown()
                 return
 
-            # â”€â”€ Step 7: Observation period + Enter positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Step 7: Observation period + Enter positions ──────────
             self._observe_and_enter()
 
             # If order API broke during entry, skip monitor and shut down
             if self.engine.is_order_api_broken():
                 self.log.error(
-                    "Order API broken during entry â€” shutting down. "
+                    "Order API broken during entry — shutting down. "
                     "No Claude calls will be made."
                 )
                 if self.engine.open_positions():
                     self._square_off()
             else:
-                # â”€â”€ Step 8: Monitor loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                # ── Step 8: Monitor loop ──────────────────────────────────
                 self._run_monitor_loop()
 
-        # â”€â”€ Step 9: Square off (if not already done) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Always attempt square-off â€” even on Ctrl+C. Real money
+        # ── Step 9: Square off (if not already done) ──────────────
+        # Always attempt square-off — even on Ctrl+C. Real money
         # positions must be closed. Resume feature is a safety net,
         # not the primary shutdown path.
         if self.engine.open_positions():
             self._square_off()
 
-        # â”€â”€ Step 9b: Reconcile with Zerodha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 9b: Reconcile with Zerodha ─────────────────────
         # Fetch actual trade data from Zerodha and correct any
         # price/P&L discrepancies before generating the report.
         try:
             self.engine.reconcile_with_zerodha()
         except Exception as e:
-            self.log.warning(f"Reconciliation failed: {e} â€” using internal data")
+            self.log.warning(f"Reconciliation failed: {e} — using internal data")
 
-        # â”€â”€ Step 10: Generate report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 10: Generate report ──────────────────────────────
         try:
             self._generate_report()
         except Exception as e:
@@ -277,7 +277,7 @@ class PortfolioManager:
                 "Trading data may not be saved. Check Zerodha for actual P&L."
             )
 
-        # â”€â”€ Step 11: Verify trades against Zerodha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 11: Verify trades against Zerodha ───────────────
         if not self.cfg.DRY_RUN:
             try:
                 from scripts.verify_trades import verify_today
@@ -285,11 +285,11 @@ class PortfolioManager:
                 stats = verify_today()
                 corrected = stats.get("corrected", 0)
                 if corrected:
-                    self.log.info(f"Verification complete â€” {corrected} trade(s) corrected")
+                    self.log.info(f"Verification complete — {corrected} trade(s) corrected")
                 else:
-                    self.log.info("Verification complete â€” all trades match Zerodha")
+                    self.log.info("Verification complete — all trades match Zerodha")
             except Exception as e:
-                self.log.warning(f"Trade verification failed: {e} â€” run manually with: python scripts/verify_trades.py")
+                self.log.warning(f"Trade verification failed: {e} — run manually with: python scripts/verify_trades.py")
 
     # ================================================================
     # PRE-MARKET SCAN
@@ -311,10 +311,10 @@ class PortfolioManager:
             self.log.section("PRE-MARKET SCAN")
         else:
             self.log.section("MARKET SCAN (joined late)")
-            self.log.info(f"Started at {now.strftime('%I:%M %p')} â€” picking stocks at current prices")
+            self.log.info(f"Started at {now.strftime('%I:%M %p')} — picking stocks at current prices")
 
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
-        self.log.info(f"Budget: â‚¹{self._budget:,.2f}")
+        self.log.info(f"Budget: ₹{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
 
         universe = self.scanner.get_universe()
@@ -329,9 +329,9 @@ class PortfolioManager:
             return
 
         if not quotes:
-            self.log.warning("No quotes returned â€” market may not be open yet")
+            self.log.warning("No quotes returned — market may not be open yet")
             # In pre-market, previous close data is still available
-            # Proceed anyway â€” Claude can work with available data
+            # Proceed anyway — Claude can work with available data
 
         # Fetch NIFTY 50 index for trend context + market condition
         nifty_context = self._build_nifty_context()
@@ -348,9 +348,9 @@ class PortfolioManager:
             for i, t in enumerate(self._trade_plans, 1):
                 self.log.info(
                     f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
-                    f"@ â‚¹{t['entry_price']:.2f} | "
-                    f"SL: â‚¹{t['stop_loss']:.2f} | "
-                    f"Target: â‚¹{t['target_price']:.2f}"
+                    f"@ ₹{t['entry_price']:.2f} | "
+                    f"SL: ₹{t['stop_loss']:.2f} | "
+                    f"Target: ₹{t['target_price']:.2f}"
                 )
                 self.log.info(f"           {t.get('rationale', '')}")
 
@@ -379,7 +379,7 @@ class PortfolioManager:
                 break
             if self.engine.is_order_api_broken():
                 self.log.error(
-                    "Zerodha order API is broken â€” aborting remaining entries"
+                    "Zerodha order API is broken — aborting remaining entries"
                 )
                 break
             self.engine.enter_trade(trade)
@@ -417,7 +417,7 @@ class PortfolioManager:
             mins_to_close = (sq_off_check - now_check).total_seconds() / 60
             if mins_to_close < self.cfg.MIN_MINUTES_FOR_ENTRY:
                 self.log.warning(
-                    f"Only {mins_to_close:.0f} min until square-off â€” "
+                    f"Only {mins_to_close:.0f} min until square-off — "
                     f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min for entry. Skipping. "
                     f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                 )
@@ -426,7 +426,7 @@ class PortfolioManager:
             return
 
         # If market has been open longer than the configured delay,
-        # reduce to 5 min â€” opening volatility has already passed.
+        # reduce to 5 min — opening volatility has already passed.
         now = now_ist()
         market_open = now.replace(
             hour=self.cfg.MARKET_OPEN_HOUR,
@@ -437,12 +437,12 @@ class PortfolioManager:
         if minutes_since_open >= delay:
             delay = 5
             self.log.info(
-                f"Market has been open for {minutes_since_open:.0f} min â€” "
+                f"Market has been open for {minutes_since_open:.0f} min — "
                 f"reduced observation to {delay} min (opening volatility passed)"
             )
 
         entry_time = now_ist() + datetime.timedelta(minutes=delay)
-        self.log.section(f"OBSERVATION MODE â€” watching prices for {delay} min")
+        self.log.section(f"OBSERVATION MODE — watching prices for {delay} min")
         self.log.info(
             f"Trades will be entered at {entry_time.strftime('%I:%M %p')} "
             f"for stocks with >{self.cfg.ENTRY_MIN_MOVE_PCT}% directional move"
@@ -473,7 +473,7 @@ class PortfolioManager:
                 # Use last_price as fallback
                 open_prices[t["symbol"]] = q.get("last_price", t["entry_price"])
 
-        # Wait until entry time â€” print status during observation
+        # Wait until entry time — print status during observation
         while now_ist() < entry_time and not self._shutdown_requested:
             remaining = (entry_time - now_ist()).total_seconds()
             mins, secs = divmod(int(remaining), 60)
@@ -501,7 +501,7 @@ class PortfolioManager:
                     time.sleep(2 * attempt)
 
         if current_quotes is None:
-            self.log.info("All retries failed â€” entering all trades without observation filter")
+            self.log.info("All retries failed — entering all trades without observation filter")
             self._enter_positions()
             return
 
@@ -518,7 +518,7 @@ class PortfolioManager:
             day_open_price = open_prices.get(symbol, 0)
 
             if current_price <= 0 or day_open_price <= 0:
-                confirmed.append(trade)  # no data â€” let it through
+                confirmed.append(trade)  # no data — let it through
                 continue
 
             move_pct = abs(current_price - day_open_price) / day_open_price * 100
@@ -534,23 +534,23 @@ class PortfolioManager:
                 # Update entry price to current market price
                 trade["entry_price"] = round(current_price, 2)
                 confirmed.append(trade)
-                direction = "â†‘" if current_price > day_open_price else "â†“"
+                direction = "↑" if current_price > day_open_price else "↓"
                 self.log.info(
-                    f"  âœ“ {symbol}: {direction} {move_pct:.2f}% from open "
-                    f"(â‚¹{day_open_price:.2f} â†’ â‚¹{current_price:.2f}) â€” CONFIRMED"
+                    f"  ✓ {symbol}: {direction} {move_pct:.2f}% from open "
+                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — CONFIRMED"
                 )
             elif move_pct >= min_move and not direction_ok:
                 skipped.append(trade)
-                direction = "â†‘" if current_price > day_open_price else "â†“"
+                direction = "↑" if current_price > day_open_price else "↓"
                 self.log.info(
-                    f"  âœ— {symbol}: {direction} {move_pct:.2f}% but WRONG direction "
-                    f"for {side} â€” SKIPPED"
+                    f"  ✗ {symbol}: {direction} {move_pct:.2f}% but WRONG direction "
+                    f"for {side} — SKIPPED"
                 )
             else:
                 skipped.append(trade)
                 self.log.info(
-                    f"  âœ— {symbol}: only {move_pct:.2f}% move from open "
-                    f"(â‚¹{day_open_price:.2f} â†’ â‚¹{current_price:.2f}) â€” SKIPPED"
+                    f"  ✗ {symbol}: only {move_pct:.2f}% move from open "
+                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — SKIPPED"
                 )
 
         if skipped:
@@ -569,7 +569,7 @@ class PortfolioManager:
             mins_left_post = (sq_off_post - now_post).total_seconds() / 60
             if mins_left_post < self.cfg.MIN_MINUTES_FOR_ENTRY:
                 self.log.warning(
-                    f"Only {mins_left_post:.0f} min until square-off after observation â€” "
+                    f"Only {mins_left_post:.0f} min until square-off after observation — "
                     f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries. "
                     f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                 )
@@ -588,9 +588,9 @@ class PortfolioManager:
         Main trading loop that runs from market open until square-off.
 
         Two independent timers:
-          1. Price polling (every PRICE_POLL_SECONDS) â€” checks SL/target
+          1. Price polling (every PRICE_POLL_SECONDS) — checks SL/target
              hits using rule-based logic. No Claude API calls.
-          2. Claude review (every CLAUDE_REVIEW_MINUTES) â€” asks Claude
+          2. Claude review (every CLAUDE_REVIEW_MINUTES) — asks Claude
              to re-evaluate positions and suggest adjustments.
 
         The loop exits when:
@@ -599,7 +599,7 @@ class PortfolioManager:
           - Circuit breaker triggers (max daily loss exceeded)
           - User presses Ctrl+C (graceful shutdown)
         """
-        self.log.section("MONITORING â€” Live price tracking")
+        self.log.section("MONITORING — Live price tracking")
         self.log.info(
             f"Price poll: every {self.cfg.PRICE_POLL_SECONDS}s | "
             f"Claude review: every {self.cfg.CLAUDE_REVIEW_MINUTES}min"
@@ -612,19 +612,19 @@ class PortfolioManager:
         while not self._shutdown_requested:
             now = now_ist()
 
-            # â”€â”€ Check if it's square-off time â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Check if it's square-off time ─────────────────────
             if self._is_square_off_time(now):
                 self._clear_status_line()
                 self.log.info("Square-off time reached")
                 break
 
-            # â”€â”€ Check if all positions are closed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Check if all positions are closed ─────────────────
             if not self.engine.open_positions():
                 # If order API is broken, don't scan for more trades
                 if self.engine.is_order_api_broken():
                     self._clear_status_line()
                     self.log.error(
-                        "All positions closed and order API is broken â€” "
+                        "All positions closed and order API is broken — "
                         "stopping (not scanning for new trades)"
                     )
                     break
@@ -642,14 +642,14 @@ class PortfolioManager:
                     if self.engine.is_sl_paused():
                         self._clear_status_line()
                         self.log.info(
-                            f"All positions closed but SL pause active â€” "
+                            f"All positions closed but SL pause active — "
                             f"waiting for pause to expire before re-scanning"
                         )
                         time.sleep(poll_interval)
                         continue
                     self._clear_status_line()
                     self.log.info(
-                        f"All positions closed with {mins_remaining:.0f} min left â€” "
+                        f"All positions closed with {mins_remaining:.0f} min left — "
                         f"scanning for new opportunities..."
                     )
                     # Sync with Zerodha before re-scan (detect manual trades, refresh budget)
@@ -663,11 +663,11 @@ class PortfolioManager:
                     day_pnl = self.engine.day_pnl()
                     session_ctx = (
                         f"\nSESSION CONTEXT (mid-day re-scan):\n"
-                        f"  Day P&L so far: â‚¹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                        f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                         f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                         f"  DO NOT pick any stock already traded today unless you have a "
                         f"fundamentally different setup (opposite direction or new catalyst).\n"
-                        f"  If day P&L is negative, prioritise capital preservation â€” "
+                        f"  If day P&L is negative, prioritise capital preservation — "
                         f"pick only high-conviction setups with tight stops.\n"
                     )
                     self._trade_plans = []
@@ -677,18 +677,18 @@ class PortfolioManager:
                         last_review_time = time.time()  # reset review timer
                         continue
                     else:
-                        self.log.info("No new trades found â€” done for the day")
+                        self.log.info("No new trades found — done for the day")
                         break
                 else:
                     self._clear_status_line()
                     self.log.info(
-                        f"All positions closed â€” only {mins_remaining:.0f} min left, "
+                        f"All positions closed — only {mins_remaining:.0f} min left, "
                         f"not enough time for new trades "
                         f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                     )
                     break
 
-            # â”€â”€ Fetch live quotes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Fetch live quotes ─────────────────────────────────
             open_symbols = [
                 {"symbol": p["symbol"], "exchange": p["exchange"]}
                 for p in self.engine.open_positions()
@@ -696,16 +696,16 @@ class PortfolioManager:
             try:
                 quotes = self.zerodha.get_quotes(open_symbols)
             except Exception as e:
-                self.log.warning(f"Quote fetch failed: {e} â€” retrying next cycle")
+                self.log.warning(f"Quote fetch failed: {e} — retrying next cycle")
                 time.sleep(poll_interval)
                 continue
 
-            # â”€â”€ Rule-based SL/target check (free) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Rule-based SL/target check (free) ─────────────────
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
                 self._clear_status_line()
                 self.log.info(f"{closed} position(s) auto-closed")
-                # â”€â”€ Partial re-scan: fill empty slots with new trades â”€
+                # ── Partial re-scan: fill empty slots with new trades ─
                 # Sync with Zerodha to detect manual trades before counting slots
                 self.engine.sync_external_positions()
                 self.engine.refresh_budget()
@@ -730,15 +730,15 @@ class PortfolioManager:
                     slots = self.cfg.MAX_POSITIONS - open_count
                     if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
                         self.log.info(
-                            f"{slots} slot(s) free, {mins_left:.0f} min left â€” "
+                            f"{slots} slot(s) free, {mins_left:.0f} min left — "
                             f"scanning for replacement trades..."
                         )
                         closed_trades = self.engine.closed_positions()
                         traded_symbols = list({p["symbol"] for p in closed_trades})
                         day_pnl = self.engine.day_pnl()
                         session_ctx = (
-                            f"\nSESSION CONTEXT (partial re-scan â€” {slots} slot(s) available):\n"
-                            f"  Day P&L so far: â‚¹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"\nSESSION CONTEXT (partial re-scan — {slots} slot(s) available):\n"
+                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                             f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                             f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
                             f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
@@ -756,13 +756,13 @@ class PortfolioManager:
                             self.log.info("Partial re-scan: no replacement trades found")
                         self._last_partial_rescan = time.time()
 
-            # â”€â”€ Check if Zerodha order API is broken â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Check if Zerodha order API is broken ──────────────
             # If consecutive order failures hit the limit, stop
             # calling Claude (wastes money) and shut down gracefully.
             if self.engine.is_order_api_broken():
                 self._clear_status_line()
                 self.log.error(
-                    "ZERODHA ORDER API BROKEN â€” stopping all trading. "
+                    "ZERODHA ORDER API BROKEN — stopping all trading. "
                     "Will not call Claude again. "
                     "Attempting to close any open positions..."
                 )
@@ -770,7 +770,7 @@ class PortfolioManager:
                     self._square_off()
                 break
 
-            # â”€â”€ Circuit breaker check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Circuit breaker check ─────────────────────────────
             if self.engine.check_circuit_breaker():
                 self._circuit_broken = True
                 self._square_off()
@@ -787,7 +787,7 @@ class PortfolioManager:
                             f"Circuit breaker cooldown: waiting {cooldown} min "
                             f"before resuming with reduced budget..."
                         )
-                        # Polling sleep â€” check shutdown every 10s
+                        # Polling sleep — check shutdown every 10s
                         for _ in range(cooldown * 6):
                             if self._shutdown_requested:
                                 break
@@ -798,8 +798,8 @@ class PortfolioManager:
                         self.engine.reset_circuit_breaker_baseline()
                         self.engine.refresh_budget()
                         self.log.info(
-                            f"Circuit breaker cooldown complete â€” resuming with "
-                            f"loss-adjusted budget â‚¹{self.engine.loss_adjusted_budget():,.2f}"
+                            f"Circuit breaker cooldown complete — resuming with "
+                            f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
                         )
                         continue
                 self.log.warning(
@@ -808,24 +808,24 @@ class PortfolioManager:
                 )
                 break
 
-            # â”€â”€ Periodic Claude review (paid) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Periodic Claude review (paid) ─────────────────────
             elapsed = time.time() - last_review_time
             if elapsed >= review_interval and self.engine.open_positions():
                 self._clear_status_line()
                 self._run_claude_review(quotes)
                 last_review_time = time.time()
 
-            # â”€â”€ End-of-day accelerated exit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── End-of-day accelerated exit ─────────────────────
             if self.engine.open_positions():
                 eod_closed = self.engine.check_eod_exit(quotes)
                 if eod_closed > 0:
                     self._clear_status_line()
                     self.log.info(f"{eod_closed} losing position(s) exited (EOD accelerated exit)")
 
-            # â”€â”€ Print compact status line â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Print compact status line ─────────────────────────
             self._print_status(quotes)
 
-            # â”€â”€ Sleep until next poll â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Sleep until next poll ─────────────────────────────
             time.sleep(poll_interval)
 
     # ================================================================
@@ -887,7 +887,7 @@ class PortfolioManager:
             quotes = self.zerodha.get_quotes(open_symbols)
         except Exception as e:
             self.log.error(
-                f"Cannot fetch quotes for square-off: {e} â€” "
+                f"Cannot fetch quotes for square-off: {e} — "
                 f"MANUAL INTERVENTION MAY BE NEEDED"
             )
             # Use entry prices as fallback for P&L calculation
@@ -917,7 +917,7 @@ class PortfolioManager:
             market_condition = self._market_condition,
         )
 
-        # Record to performance database (live trades only â€” dry-run
+        # Record to performance database (live trades only — dry-run
         # data is excluded to keep the trades table clean for analysis)
         if not self.cfg.DRY_RUN:
             self.tracker.record_trades(
@@ -970,9 +970,9 @@ class PortfolioManager:
         self.cfg.V2_MIN_SCORE += bump_score
 
         self.log.info(
-            f"ðŸ“… Thursday F&O expiry: ATR multiplier â†’ {self.cfg.ATR_MULTIPLIER:.1f}, "
-            f"max positions â†’ {self.cfg.MAX_POSITIONS}, "
-            f"min score â†’ {self.cfg.V2_MIN_SCORE:.1f}"
+            f"📅 Thursday F&O expiry: ATR multiplier → {self.cfg.ATR_MULTIPLIER:.1f}, "
+            f"max positions → {self.cfg.MAX_POSITIONS}, "
+            f"min score → {self.cfg.V2_MIN_SCORE:.1f}"
         )
 
     # ================================================================
@@ -1009,18 +1009,18 @@ class PortfolioManager:
             change = price - prev_close
             change_pct = (change / prev_close) * 100
 
-            # â”€â”€ Market condition classification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # ── Market condition classification ───────────────────
             if change_pct > 0.5:
-                bias = "BULLISH â€” favour BUY trades, be selective with shorts"
+                bias = "BULLISH — favour BUY trades, be selective with shorts"
                 condition = "BULLISH"
             elif change_pct < -0.5:
-                bias = "BEARISH â€” favour SELL (short) trades, avoid buying into weakness"
+                bias = "BEARISH — favour SELL (short) trades, avoid buying into weakness"
                 condition = "BEARISH"
             else:
-                bias = "NEUTRAL â€” no strong directional bias, favour mean-reversion setups"
+                bias = "NEUTRAL — no strong directional bias, favour mean-reversion setups"
                 condition = "NEUTRAL"
 
-            # â”€â”€ Volatility regime (from last 5 days of NIFTY) â”€â”€â”€â”€â”€
+            # ── Volatility regime (from last 5 days of NIFTY) ─────
             volatility_label = "NORMAL"
             volatility_text  = ""
             try:
@@ -1051,7 +1051,7 @@ class PortfolioManager:
                                 "widen stop-losses, prefer liquid large-caps"
                             )
             except Exception:
-                pass  # volatility data is optional â€” don't fail
+                pass  # volatility data is optional — don't fail
 
             self._market_condition = f"{condition}_{volatility_label}"
 
@@ -1069,9 +1069,9 @@ class PortfolioManager:
 
             return (
                 f"\nMARKET TREND (NIFTY 50 INDEX):\n"
-                f"  NIFTY 50: â‚¹{price:,.2f}  Change: {change_pct:+.2f}%  "
-                f"Open: â‚¹{day_open:,.2f}  High: â‚¹{day_high:,.2f}  Low: â‚¹{day_low:,.2f}  "
-                f"PrevClose: â‚¹{prev_close:,.2f}\n"
+                f"  NIFTY 50: ₹{price:,.2f}  Change: {change_pct:+.2f}%  "
+                f"Open: ₹{day_open:,.2f}  High: ₹{day_high:,.2f}  Low: ₹{day_low:,.2f}  "
+                f"PrevClose: ₹{prev_close:,.2f}\n"
                 f"  Market bias: {bias}"
                 f"{sector_advice}"
                 f"{volatility_text}\n"
@@ -1088,7 +1088,7 @@ class PortfolioManager:
         Fetches available cash from Zerodha and sets the trading budget.
 
         Budget = min(available_funds, MAX_BUDGET_INR).
-        So even if account has â‚¹50K, the bot only uses up to â‚¹10K.
+        So even if account has ₹50K, the bot only uses up to ₹10K.
 
         Live mode:
           - Fetches real balance, checks against MIN_BALANCE_TO_TRADE.
@@ -1106,14 +1106,14 @@ class PortfolioManager:
         try:
             self._available_funds = self.zerodha.get_available_funds()
             self.log.success(
-                f"Available funds in Zerodha: â‚¹{self._available_funds:,.2f}"
+                f"Available funds in Zerodha: ₹{self._available_funds:,.2f}"
             )
         except Exception as e:
             self.log.warning(f"Could not fetch Zerodha funds: {e}")
             if self.cfg.DRY_RUN:
                 self._available_funds = float(max_budget)
                 self.log.info(
-                    f"DRY RUN â€” using max budget as fallback: â‚¹{max_budget:,}"
+                    f"DRY RUN — using max budget as fallback: ₹{max_budget:,}"
                 )
             else:
                 self.log.error(
@@ -1127,13 +1127,13 @@ class PortfolioManager:
         if self._available_funds < min_balance:
             if self.cfg.DRY_RUN:
                 self.log.warning(
-                    f"Funds â‚¹{self._available_funds:,.2f} below minimum "
-                    f"â‚¹{min_balance:,} â€” ignored in DRY RUN mode"
+                    f"Funds ₹{self._available_funds:,.2f} below minimum "
+                    f"₹{min_balance:,} — ignored in DRY RUN mode"
                 )
             else:
                 self.log.error(
-                    f"Funds â‚¹{self._available_funds:,.2f} below minimum "
-                    f"â‚¹{min_balance:,}. Add funds to Zerodha and retry. "
+                    f"Funds ₹{self._available_funds:,.2f} below minimum "
+                    f"₹{min_balance:,}. Add funds to Zerodha and retry. "
                     f"(change MIN_BALANCE_TO_TRADE in config.py to lower the threshold)"
                 )
                 self._budget = 0
@@ -1142,18 +1142,18 @@ class PortfolioManager:
         if self.cfg.DRY_RUN:
             # Dry run always uses MAX_BUDGET_INR regardless of account balance
             self._budget = float(max_budget)
-            self.log.info(f"DRY RUN â€” using max budget: â‚¹{max_budget:,}")
+            self.log.info(f"DRY RUN — using max budget: ₹{max_budget:,}")
         else:
             # Live mode: cap at MAX_BUDGET_INR
             self._budget = min(self._available_funds, float(max_budget))
 
             if self._available_funds > max_budget:
                 self.log.info(
-                    f"Using maximum budget: â‚¹{max_budget:,}"
+                    f"Using maximum budget: ₹{max_budget:,}"
                 )
             else:
                 self.log.info(
-                    f"Using â‚¹{self._budget:,.2f} to trade"
+                    f"Using ₹{self._budget:,.2f} to trade"
                 )
 
         # Set budget on engine and scanner so they use the live value
@@ -1196,7 +1196,7 @@ class PortfolioManager:
                 return date
             date += datetime.timedelta(days=1)
 
-        # Fallback â€” should never reach here
+        # Fallback — should never reach here
         self.log.warning(
             f"Could not find a trading day within 15 days of {from_date}. "
             f"Check NSE_HOLIDAYS_2026 in config.py."
@@ -1243,13 +1243,13 @@ class PortfolioManager:
 
         # Determine WHY today is not a trading day
         if today.weekday() == 5:
-            reason = "Today is Saturday â€” market is closed"
+            reason = "Today is Saturday — market is closed"
         elif today.weekday() == 6:
-            reason = "Today is Sunday â€” market is closed"
+            reason = "Today is Sunday — market is closed"
         else:
             holiday = self._holiday_name(today)
             name = f" ({holiday})" if holiday else ""
-            reason = f"Today is a market holiday{name} â€” market is closed"
+            reason = f"Today is a market holiday{name} — market is closed"
 
         self._wait_for_next_market_open(reason)
 
@@ -1293,7 +1293,7 @@ class PortfolioManager:
         pre_market = self._get_pre_market_time()
 
         if now_ist() >= pre_market:
-            self.log.info("Pre-market time already reached â€” starting scan")
+            self.log.info("Pre-market time already reached — starting scan")
             return
 
         self.log.section("WAITING FOR PRE-MARKET")
@@ -1314,7 +1314,7 @@ class PortfolioManager:
         )
 
         if now_ist() >= market_open:
-            self.log.info("Market already open â€” entering positions now")
+            self.log.info("Market already open — entering positions now")
             return
 
         self.log.section("WAITING FOR MARKET OPEN")
@@ -1372,11 +1372,11 @@ class PortfolioManager:
         plan = self.cfg.claude()
         mode = "DRY RUN (no real orders)" if self.cfg.DRY_RUN else "LIVE TRADING"
         print(f"\n{'='*58}")
-        print("  AI PORTFOLIO MANAGER â€” PHASE 2 INTRADAY BOT")
+        print("  AI PORTFOLIO MANAGER — PHASE 2 INTRADAY BOT")
         print(f"{'='*58}")
         print(f"  Mode           : {mode}")
         print(f"  Max budget     : \u20b9{self.cfg.MAX_BUDGET_INR:,}")
-        print(f"  Min balance    : â‚¹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
+        print(f"  Min balance    : ₹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
         print(f"  Max positions  : {self.cfg.MAX_POSITIONS}")
         print(f"  Universe       : {self.cfg.SCAN_UNIVERSE}")
         print(f"  Claude model   : {plan['model']}")
@@ -1392,7 +1392,7 @@ class PortfolioManager:
         print(f"{'='*58}\n")
 
     def _print_status(self, quotes: dict):
-        """Compact 2-line status during monitor loop â€” session P&L + net daily totals."""
+        """Compact 2-line status during monitor loop — session P&L + net daily totals."""
         open_pos   = self.engine.open_positions()
         closed_pos = self.engine.closed_positions()
         unrealised = self.engine.unrealised_pnl(quotes)
@@ -1407,8 +1407,8 @@ class PortfolioManager:
             f"  [{now}]  "
             f"Open: {len(open_pos)}  "
             f"Closed: {len(closed_pos)}  "
-            f"Unrealised: {u_color}â‚¹{unrealised:+,.2f}\033[0m  "
-            f"Realised: {r_color}â‚¹{realised:+,.2f}\033[0m"
+            f"Unrealised: {u_color}₹{unrealised:+,.2f}\033[0m  "
+            f"Realised: {r_color}₹{realised:+,.2f}\033[0m"
         )
 
         # Cumulative daily totals (previous runs from DB + current run)
@@ -1425,8 +1425,8 @@ class PortfolioManager:
         net_line = (
             f"  "
             f"Net today: {total_closed} trades  "
-            f"Realised: {tr_color}â‚¹{total_realised:+,.2f}\033[0m  "
-            f"Net: {t_color}â‚¹{total_combined:+,.2f}\033[0m"
+            f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
+            f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
         )
 
         # Use ANSI cursor-up to overwrite both lines on each poll
@@ -1435,7 +1435,7 @@ class PortfolioManager:
             print(f"\033[1A\r\033[2K{session_line}", flush=True)
             print(f"\r\033[2K{net_line}", end="", flush=True)
         else:
-            # First print â€” no cursor-up needed
+            # First print — no cursor-up needed
             print(f"\r\033[2K{session_line}", flush=True)
             print(f"\r\033[2K{net_line}", end="", flush=True)
             self._status_lines_printed = True
@@ -1457,30 +1457,30 @@ class PortfolioManager:
         print("  FINAL P&L SUMMARY")
         print(f"{'='*58}")
         print(f"  Total trades     : {len(self.engine.closed_positions())}")
-        print(f"  Gross P&L        : â‚¹{pnl['gross_pnl']:+,.2f}")
-        print(f"{'â”€'*58}")
+        print(f"  Gross P&L        : ₹{pnl['gross_pnl']:+,.2f}")
+        print(f"{'─'*58}")
         print(f"  CHARGES & TAXES:")
-        print(f"    Brokerage      : â‚¹{charges['brokerage']:,.2f}")
-        print(f"    STT            : â‚¹{charges['stt']:,.2f}")
-        print(f"    Exchange txn   : â‚¹{charges['exchange_txn']:,.2f}")
-        print(f"    GST            : â‚¹{charges['gst']:,.2f}")
-        print(f"    SEBI charges   : â‚¹{charges['sebi_charges']:,.4f}")
-        print(f"    Stamp duty     : â‚¹{charges['stamp_duty']:,.2f}")
-        print(f"    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
-        print(f"    Total tax+chrg : â‚¹{charges['total_tax_and_charges']:,.2f}")
-        print(f"{'â”€'*58}")
+        print(f"    Brokerage      : ₹{charges['brokerage']:,.2f}")
+        print(f"    STT            : ₹{charges['stt']:,.2f}")
+        print(f"    Exchange txn   : ₹{charges['exchange_txn']:,.2f}")
+        print(f"    GST            : ₹{charges['gst']:,.2f}")
+        print(f"    SEBI charges   : ₹{charges['sebi_charges']:,.4f}")
+        print(f"    Stamp duty     : ₹{charges['stamp_duty']:,.2f}")
+        print(f"    ────────────────────────────")
+        print(f"    Total tax+chrg : ₹{charges['total_tax_and_charges']:,.2f}")
+        print(f"{'─'*58}")
         print(f"  CLAUDE API COST:")
-        print(f"    Claude API     : â‚¹{charges['claude_api_cost']:,.2f} ({self.engine.claude_calls} calls)")
-        print(f"{'â”€'*58}")
-        print(f"  Total all costs  : â‚¹{charges['total_costs']:,.2f}")
+        print(f"    Claude API     : ₹{charges['claude_api_cost']:,.2f} ({self.engine.claude_calls} calls)")
+        print(f"{'─'*58}")
+        print(f"  Total all costs  : ₹{charges['total_costs']:,.2f}")
         print(f"{'='*58}")
-        print(f"  {color}NET PROFIT       : â‚¹{pnl['net_profit']:+,.2f}{reset}")
+        print(f"  {color}NET PROFIT       : ₹{pnl['net_profit']:+,.2f}{reset}")
         print(f"{'='*58}")
         if self._budget > 0:
             returns_pct = pnl["net_profit"] / self._budget * 100
             color2 = "\033[92m" if returns_pct >= 0 else "\033[91m"
-            print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on â‚¹{self._budget:,.0f} budget")
-        print(f"  FYI: Zerodha Kite Connect: â‚¹{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
+            print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on ₹{self._budget:,.0f} budget")
+        print(f"  FYI: Zerodha Kite Connect: ₹{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
         print()
 
     # ================================================================
@@ -1495,11 +1495,11 @@ class PortfolioManager:
         """
         def handler(sig, frame):
             if self._shutdown_requested:
-                # Second Ctrl+C â€” force exit
-                self.log.error("Force exit â€” some positions may still be open!")
+                # Second Ctrl+C — force exit
+                self.log.error("Force exit — some positions may still be open!")
                 sys.exit(1)
 
-            self.log.warning("\nShutdown requested â€” will square off and exit...")
+            self.log.warning("\nShutdown requested — will square off and exit...")
             self._shutdown_requested = True
 
         signal.signal(signal.SIGINT, handler)

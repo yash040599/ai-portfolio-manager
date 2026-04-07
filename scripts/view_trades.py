@@ -25,7 +25,7 @@ for r in rows:
     pnl = r["pnl"] or 0
     total_pnl += pnl
     pnl_str = f"₹{pnl:+.2f}"
-    print(f"  {r['date']:<12} {r['symbol']:<15} {r['side']:<6} {r['qty']:>5} {r['entry_price']:>10.2f} {(r['exit_price'] or 0):>10.2f} {pnl_str:>10} {(r['exit_reason'] or '')::<25} {(r['market_condition'] or ''):<25} {r['claude_confidence'] or ''}")
+    print(f"  {r['date']:<12} {r['symbol']:<15} {r['side']:<6} {r['qty']:>5} {r['entry_price']:>10.2f} {(r['exit_price'] or 0):>10.2f} {pnl_str:>10} {(r['exit_reason'] or ''):<25} {(r['market_condition'] or ''):<25} {r['claude_confidence'] or ''}")
 
 print(f"\n  {'TOTAL P&L':>60}: ₹{total_pnl:+.2f}")
 print(f"  {'TOTAL TRADES':>60}: {len(rows)}")

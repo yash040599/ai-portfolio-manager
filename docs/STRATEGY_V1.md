@@ -82,7 +82,7 @@ Close all remaining open positions at market price
 | Layer | Type | Description |
 |-------|------|-------------|
 | ATR-based SL | Rule-based | Dynamic stop-loss based on 14-day volatility (tighter for calm stocks, wider for volatile ones) |
-| Trailing stop-loss | Rule-based | At 1.5× initial risk profit, exits 33% of qty and trails SL at 65% of unrealised profit |
+| Trailing stop-loss | Rule-based | At 1.5× initial risk profit, exits 33% of qty and trails SL at 50% of unrealised profit |
 | Time-decay target | Rule-based | After 2 PM, reduce open targets by 40% to avoid holding into close with shrinking upside |
 | Circuit breaker | Rule-based | Day loss > 3% of budget → exit ALL positions, cooldown 30 min, resume with loss-adjusted budget |
 | Entry price validation | Rule-based | Reject Claude's entry if it differs >5% from live Zerodha quote (prevents hallucinated prices) |

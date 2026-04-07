@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 # core/zerodha_client.py
 # ================================================================
 # All Zerodha Kite API interactions in one place.
@@ -32,7 +32,7 @@ class ZerodhaClient:
         self.log   = log
         self._kite = None   # set by login()
 
-        # Instrument token cache â€” loaded once, reused per session
+        # Instrument token cache — loaded once, reused per session
         self._nse_tokens: dict | None = None
         self._bse_tokens: dict | None = None
 
@@ -43,7 +43,7 @@ class ZerodhaClient:
     # LOGIN
     # ================================================================
     # Opens Zerodha's browser login flow. Saves the access token for
-    # the day â€” subsequent calls within the same day skip the browser.
+    # the day — subsequent calls within the same day skip the browser.
     # Zerodha tokens expire at midnight; next-day runs trigger re-login.
     #
     # If you see "Incorrect api_key or access_token":
@@ -63,7 +63,7 @@ class ZerodhaClient:
                 self._kite.set_access_token(saved["token"])
                 return
 
-        # No valid token â€” need OAuth flow
+        # No valid token — need OAuth flow
         login_url = self._kite.login_url()
 
         if interactive:
@@ -87,7 +87,7 @@ class ZerodhaClient:
 
         self._login_browser(login_url)
 
-    # â”€â”€ Login helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Login helpers ─────────────────────────────────────────────
 
     def _exchange_and_save(self, request_token: str):
         """Exchange request_token for access_token and persist it."""
@@ -105,7 +105,7 @@ class ZerodhaClient:
         self.log.success("Logged in to Zerodha successfully")
 
     def _login_browser(self, login_url: str):
-        """Browser-based login â€” opens a local HTTP server to catch the redirect."""
+        """Browser-based login — opens a local HTTP server to catch the redirect."""
         self.log.info("Opening Zerodha login in browser...")
         self.log.info(f"If it doesn't open automatically: {login_url}")
 
@@ -158,20 +158,20 @@ class ZerodhaClient:
         and pastes the redirect URL back into the terminal.
         """
         print()
-        print(f"  â”Œâ”€ MANUAL LOGIN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
-        print(f"  â”‚")
-        print(f"  â”‚  1. Open this URL in any browser (phone/laptop):")
-        print(f"  â”‚")
-        print(f"  â”‚     {login_url}")
-        print(f"  â”‚")
-        print(f"  â”‚  2. Log in to Zerodha (credentials + TOTP)")
-        print(f"  â”‚")
-        print(f"  â”‚  3. After login, the browser will show an error page")
-        print(f"  â”‚     (localhost refused to connect) â€” that's normal.")
-        print(f"  â”‚     Copy the FULL URL from the browser address bar")
-        print(f"  â”‚     and paste it below.")
-        print(f"  â”‚")
-        print(f"  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€")
+        print(f"  ┌─ MANUAL LOGIN ──────────────────────────────────────")
+        print(f"  │")
+        print(f"  │  1. Open this URL in any browser (phone/laptop):")
+        print(f"  │")
+        print(f"  │     {login_url}")
+        print(f"  │")
+        print(f"  │  2. Log in to Zerodha (credentials + TOTP)")
+        print(f"  │")
+        print(f"  │  3. After login, the browser will show an error page")
+        print(f"  │     (localhost refused to connect) — that's normal.")
+        print(f"  │     Copy the FULL URL from the browser address bar")
+        print(f"  │     and paste it below.")
+        print(f"  │")
+        print(f"  └────────────────────────────────────────────────────")
         print()
 
         try:
@@ -265,7 +265,7 @@ class ZerodhaClient:
             return self.get_quotes(stocks)
         except Exception as e:
             if "api_key" in str(e).lower() or "access_token" in str(e).lower():
-                self.log.info("Token appears invalid â€” forcing re-login...")
+                self.log.info("Token appears invalid — forcing re-login...")
                 self.force_relogin()
                 try:
                     return self.get_quotes(stocks)
@@ -291,7 +291,7 @@ class ZerodhaClient:
         """
         Fetches OHLCV candles for one stock over a date range.
         Returns list of dicts: {date, open, high, low, close, volume}.
-        Requires connect_paid plan â€” raises RuntimeError otherwise.
+        Requires connect_paid plan — raises RuntimeError otherwise.
 
         Rate-limited to ~3 req/sec to stay within Zerodha's API limits.
         Uses a simple timestamp-based throttle (no sleep if enough time
@@ -338,7 +338,7 @@ class ZerodhaClient:
     def load_instruments(self) -> tuple[dict, dict]:
         """
         Loads the full NSE and BSE instrument lists from Kite.
-        Returns (nse_tokens, bse_tokens) â€” dicts mapping symbol â†’ token.
+        Returns (nse_tokens, bse_tokens) — dicts mapping symbol → token.
 
         Called once per session by MarketData (not per stock).
         Results are cached on self so subsequent calls are instant.
@@ -359,13 +359,13 @@ class ZerodhaClient:
         return self._nse_tokens, self._bse_tokens
 
     def _get_instrument_token(self, symbol: str, exchange: str) -> int | None:
-        """Internal helper â€” loads instrument cache if needed."""
+        """Internal helper — loads instrument cache if needed."""
         nse, bse = self.load_instruments()
         tokens   = nse if exchange == "NSE" else bse
         return tokens.get(symbol)
 
     # ================================================================
-    # ORDER METHODS â€” Phase 2
+    # ORDER METHODS — Phase 2
     # ================================================================
     # place_order sends a real order to Zerodha via Kite API.
     # The OrderEngine decides whether to call this (live mode) or
@@ -403,7 +403,7 @@ class ZerodhaClient:
         Raises:
             RuntimeError if order placement fails after all retries.
 
-        Note: product="MIS" means intraday â€” Zerodha auto-squares
+        Note: product="MIS" means intraday — Zerodha auto-squares
         any MIS position at 3:20 PM if you don't close it yourself.
         """
         self._require_login()
@@ -454,13 +454,13 @@ class ZerodhaClient:
                     wait = attempt * 2  # 2s, 4s backoff
                     self.log.warning(
                         f"Zerodha order failed (attempt {attempt}/{max_retries}): "
-                        f"{side} {qty}x {symbol} â€” {e} | Retrying in {wait}s..."
+                        f"{side} {qty}x {symbol} — {e} | Retrying in {wait}s..."
                     )
                     time.sleep(wait)
                 else:
                     self.log.error(
                         f"Zerodha order FAILED after {max_retries} attempts: "
-                        f"{side} {qty}x {symbol} â€” {e}"
+                        f"{side} {qty}x {symbol} — {e}"
                     )
 
         raise RuntimeError(
@@ -493,7 +493,7 @@ class ZerodhaClient:
         """
         Places an SL-M (stop-loss market) intraday order on Zerodha.
         This order sits on the exchange and triggers instantly when
-        price hits the trigger_price â€” no polling delay.
+        price hits the trigger_price — no polling delay.
 
         Args:
             symbol:        Trading symbol e.g. "RELIANCE"
@@ -526,13 +526,13 @@ class ZerodhaClient:
             )
             self.log.success(
                 f"SL-M order placed: {side} {qty}x {symbol} "
-                f"trigger â‚¹{trigger_price:.2f} | ID: {order_id}"
+                f"trigger ₹{trigger_price:.2f} | ID: {order_id}"
             )
             return str(order_id)
         except Exception as e:
             self.log.error(
                 f"SL-M order FAILED: {side} {qty}x {symbol} "
-                f"trigger â‚¹{trigger_price:.2f} â€” {e}"
+                f"trigger ₹{trigger_price:.2f} — {e}"
             )
             return None
 
@@ -588,7 +588,7 @@ class ZerodhaClient:
         Uses Kite Connect /user/margins endpoint.
 
         Returns 'available.live_balance' which includes cash,
-        intraday payin, and collateral â€” the actual usable amount
+        intraday payin, and collateral — the actual usable amount
         for placing new orders.
         """
         self._require_login()
@@ -701,7 +701,7 @@ class ZerodhaClient:
         order_id, product, fill_timestamp.
 
         Uses Kite's trades() endpoint which gives actual fills
-        (not orders â€” one order can have multiple fills).
+        (not orders — one order can have multiple fills).
         """
         self._require_login()
         try:

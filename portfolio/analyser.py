@@ -1,7 +1,7 @@
-﻿# ================================================================
+# ================================================================
 # portfolio/analyser.py
 # ================================================================
-# Phase 1 orchestrator â€” read-only portfolio analysis.
+# Phase 1 orchestrator — read-only portfolio analysis.
 #
 # Responsibilities:
 #   Coordinate the six-step flow in order:
@@ -12,14 +12,14 @@
 #     5. Analyse via Claude API
 #     6. Save report
 #
-# This class itself is intentionally thin â€” all real logic lives
+# This class itself is intentionally thin — all real logic lives
 # in the service classes it calls. Adding behaviour here means
 # adding a new step to the flow, not changing an existing one.
 #
 # Phase 2 note:
 #   PortfolioManager (portfolio/manager.py) is structured identically
 #   and uses the same four shared classes. Neither class knows about
-#   the other â€” main.py decides which one to run.
+#   the other — main.py decides which one to run.
 # ================================================================
 
 import os
@@ -58,18 +58,18 @@ class PortfolioAnalyser:
         """Executes the full end-to-end analysis flow."""
         self._print_banner()
 
-        # â”€â”€ Check if today's report already exists â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Check if today's report already exists ────────────────
         today = now_ist().date()
         if os.path.exists(ReportWriter.portfolio_report_path(today)):
             answer = input(
-                f"\nâš ï¸  Report for {today} already exists and will be overwritten.\n"
+                f"\n⚠️  Report for {today} already exists and will be overwritten.\n"
                 f"   Do you want to run again? (y/n): "
             ).strip().lower()
             if answer != 'y':
-                self.log.info("Skipped â€” existing report preserved.")
+                self.log.info("Skipped — existing report preserved.")
                 return
 
-        # â”€â”€ Step 1: Validate config â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 1: Validate config ───────────────────────────────
         missing = self.cfg.validate()
         if missing:
             self.log.section("CONFIGURATION ERROR")
@@ -81,14 +81,14 @@ class PortfolioAnalyser:
         for warning in self.cfg.mismatch_warnings():
             self.log.warning(f"Plan mismatch: {warning}")
 
-        # â”€â”€ Step 2: Login to Zerodha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2: Login to Zerodha ──────────────────────────────
         self.log.section("ZERODHA LOGIN")
         self.zerodha.login()
 
-        # â”€â”€ Step 2b: Show account snapshot â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 2b: Show account snapshot ─────────────────────────
         self._print_account_snapshot()
 
-        # â”€â”€ Step 3: Fetch holdings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 3: Fetch holdings ────────────────────────────────
         self.log.section("FETCHING HOLDINGS")
         portfolio = self.zerodha.get_holdings()
         if not portfolio:
@@ -96,21 +96,21 @@ class PortfolioAnalyser:
             return
         self.log.success(f"Found {len(portfolio)} stocks in your demat account")
 
-        # â”€â”€ Step 4: Enrich with market data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 4: Enrich with market data ───────────────────────
         self.log.section("ENRICHING WITH MARKET DATA")
         portfolio = self.market.enrich(portfolio)
 
-        # â”€â”€ Step 4b: Load previous report for comparison â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 4b: Load previous report for comparison ──────────
         prev_data = self.tracker.get_latest_portfolio_analysis()
         if prev_data is None:
             # Fallback to JSON file scan if DB is empty (first run after DB was added)
             prev_data = ReportWriter.find_latest_portfolio_data(now_ist().date())
         if prev_data:
-            self.log.info(f"Previous report found ({prev_data['date']}) â€” Claude will compare changes")
+            self.log.info(f"Previous report found ({prev_data['date']}) — Claude will compare changes")
         else:
-            self.log.info("No previous report found â€” first run")
+            self.log.info("No previous report found — first run")
 
-        # â”€â”€ Step 4c: Load full history + pending actions from DB â”€â”€
+        # ── Step 4c: Load full history + pending actions from DB ──
         current_symbols = [s["symbol"] for s in portfolio]
         history = self.tracker.get_full_history_context(current_symbols)
         pending_actions = self.tracker.get_pending_actions()
@@ -119,11 +119,11 @@ class PortfolioAnalyser:
             self.log.info(f"Loaded {total_entries} historical analyses across {len(history)} stocks")
         if pending_actions:
             self.log.info(
-                f"Found {len(pending_actions)} unacted recommendations â€” "
+                f"Found {len(pending_actions)} unacted recommendations — "
                 f"Claude will re-evaluate"
             )
 
-        # â”€â”€ Step 5: Analyse via Claude API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 5: Analyse via Claude API ────────────────────────
         self.queue.load(
             portfolio,
             previous_data=prev_data,
@@ -132,24 +132,24 @@ class PortfolioAnalyser:
         )
         analyses, skipped, failed_log = self.queue.run()
 
-        # â”€â”€ Step 5b: Portfolio-level overall review â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 5b: Portfolio-level overall review ───────────────
         portfolio_review = None
         new_stock_recommendations = []
         if analyses:
-            self.log.section("PORTFOLIO REVIEW â€” Overall assessment")
+            self.log.section("PORTFOLIO REVIEW — Overall assessment")
             try:
                 portfolio_review, new_stock_recommendations = self.queue.run_portfolio_review(portfolio, analyses)
                 self.log.success("Portfolio-level review complete")
                 if new_stock_recommendations:
                     self.log.info(f"  {len(new_stock_recommendations)} new stock recommendations extracted")
             except Exception as e:
-                self.log.warning(f"Portfolio review failed: {e} â€” individual analyses still saved")
+                self.log.warning(f"Portfolio review failed: {e} — individual analyses still saved")
 
-        # â”€â”€ Step 6: Save report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 6: Save report ───────────────────────────────────
         self.log.section("SAVING REPORT")
         self.report.save(portfolio, analyses, skipped, failed_log, portfolio_review, new_stock_recommendations)
 
-        # â”€â”€ Step 7: Record to performance database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # ── Step 7: Record to performance database ────────────────
         self.tracker.record_portfolio_analyses(portfolio, analyses)
 
         self._print_summary(analyses, skipped, failed_log)
@@ -190,7 +190,7 @@ class PortfolioAnalyser:
         self.log.success(f"Run complete")
         self.log.success(f"Analysed : {len(analyses)} stocks")
         if skipped:
-            self.log.warning(f"Skipped  : {len(skipped)} â€” {', '.join(skipped)}")
+            self.log.warning(f"Skipped  : {len(skipped)} — {', '.join(skipped)}")
         if failed_log:
             self.log.error(f"Failed   : {len(failed_log)} (see report for details)")
         print()

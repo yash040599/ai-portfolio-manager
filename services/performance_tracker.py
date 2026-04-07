@@ -1,4 +1,4 @@
-﻿# ================================================================
+# ================================================================
 # services/performance_tracker.py
 # ================================================================
 # Persistent SQLite database for tracking trade performance across
@@ -285,7 +285,7 @@ class PerformanceTracker:
 
                 lines.append(
                     f"  {date}: {total} trades, {win_rate:.0f}% win rate, "
-                    f"Net P&L: â‚¹{net_pnl:+,.2f}, SL exits: {sl_count}"
+                    f"Net P&L: ₹{net_pnl:+,.2f}, SL exits: {sl_count}"
                 )
 
                 # Flag consistently losing stocks
@@ -301,7 +301,7 @@ class PerformanceTracker:
         return "\n".join(lines)
 
     # ================================================================
-    # PHASE 1 â€” PORTFOLIO ANALYSIS RECORDING
+    # PHASE 1 — PORTFOLIO ANALYSIS RECORDING
     # ================================================================
 
     def record_portfolio_analyses(
@@ -373,10 +373,10 @@ class PerformanceTracker:
     def _resolve_pending_actions(self, current_stocks: dict):
         """
         Compares current holdings against previous PENDING recommendations.
-        If a PARTIAL EXIT / FULL EXIT was recommended and qty decreased â†’ DONE.
-        If AVERAGE DOWN / ADD MORE was recommended and qty increased â†’ DONE.
-        If qty unchanged â†’ stays PENDING (Claude will be told to re-evaluate).
-        Stocks no longer in portfolio with FULL EXIT â†’ DONE (fully sold).
+        If a PARTIAL EXIT / FULL EXIT was recommended and qty decreased → DONE.
+        If AVERAGE DOWN / ADD MORE was recommended and qty increased → DONE.
+        If qty unchanged → stays PENDING (Claude will be told to re-evaluate).
+        Stocks no longer in portfolio with FULL EXIT → DONE (fully sold).
         """
         with self._connect() as conn:
             pending = conn.execute(
@@ -390,7 +390,7 @@ class PerformanceTracker:
                 return
 
             # Get the qty at time of each recommendation
-            # (current_value / current_price â‰ˆ qty, but we stored invested_value)
+            # (current_value / current_price ≈ qty, but we stored invested_value)
             # Better: get from the previous portfolio snapshot
             prev_analyses = {}
             for p in pending:
@@ -404,13 +404,13 @@ class PerformanceTracker:
 
                 if action in ("FULL EXIT",):
                     if curr_stock is None or curr_stock.get("quantity", 0) == 0:
-                        # Stock no longer held â€” action was taken
+                        # Stock no longer held — action was taken
                         conn.execute(
                             "UPDATE portfolio_analyses SET action_taken = 'DONE' WHERE id = ?",
                             (prev["id"],),
                         )
                     else:
-                        # Still held â€” not acted on
+                        # Still held — not acted on
                         pass
 
                 elif action in ("PARTIAL EXIT",):
@@ -523,7 +523,7 @@ class PerformanceTracker:
         not just the latest. Keyed by symbol.
 
         This solves the problem where only the latest report is fed to
-        Claude â€” now Claude sees the full recommendation timeline including
+        Claude — now Claude sees the full recommendation timeline including
         stocks that appeared in older reports but not the latest.
 
         Returns: {symbol: [list of past analyses, newest first]}
