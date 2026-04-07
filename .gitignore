@@ -15,8 +15,7 @@ logs/
 reports/
 
 # ── Database (contains personal trading data) ────────────
-data/*
-!data/candle_cache.db
+data/
 
 # ── IDE / Editor ─────────────────────────────────────────
 .vscode/
@@ -32,5 +31,4 @@ desktop.ini
 
 # ── Temp / scratch ────────────────────────────────────────
 ClaudeTemp/
-data/candle_cache.db
 venv/
