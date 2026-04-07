@@ -26,7 +26,7 @@ A fully automated intraday trading bot that:
 - Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
-- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 9 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R), and composite scoring (~-22 to +22). Only the top 15 strongest setups are sent to Claude
+- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 11 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R, Hourly EMA, BB Squeeze), and composite scoring (~-24 to +24). Only the top 15 strongest setups are sent to Claude
 - **Sector diversification** — max 2 stocks per sector (BANKING, IT, PHARMA, AUTO, etc.) prevents correlated risk
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from 15-minute intraday candles to set intelligent SL/target levels sized for intraday moves (falls back to Claude's values if data unavailable). SL is hard-capped at 2.5% to prevent swing-trade-sized stops. When both ATR and Claude provide SL levels, the tighter (closer to entry) SL is used
@@ -63,6 +63,12 @@ A fully automated intraday trading bot that:
 - **Order API failure protection** — if Zerodha's order API fails 3 consecutive times (after retrying each order 3 times with backoff), the bot stops calling Claude immediately (no more wasted API money), closes any open positions, and shuts down gracefully. Prevents the scenario where broken Zerodha APIs cause the bot to loop endlessly asking Claude for new recommendations
 - **Crash recovery** — if the bot is stopped (Ctrl+C, crash, terminal closed) while positions are still open on Zerodha, restarting it will automatically detect and resume monitoring those positions. Fetches open MIS positions from Zerodha, recalculates ATR-based SL/targets, and jumps straight to the monitor loop — no duplicate orders, no orphaned positions
 - **Manual trade adoption** — if you buy or sell a stock manually on the Zerodha app (intraday/MIS only), the bot automatically detects it on its next sync, assigns ATR-based SL/targets, and manages it like any other position — including monitoring, Claude review, and end-of-day square-off. CNC (delivery/long-term) positions are ignored. If you close a manual trade yourself before the bot does, it's marked as `EXTERNAL_CLOSE` in the report. Manual trades appear in reports with a `[M]` tag
+- **Whipsaw guard** — after 3 consecutive stop-loss hits (across any stocks), pauses new entries for 30 minutes. Prevents "death by a thousand cuts" on days when signals systemically fail
+- **Max circuit breaker trips** — circuit breaker can only fire and resume 2 times per day. After that, the day is over. Prevents infinite cooldown loops on catastrophically bad days
+- **Dynamic score threshold** — in NoAI mode, after day loss exceeds 1.5% of budget, raises the minimum technical score for new trades. Only higher-conviction setups are picked after losses
+- **Regime-shift protection** — when Nifty flips from BULLISH→BEARISH (or vice versa), immediately tightens SLs on positions contradicting the new regime: locks 50% of profit or moves SL to breakeven
+- **Multi-timeframe alignment** — builds hourly candles from 15-min data and checks EMA(9/21) alignment across both timeframes. Adds conviction (+1) only when both agree
+- **Bollinger Band squeeze** — detects periods of unusually low volatility (bandwidth below 75% of average). Squeeze + price above middle band → bullish breakout signal
 
 ```bash
 python main.py --mode trade
@@ -277,9 +283,14 @@ Open `config.py` and review these key settings:
 | `DEFAULT_TARGET_PCT` | `2.0%` | Fallback target when ATR data is unavailable |
 | `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading, resumes after cooldown |
 | `CIRCUIT_BREAKER_COOLDOWN_MINUTES` | `30` | Wait time after circuit breaker before resuming (0 = day over) |
+| `MAX_CIRCUIT_BREAKER_TRIPS` | `2` | Max CB trips per day before stopping permanently |
+| `CONSECUTIVE_SL_PAUSE_COUNT` | `3` | Pause new entries after N consecutive SL hits (0 = disable) |
+| `CONSECUTIVE_SL_PAUSE_MINUTES` | `30` | How long to pause after whipsaw detection |
 | `LOSS_SIZING_ENABLED` | `True` | Reduce position sizes after realised losses |
+| `LOSS_SCORE_BUMP_PCT` | `1.5%` | Day loss % that triggers higher MIN_SCORE (NoAI) |
+| `LOSS_SCORE_BUMP_AMOUNT` | `1.5` | Extra score points added after loss threshold (NoAI) |
 | `STAGNANT_EXIT_MINUTES` | `90` | NoAI: exit dead positions after N minutes (0 = disable) |
-| `STAGNANT_EXIT_MIN_MOVE_PCT` | `0.3%` | NoAI: minimum move toward target to stay alive |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | `0.3%` | NoAI: minimum favourable move to stay alive |
 | `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
 | `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
 | `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run entries |

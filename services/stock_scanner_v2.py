@@ -379,7 +379,7 @@ class StockScannerV2(StockScanner):
     # PRE-FILTER SCAN (MATH-BASED, FREE)
     # ================================================================
 
-    def _prefilter_universe(self, quotes: dict, nifty_trend: str = "") -> list[dict]:
+    def _prefilter_universe(self, quotes: dict, nifty_trend: str = "", min_score_override: float | None = None) -> list[dict]:
         """
         Analyses all stocks in the universe using candle patterns
         and technical indicators. Returns the top candidates ranked
@@ -410,7 +410,7 @@ class StockScannerV2(StockScanner):
         self.log.info(f"  Analysed {len(scored)} stocks with sufficient candle data")
 
         # Filter out weak signals below V2_MIN_SCORE threshold
-        min_score = self.cfg.V2_MIN_SCORE
+        min_score = min_score_override if min_score_override is not None else self.cfg.V2_MIN_SCORE
         passed_score = []
         for s in scored:
             if abs(s["combined_score"]) >= min_score:
@@ -531,6 +531,7 @@ class StockScannerV2(StockScanner):
     def scan_noai(
         self, quotes: dict, nifty_context: str = "",
         max_trades: int = 0, session_context: str = "",
+        day_pnl: float = 0.0,
     ) -> list[dict]:
         """
         Selects trades purely from technical scores — no Claude call.
@@ -554,8 +555,20 @@ class StockScannerV2(StockScanner):
         elif "BULLISH" in nifty_context.upper():
             nifty_trend = "BULLISH"
 
+        # Dynamic score: raise bar after losses
+        min_score_override = None
+        if day_pnl < 0 and self.cfg.LOSS_SCORE_BUMP_PCT > 0:
+            loss_pct = abs(day_pnl) / self._budget * 100
+            if loss_pct >= self.cfg.LOSS_SCORE_BUMP_PCT:
+                min_score_override = self.cfg.V2_MIN_SCORE + self.cfg.LOSS_SCORE_BUMP_AMOUNT
+                self.log.info(
+                    f"Dynamic score threshold: day loss {loss_pct:.1f}% ≥ "
+                    f"{self.cfg.LOSS_SCORE_BUMP_PCT}% — raising MIN_SCORE "
+                    f"to {min_score_override:.1f}"
+                )
+
         # Step 1: Math-based pre-filter
-        candidates = self._prefilter_universe(quotes, nifty_trend)
+        candidates = self._prefilter_universe(quotes, nifty_trend, min_score_override)
         if not candidates:
             self.log.warning("NoAI scan: no candidates passed pre-filter")
             return []
@@ -630,6 +643,12 @@ class StockScannerV2(StockScanner):
             gap_info = tech.get("gap", {})
             if gap_info.get("signal", "NO_GAP") != "NO_GAP":
                 parts.append(f"Gap {gap_info['signal']}")
+            hourly_info = tech.get("hourly_ema", {})
+            if hourly_info.get("signal", "NEUTRAL") != "NEUTRAL":
+                parts.append(f"Hourly {hourly_info['signal']}")
+            bb_info = tech.get("bb_squeeze", {})
+            if bb_info.get("squeeze", False):
+                parts.append(f"BB {bb_info['signal']}")
             if ps["patterns"]:
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
@@ -787,6 +806,18 @@ class StockScannerV2(StockScanner):
             if gap.get("signal", "NO_GAP") != "NO_GAP":
                 gap_str = f"  Gap: {gap['signal']}({gap['gap_pct']:+.1f}%)"
 
+            # Hourly EMA alignment
+            hourly = tech.get("hourly_ema", {})
+            hourly_str = ""
+            if hourly.get("signal", "NEUTRAL") != "NEUTRAL":
+                hourly_str = f"  Hourly: {hourly['signal']}"
+
+            # Bollinger Band squeeze
+            bb = tech.get("bb_squeeze", {})
+            bb_str = ""
+            if bb.get("squeeze", False):
+                bb_str = f"  BB: {bb['signal']}"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -796,7 +827,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}"
             )
 
         return "\n".join(lines)
@@ -899,6 +930,16 @@ Gap:
   GAP_DOWN_STRONG (with volume) = continuation down → sell rallies to gap edge
   GAP_DOWN_WEAK (low volume) = gap fill likely → possible BUY
 
+Hourly EMA:
+  ALIGNED_BULL = both 15-min and hourly EMA(9/21) are bullish → stronger BUY conviction
+  ALIGNED_BEAR = both timeframes bearish → stronger SELL conviction
+  *** Multi-timeframe agreement is a high-quality confluence signal ***
+
+BB Squeeze:
+  SQUEEZE_BULL = Bollinger Bands contracted + price above middle band → bullish breakout imminent
+  SQUEEZE_BEAR = BB contracted + price below middle band → bearish breakout imminent
+  *** Squeeze = low volatility → breakout is coming. Direction biased by price position ***
+
 Score:
   |score| >= 5 = high conviction (3+ aligned indicators)
   |score| 3-5 = moderate (needs confirming indicators)
@@ -929,13 +970,15 @@ For BUY, count TRUE items:
   □ MACD = BULLISH/GROWING
   □ ORB = BREAKOUT_UP (if before 11 AM)
   □ RVol > 1.5
+  □ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
+  □ BB = SQUEEZE_BULL (volatility breakout imminent)
 
 For SELL, mirror with bearish signals.
 → 2 or fewer = DO NOT TRADE (insufficient evidence)
 → 3-4 = acceptable trade (moderate conviction)
 → 5+ = strong trade (high conviction — use full position size)
 
-Explicitly state the confluence count in your RATIONALE (e.g. "4/8 confluence").
+Explicitly state the confluence count in your RATIONALE (e.g. "5/10 confluence").
 
 ══════════════════════════════════════════════════════════
 INDIAN MARKET AWARENESS:
@@ -985,7 +1028,7 @@ ENTRY_PRICE: [realistic entry price near current price]
 STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/swing]
 TARGET: [target price — at least 1.5× SL distance from entry]
 QTY: [number of shares within budget constraints]
-RATIONALE: [2-3 sentences: (1) confluence count X/8 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
+RATIONALE: [2-3 sentences: (1) confluence count X/10 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
 TRADE 2:
 ...

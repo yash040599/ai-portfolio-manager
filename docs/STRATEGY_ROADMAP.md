@@ -123,35 +123,65 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ## MEDIUM PRIORITY — Proven, moderate effort
 
-### 17. Multi-Timeframe Alignment (Hourly)
+### 17. ✅ Multi-Timeframe Alignment (Hourly)
 - **Versions**: V2, NoAI
 - **Gap**: 15-min candles + daily EMA = two timeframes. Missing intermediate (hourly).
-- **Fix**: Compute hourly EMA(9/21) from 15-min candles. All 3 aligned → +1. Conflict → -1.
+- **Fix**: Build synthetic hourly candles from 15-min data. Compute hourly EMA(9/21). When 15-min and hourly both agree → +1. Conflict → 0 (no conviction).
 - **Source**: Professional traders use 3 timeframes (higher for direction, middle for setup, lower for entry).
-- **Effort**: Medium | **Impact**: Medium
 
-### 18. Bollinger Band Squeeze Detection
+### 18. ✅ Bollinger Band Squeeze Detection
 - **Versions**: V2, NoAI
 - **Gap**: No volatility-based entry signal.
-- **Fix**: BB(20,2) bandwidth below historical avg → squeeze → impending breakout.
+- **Fix**: BB(20,2) bandwidth below 75% of rolling average → squeeze. Price above middle band → +1 (bullish breakout). Below → -1 (bearish breakout).
 - **Source**: Popular on Indian platforms. Zerodha's Karthik Rangappa calls BB a personal favorite for intraday.
-- **Effort**: Medium | **Impact**: Medium-Low
 
-### 19. Volatility Regime Detection (India VIX)
+---
+
+## COMPLETED — NoAI Adaptive Strategy (When Things Go Wrong)
+
+### 19. ✅ Max Circuit Breaker Trips Per Day
+- **Versions**: All
+- **Gap**: Circuit breaker could trip → cooldown → resume → trip again indefinitely, grinding through capital on a bad day.
+- **Fix**: `MAX_CIRCUIT_BREAKER_TRIPS` (default 2). After N trips, the day is over. Prevents infinite cooldown loops.
+- **Source**: Risk management — cap exposure on systematically bad days.
+
+### 20. ✅ Consecutive SL Pause (Whipsaw Guard)
+- **Versions**: All
+- **Gap**: 3 consecutive SL hits across different stocks means the signal set doesn't match today's market. Each loss is small but they compound through 8-10 trades.
+- **Fix**: After `CONSECUTIVE_SL_PAUSE_COUNT` (default 3) consecutive SL hits, pause new entries for `CONSECUTIVE_SL_PAUSE_MINUTES` (default 30). Resets on any profitable close.
+- **Source**: "Death by a thousand cuts" — professional day traders have whipsaw rules.
+
+### 21. ✅ Dynamic Score Threshold After Losses
+- **Versions**: V2 NoAI
+- **Gap**: After losses, the bot still picks marginal +2.5 candidates. Quality gating between 0% and circuit breaker.
+- **Fix**: When day loss exceeds `LOSS_SCORE_BUMP_PCT` (1.5% of budget), raise MIN_SCORE by `LOSS_SCORE_BUMP_AMOUNT` (1.5). Only higher-conviction setups after losses.
+- **Source**: Institutional practice — tighten entry criteria after drawdowns.
+
+### 22. ✅ Regime-Shift SL Tightening
+- **Versions**: V2, NoAI
+- **Gap**: When Nifty regime flips (BULLISH→BEARISH), existing LONG positions get no adjustment. A sharp reversal can wipe out the morning's gains across all positions simultaneously.
+- **Fix**: On regime shift, positions contradicting the new regime: in profit → lock 50%, near breakeven → SL to entry. SL only moves in protective direction.
+- **Source**: Institutional traders reduce exposure on regime changes rather than hoping for recovery.
+
+---
+
+## MEDIUM PRIORITY — Proven, moderate effort
+
+### 23. Volatility Regime Detection (India VIX)
 - **Versions**: V1 (retired), V2, NoAI
 - **Gap**: Every market day treated the same. Low-vol days and high-vol days need different strategies.
 - **Fix**: Fetch India VIX at open. VIX < 13 → tighten targets, widen SL slightly. VIX > 22 → widen targets, reduce position size.
 - **Source**: Institutional practice — volatility-adaptive position sizing.
 - **Effort**: Medium | **Impact**: Medium
 
-### 20. Backtesting Framework
+### 24. Backtesting Framework
 - **Versions**: All (infrastructure)
 - **Gap**: No way to measure which indicators actually contribute to winning trades. Flying blind.
 - **Fix**: Replay V2 scoring on historical 15-min data, simulate ATR-based entries/exits, compute win rate per indicator combination.
 - **Source**: Every professional quant desk backtests before going live.
 - **Effort**: High | **Impact**: Highest (enables all other improvements to be measured)
 
-### 21. Trade Journaling & Performance Analytics
+### 25. Trade Journaling & Performance Analytics
 - **Versions**: All (infrastructure)
 - **Gap**: Daily reports exist but no systematic analysis of which patterns/indicators/times win.
 - **Fix**: Write full indicator snapshot at entry to SQLite. Weekly script to compute stats: win rate by pattern, by time of day, by RVol bucket, by score range.
@@ -180,8 +210,12 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 14 | Stagnant position exit | NoAI | ✅ Done | `order_engine.py`, `manager_v2.py` |
 | 15 | Loss-adjusted sizing | All | ✅ Done | `order_engine.py`, `config.py` |
 | 16 | Circuit breaker cooldown | All | ✅ Done | `manager.py`, `manager_v2.py`, `config.py` |
-| 17 | Multi-timeframe (hourly) | V2, NoAI | ⬜ Pending | — |
-| 18 | BB squeeze | V2, NoAI | ⬜ Pending | — |
-| 19 | VIX-based sizing | All | ⬜ Pending | — |
-| 20 | Backtesting framework | All | ⬜ Pending | — |
-| 21 | Trade journaling | All | ⬜ Pending | — |
+| 17 | Multi-timeframe (hourly) | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 18 | BB squeeze | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 19 | Max CB trips per day | All | ✅ Done | `order_engine.py`, `config.py` |
+| 20 | Consecutive SL pause | All | ✅ Done | `order_engine.py`, `manager_v2.py` |
+| 21 | Dynamic score after losses | NoAI | ✅ Done | `stock_scanner_v2.py`, `config.py` |
+| 22 | Regime-shift SL tightening | V2, NoAI | ✅ Done | `manager_v2.py` |
+| 23 | VIX-based sizing | All | ⬜ Pending | — |
+| 24 | Backtesting framework | All | ⬜ Pending | — |
+| 25 | Trade journaling | All | ⬜ Pending | — |

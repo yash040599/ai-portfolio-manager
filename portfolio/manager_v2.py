@@ -134,10 +134,10 @@ class PortfolioManagerV2(PortfolioManager):
         print("  ┌─────────────────────────────────────────────────┐")
         print("  │ 1. Fetch candle data (15-min + daily)           │")
         print("  │ 2. Run 14 candlestick pattern detectors         │")
-        print("  │ 3. Compute 9 technical indicators               │")
+        print("  │ 3. Compute 11 technical indicators              │")
         print("  │    EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap,  │")
-        print("  │    Daily EMA, Previous Day S&R                   │")
-        print("  │ 4. Score each stock (~-22 to +22)               │")
+        print("  │    Daily EMA, Prev-Day S&R, Hourly EMA, BB Sqz  │")
+        print("  │ 4. Score each stock (~-24 to +24)               │")
         print("  │ 5. Filter by min score threshold                │")
         print("  │ 6. Apply Nifty trend hard filter                │")
         print("  │ 7. Apply sector diversification (max 2/sector)  │")
@@ -461,6 +461,7 @@ class PortfolioManagerV2(PortfolioManager):
             quotes, nifty_context,
             max_trades=max_trades,
             session_context=session_context,
+            day_pnl=self.engine.day_pnl(),
         )
 
         if self._trade_plans:
@@ -537,6 +538,14 @@ class PortfolioManagerV2(PortfolioManager):
                 mins_remaining = (sq_off - now).total_seconds() / 60
 
                 if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                    if self.engine.is_sl_paused():
+                        self._clear_status_line()
+                        self.log.info(
+                            f"All positions closed but SL pause active — "
+                            f"waiting for pause to expire before re-scanning"
+                        )
+                        time.sleep(base_poll)
+                        continue
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
@@ -605,6 +614,7 @@ class PortfolioManagerV2(PortfolioManager):
                     and open_count < self.cfg.MAX_POSITIONS
                     and not self.engine.is_order_api_broken()
                     and not self._circuit_broken
+                    and not self.engine.is_sl_paused()
                     and time_since_rescan >= rescan_cooldown
                 ):
                     sq_now = datetime.datetime.now()
@@ -658,7 +668,7 @@ class PortfolioManagerV2(PortfolioManager):
                 self._circuit_broken = True
                 self._square_off()
                 cooldown = self.cfg.CIRCUIT_BREAKER_COOLDOWN_MINUTES
-                if cooldown > 0:
+                if cooldown > 0 and not self.engine.circuit_breaker_trips_exhausted():
                     sq_off = now.replace(
                         hour=self.cfg.SQUARE_OFF_HOUR,
                         minute=self.cfg.SQUARE_OFF_MINUTE,
@@ -738,6 +748,8 @@ class PortfolioManagerV2(PortfolioManager):
                         self.log.info(
                             f"📊 Market regime shifted: {old_condition} → {self._market_condition}"
                         )
+                        # Tighten SLs on positions contradicted by new regime
+                        self._regime_shift_protect(quotes)
                     self._last_nifty_check = time.time()
 
             # ── Periodic opportunity scan (fill free slots) ───────
@@ -751,6 +763,7 @@ class PortfolioManagerV2(PortfolioManager):
                     and opp_elapsed >= opp_rescan_interval
                     and not self.engine.is_order_api_broken()
                     and not self._circuit_broken
+                    and not self.engine.is_sl_paused()
                 ):
                     sq_now = datetime.datetime.now()
                     sq_off = sq_now.replace(
@@ -928,3 +941,60 @@ class PortfolioManagerV2(PortfolioManager):
             f"⚠ CANDLE PROTECT {symbol}: contrary signal (score {score:+.1f}, "
             f"[{patterns}]) → SL tightened ₹{old_sl:.2f} → ₹{new_sl:.2f}"
         )
+
+    # ================================================================
+    # REGIME-SHIFT PROTECTION
+    # ================================================================
+
+    def _regime_shift_protect(self, quotes: dict):
+        """
+        When the Nifty regime flips against open positions, tighten SLs:
+          - In profit → lock 50% of profit
+          - Near breakeven/loss → move SL to entry (breakeven)
+        Only affects positions whose side contradicts the new regime.
+        """
+        regime = (self._market_condition or "").upper()
+        if "BEARISH" not in regime and "BULLISH" not in regime:
+            return  # NEUTRAL — no action
+
+        for pos in self.engine.open_positions():
+            side = pos["side"]
+            # Check if regime contradicts position
+            if regime.startswith("BEARISH") and side == "BUY":
+                pass  # bearish market hurts longs
+            elif regime.startswith("BULLISH") and side == "SELL":
+                pass  # bullish market hurts shorts
+            else:
+                continue  # position aligns with regime
+
+            symbol = pos["symbol"]
+            entry  = pos["entry_price"]
+            old_sl = pos["stop_loss"]
+            key    = f"{pos.get('exchange', 'NSE')}:{symbol}"
+            q      = quotes.get(key, {})
+            current_price = q.get("last_price", 0)
+            if current_price <= 0:
+                continue
+
+            if side == "BUY":
+                profit = current_price - entry
+                if profit > 0:
+                    new_sl = round(entry + profit * 0.5, 2)
+                else:
+                    new_sl = entry
+                if new_sl <= old_sl:
+                    continue
+            else:
+                profit = entry - current_price
+                if profit > 0:
+                    new_sl = round(entry - profit * 0.5, 2)
+                else:
+                    new_sl = entry
+                if new_sl >= old_sl:
+                    continue
+
+            pos["stop_loss"] = new_sl
+            self.log.warning(
+                f"⚠ REGIME PROTECT {symbol} {side}: market turned {regime} "
+                f"→ SL tightened ₹{old_sl:.2f} → ₹{new_sl:.2f}"
+            )

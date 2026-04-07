@@ -51,7 +51,9 @@ For each stock in universe (50-200 stocks):
       • MACD(12,26,9) histogram — momentum confirmation/divergence
       • Opening Range Breakout (ORB) — first candle breakout signal
       • Gap analysis — pre-market gap continuation vs fill
-  → Calculate composite score (~-22 to +22)
+      • Hourly EMA(9/21) alignment — multi-timeframe confluence
+      • Bollinger Band squeeze — volatility contraction breakout signal
+  → Calculate composite score (~-24 to +24)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -166,8 +168,12 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Time-decay targets | Monitor loop | Yes |
 | Circuit breaker (daily loss limit) | Monitor loop | Yes |
 | Circuit breaker cooldown (resume after 30 min) | Monitor loop | Yes (new) |
+| Max CB trips per day (cap at 2) | Monitor loop | Yes (new) |
 | Loss-adjusted position sizing | Order engine | Yes (new) |
 | Stagnant position exit (90 min) | Monitor loop | Yes (new — replaces Claude reviews) |
+| Consecutive SL pause (whipsaw guard, 30 min) | Monitor loop | Yes (new) |
+| Dynamic score threshold after losses | Scanner | Yes (new — NoAI only) |
+| Regime-shift SL tightening | Monitor loop | Yes (new) |
 | Dynamic poll rate | V2 monitor | Yes |
 | Candle re-scan auto-protect | V2 monitor (every 15 min) | Yes |
 | Partial re-scan | Monitor loop (2-min cooldown) | Yes |
@@ -211,6 +217,11 @@ NoAI uses the same config settings as V2. No additional configuration required.
 | `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | Minimum move toward target to avoid stagnant exit |
 | `LOSS_SIZING_ENABLED` | True | Reduce position sizes after realised losses |
 | `CIRCUIT_BREAKER_COOLDOWN_MINUTES` | 30 | Resume after circuit breaker with reduced budget |
+| `MAX_CIRCUIT_BREAKER_TRIPS` | 2 | Max CB trips per day before stopping |
+| `CONSECUTIVE_SL_PAUSE_COUNT` | 3 | Consecutive SL hits before pausing new entries |
+| `CONSECUTIVE_SL_PAUSE_MINUTES` | 30 | How long to pause after whipsaw detection |
+| `LOSS_SCORE_BUMP_PCT` | 1.5% | Day loss % that triggers higher MIN_SCORE |
+| `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Extra score points added after loss threshold |
 | `DEFAULT_STOP_LOSS_PCT` | 1.5% | Used as initial SL before ATR override |
 | `DEFAULT_TARGET_PCT` | 2.0% | Used as initial target before ATR override |
 | `ATR_INTERVAL` | "15minute" | ATR candle interval (overrides default SL/target) |

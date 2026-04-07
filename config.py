@@ -279,6 +279,27 @@ class Config:
     #   Set to 0 to disable (old behaviour: circuit breaker = day over).
     CIRCUIT_BREAKER_COOLDOWN_MINUTES: int = 30
 
+    # MAX_CIRCUIT_BREAKER_TRIPS: max number of times CB can trip
+    #   and resume in one day. After this, the day is over.
+    #   2 = trip → cooldown → resume → trip again → done.
+    MAX_CIRCUIT_BREAKER_TRIPS: int = 2
+
+    # ── Consecutive SL Pause ──────────────────────────────────────
+    # CONSECUTIVE_SL_PAUSE_COUNT: after this many consecutive SL hits
+    #   (across any stocks), pause new entries for CONSECUTIVE_SL_PAUSE_MIN.
+    #   Protects against whipsaw days when signals fail repeatedly.
+    #   Set to 0 to disable.
+    CONSECUTIVE_SL_PAUSE_COUNT: int = 3
+    CONSECUTIVE_SL_PAUSE_MINUTES: int = 30
+
+    # ── Dynamic Score Threshold ───────────────────────────────────
+    # After losses, raise the minimum score for new NoAI trades.
+    # LOSS_SCORE_BUMP_PCT: day loss threshold (as % of budget)
+    #   that triggers a higher MIN_SCORE.
+    # LOSS_SCORE_BUMP_AMOUNT: extra score points added to V2_MIN_SCORE.
+    LOSS_SCORE_BUMP_PCT: float = 1.5
+    LOSS_SCORE_BUMP_AMOUNT: float = 1.5
+
     # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════

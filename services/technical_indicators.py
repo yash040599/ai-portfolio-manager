@@ -27,7 +27,9 @@
 #   MACD histogram:    ±1-1.5 (momentum confirmation + fading warning)
 #   ORB breakout:      ±2  (opening range breakout — strong intraday signal)
 #   Gap analysis:      ±1  (pre-market gap continuation vs fill)
-#   → Technical score range: ~-16 to +16
+#   Hourly EMA align:  ±1  (multi-timeframe confluence confirmation)
+#   BB squeeze:        ±1  (volatility contraction → breakout imminent)
+#   → Technical score range: ~-18 to +18
 # ================================================================
 
 import datetime
@@ -634,6 +636,140 @@ def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict
         "signal": signal,
     }
 
+
+# ================================================================
+# MULTI-TIMEFRAME — HOURLY EMA FROM 15-MIN CANDLES
+# ================================================================
+
+def hourly_ema_alignment(candles_15m: list[dict]) -> dict:
+    """
+    Builds synthetic hourly candles from 15-min data and computes
+    EMA(9/21) crossover on the hourly timeframe.
+
+    Returns:
+      {
+        "score": float (-1, 0, or +1),
+        "signal": "ALIGNED_BULL" | "ALIGNED_BEAR" | "NEUTRAL",
+        "hourly_spread_pct": float,
+      }
+
+    Adds +1 when 15-min AND hourly are both bullish, -1 when both
+    bearish. Neutral when they conflict (no added conviction).
+    """
+    if len(candles_15m) < 60:  # need ~15 hourly candles × 4
+        return {"score": 0, "signal": "NEUTRAL", "hourly_spread_pct": 0}
+
+    # Build hourly candles by grouping 15-min candles by hour
+    hourly: dict[str, dict] = {}
+    for c in candles_15m:
+        dt = c.get("date")
+        if dt is None:
+            continue
+        if hasattr(dt, "strftime"):
+            hour_key = dt.strftime("%Y-%m-%d %H")
+        else:
+            continue
+        if hour_key not in hourly:
+            hourly[hour_key] = {
+                "date": dt,
+                "open": c["open"],
+                "high": c["high"],
+                "low": c["low"],
+                "close": c["close"],
+                "volume": c.get("volume", 0),
+            }
+        else:
+            h = hourly[hour_key]
+            h["high"] = max(h["high"], c["high"])
+            h["low"] = min(h["low"], c["low"])
+            h["close"] = c["close"]
+            h["volume"] = h["volume"] + c.get("volume", 0)
+
+    hourly_candles = sorted(hourly.values(), key=lambda x: x["date"])
+    if len(hourly_candles) < 15:
+        return {"score": 0, "signal": "NEUTRAL", "hourly_spread_pct": 0}
+
+    hourly_cross = ema_crossover(hourly_candles, fast=9, slow=21)
+    intra_cross = ema_crossover(candles_15m, fast=9, slow=21)
+
+    h_bull = hourly_cross["spread_pct"] > 0.3
+    h_bear = hourly_cross["spread_pct"] < -0.3
+    i_bull = intra_cross["spread_pct"] > 0.3
+    i_bear = intra_cross["spread_pct"] < -0.3
+
+    if h_bull and i_bull:
+        return {"score": 1, "signal": "ALIGNED_BULL", "hourly_spread_pct": round(hourly_cross["spread_pct"], 2)}
+    elif h_bear and i_bear:
+        return {"score": -1, "signal": "ALIGNED_BEAR", "hourly_spread_pct": round(hourly_cross["spread_pct"], 2)}
+    else:
+        return {"score": 0, "signal": "NEUTRAL", "hourly_spread_pct": round(hourly_cross["spread_pct"], 2)}
+
+
+# ================================================================
+# BOLLINGER BAND SQUEEZE DETECTION
+# ================================================================
+
+def bollinger_squeeze(candles: list[dict], period: int = 20, num_std: float = 2.0) -> dict:
+    """
+    Detects Bollinger Band squeeze — when bandwidth is below its
+    rolling average, a volatility expansion (breakout) is imminent.
+
+    Returns:
+      {
+        "score": float (-1, 0, or +1),
+        "signal": "SQUEEZE_BULL" | "SQUEEZE_BEAR" | "NO_SQUEEZE",
+        "bandwidth": float,  # current BB width as % of middle band
+        "squeeze": bool,
+      }
+
+    Score logic:
+      Squeeze + price above middle band → +1 (bullish breakout likely)
+      Squeeze + price below middle band → -1 (bearish breakout likely)
+      No squeeze → 0
+    """
+    if len(candles) < period + 10:
+        return {"score": 0, "signal": "NO_SQUEEZE", "bandwidth": 0, "squeeze": False}
+
+    closes = [c["close"] for c in candles]
+
+    # Compute current BB bandwidth
+    window = closes[-period:]
+    sma = sum(window) / period
+    variance = sum((x - sma) ** 2 for x in window) / period
+    std = variance ** 0.5
+    upper = sma + num_std * std
+    lower = sma - num_std * std
+    bandwidth = (upper - lower) / sma * 100 if sma > 0 else 0
+
+    # Historical bandwidth average (last 50 candles' rolling bandwidth)
+    lookback = min(50, len(closes) - period)
+    if lookback < 10:
+        return {"score": 0, "signal": "NO_SQUEEZE", "bandwidth": round(bandwidth, 3), "squeeze": False}
+
+    bw_history = []
+    for i in range(lookback):
+        idx = len(closes) - period - lookback + i
+        w = closes[idx:idx + period]
+        m = sum(w) / period
+        v = sum((x - m) ** 2 for x in w) / period
+        s = v ** 0.5
+        bw = (2 * num_std * s) / m * 100 if m > 0 else 0
+        bw_history.append(bw)
+
+    avg_bw = sum(bw_history) / len(bw_history) if bw_history else bandwidth
+
+    squeeze = bandwidth < avg_bw * 0.75  # current is 25%+ below average
+
+    if not squeeze:
+        return {"score": 0, "signal": "NO_SQUEEZE", "bandwidth": round(bandwidth, 3), "squeeze": False}
+
+    current_price = closes[-1]
+    if current_price > sma:
+        return {"score": 1, "signal": "SQUEEZE_BULL", "bandwidth": round(bandwidth, 3), "squeeze": True}
+    else:
+        return {"score": -1, "signal": "SQUEEZE_BEAR", "bandwidth": round(bandwidth, 3), "squeeze": True}
+
+
 def compute_technical_score(
     candles_15m: list[dict],
     candles_day: list[dict] | None = None,
@@ -643,7 +779,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: ~-16 to +16
+    Score range: ~-18 to +18
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal
@@ -660,6 +796,8 @@ def compute_technical_score(
         "macd": dict,
         "orb": dict,
         "gap": dict,
+        "hourly_ema": dict,
+        "bb_squeeze": dict,
       }
     """
     score = 0.0
@@ -747,6 +885,14 @@ def compute_technical_score(
     }
     score += gap_data["score"]
 
+    # Multi-timeframe: hourly EMA alignment (from 15-min candles)
+    hourly_data = hourly_ema_alignment(candles_15m)
+    score += hourly_data["score"]
+
+    # Bollinger Band squeeze detection (on 15-min candles)
+    bb_data = bollinger_squeeze(candles_15m, period=20, num_std=2.0)
+    score += bb_data["score"]
+
     # Map score to signal
     if score >= 5:
         signal = "STRONG_BUY"
@@ -770,4 +916,6 @@ def compute_technical_score(
         "macd": macd_data,
         "orb": orb_data,
         "gap": gap_data,
+        "hourly_ema": hourly_data,
+        "bb_squeeze": bb_data,
     }

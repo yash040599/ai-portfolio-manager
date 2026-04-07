@@ -44,7 +44,7 @@ For each stock in universe (50-200 stocks):
       • MACD(12,26,9) histogram — momentum confirmation/divergence
       • Opening Range Breakout (ORB) — first candle breakout signal
       • Gap analysis — pre-market gap continuation vs fill
-  → Calculate composite score (~-22 to +22)
+  → Calculate composite score (~-24 to +24)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 5
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -248,12 +248,13 @@ The composite score combines candle patterns + technical indicators:
 
 ```
 Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -16 to +16
+Technical score:       -18 to +18
   (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
-   Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1)
+   Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1,
+   Hourly EMA ±1, BB Squeeze ±1)
 RVol bonus/penalty:    -1 to +1
 
-Total range:           ~-22 to +22
+Total range:           ~-24 to +24
 ```
 
 **Score interpretation:**

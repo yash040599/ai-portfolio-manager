@@ -25,6 +25,7 @@
 # ================================================================
 
 import datetime
+import time
 
 from config              import Config
 from core.logger         import Logger
@@ -66,6 +67,11 @@ class OrderEngine:
         # Circuit breaker baseline — after cooldown, only re-trip on
         # NEW losses exceeding the threshold (not cumulative day losses).
         self._cb_pnl_baseline: float = 0.0
+        self._cb_trip_count:   int   = 0    # how many times CB tripped today
+
+        # Consecutive SL counter — triggers a pause after N straight SL hits
+        self._consecutive_sl_count: int = 0
+        self._sl_pause_until: float = 0.0   # time.time() when pause ends
 
         # ── Order failure tracking ────────────────────────────────
         # Consecutive order placement failures (resets on success).
@@ -791,6 +797,12 @@ class OrderEngine:
         )
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
+        # Track consecutive SL hits for whipsaw guard
+        if reason == "STOP_LOSS":
+            self.record_sl_hit()
+        elif pnl > 0:
+            self.record_profitable_close()
+
     # ================================================================
     # PARTIAL EXIT — EXIT SUBSET OF SHARES
     # ================================================================
@@ -1373,6 +1385,42 @@ class OrderEngine:
     def reset_circuit_breaker_baseline(self):
         """After cooldown, reset so the breaker only trips on NEW losses."""
         self._cb_pnl_baseline = self.day_pnl()
+        self._cb_trip_count += 1
+
+    def circuit_breaker_trips_exhausted(self) -> bool:
+        """True if max CB trips reached — no more cooldowns allowed."""
+        max_trips = self.cfg.MAX_CIRCUIT_BREAKER_TRIPS
+        return max_trips > 0 and self._cb_trip_count >= max_trips
+
+    # ================================================================
+    # CONSECUTIVE SL TRACKING
+    # ================================================================
+
+    def record_sl_hit(self):
+        """Called after a stop-loss exit. Increments consecutive SL counter."""
+        self._consecutive_sl_count += 1
+        limit = self.cfg.CONSECUTIVE_SL_PAUSE_COUNT
+        if limit > 0 and self._consecutive_sl_count >= limit:
+            pause_min = self.cfg.CONSECUTIVE_SL_PAUSE_MINUTES
+            self._sl_pause_until = time.time() + pause_min * 60
+            self.log.warning(
+                f"WHIPSAW GUARD: {self._consecutive_sl_count} consecutive SL hits — "
+                f"pausing new entries for {pause_min} min"
+            )
+
+    def record_profitable_close(self):
+        """Called after a profitable exit. Resets consecutive SL counter."""
+        self._consecutive_sl_count = 0
+
+    def is_sl_paused(self) -> bool:
+        """True if in a whipsaw pause (consecutive SL hits triggered a cooldown)."""
+        if self._sl_pause_until <= 0:
+            return False
+        if time.time() >= self._sl_pause_until:
+            self._sl_pause_until = 0.0
+            self._consecutive_sl_count = 0
+            return False
+        return True
 
     # ================================================================
     # P&L AND COST CALCULATIONS

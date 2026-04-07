@@ -619,6 +619,14 @@ class PortfolioManager:
                 mins_remaining = (sq_off - sq_now).total_seconds() / 60
 
                 if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                    if self.engine.is_sl_paused():
+                        self._clear_status_line()
+                        self.log.info(
+                            f"All positions closed but SL pause active — "
+                            f"waiting for pause to expire before re-scanning"
+                        )
+                        time.sleep(poll_interval)
+                        continue
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
@@ -688,6 +696,7 @@ class PortfolioManager:
                     and open_count < self.cfg.MAX_POSITIONS
                     and not self.engine.is_order_api_broken()
                     and not self._circuit_broken
+                    and not self.engine.is_sl_paused()
                     and time_since_rescan >= rescan_cooldown
                 ):
                     sq_now = datetime.datetime.now()
@@ -745,7 +754,7 @@ class PortfolioManager:
                 self._circuit_broken = True
                 self._square_off()
                 cooldown = self.cfg.CIRCUIT_BREAKER_COOLDOWN_MINUTES
-                if cooldown > 0:
+                if cooldown > 0 and not self.engine.circuit_breaker_trips_exhausted():
                     sq_off = now.replace(
                         hour=self.cfg.SQUARE_OFF_HOUR,
                         minute=self.cfg.SQUARE_OFF_MINUTE,
