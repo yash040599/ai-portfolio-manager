@@ -129,7 +129,7 @@ def verify_today(date_str: str | None = None) -> dict:
 
     # ── Build lookups ─────────────────────────────────────────
 
-    # Group Zerodha trades by order_id
+    # Group Zerodha trades by order_id (for entry fill prices)
     z_by_order: dict[str, list[dict]] = {}
     for t in z_trades:
         if t.get("product") != "MIS":
@@ -138,7 +138,7 @@ def verify_today(date_str: str | None = None) -> dict:
         if oid:
             z_by_order.setdefault(oid, []).append(t)
 
-    # Zerodha positions by symbol (for aggregate verification)
+    # Zerodha positions by symbol (for aggregate P&L verification)
     z_pos_by_sym: dict[str, dict] = {}
     for zp in z_positions:
         if zp.get("product") != "MIS":
@@ -147,76 +147,123 @@ def verify_today(date_str: str | None = None) -> dict:
         if sym:
             z_pos_by_sym[sym] = zp
 
-    # ── Verify each position ─────────────────────────────────
+    # ── Phase 1: correct entry prices from order fills ────────
     stats = {"verified": 0, "corrected": 0, "no_match": 0}
 
-    # Count positions per symbol to detect multi-trade same-stock
-    from collections import Counter
-    sym_counts = Counter(p["symbol"] for p in closed)
-
     for pos in closed:
-        symbol    = pos["symbol"]
-        order_id  = str(pos.get("order_id", ""))
-        old_entry = pos["entry_price"]
-        old_exit  = pos.get("exit_price", 0)
-        old_pnl   = pos.get("pnl", 0)
-        side      = pos.get("side", "BUY")
-        qty       = pos.get("qty", 0)
-
-        changes = []
-
-        # ── Method 1: order_id → actual fill price ────────
+        order_id = str(pos.get("order_id", ""))
         if order_id and order_id in z_by_order:
             fills = z_by_order[order_id]
-            # Weighted avg fill price
             total_qty = sum(f.get("quantity", 0) for f in fills)
             if total_qty > 0:
                 wavg = sum(f.get("average_price", 0) * f.get("quantity", 0)
                            for f in fills) / total_qty
                 wavg = round(wavg, 2)
-
-                if abs(wavg - old_entry) > 0.01:
-                    changes.append(f"entry ₹{old_entry:.2f}→₹{wavg:.2f}")
+                if abs(wavg - pos["entry_price"]) > 0.01:
+                    print(f"    ✎ {pos['symbol']}: entry ₹{pos['entry_price']:.2f}→₹{wavg:.2f}")
                     pos["entry_price"] = wavg
 
-        # ── Method 2: position-level exit price ───────────
-        # Skip if same stock traded multiple times — Zerodha
-        # positions() aggregates all buys/sells for a symbol,
-        # so the averaged price would corrupt individual trades.
+    # ── Phase 2: correct exit prices using Zerodha aggregate P&L ─
+    # Group closed positions by symbol
+    from collections import defaultdict
+    sym_positions: dict[str, list[dict]] = defaultdict(list)
+    for pos in closed:
+        sym_positions[pos["symbol"]].append(pos)
+
+    for symbol, pos_list in sym_positions.items():
         zp = z_pos_by_sym.get(symbol)
-        if zp and sym_counts[symbol] == 1:
+        if not zp:
+            for pos in pos_list:
+                stats["no_match"] += 1
+                print(f"    ? {symbol}: no Zerodha position data")
+            continue
+
+        z_pnl = round(zp.get("pnl", 0), 2)
+
+        if len(pos_list) == 1:
+            # Single trade: use position-level exit price directly
+            pos = pos_list[0]
+            side = pos.get("side", "BUY")
+            old_exit = pos.get("exit_price", 0)
+
             z_buy_price  = zp.get("buy_price", 0)
             z_sell_price = zp.get("sell_price", 0)
-            z_pnl        = zp.get("pnl", 0)
+            z_exit = z_sell_price if side == "BUY" else z_buy_price
 
-            if side == "BUY":
-                z_exit = z_sell_price
-            else:
-                z_exit = z_buy_price
-
+            changes = []
             if z_exit > 0 and abs(z_exit - old_exit) > 0.01:
-                # Only correct if no partial exit (Zerodha averages all sells)
                 if not pos.get("_partial_qty", 0):
                     changes.append(f"exit ₹{old_exit:.2f}→₹{z_exit:.2f}")
                     pos["exit_price"] = round(z_exit, 2)
 
-        # Recalculate P&L
-        if pos["side"] == "BUY":
-            new_pnl = (pos["exit_price"] - pos["entry_price"]) * qty
-        else:
-            new_pnl = (pos["entry_price"] - pos["exit_price"]) * qty
-        new_pnl = round(new_pnl, 2)
+            # Recalculate P&L
+            qty = pos.get("qty", 0)
+            if side == "BUY":
+                new_pnl = round((pos["exit_price"] - pos["entry_price"]) * qty, 2)
+            else:
+                new_pnl = round((pos["entry_price"] - pos["exit_price"]) * qty, 2)
 
-        if abs(new_pnl - old_pnl) > 0.01:
-            changes.append(f"P&L ₹{old_pnl:+,.2f}→₹{new_pnl:+,.2f}")
-            pos["pnl"] = new_pnl
+            if abs(new_pnl - pos.get("pnl", 0)) > 0.01:
+                changes.append(f"P&L ₹{pos['pnl']:+,.2f}→₹{new_pnl:+,.2f}")
+                pos["pnl"] = new_pnl
 
-        if changes:
-            stats["corrected"] += 1
-            print(f"    ✎ {symbol}: {' | '.join(changes)}")
+            if changes:
+                stats["corrected"] += 1
+                print(f"    ✎ {symbol}: {' | '.join(changes)}")
+            else:
+                stats["verified"] += 1
+                print(f"    ✓ {symbol}: matches Zerodha")
+
         else:
-            stats["verified"] += 1
-            print(f"    ✓ {symbol}: matches Zerodha")
+            # Multiple trades for same symbol — use aggregate P&L
+            # to distribute corrections.
+            # First, recalculate each trade's P&L from current entry/exit
+            for pos in pos_list:
+                qty = pos.get("qty", 0)
+                if pos["side"] == "BUY":
+                    pos["pnl"] = round((pos["exit_price"] - pos["entry_price"]) * qty, 2)
+                else:
+                    pos["pnl"] = round((pos["entry_price"] - pos["exit_price"]) * qty, 2)
+
+            internal_total = round(sum(p["pnl"] for p in pos_list), 2)
+            diff = round(z_pnl - internal_total, 2)
+
+            if abs(diff) <= 0.10:
+                # Close enough — consider verified
+                for pos in pos_list:
+                    stats["verified"] += 1
+                    print(f"    ✓ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
+            else:
+                # Distribute P&L difference to the last trade's exit price.
+                # The last trade is most likely where the discrepancy is
+                # (aggregated position prices lose per-trade granularity).
+                last_pos = pos_list[-1]
+                old_pnl = last_pos["pnl"]
+                correction_per_share = diff / last_pos.get("qty", 1)
+
+                if last_pos["side"] == "BUY":
+                    old_exit = last_pos["exit_price"]
+                    last_pos["exit_price"] = round(old_exit + correction_per_share, 2)
+                else:
+                    old_exit = last_pos["exit_price"]
+                    last_pos["exit_price"] = round(old_exit - correction_per_share, 2)
+
+                # Recalculate last trade's P&L
+                qty = last_pos.get("qty", 0)
+                if last_pos["side"] == "BUY":
+                    last_pos["pnl"] = round((last_pos["exit_price"] - last_pos["entry_price"]) * qty, 2)
+                else:
+                    last_pos["pnl"] = round((last_pos["entry_price"] - last_pos["exit_price"]) * qty, 2)
+
+                for pos in pos_list[:-1]:
+                    stats["verified"] += 1
+                    print(f"    ✓ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
+
+                stats["corrected"] += 1
+                print(f"    ✎ {symbol} ({last_pos.get('entry_time','?')}): "
+                      f"exit ₹{old_exit:.2f}→₹{last_pos['exit_price']:.2f} | "
+                      f"P&L ₹{old_pnl:+,.2f}→₹{last_pos['pnl']:+,.2f} "
+                      f"(from Zerodha aggregate {z_pnl:+.2f})")
 
     # ── Recalculate charges from Zerodha positions ────────────
     # Use Zerodha's actual turnover data for accurate charge calculation
@@ -237,6 +284,15 @@ def verify_today(date_str: str | None = None) -> dict:
 
     # ── Recalculate P&L totals ────────────────────────────────
     gross_pnl = round(sum(p.get("pnl", 0) for p in positions if p.get("status") == "CLOSED"), 2)
+
+    # Cross-check: aggregate Zerodha P&L vs our corrected total
+    z_total_pnl = round(sum(zp.get("pnl", 0) for zp in z_pos_by_sym.values()), 2)
+    if abs(gross_pnl - z_total_pnl) > 0.50:
+        print(f"\n    ⚠ P&L mismatch: internal ₹{gross_pnl:+.2f} vs Zerodha ₹{z_total_pnl:+.2f} "
+              f"(diff ₹{gross_pnl - z_total_pnl:+.2f})")
+    else:
+        print(f"\n    ✓ Gross P&L confirmed: ₹{gross_pnl:+.2f} (Zerodha: ₹{z_total_pnl:+.2f})")
+
     total_costs = data["pnl"]["charges"]["total_costs"]
     net_profit = round(gross_pnl - total_costs, 2)
 

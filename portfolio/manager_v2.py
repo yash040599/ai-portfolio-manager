@@ -581,7 +581,8 @@ class PortfolioManagerV2(PortfolioManager):
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed — {mins_remaining:.0f} min left, "
-                        f"not enough for new trades"
+                        f"not enough for new trades "
+                        f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                     )
                     break
 
@@ -696,6 +697,10 @@ class PortfolioManagerV2(PortfolioManager):
                         )
                         self._last_opportunity_scan = time.time()
                         continue
+                self.log.warning(
+                    "Circuit breaker: stopping for the day "
+                    "(change MAX_CIRCUIT_BREAKER_TRIPS or CIRCUIT_BREAKER_COOLDOWN_MINUTES in config.py to adjust)"
+                )
                 break
 
             # ── End-of-day accelerated exit ─────────────────────

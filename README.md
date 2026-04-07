@@ -60,6 +60,7 @@ A fully automated intraday trading bot that:
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
 - **Tax ledger & capital gains** — full tax infrastructure with separate DB tables, verification against Zerodha's official Tax P&L report, and combined tax summary. See the **[Taxation](#taxation)** section below
+- **Auto trade verification** — after each live trading day, automatically verifies all trades against Zerodha's API, corrects any price/P&L discrepancies, and marks trades as verified in the tax ledger
 - **Order API failure protection** — if Zerodha's order API fails 3 consecutive times (after retrying each order 3 times with backoff), the bot stops calling Claude immediately (no more wasted API money), closes any open positions, and shuts down gracefully. Prevents the scenario where broken Zerodha APIs cause the bot to loop endlessly asking Claude for new recommendations
 - **Crash recovery** — if the bot is stopped (Ctrl+C, crash, terminal closed) while positions are still open on Zerodha, restarting it will automatically detect and resume monitoring those positions. Fetches open MIS positions from Zerodha, recalculates ATR-based SL/targets, and jumps straight to the monitor loop — no duplicate orders, no orphaned positions
 - **Manual trade adoption** — if you buy or sell a stock manually on the Zerodha app (intraday/MIS only), the bot automatically detects it on its next sync, assigns ATR-based SL/targets, and manages it like any other position — including monitoring, Claude review, and end-of-day square-off. CNC (delivery/long-term) positions are ignored. If you close a manual trade yourself before the bot does, it's marked as `EXTERNAL_CLOSE` in the report. Manual trades appear in reports with a `[M]` tag
@@ -590,6 +591,7 @@ The bot uses this data to:
 | `python scripts/view_analyses.py` | Print all portfolio analyses — action, conviction, status (DONE/PENDING/NOT ACTED), P&L, per-date summary |
 | `python scripts/generate_sheet.py` | Generate a TSV spreadsheet from a portfolio report. Uses 1 Claude API call to extract structured fields |
 | `python scripts/view_candle_cache.py` | View candle cache — symbols cached, date ranges, OHLCV candles. Use `--symbol RELIANCE --candles` for individual candles |
+| `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices/P&L, marks trades as `verified`. Use `--status` to check all dates |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON report files into the DB. Safe to re-run — skips dates already imported |
 
 ```bash
@@ -610,6 +612,11 @@ python scripts/view_candle_cache.py --symbol RELIANCE   # one symbol
 python scripts/view_candle_cache.py --symbol RELIANCE --candles          # OHLCV candles (last 20)
 python scripts/view_candle_cache.py --symbol RELIANCE --candles --last 50  # more candles
 python scripts/view_candle_cache.py --interval day      # filter by interval
+
+# ── Verify trades against Zerodha ────────────────────────
+python scripts/verify_trades.py                         # verify today's trades
+python scripts/verify_trades.py 2026-04-07              # verify a specific date
+python scripts/verify_trades.py --status                # show verification status for all dates
 
 # ── Import old reports ───────────────────────────────────
 python scripts/import_reports_to_db.py                  # one-time, safe to re-run
@@ -658,9 +665,9 @@ For a comprehensive guide covering ITR form selection, advance tax deadlines, lo
 
 ### Tax workflow
 
-**Daily (automatic):** After each live trading day, the bot auto-fills `intraday_tax_ledger` with trades marked as `unverified`.
+**Daily (automatic):** After each live trading day, the bot auto-fills `intraday_tax_ledger` with trades marked as `unverified`, then automatically runs trade verification against Zerodha's API — correcting prices, P&L, charges, and marking trades `verified`.
 
-**Same-day verification:** Run `python scripts/verify_trades.py` after market close to verify trades against Zerodha's actual API data. Corrects prices, P&L, charges, and marks trades `verified`. Use `--status` to see which dates are verified.
+**Same-day verification (manual fallback):** If auto-verification fails or you want to re-verify, run `python scripts/verify_trades.py` after market close. Use `--status` to see which dates are verified.
 
 **Periodically (manual):** Download the Zerodha Tax P&L report from [Console → Tax P&L](https://console.zerodha.com/reports/taxpnl), place the xlsx in `data/ZerodhaTaxPL/`, and run the import script. This verifies/corrects intraday data and imports capital gains.
 
@@ -792,6 +799,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Graceful shutdown** — Ctrl+C squares off all positions before exiting
 - **Existing holdings are READ-ONLY** — the bot only trades with the managed budget pool
 - **NSE holiday calendar** — handles weekends, holidays, late starts, and token expiry automatically
+- **Config hints** — when the bot skips an action due to a config limit (e.g. not enough time for entry, balance too low), the log message tells you which config to change
 
 ---
 

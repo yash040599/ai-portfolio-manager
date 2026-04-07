@@ -164,7 +164,8 @@ class PortfolioManager:
                 reason = (
                     f"Only {minutes_left:.0f} minutes until square-off — "
                     f"need at least {self.cfg.CUTOFF_MINUTES_BEFORE_CLOSE} minutes, "
-                    f"skipping today"
+                    f"skipping today "
+                    f"(change CUTOFF_MINUTES_BEFORE_CLOSE in config.py to lower the threshold)"
                 )
             else:
                 break  # Enough time to trade — proceed
@@ -275,6 +276,20 @@ class PortfolioManager:
             self.log.warning(
                 "Trading data may not be saved. Check Zerodha for actual P&L."
             )
+
+        # ── Step 11: Verify trades against Zerodha ───────────────
+        if not self.cfg.DRY_RUN:
+            try:
+                from scripts.verify_trades import verify_today
+                self.log.info("Verifying trades against Zerodha API...")
+                stats = verify_today()
+                corrected = stats.get("corrected", 0)
+                if corrected:
+                    self.log.info(f"Verification complete — {corrected} trade(s) corrected")
+                else:
+                    self.log.info("Verification complete — all trades match Zerodha")
+            except Exception as e:
+                self.log.warning(f"Trade verification failed: {e} — run manually with: python scripts/verify_trades.py")
 
     # ================================================================
     # PRE-MARKET SCAN
@@ -403,7 +418,8 @@ class PortfolioManager:
             if mins_to_close < self.cfg.MIN_MINUTES_FOR_ENTRY:
                 self.log.warning(
                     f"Only {mins_to_close:.0f} min until square-off — "
-                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min for entry. Skipping."
+                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min for entry. Skipping. "
+                    f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                 )
                 return
             self._enter_positions()
@@ -554,7 +570,8 @@ class PortfolioManager:
             if mins_left_post < self.cfg.MIN_MINUTES_FOR_ENTRY:
                 self.log.warning(
                     f"Only {mins_left_post:.0f} min until square-off after observation — "
-                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries."
+                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries. "
+                    f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                 )
                 return
             self._enter_positions(confirmed)
@@ -666,7 +683,8 @@ class PortfolioManager:
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed — only {mins_remaining:.0f} min left, "
-                        f"not enough time for new trades"
+                        f"not enough time for new trades "
+                        f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                     )
                     break
 
@@ -784,6 +802,10 @@ class PortfolioManager:
                             f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
                         )
                         continue
+                self.log.warning(
+                    "Circuit breaker: stopping for the day "
+                    "(change MAX_CIRCUIT_BREAKER_TRIPS or CIRCUIT_BREAKER_COOLDOWN_MINUTES in config.py to adjust)"
+                )
                 break
 
             # ── Periodic Claude review (paid) ─────────────────────
@@ -1104,7 +1126,8 @@ class PortfolioManager:
             else:
                 self.log.error(
                     f"Funds ₹{self._available_funds:,.2f} below minimum "
-                    f"₹{min_balance:,}. Add funds to Zerodha and retry."
+                    f"₹{min_balance:,}. Add funds to Zerodha and retry. "
+                    f"(change MIN_BALANCE_TO_TRADE in config.py to lower the threshold)"
                 )
                 self._budget = 0
                 return
