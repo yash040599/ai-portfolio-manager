@@ -744,6 +744,34 @@ class PortfolioManager:
             if self.engine.check_circuit_breaker():
                 self._circuit_broken = True
                 self._square_off()
+                cooldown = self.cfg.CIRCUIT_BREAKER_COOLDOWN_MINUTES
+                if cooldown > 0:
+                    sq_off = now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - now).total_seconds() / 60
+                    if mins_left > cooldown + self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self.log.info(
+                            f"Circuit breaker cooldown: waiting {cooldown} min "
+                            f"before resuming with reduced budget..."
+                        )
+                        # Polling sleep — check shutdown every 10s
+                        for _ in range(cooldown * 6):
+                            if self._shutdown_requested:
+                                break
+                            time.sleep(10)
+                        if self._shutdown_requested:
+                            break
+                        self._circuit_broken = False
+                        self.engine.reset_circuit_breaker_baseline()
+                        self.engine.refresh_budget()
+                        self.log.info(
+                            f"Circuit breaker cooldown complete — resuming with "
+                            f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
+                        )
+                        continue
                 break
 
             # ── Periodic Claude review (paid) ─────────────────────

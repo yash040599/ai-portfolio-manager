@@ -256,6 +256,29 @@ class Config:
     # reach this minimum. Set to 0 to disable.
     MIN_BUDGET_UTILISATION_PCT: float = 60.0
 
+    # ── Stagnant Position Exit (NoAI) ─────────────────────────────
+    # STAGNANT_EXIT_MINUTES: after this many minutes, if a position
+    #   hasn't moved toward target by at least STAGNANT_EXIT_MIN_MOVE_PCT,
+    #   exit it to free the slot for a better trade. Only in NoAI mode
+    #   (V2 has Claude reviews for this). Set to 0 to disable.
+    STAGNANT_EXIT_MINUTES:      int   = 90
+    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3
+
+    # ── Loss-Adjusted Position Sizing ─────────────────────────────
+    # LOSS_SIZING_ENABLED: if True, reduce position sizes after
+    #   realising losses. Budget for new trades shrinks by day's
+    #   losses, preventing full-size re-entry after SL hits.
+    #   Live mode already gets this from Zerodha's margin API.
+    #   This mainly helps dry-run mode stay realistic.
+    LOSS_SIZING_ENABLED: bool = True
+
+    # ── Circuit Breaker Cooldown ──────────────────────────────────
+    # CIRCUIT_BREAKER_COOLDOWN_MINUTES: after circuit breaker trips,
+    #   wait this many minutes then resume with loss-adjusted budget.
+    #   Only NEW losses after resume can re-trip the breaker.
+    #   Set to 0 to disable (old behaviour: circuit breaker = day over).
+    CIRCUIT_BREAKER_COOLDOWN_MINUTES: int = 30
+
     # ══════════════════════════════════════════════════════════════
     # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════

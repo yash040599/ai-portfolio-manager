@@ -108,15 +108,15 @@ A completely Claude-free trading mode that uses the V2 candle pipeline for every
 - **Auto-generates SL/target** from config defaults (ATR overrides in `enter_trade` still apply)
 - **Auto-sizes positions** to fit budget and per-stock limits
 - All monitoring is rule-based: SL/target checks, trailing stops, auto-protect on contrary candle signals, periodic candle re-scans
-- **No Claude reviews** — no periodic position reviews, no re-scan prompts. Everything is math
+- **No Claude reviews** — stagnant position exit replaces Claude's "momentum faded" judgment (exits dead positions after 90 min)
 - Partial re-scans when slots free up also use pure technical selection
-- All other V2 features preserved: dynamic poll rate, crash recovery, circuit breaker, etc.
+- All other V2 features preserved: dynamic poll rate, crash recovery, circuit breaker cooldown, loss-adjusted sizing, etc.
 
 **Trade-offs vs V2:**
 - **Free** — zero Claude API cost per trading day
 - **Faster** — no waiting for Claude responses (~10-30s per call saved)
 - **Less nuanced** — no qualitative reasoning about setups, sector context, or position management
-- **No mid-day position reviews** — relies entirely on rule-based SL/target/trailing/candle-protect
+- **Stagnant exit** — rule-based exit for dead positions (replaces Claude's review-based exits)
 
 ```bash
 python main.py --mode trade --noai
@@ -275,7 +275,11 @@ Open `config.py` and review these key settings:
 | `MAX_INTRADAY_SL_PCT` | `2.5%` | Hard cap on ATR-based SL width — prevents swing-trade-sized stops |
 | `DEFAULT_STOP_LOSS_PCT` | `1.5%` | Fallback SL when ATR data is unavailable |
 | `DEFAULT_TARGET_PCT` | `2.0%` | Fallback target when ATR data is unavailable |
-| `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading for the day |
+| `MAX_LOSS_PER_DAY_PCT` | `3.0%` | Circuit breaker — stops trading, resumes after cooldown |
+| `CIRCUIT_BREAKER_COOLDOWN_MINUTES` | `30` | Wait time after circuit breaker before resuming (0 = day over) |
+| `LOSS_SIZING_ENABLED` | `True` | Reduce position sizes after realised losses |
+| `STAGNANT_EXIT_MINUTES` | `90` | NoAI: exit dead positions after N minutes (0 = disable) |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | `0.3%` | NoAI: minimum move toward target to stay alive |
 | `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
 | `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
 | `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run entries |
@@ -735,8 +739,9 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 ## Safety Features
 
 - **Dry-run mode** (default) — no real orders, simulated P&L on live prices with slippage modelling
-- **Circuit breaker** — stops trading if daily loss exceeds threshold
+- **Circuit breaker** — stops trading if daily loss exceeds threshold; resumes after cooldown with reduced budget
 - **Budget cap** — never exceeds `MAX_BUDGET_INR`
+- **Loss-adjusted sizing** — reduces position sizes after realised losses (budget shrinks by day's losses)
 - **Smart sizing** — auto-reduces qty to fit remaining budget instead of rejecting the trade
 - **Re-entry limit** — blocks repeated entries into the same stock after stop-losses (`MAX_REENTRIES_PER_STOCK`)
 - **Min balance check** — won't trade live if Zerodha balance is below `MIN_BALANCE_TO_TRADE`

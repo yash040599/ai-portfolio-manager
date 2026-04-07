@@ -21,12 +21,14 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | SL / Target | Claude sets, ATR may override | Config defaults, ATR overrides in `enter_trade` |
 | Position sizing | Claude sets qty, budget-validated | Auto-sized to fit budget and per-stock limits |
 | Rationale | Claude writes qualitative analysis | Auto-generated from indicator values |
-| Position reviews | Claude reviews every 25 min | None — rule-based SL/target/trailing only |
+| Position reviews | Claude reviews every 25 min | Stagnant position exit after 90 min (rule-based) |
 | Mid-day re-scan | Claude picks from new candidates | Auto-select from new candidates (same as initial scan) |
 | Candle re-scan | Every 15 min, auto-protect + Claude can see patterns | Every 15 min, auto-protect only (no Claude review) |
 | NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
 | Opportunity scan | Every 30 min, fills free slots (1 Claude call) | Every 30 min, fills free slots (0 cost — uses scan_noai) |
 | Min deployment | Claude prompted to deploy ≥60% + code boost | Code boost only (same _boost_underdeployed logic) |
+| Loss-adjusted sizing | Yes — reduces budget after losses | Yes — same mechanism |
+| Circuit breaker cooldown | Yes — resumes after 30 min | Yes — same mechanism |
 | API cost | ~₹50-100/day (Claude) | ₹0 |
 | Latency | 10-30s per Claude call | Instant |
 
@@ -99,6 +101,11 @@ Every 10 seconds (or 5s when near SL/target):
   → Circuit breaker check (MAX_LOSS_PER_DAY_PCT)
   → Dynamic poll: halve interval when any position within 0.5% of SL/target
 
+Every CLAUDE_REVIEW_MINUTES (default: 25 min) — FREE in NoAI:
+  → Stagnant position check: exit positions open > STAGNANT_EXIT_MINUTES (90 min)
+    that haven't moved > STAGNANT_EXIT_MIN_MOVE_PCT (0.3%) toward target
+  → Frees slots for stronger setups (replaces Claude's "momentum faded, exit" judgment)
+
 Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
   → Re-run candle pattern analysis on all open positions
   → AUTO-PROTECT: contrary signal score ±4 → tighten SL
@@ -115,6 +122,17 @@ Every OPPORTUNITY_RESCAN_MINUTES (default: 30 min) — FREE (NoAI):
   → Proactively fills empty slots without waiting for position closes
   → Skipped if circuit breaker active or insufficient time remains
 
+Circuit breaker cooldown (CIRCUIT_BREAKER_COOLDOWN_MINUTES, default: 30 min):
+  → After circuit breaker triggers, wait 30 min then resume with loss-adjusted budget
+  → Resets P&L baseline — only NEW losses after resume can re-trip the breaker
+  → Only resumes if enough time remains before square-off
+  → Set to 0 for old behaviour (circuit breaker = day over)
+
+Loss-adjusted position sizing (LOSS_SIZING_ENABLED, default: True):
+  → Budget for new trades shrinks by realised losses
+  → Prevents full-size re-entry after consecutive SL hits
+  → Floor at 20% of original budget to keep bot active
+
 Partial re-scan (when slots free up):
   → When a position closes via SL/target and empty slots exist
   → 2-minute cooldown between re-scans
@@ -122,7 +140,7 @@ Partial re-scan (when slots free up):
   → Session context includes already-traded symbols and current holdings
 ```
 
-**What's missing vs V2:** No Claude position reviews every 25 minutes. Claude can sometimes spot qualitative signals (sector rotation, news impact, momentum fading) that pure math misses. In NoAI, the only mid-position protection comes from the candle re-scan auto-protect system.
+**What NoAI adds vs pure rule-based:** Stagnant position exit (exits dead positions after 90 min), loss-adjusted sizing (reduces trade size after losses), and circuit breaker cooldown (resumes after 30 min instead of shutting down for the day).
 
 ### Phase 5 — Square Off & Report (same as V1/V2)
 
@@ -137,7 +155,7 @@ At SQUARE_OFF_HOUR:SQUARE_OFF_MINUTE (default 3:10 PM):
 
 ## Risk Management Layers
 
-All V1/V2 risk management is preserved. The only layer removed is Claude position reviews.
+All V1/V2 risk management is preserved. Claude position reviews are replaced by rule-based stagnant exit.
 
 | Layer | Source | Kept in NoAI? |
 |-------|--------|---------------|
@@ -147,6 +165,9 @@ All V1/V2 risk management is preserved. The only layer removed is Claude positio
 | Trailing stop-loss | Order engine | Yes |
 | Time-decay targets | Monitor loop | Yes |
 | Circuit breaker (daily loss limit) | Monitor loop | Yes |
+| Circuit breaker cooldown (resume after 30 min) | Monitor loop | Yes (new) |
+| Loss-adjusted position sizing | Order engine | Yes (new) |
+| Stagnant position exit (90 min) | Monitor loop | Yes (new — replaces Claude reviews) |
 | Dynamic poll rate | V2 monitor | Yes |
 | Candle re-scan auto-protect | V2 monitor (every 15 min) | Yes |
 | Partial re-scan | Monitor loop (2-min cooldown) | Yes |
@@ -160,7 +181,7 @@ All V1/V2 risk management is preserved. The only layer removed is Claude positio
 | Partial profit taking (50% at 1×risk) | Order engine | Yes |
 | Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
-| **Claude position reviews** | **V2 monitor (every 25 min)** | **No** |
+| **Claude position reviews** | **V2 monitor (every 25 min)** | **No (replaced by stagnant exit)** |
 | **Claude re-scan stock selection** | **V1/V2 scanner** | **No** |
 
 ---
@@ -185,7 +206,11 @@ NoAI uses the same config settings as V2. No additional configuration required.
 |---------|---------|-------------------|
 | `V2_MIN_SCORE` | 2.0 | Minimum score to pass pre-filter (same as V2) |
 | `V2_CANDLE_INTERVAL` | "15minute" | Candle interval for pattern detection (same as V2) |
-| `V2_CANDLE_RESCAN_MINUTES` | 15 | Candle re-scan frequency — only risk layer for open positions |
+| `V2_CANDLE_RESCAN_MINUTES` | 15 | Candle re-scan frequency — auto-protect for open positions |
+| `STAGNANT_EXIT_MINUTES` | 90 | Exit positions stagnating longer than this (NoAI only) |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | Minimum move toward target to avoid stagnant exit |
+| `LOSS_SIZING_ENABLED` | True | Reduce position sizes after realised losses |
+| `CIRCUIT_BREAKER_COOLDOWN_MINUTES` | 30 | Resume after circuit breaker with reduced budget |
 | `DEFAULT_STOP_LOSS_PCT` | 1.5% | Used as initial SL before ATR override |
 | `DEFAULT_TARGET_PCT` | 2.0% | Used as initial target before ATR override |
 | `ATR_INTERVAL` | "15minute" | ATR candle interval (overrides default SL/target) |

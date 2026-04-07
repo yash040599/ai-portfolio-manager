@@ -657,6 +657,35 @@ class PortfolioManagerV2(PortfolioManager):
             if self.engine.check_circuit_breaker():
                 self._circuit_broken = True
                 self._square_off()
+                cooldown = self.cfg.CIRCUIT_BREAKER_COOLDOWN_MINUTES
+                if cooldown > 0:
+                    sq_off = now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - now).total_seconds() / 60
+                    if mins_left > cooldown + self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        self.log.info(
+                            f"Circuit breaker cooldown: waiting {cooldown} min "
+                            f"before resuming with reduced budget..."
+                        )
+                        # Polling sleep — check shutdown every 10s
+                        for _ in range(cooldown * 6):
+                            if self._shutdown_requested:
+                                break
+                            time.sleep(10)
+                        if self._shutdown_requested:
+                            break
+                        self._circuit_broken = False
+                        self.engine.reset_circuit_breaker_baseline()
+                        self.engine.refresh_budget()
+                        self.log.info(
+                            f"Circuit breaker cooldown complete — resuming with "
+                            f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
+                        )
+                        self._last_opportunity_scan = time.time()
+                        continue
                 break
 
             # ── Dynamic poll rate ─────────────────────────────────
@@ -766,7 +795,13 @@ class PortfolioManagerV2(PortfolioManager):
             # ── Claude review (with candle context) ───────────────
             elapsed = time.time() - last_review_time
             if elapsed >= review_interval and self.engine.open_positions():
-                if not self._noai:
+                if self._noai:
+                    # NoAI: check for stagnant positions instead of Claude review
+                    stagnant_closed = self.engine.check_stagnant_positions(quotes)
+                    if stagnant_closed > 0:
+                        self._clear_status_line()
+                        self.log.info(f"{stagnant_closed} stagnant position(s) exited (NoAI)")
+                else:
                     self._clear_status_line()
                     self._run_claude_review_v2(quotes)
                 last_review_time = time.time()

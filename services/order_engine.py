@@ -63,6 +63,10 @@ class OrderEngine:
         # Running order counter for dry-run IDs
         self._dry_run_counter: int = 0
 
+        # Circuit breaker baseline — after cooldown, only re-trip on
+        # NEW losses exceeding the threshold (not cumulative day losses).
+        self._cb_pnl_baseline: float = 0.0
+
         # ── Order failure tracking ────────────────────────────────
         # Consecutive order placement failures (resets on success).
         # When this reaches ORDER_FAILURE_LIMIT, the engine signals
@@ -1089,6 +1093,99 @@ class OrderEngine:
                          f"Original target: ₹{target:.2f}")
 
     # ================================================================
+    # STAGNANT POSITION EXIT (NoAI)
+    # ================================================================
+
+    def check_stagnant_positions(self, quotes: dict) -> int:
+        """
+        Exits positions that have been open for STAGNANT_EXIT_MINUTES
+        without moving at least STAGNANT_EXIT_MIN_MOVE_PCT toward
+        their target. Frees slots for better trades.
+
+        Only useful in NoAI mode (Claude reviews handle this in V1/V2).
+
+        Returns the number of positions closed.
+        """
+        stagnant_mins = self.cfg.STAGNANT_EXIT_MINUTES
+        min_move_pct  = self.cfg.STAGNANT_EXIT_MIN_MOVE_PCT
+        if stagnant_mins <= 0:
+            return 0
+
+        now = datetime.datetime.now()
+        closed = 0
+
+        for pos in self.open_positions():
+            # Parse entry time
+            entry_time_str = pos.get("entry_time", "")
+            if not entry_time_str:
+                continue
+            try:
+                entry_time = datetime.datetime.strptime(
+                    f"{now.strftime('%Y-%m-%d')} {entry_time_str}",
+                    "%Y-%m-%d %H:%M:%S",
+                )
+            except ValueError:
+                continue
+
+            elapsed = (now - entry_time).total_seconds() / 60
+            if elapsed < stagnant_mins:
+                continue
+
+            # Get current price
+            key = f"{pos['exchange']}:{pos['symbol']}"
+            q = quotes.get(key, {})
+            current_price = q.get("last_price", 0)
+            if current_price <= 0:
+                continue
+
+            entry  = pos["entry_price"]
+            side   = pos["side"]
+
+            # Calculate favourable move from entry (as % of entry price)
+            if side == "BUY":
+                move_pct = (current_price - entry) / entry * 100
+            else:
+                move_pct = (entry - current_price) / entry * 100
+
+            # If barely moved (or moved against us), exit
+            if move_pct < min_move_pct:
+                pnl = (current_price - entry) * pos["qty"] if side == "BUY" \
+                    else (entry - current_price) * pos["qty"]
+                self.log.warning(
+                    f"STAGNANT EXIT: {pos['symbol']} {side} — open {elapsed:.0f} min, "
+                    f"moved only {move_pct:+.2f}% (need {min_move_pct}%) | "
+                    f"P&L: ₹{pnl:+,.2f}"
+                )
+                self.exit_position(pos, current_price, "STAGNANT_EXIT")
+                closed += 1
+
+        return closed
+
+    # ================================================================
+    # LOSS-ADJUSTED BUDGET
+    # ================================================================
+
+    def loss_adjusted_budget(self) -> float:
+        """
+        Returns effective budget reduced by realised losses.
+        Prevents full-size re-entry after SL hits.
+
+        Live mode: Zerodha's refresh_budget() already reflects margin.
+        Dry-run mode: this is the only way to reduce budget after losses.
+        """
+        if not self.cfg.LOSS_SIZING_ENABLED:
+            return self._budget
+
+        day_loss = self.day_pnl()
+        if day_loss >= 0:
+            return self._budget
+
+        # Reduce budget by realised losses (floor at 20% of original budget)
+        adjusted = self._budget + day_loss  # day_loss is negative
+        min_budget = self._budget * 0.2
+        return max(adjusted, min_budget)
+
+    # ================================================================
     # APPLY CLAUDE REVIEW ACTIONS
     # ================================================================
 
@@ -1261,16 +1358,21 @@ class OrderEngine:
 
         budget   = self._budget
         max_loss = budget * max_loss_pct / 100
-        day_pnl  = self.day_pnl()
+        pnl_since_baseline = self.day_pnl() - self._cb_pnl_baseline
 
-        if day_pnl < -max_loss:
+        if pnl_since_baseline < -max_loss:
             self.log.error(
-                f"CIRCUIT BREAKER: Day P&L ₹{day_pnl:,.2f} exceeds "
-                f"max loss of ₹{max_loss:,.0f} ({max_loss_pct}% of budget). "
+                f"CIRCUIT BREAKER: P&L since baseline ₹{pnl_since_baseline:,.2f} "
+                f"(day total ₹{self.day_pnl():,.2f}) exceeds max loss of "
+                f"₹{max_loss:,.0f} ({max_loss_pct}% of budget). "
                 f"Stopping all trading."
             )
             return True
         return False
+
+    def reset_circuit_breaker_baseline(self):
+        """After cooldown, reset so the breaker only trips on NEW losses."""
+        self._cb_pnl_baseline = self.day_pnl()
 
     # ================================================================
     # P&L AND COST CALCULATIONS
@@ -1369,8 +1471,8 @@ class OrderEngine:
         return [p for p in self.positions if p["status"] == "CLOSED"]
 
     def budget_remaining(self) -> float:
-        """How much of the budget is not currently allocated."""
-        return self._budget - self._total_open_exposure()
+        """How much of the budget is not currently allocated (loss-adjusted)."""
+        return self.loss_adjusted_budget() - self._total_open_exposure()
 
     def print_position_status(self, quotes: dict):
         """
