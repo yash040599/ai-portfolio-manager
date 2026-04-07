@@ -47,10 +47,6 @@ class Config:
     # In DRY RUN mode, this check is skipped (only a warning is shown).
     MIN_BALANCE_TO_TRADE: int = 3_000
 
-    # Scheduling: "manual" means you run it yourself.
-    # "daily" / "weekly" automation comes in Phase 3.
-    ANALYSIS_FREQUENCY: str = "manual"
-
     # API keys — loaded from your .env file
     ZERODHA_API_KEY:    str = os.getenv("ZERODHA_API_KEY",    "")
     ZERODHA_API_SECRET: str = os.getenv("ZERODHA_API_SECRET", "")
@@ -108,7 +104,7 @@ class Config:
     #   30 min = ~12 calls/day ≈ ₹25-50/day in Claude costs.
     #   15 min = ~24 calls/day ≈ ₹50-100/day. Only if budget is large.
     PRICE_POLL_SECONDS:     int = 10
-    CLAUDE_REVIEW_MINUTES:  int = 25
+    CLAUDE_REVIEW_MINUTES:  int = 20
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
@@ -207,7 +203,10 @@ class Config:
     # MIN_MINUTES_FOR_ENTRY: don't open new positions if fewer than
     # this many minutes remain until square-off. Prevents entering
     # too late when full-day targets are impossible.
-    MIN_MINUTES_FOR_ENTRY: int = 60
+    # 45 min = won't enter after ~2:25 PM (with 3:10 square-off).
+    # Safe because late-entry target reduction + EOD accelerated exit
+    # already protect against late-day risk.
+    MIN_MINUTES_FOR_ENTRY: int = 45
 
     # ── End-of-Day Accelerated Exit ───────────────────────────────
     # EOD_EXIT_AFTER_HOUR / MINUTE: after this time, auto-exit any

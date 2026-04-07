@@ -45,7 +45,7 @@ A fully automated intraday trading bot that:
 - **Auto re-scan** — when all positions close mid-day, scans for new trades instead of stopping
 - **Partial re-scan** — when some (but not all) positions close via SL/target, immediately scans for replacement trades to fill empty slots instead of riding remaining losers with no hedge
 - **Session-aware re-scans** — mid-day re-scans pass current day P&L and already-traded symbols to Claude so it can adjust risk appetite
-- **Late entry guard** — won't open new positions if fewer than 60 minutes remain before square-off
+- **Late entry guard** — won't open new positions if fewer than 45 minutes remain before square-off
 - **Smart position sizing** — auto-reduces qty to fit budget instead of dropping the trade
 - **Max re-entry limit** — prevents re-entering the same stock after repeated stop-losses (default: 2x/day)
 - **Market condition detection** — classifies the day as BULLISH/BEARISH/NEUTRAL with HIGH_VOLATILITY/NORMAL regime, adjusts strategy accordingly
@@ -303,7 +303,7 @@ Open `config.py` and review these key settings:
 | `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run entries |
 | `TARGET_DECAY_AFTER_HOUR` | `14` | After 2 PM, start reducing targets (24h format) |
 | `TARGET_DECAY_PCT` | `40.0%` | How much to reduce targets after decay hour |
-| `MIN_MINUTES_FOR_ENTRY` | `60` | Don't open new trades if fewer than this many min remain |
+| `MIN_MINUTES_FOR_ENTRY` | `45` | Don't open new trades if fewer than this many min remain |
 | `EOD_EXIT_AFTER_HOUR` | `14` | Hour (24h) to start accelerated EOD exits |
 | `EOD_EXIT_AFTER_MINUTE` | `45` | Minute to start accelerated EOD exits (2:45 PM default) |
 | `LATE_ENTRY_HOUR_1` | `13` | After 1 PM, reduce new-entry targets by `LATE_ENTRY_REDUCTION_1` |
@@ -390,6 +390,7 @@ ai-portfolio-manager/
 │   ├── generate_sheet.py           # Generate TSV spreadsheet from portfolio report (Claude-powered)
 │   ├── tax_db.py                   # Shared DB helpers for all tax scripts (migration, FY utils)
 │   ├── fill_intraday_ledger.py     # Fill intraday_tax_ledger from live JSONs (auto-runs after each trade day)
+│   ├── verify_trades.py            # Same-day trade verification via Zerodha API (no xlsx needed)
 │   ├── import_zerodha_taxpnl.py    # Import Zerodha Tax P&L xlsx — verify intraday + import capital gains
 │   ├── view_intraday_ledger.py     # View intraday trades with verified/unverified status
 │   ├── view_capital_gains_ledger.py # View capital gains trades (short-term / long-term)
@@ -649,6 +650,7 @@ For a comprehensive guide covering ITR form selection, advance tax deadlines, lo
 | Script | Purpose |
 |---|---|
 | `python scripts/fill_intraday_ledger.py` | Fill `intraday_tax_ledger` from live trading JSONs (marks as `unverified`). Auto-runs after each live trade day |
+| `python scripts/verify_trades.py` | Same-day trade verification via Zerodha API — corrects prices/P&L, marks trades as `verified`. No xlsx download needed |
 | `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verifies/corrects intraday data + imports short/long-term capital gains |
 | `python scripts/view_intraday_ledger.py` | View intraday trades with entry/exit prices, charges, net P&L, and verified status |
 | `python scripts/view_capital_gains_ledger.py` | View capital gains trades — filterable by `--type short_term` or `--type long_term` |
@@ -657,6 +659,8 @@ For a comprehensive guide covering ITR form selection, advance tax deadlines, lo
 ### Tax workflow
 
 **Daily (automatic):** After each live trading day, the bot auto-fills `intraday_tax_ledger` with trades marked as `unverified`.
+
+**Same-day verification:** Run `python scripts/verify_trades.py` after market close to verify trades against Zerodha's actual API data. Corrects prices, P&L, charges, and marks trades `verified`. Use `--status` to see which dates are verified.
 
 **Periodically (manual):** Download the Zerodha Tax P&L report from [Console → Tax P&L](https://console.zerodha.com/reports/taxpnl), place the xlsx in `data/ZerodhaTaxPL/`, and run the import script. This verifies/corrects intraday data and imports capital gains.
 

@@ -236,6 +236,106 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
+## FUTURE — Remaining Deep Review Findings
+
+### 33. Fibonacci Retracement Levels
+- **Versions**: V2, NoAI
+- **Gap**: Only uses previous day H/L and VWAP as reference levels. Fibonacci retracements (38.2%, 50%, 61.8%) of the day's range provide additional support/resistance.
+- **Fix**: Compute day's high-low Fib levels, add ±0.5 when price is near a level. Feed Fib level proximity to Claude snapshot.
+- **Effort**: Low | **Impact**: Medium
+
+### 34. Volume Profile / VWAP Standard Deviation Bands
+- **Versions**: V2, NoAI
+- **Gap**: VWAP is used as a single line. Institutional traders also watch ±1σ and ±2σ bands — price touching -2σ VWAP band is a much stronger buy signal than simply "below VWAP".
+- **Fix**: Compute VWAP SD bands. Price at ±2σ → ±1 score bonus. Price between ±1-2σ → ±0.5.
+- **Effort**: Medium | **Impact**: Medium
+
+### 35. Order Book Depth / Bid-Ask Spread Check
+- **Versions**: All
+- **Gap**: Entry assumes tight spreads. Illiquid stocks can have wide bid-ask (0.5-1%), eating into the already-tight ATR target.
+- **Fix**: Before placing an order, check top 5 bid-ask levels via Zerodha's depth data. Skip stocks with spread > 0.3%.
+- **Effort**: Low | **Impact**: Medium
+
+### 36. Intraday Momentum Score (Rate of Change)
+- **Versions**: V2, NoAI
+- **Gap**: Score is a snapshot at scan time. A stock scored +8 might already be decelerating. Rate of change (RoC) of score over 2-3 scans would detect momentum fade early.
+- **Fix**: Cache previous scan scores in memory. Compute delta_score. Penalize entries where score is falling fast.
+- **Effort**: Medium | **Impact**: Medium
+
+### 37. Correlation-Based Position Sizing
+- **Versions**: All
+- **Gap**: Sector cap prevents 3+ stocks in one sector, but 2 highly-correlated stocks (e.g. HDFCBANK + ICICIBANK) still act as a single position during sector drops.
+- **Fix**: Track intraday correlation between open positions. If new entry has >0.7 correlation with an existing position, reduce qty by 50%.
+- **Effort**: High | **Impact**: Medium
+
+### 38. Improved Slippage Model for Dry Run
+- **Versions**: Dry Run
+- **Gap**: Fixed 0.15% slippage doesn't reflect real-world patterns. Slippage is higher at open (0.3-0.5%), near market close (0.2%), and for illiquid stocks.
+- **Fix**: Time-of-day and RVol-adjusted slippage: open hour ×2, last 30 min ×1.5, low RVol ×1.5.
+- **Effort**: Low | **Impact**: Low (only affects dry-run realism)
+
+### 39. ATR Percentile Ranking
+- **Versions**: V2, NoAI
+- **Gap**: ATR-based SL uses absolute value but doesn't consider how today's ATR compares to the stock's typical range. Unusually high ATR means SL may be too wide for intraday.
+- **Fix**: Rank today's 15-min ATR against a 10-day lookback. If ATR is >80th percentile, cap SL tighter. If <20th, allow wider SL (quiet day).
+- **Effort**: Medium | **Impact**: Medium
+
+### 40. Claude Prompt Feedback Loop
+- **Versions**: V2
+- **Gap**: Claude doesn't know its historical accuracy. No feedback on which of its past picks won/lost.
+- **Fix**: Prepend last 5-day win rate and common failure modes to Claude prompt: "Your last 5 days: 12W/8L (60%). Main failure: positions opened at already-extended prices."
+- **Effort**: Medium | **Impact**: High
+
+### 41. Automatic Holiday-Shifted Expiry Detection
+- **Versions**: All
+- **Gap**: Thursday expiry detection checks `weekday == 3` but when Thursday is an NSE holiday, expiry shifts to Wednesday. Misses ~2-3 days/year.
+- **Fix**: Maintain a list of actual expiry dates (from NSE published calendar) alongside the holiday list. Fall back to Thursday check if list is empty.
+- **Effort**: Low | **Impact**: Low (edge case)
+
+### 42. Pre-Open Auction Data
+- **Versions**: V2, NoAI
+- **Gap**: Scan happens after market open. The 9:00-9:08 pre-open auction gives indicative open price, volume, and order imbalance — valuable signal for gap analysis before first candle forms.
+- **Fix**: Fetch pre-open snapshot from Zerodha at 9:08 AM. Use indicative open vs prev close for early gap detection and bias.
+- **Effort**: Medium | **Impact**: Medium
+
+### 43. ✅ Real-Time Trade Verification Script
+- **Versions**: All (infrastructure)
+- **Gap**: Trade verification currently requires downloading Zerodha Tax P&L xlsx the next day. No same-day verification using Zerodha's live API.
+- **Fix**: Script that fetches `kite.trades()` and `kite.positions()` after market close, cross-references with internal data, and marks trades as verified.
+- **Effort**: Medium | **Impact**: High (eliminates manual xlsx download step)
+
+### 44. WebSocket Tick Data for Faster SL/Target Execution
+- **Versions**: All
+- **Gap**: 10-second polling can miss rapid SL/target breaches. A stock can gap through SL in seconds during news events.
+- **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick instead of every poll.
+- **Effort**: High | **Impact**: High (faster execution, less slippage)
+
+### 45. Multi-Day Score Trend
+- **Versions**: V2, NoAI
+- **Gap**: Score is computed only on today's candles. A stock that was +7 yesterday and +6 today is a sustained trend; +6 today from -2 yesterday is a fresh reversal. Different conviction levels.
+- **Fix**: Cache daily scanner scores in DB. Compare today's pre-market score with yesterday's closing score. Sustained-trend bonus +0.5, fresh-reversal no adjustment.
+- **Effort**: Medium | **Impact**: Medium
+
+### 46. Smart Square-Off Timing
+- **Versions**: All
+- **Gap**: Fixed 3:10 PM square-off regardless of market conditions. On trending days, holding 5 more minutes captures more profit. On choppy days, earlier exit avoids EOD chop.
+- **Fix**: Adaptive square-off: if portfolio is profitable and trend is intact (ADX>25, positions in-profit), delay to 3:15. If losing and trend fading, advance to 3:05.
+- **Effort**: Medium | **Impact**: Medium
+
+### 47. Budget Auto-Scaling Based on Win Rate
+- **Versions**: All
+- **Gap**: Budget is fixed at MAX_BUDGET_INR. After a winning streak, the bot should deploy more; after losses, less.
+- **Fix**: Track 5-day rolling win rate. >65% → allow budget ×1.2 (max 120% of MAX_BUDGET_INR). <40% → cap at 80%. Resets weekly.
+- **Effort**: Medium | **Impact**: Medium
+
+### 48. Zerodha API Calls Real-Time Verification
+- **Versions**: All (infrastructure)
+- **Gap**: No same-day verification using Zerodha API — relies on next-day xlsx download.
+- **Note**: Merged with #43 (duplicate). See #43 for implementation plan.
+- **Status**: Duplicate → #43
+
+---
+
 ## Implementation Status
 
 | # | Improvement | Versions | Status | Implemented In |
@@ -272,3 +372,18 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 30 | 3-day candle lookback | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
 | 31 | Today-candle-count guard | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 32 | Late-entry target reduction | All | ✅ Done | `order_engine.py`, `config.py` |
+| 33 | Fibonacci retracement levels | V2, NoAI | ⬜ Pending | — |
+| 34 | VWAP SD bands | V2, NoAI | ⬜ Pending | — |
+| 35 | Bid-ask spread check | All | ⬜ Pending | — |
+| 36 | Intraday momentum (RoC) | V2, NoAI | ⬜ Pending | — |
+| 37 | Correlation-based sizing | All | ⬜ Pending | — |
+| 38 | Improved slippage model | Dry Run | ⬜ Pending | — |
+| 39 | ATR percentile ranking | V2, NoAI | ⬜ Pending | — |
+| 40 | Claude prompt feedback loop | V2 | ⬜ Pending | — |
+| 41 | Holiday-shifted expiry | All | ⬜ Pending | — |
+| 42 | Pre-open auction data | V2, NoAI | ⬜ Pending | — |
+| 43 | Real-time trade verification | All | ✅ Done | `scripts/verify_trades.py` |
+| 44 | WebSocket tick data | All | ⬜ Pending | — |
+| 45 | Multi-day score trend | V2, NoAI | ⬜ Pending | — |
+| 46 | Smart square-off timing | All | ⬜ Pending | — |
+| 47 | Budget auto-scaling | All | ⬜ Pending | — |
