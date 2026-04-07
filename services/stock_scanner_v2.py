@@ -1044,8 +1044,8 @@ Score:
 ══════════════════════════════════════════════════════════
 HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ══════════════════════════════════════════════════════════
-✗ REJECT BUY if stock already UP >2% from previous close — move is EXTENDED, mean-reversion risk is high.
-✗ REJECT SHORT if stock already DOWN >2% from previous close — move is EXTENDED, bounce risk is high.
+✗ REJECT BUY if stock already UP >2% from today's open — move is EXTENDED, mean-reversion risk is high.
+✗ REJECT SHORT if stock already DOWN >2% from today's open — move is EXTENDED, bounce risk is high.
 ✗ REJECT SHORT if RSI < 25 — stock is in CAPITULATION zone, a bounce is almost certain.
 ✗ REJECT BUY if RSI > 80 — stock is in EUPHORIA zone, a pullback is almost certain.
 ✗ REJECT if Risk:Reward < 1:1.5 — not enough edge to cover costs and slippage.
@@ -1338,7 +1338,7 @@ REVIEW RULES — MUST FOLLOW:
 9. NEW TRADES IN REVIEW: Be very selective. Only suggest if ALL of:
    • 60+ minutes remain
    • Strong technical setup (score ≥ 5 with 3+ indicator confluence)
-   • Stock is NOT already extended (within ±2% of previous close)
+   • Stock is NOT already extended (within ±2% of today's open)
    • Budget available and would not exceed max positions
 
 Review each position. For each, respond:

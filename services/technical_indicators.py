@@ -1160,8 +1160,17 @@ def compute_technical_score(
 
     # Opening Range Breakout (first 15-min candle of today)
     # Suppress when < 3 today candles (too early for meaningful ORB)
+    # ORB signal decays after 10:30 AM — near-zero value by afternoon
     if len(today_candles) >= 3:
         orb_data = opening_range_score(candles_15m, price)
+        now_hour = datetime.datetime.now().hour
+        now_min  = datetime.datetime.now().minute
+        if now_hour >= 12:
+            orb_data["score"] = 0  # No ORB value after noon
+        elif now_hour >= 11:
+            orb_data["score"] *= 0.25  # Minimal value 11-12
+        elif now_hour == 10 and now_min >= 30:
+            orb_data["score"] *= 0.5  # Half value 10:30-11
     else:
         orb_data = {"score": 0, "or_high": 0, "or_low": 0, "signal": "NO_DATA"}
     score += orb_data["score"]

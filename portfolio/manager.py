@@ -958,6 +958,11 @@ class PortfolioManager:
         reduce_pos = self.cfg.EXPIRY_POSITION_REDUCTION
         bump_score = self.cfg.EXPIRY_SCORE_BUMP
 
+        # Save originals so they can be restored if needed (Config is class-level)
+        self._pre_expiry_atr = self.cfg.ATR_MULTIPLIER
+        self._pre_expiry_max_pos = self.cfg.MAX_POSITIONS
+        self._pre_expiry_min_score = self.cfg.V2_MIN_SCORE
+
         self.cfg.ATR_MULTIPLIER += bump_atr
         self.cfg.MAX_POSITIONS = max(1, self.cfg.MAX_POSITIONS - reduce_pos)
         self.cfg.V2_MIN_SCORE += bump_score

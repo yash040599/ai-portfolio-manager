@@ -77,7 +77,7 @@ class Config:
     #   - Moving MARKET_OPEN earlier → bot enters trades sooner
     #     (risky, opening volatility can cause whipsaws)
     #   - Moving SQUARE_OFF later → closer to 3:30 hard cutoff
-    #     (risky, Zerodha auto-squares at 3:20 with penalty)
+    #     (risky, Zerodha auto-squares MIS at 3:25 with penalty)
     MARKET_OPEN_HOUR:   int = 9
     MARKET_OPEN_MINUTE: int = 15
     SQUARE_OFF_HOUR:    int = 15

@@ -673,6 +673,7 @@ class OrderEngine:
                 return False
 
         # ── Place or simulate the order ───────────────────────────
+        estimated_entry = entry  # Save pre-fill price for proportional SL/target scaling
         if self.cfg.DRY_RUN:
             self._dry_run_counter += 1
             order_id = f"DRY_RUN_{self._dry_run_counter:04d}"
@@ -715,17 +716,15 @@ class OrderEngine:
                     # Always use the actual Zerodha fill price
                     entry = fill_price
                     cost = entry * qty
-                    # Recalculate ATR-based SL/target around actual fill
-                    if atr and atr > 0:
-                        multiplier = self.cfg.ATR_MULTIPLIER
-                        if side == "BUY":
-                            sl     = round(entry - multiplier * atr, 2)
-                            target = round(entry + multiplier * 2 * atr, 2)
-                        else:
-                            sl     = round(entry + multiplier * atr, 2)
-                            target = round(entry - multiplier * 2 * atr, 2)
+                    # Scale SL/target proportionally around new fill price.
+                    # This preserves wider-of merge, MAX cap, and late-entry
+                    # adjustments already applied above.
+                    if estimated_entry > 0:
+                        ratio = fill_price / estimated_entry
+                        sl     = round(sl * ratio, 2)
+                        target = round(target * ratio, 2)
                         self.log.info(
-                            f"SL/Target recalculated on fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+                            f"SL/Target scaled to fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
                         )
                 else:
                     self.log.warning(
@@ -770,6 +769,8 @@ class OrderEngine:
             "_entry_rsi":   trade.get("_entry_rsi"),
             "_entry_time":  now.strftime("%H:%M:%S"),
             "_indicator_snapshot": trade.get("_indicator_snapshot"),
+            # Late-entry flag — prevents time-decay from stacking
+            "_late_entry_reduced": trade.get("_late_entry_reduced", False),
         }
         self.positions.append(position)
         self._log_action("ENTRY", symbol, side, qty, entry, rationale)
@@ -1062,10 +1063,10 @@ class OrderEngine:
 
         Logic:
           1. Calculate original risk = |entry - initial SL|
-          2. At TRAIL_AFTER_RISK_MULTIPLE × risk profit (default 1.0):
-             a. PARTIAL PROFIT: exit 50% of qty at current price (first time only)
-             b. Move SL to breakeven (entry price) on remaining position
-          3. Beyond breakeven, SL = entry + TRAIL_STEP_PCT% of unrealised profit
+          2. At TRAIL_AFTER_RISK_MULTIPLE × risk profit (default 1.5):
+             a. PARTIAL PROFIT: exit 33% of qty (1/3) at current price (first time only, min qty 3)
+             b. Trail SL to entry + TRAIL_STEP_PCT% (65%) of unrealised profit
+          3. Beyond trigger, SL = entry + TRAIL_STEP_PCT% of unrealised profit
              (for BUY; inverted for SELL)
           4. SL only ever moves in the favorable direction (never loosens)
         """
@@ -1590,11 +1591,17 @@ class OrderEngine:
     # ================================================================
 
     def day_pnl(self) -> float:
-        """Total P&L from all closed positions today (before charges), including partial exits."""
-        return sum(
+        """Total P&L from all closed + partial-booked positions today (before charges)."""
+        closed_pnl = sum(
             p["pnl"] + p.get("_partial_pnl", 0)
             for p in self.positions if p["status"] == "CLOSED"
         )
+        # Include partial profits already booked on still-OPEN positions
+        open_partial = sum(
+            p.get("_partial_pnl", 0)
+            for p in self.positions if p["status"] == "OPEN"
+        )
+        return closed_pnl + open_partial
 
     def unrealised_pnl(self, quotes: dict) -> float:
         """Unrealised P&L from open positions at current prices, including partial exits."""
