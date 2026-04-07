@@ -126,14 +126,17 @@ class Config:
     ]
 
     # ── Position Limits ───────────────────────────────────────────
-    # MAX_POSITIONS: max number of stocks to hold simultaneously.
-    #   More positions = more diversified but less capital per trade.
-    #   With ₹10K, 3-5 positions means ₹2K-3.3K per trade.
-    #
-    # MAX_POSITION_PCT: max % of budget allocated to one stock.
-    #   40 = no single stock gets more than 40% of your capital.
-    #   Prevents concentration risk if Claude is very bullish on one pick.
+    # MAX_POSITIONS: max simultaneous positions. Overridden at runtime
+    #   by dynamic_max_positions() which scales with budget:
+    #     budget < ₹25K  → 2 positions (₹10-12K each, ~0.3% cost drag)
+    #     budget ₹25-60K → 3 positions (₹8-20K each)
+    #     budget ₹60-1L  → 4 positions (₹15-25K each)
+    #     budget > ₹1L   → 5 positions (₹20K+ each)
+    #   This ensures per-position size stays large enough that
+    #   transaction costs (₹40-50 round trip) are < 0.5% of position.
+    #   Set MAX_POSITIONS_OVERRIDE to a non-zero value to lock it manually.
     MAX_POSITIONS:    int = 3
+    MAX_POSITIONS_OVERRIDE: int = 0  # 0 = auto-scale with budget; >0 = fixed
     MAX_POSITION_PCT: int = 40
 
     # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
@@ -177,18 +180,29 @@ class Config:
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
-    # TRAIL_AFTER_RISK_MULTIPLE: once the price moves this many
-    #   multiples of the SL distance in your favour, trailing kicks in.
-    #   1.5 = trail starts once profit equals 1.5× the initial risk.
-    #   e.g. entry ₹100, SL ₹98 (risk ₹2). At ₹103 (1.5×risk profit)
-    #   the bot exits 1/3 qty and moves SL to lock 65% of profit.
+    # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
+    #   the position must profit before trailing starts.
+    #   1.5 = trail starts at 1.5× risk (e.g. risk ₹2 → trail at ₹3 profit).
+    #   At trigger: exits 1/3 qty (partial profit) + moves SL.
     #
-    # TRAIL_STEP_PCT: after the initial trail trigger,
-    #   the SL is moved up to lock in this % of current profit.
-    #   50 = SL sits at 50% of the way from entry to current price.
-    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103.00 (50% of ₹6 gain).
-    #   Lower = more room for pullbacks, lets winners run longer.
-    #   Higher = tighter trail, locks more but exits on minor dips.
+    # TRAIL_STEP_PCT: % of unrealised profit locked in by the trailing SL.
+    #   50 = SL sits halfway between entry and current price.
+    #   e.g. entry ₹100, current ₹106 → SL at ₹103 (50% of ₹6 gain).
+    #
+    #   DECISION HISTORY (do NOT change without backtesting evidence):
+    #     65% (commit 4444248, 2026-03-16): Set to 65% after observing
+    #       that loose trailing let winning trades reverse into losses.
+    #       Rationale: lock more profit, accept fewer home runs.
+    #     50% (commit 418d668, 2026-04-08): Reduced to 50% based on
+    #       Indian financial analyst review. Finding: 65% is too tight
+    #       for NSE intraday where stocks commonly pull back 0.5-0.7%
+    #       before continuing. 65% triggered trail exits on normal
+    #       retracements, converting potential 1.5% winners into 0.3%
+    #       winners. 50% gives enough room for typical pullbacks while
+    #       still protecting the majority of the gain.
+    #     OPTIMAL RANGE: 40-60%. Below 40% risks giving back too much;
+    #       above 60% chops out of winners on normal volatility.
+    #       Backtest on ≥50 trades before changing this value.
     TRAIL_AFTER_RISK_MULTIPLE: float = 1.5
     TRAIL_STEP_PCT:            float = 50.0
 
@@ -535,6 +549,34 @@ class Config:
     def zerodha(cls) -> dict:
         """Returns the resolved Zerodha plan settings dict."""
         return cls._ZERODHA_RULES[cls.ZERODHA_PLAN]
+
+    @classmethod
+    def dynamic_max_positions(cls, budget: float) -> int:
+        """Scale MAX_POSITIONS with budget to keep per-position size viable.
+
+        Returns the effective max positions count. If MAX_POSITIONS_OVERRIDE
+        is set (non-zero), that value is used unconditionally.
+
+        Goal: each position should be ≥₹8K so that round-trip charges
+        (₹40-50) stay below 0.5% of position value.
+
+        Thresholds (₹):
+          < 25K  → 2 positions  (₹10-12K each)
+           25-60K → 3 positions  (₹8-20K each)
+           60-1L  → 4 positions  (₹15-25K each)
+          > 1L   → 5 positions  (₹20K+ each)
+        """
+        if cls.MAX_POSITIONS_OVERRIDE > 0:
+            return cls.MAX_POSITIONS_OVERRIDE
+
+        if budget < 25_000:
+            return 2
+        elif budget < 60_000:
+            return 3
+        elif budget < 100_000:
+            return 4
+        else:
+            return 5
 
     @classmethod
     def validate(cls, require_claude: bool = True) -> list[str]:

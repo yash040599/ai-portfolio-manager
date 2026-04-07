@@ -83,8 +83,16 @@ class OrderEngine:
         self._order_api_broken: bool = False
 
     def set_budget(self, amount: float):
-        """Sets the trading budget (called by PortfolioManager after fetching funds)."""
+        """Sets the trading budget and adjusts MAX_POSITIONS dynamically."""
         self._budget = amount
+        if hasattr(self.cfg, 'dynamic_max_positions'):
+            new_max = self.cfg.dynamic_max_positions(amount)
+            if new_max != self.cfg.MAX_POSITIONS:
+                self.log.info(
+                    f"MAX_POSITIONS adjusted: {self.cfg.MAX_POSITIONS} → {new_max} "
+                    f"(budget ₹{amount:,.0f})"
+                )
+                self.cfg.MAX_POSITIONS = new_max
 
     def is_order_api_broken(self) -> bool:
         """
@@ -447,6 +455,19 @@ class OrderEngine:
         the returned order ID.
 
         Returns True if the order was placed/logged successfully.
+
+        Entry pipeline (each step can reject the trade):
+          1. Validate entry price vs live Zerodha quote
+          2. Bid-ask spread check (illiquid stocks)
+          3. ATR-based SL/target → merge wider of ATR vs Claude
+          4. Late-entry target reduction (13:00 / 14:00 cutoffs)
+          5. R:R floor check (post late-entry)
+          6. Minimum profit check (must cover round-trip charges)
+          7. Slippage simulation (dry-run only)
+          8. Budget / max positions / duplicate / sector / direction guards
+          9. Short entry cutoff / max re-entries per stock
+         10. Place order → scale SL/target to actual fill price
+         11. Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -460,7 +481,7 @@ class OrderEngine:
         now = datetime.datetime.now()
 
         # ── Validate entry price against live quote ───────────────
-        # Claude can hallucinate prices. Always cross-check vs Zerodha.
+        # Claude can hallucinate prices. Always use Zerodha as source of truth.
         live_quotes = {}
         try:
             live_quotes = self.zerodha.get_quotes(
@@ -533,9 +554,10 @@ class OrderEngine:
                 f"Dynamic SL: ₹{atr_sl:.2f} | Target: ₹{atr_target:.2f}"
             )
 
-            # Use WIDER of ATR vs Claude SL — structural levels matter more
-            # than ATR noise. The tighter approach was causing premature SL
-            # hits from normal intraday volatility.
+            # Merge: use WIDER (less protective) of ATR vs Claude SL.
+            # Why wider? Structural support/resistance from Claude > ATR noise.
+            # Tighter SL = premature exits from normal intraday volatility.
+            # ATR is a fallback floor, not the primary SL source.
             if side == "BUY":
                 sl     = min(atr_sl, sl)      # pick whichever SL is farther from entry
                 target = min(atr_target, target) if target > entry else atr_target
@@ -548,7 +570,11 @@ class OrderEngine:
             )
 
         # ── Late-entry target reduction ───────────────────────────
-        # Trades entered late get reduced targets (less time to hit)
+        # Two-tier cutoffs based on time remaining before 3:10 PM square-off:
+        #   13:00+ → 20% target reduction (still ~2h to hit target)
+        #   14:00+ → 35% target reduction (only ~1h, aggressive trades fail)
+        # This prevents entering with unreachable targets that end up
+        # hitting time-decay or square-off instead of target.
         hour_now = now.hour
         late_reduction = 0.0
         if hour_now >= getattr(self.cfg, "LATE_ENTRY_HOUR_2", 14):
@@ -603,10 +629,11 @@ class OrderEngine:
                 entry = round(entry - slip, 2)   # sell slightly lower
 
         # ── Budget check before entering ──────────────────────────
+        # If qty doesn't fit, reduce to what fits (preserves trade conviction).
+        # Only reject if even 1 share exceeds remaining budget.
         cost = entry * qty
         current_exposure = self._total_open_exposure()
         if current_exposure + cost > self._budget:
-            # Try reducing qty to fit remaining budget
             remaining = self._budget - current_exposure
             max_qty = int(remaining / entry) if entry > 0 else 0
             if max_qty >= 1:
@@ -803,8 +830,9 @@ class OrderEngine:
         }
 
         # ── Place SL-M order on exchange for instant SL execution ─
-        # The SL-M sits on the exchange and triggers without polling
-        # delay. Software monitoring still tracks target + trailing.
+        # Exchange SL-M triggers instantly at trigger_price — no polling delay.
+        # Software monitoring (check_stops_and_targets) is the fallback;
+        # it handles targets, trailing, and time-decay — things SL-M can't do.
         use_exchange_sl = getattr(self.cfg, 'USE_EXCHANGE_SL', False)
         if use_exchange_sl and not self.cfg.DRY_RUN and hasattr(self.zerodha, 'place_sl_m_order'):
             sl_side = "SELL" if side == "BUY" else "BUY"
@@ -1143,14 +1171,17 @@ class OrderEngine:
         """
         Rule-based trailing stop-loss with partial profit taking.
 
-        Logic:
-          1. Calculate original risk = |entry - initial SL|
-          2. At TRAIL_AFTER_RISK_MULTIPLE × risk profit (default 1.5):
-             a. PARTIAL PROFIT: exit 33% of qty (1/3) at current price (first time only, min qty 3)
-             b. Trail SL to entry + TRAIL_STEP_PCT% (65%) of unrealised profit
-          3. Beyond trigger, SL = entry + TRAIL_STEP_PCT% of unrealised profit
-             (for BUY; inverted for SELL)
-          4. SL only ever moves in the favorable direction (never loosens)
+        Formula example (BUY):
+          Entry 100, SL 97 → initial_risk = 3
+          At +1.5R (price 104.50): partial exit 1/3 qty, start trailing
+          New SL = entry + (profit × TRAIL_STEP_PCT%)
+                 = 100 + (4.50 × 0.50) = 102.25 (locks 50% of open profit)
+
+        Rules:
+          1. Trigger: profit >= initial_risk × TRAIL_AFTER_RISK_MULTIPLE (1.5)
+          2. Partial exit: sell 1/3 qty at current price (once only, min 3 shares)
+          3. Trail: SL = entry + TRAIL_STEP_PCT% of unrealised profit
+          4. SL ratchets — only moves in favorable direction, never loosens
         """
         entry  = pos["entry_price"]
         sl     = pos["stop_loss"]

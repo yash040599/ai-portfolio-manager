@@ -442,10 +442,11 @@ All data is stored in **SQLite** — `data/trades.db` (auto-created) for trades 
 | Script | Purpose |
 |---|---|
 | `python scripts/view_trades.py` | Print all intraday trades with P&L summary |
+| `python scripts/view_performance.py` | Performance analytics — daily P&L, win rate, exit stats, indicator correlation |
 | `python scripts/view_analyses.py` | Print all portfolio analyses with action status |
 | `python scripts/generate_sheet.py` | Generate TSV spreadsheet from portfolio report (1 Claude call) |
 | `python scripts/view_candle_cache.py` | View candle cache — symbols, date ranges, OHLCV data |
-| `python scripts/verify_trades.py` | Verify trades against Zerodha API |
+| `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices in reports + trades table |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON reports into DB |
 
 All scripts support `--help` for usage details.
@@ -465,7 +466,7 @@ For the comprehensive tax guide (slab rates, ITR forms, advance tax deadlines, l
 | Script | Purpose |
 |---|---|
 | `python scripts/fill_intraday_ledger.py` | Fill intraday tax ledger from live trading JSONs (auto-runs after each trade day) |
-| `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices/P&L |
+| `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices in reports, tax ledger, and trades table |
 | `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verify intraday + import capital gains |
 | `python scripts/tax_summary.py` | Combined tax summary — speculative income, STCG, LTCG, estimated tax |
 | `python scripts/view_intraday_ledger.py` | View intraday trades with verified/unverified status |

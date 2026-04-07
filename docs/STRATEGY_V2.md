@@ -1,370 +1,375 @@
-# V2 Trading Strategy — Candle Pattern + Technical Indicator Pre-Filter
+# V2 Trading Strategy — Complete Reference
+<!-- ══════════════════════════════════════════════════════════════
+  MAINTENANCE NOTE — Keep this document in sync with code changes.
+  
+  This is the single source of truth for the V2 (and V2 NoAI) intraday
+  trading strategy. Anyone reviewing this document should be able to:
+    1. Understand every decision the bot makes and why
+    2. Identify gaps, risks, or improvements in the strategy
+    3. Verify that code behaviour matches this spec
+  
+  When updating code that affects strategy (config, indicators, order
+  engine, scanner), update this document in the same commit.
+  
+  Last sync: 2026-04-08 — R:R 1.5:1, SL-M exchange orders, dynamic
+  MAX_POSITIONS, pre-trade profit check, SuperTrend 7/2.0, Fibonacci
+  directional, ORB 2nd candle, short cutoff, trail step 50%.
+══════════════════════════════════════════════════════════════ -->
 
 ## Overview
 
-V2 adds a **mathematical pre-filtering layer** before Claude. Instead of sending 100 raw stock prices to Claude, V2 first runs candlestick pattern detection and technical indicator analysis on every stock (for free, using Zerodha's historical candle API). Only the top 15 stocks with the strongest technical setups are sent to Claude — along with their exact RSI, EMA, VWAP, SuperTrend, and detected candle patterns.
+V2 is an **intraday equity trading bot** for NSE (India) via Zerodha Kite Connect. It combines a free mathematical pre-filter (candlestick patterns + 14 technical indicators) with Claude AI for stock selection. The bot trades MIS (intraday) positions on Nifty 100 stocks.
 
-**Run with:** `python main.py --mode trade`
+**Run with:** `python main.py --mode trade` (V2 with Claude) or `--noai` (V2 NoAI)
 
-V2 is the **default** trading strategy. It inherits everything from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). Use `--v1` for the retired legacy strategy.
+V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery). V1 is retired — use `--v1` only for testing.
 
 ---
 
-## What's Different from V1
+## V2 vs V2 NoAI
 
-| Aspect | V1 | V2 |
-|--------|----|----|
-| Pre-market scan | Send all 100 stock prices to Claude | Math-filter → send top 15 with indicators to Claude |
-| Claude context | Raw price table | RSI, EMA(9/21), VWAP, SuperTrend, candle patterns per stock |
-| Claude API cost | Larger prompt (all stocks) | Smaller prompt (fewer stocks, more data per stock) |
-| Poll interval | Fixed (10s) | Dynamic — halves to 5s when position is within 0.5% of SL/target |
-| Position review | Price + P&L only | Fresh 5-min candle patterns + RSI + EMA + VWAP per position |
-| Mid-day re-scan | Uses V1 scanner | Uses V2 candle-aware scanner |
+| Aspect | V2 (Claude) | V2 NoAI |
+|--------|-------------|---------|
+| Stock selection | Claude picks from top 15 pre-filtered | Auto-picks by score sign + magnitude |
+| Entry logic | Claude sets SL/target/rationale | Default SL/target from config + ATR overrides |
+| Position review | Claude reviews every 20 min | Stagnant exit after 90 min |
+| Score threshold raise | No | Yes — after day losses, V2_MIN_SCORE rises |
+| Claude API cost | ~₹20-40/day (5-15 calls) | ₹0 |
+| Mid-day re-scan | Yes (every 30 min when free slots) | Yes (same logic, no Claude call) |
+
+Both modes share: pre-filter, risk management, SL-M orders, trailing stop, circuit breaker, time-decay, EOD exit, direction diversification.
 
 ---
 
 ## Strategy Flow
 
-### Phase 1 — Pre-Market Candle Analysis (9:00 AM) — FREE
+### Phase 1 — Pre-Market Scan (9:00 AM) — FREE
 
 ```
-For each stock in universe (50-200 stocks):
-  → Fetch 15-minute candles (last 3 days) from Zerodha Historical API
+For each stock in NIFTY100 (~100 stocks):
+  → Fetch 15-min candles (last 3 days) from Zerodha Historical API
   → Fetch daily candles (last 30 days) for trend context
-  → Run 14 candlestick pattern detectors on 15-min data
-      • Volume confirmation: pattern strength ×1.3 if candle volume > 1.5× avg
-      • Freshness decay: current candle = 1.0×, 1-ago = 0.7×, 2-ago = 0.4×
-  → Compute technical indicators:
-      • EMA(9) vs EMA(21) crossover — momentum direction
-      • RSI(14) — overbought/oversold detection
-      • VWAP — institutional fair value (today's candles only)
-      • SuperTrend(10, 3.0) — ATR-based trend-following
-      • Daily EMA(9/21) — higher timeframe trend bias
-      • Previous day H/L/C — support/resistance proximity
-      • MACD(12,26,9) histogram — momentum confirmation/divergence
-      • Opening Range Breakout (ORB) — first candle breakout signal
-      • Gap analysis — pre-market gap continuation vs fill
-      • Hourly EMA(9/21) alignment — multi-timeframe confluence
-      • Bollinger Band squeeze — volatility contraction breakout signal
-      • ADX(14) — trend strength filter (modifies continuation signals)
-      • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
-      • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
-  → Calculate composite score (~-28 to +28)
-  → Compute RVol (today's volume / 5-day average) — bonus/penalty
-  → Nifty trend hard filter: against-trend signals need |score| >= 3
-  → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
-  → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
-  → Rank by absolute score (strongest signals first)
-  → Take top 15 candidates
+  → Detect 14 candlestick patterns on 15-min data
+      • Volume confirmation: strength ×1.3 if candle vol > 1.5× avg
+      • Freshness decay: current = 1.0×, 1-ago = 0.7×, 2-ago = 0.4×
+  → Compute 14 technical indicators → composite score (-24 to +24)
+  → Add RVol bonus/penalty (-1 to +1)
+  → Apply Nifty trend hard filter (against-trend needs |score| ≥ 3)
+  → Sector diversification: max 2 per sector (12 sectors in SECTOR_MAP)
+  → Filter: |score| ≥ V2_MIN_SCORE (default 2.0)
+  → Take top 15 by |score|
 ```
 
-This phase costs ₹0 — it's pure math on historical candle data from Zerodha.
+Cost: ₹0 — pure computation on free Zerodha historical data.
 
-### Phase 2 — Claude Selection from Pre-Filtered Set — PAID
+### Phase 2 — Stock Selection — PAID (V2) / FREE (NoAI)
 
-```
-Build enriched snapshot for each of the 15 candidates:
-  → Symbol, price, change%, volume
-  → VWAP value
-  → RSI value (e.g., "RSI: 28" → oversold)
-  → EMA(9/21) signal (BULLISH_CROSS / BEARISH_CROSS / NONE)
-  → SuperTrend direction (UP / DOWN)
-  → Detected candle patterns ([BULLISH_ENGULFING, HAMMER])
-  → Previous day S&R signal + pivot price
-  → RVol (relative volume vs 5-day avg)
-  → Composite score (+5.2)
-  → Send to Claude with indicator guide
+**V2 (Claude):** Sends enriched snapshot per candidate — price, RSI, EMA signal, VWAP, SuperTrend direction, detected patterns, prev-day S&R, RVol, composite score. The prompt includes:
+- Time-phase context (Opening / Morning Trend / Midday Lull / Afternoon / Late Session)
+- 13-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, MACD, ORB, RVol, Hourly EMA, BB Squeeze, ADX, Fib, VWAP Bands)
+- Hard rejection filters (extended move >2%, RSI extremes, R:R <1:1.5, against-SuperTrend without reversal)
+- Indian market awareness (NIFTY regime, F&O expiry, sector clustering)
+- Common mistakes to avoid (chasing extended moves, all-same-direction)
 
-Claude picks trades with ENTRY / SL / TARGET / QTY / RATIONALE
-  → Claude can reference specific indicators: "RSI(28) oversold + 
-    HAMMER pattern + SuperTrend UP = strong BUY confluence"
-```
+Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-### Phase 3 — Entry (same as V1)
+**V2 NoAI:** Auto-generates trades from score sign. Budget allocated: `min(budget/max_trades, budget × MAX_POSITION_PCT/100)`. If day loss ≥ 1.5% of budget, MIN_SCORE rises by 1.5 points.
 
-Observation period, ATR-based SL/target, price validation, fill tracking — all from V1.
+### Phase 3 — Entry
 
-### Phase 4 — V2 Monitor Loop (9:30 AM – 3:10 PM)
+1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
+2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
+3. ATR-based SL/target calculation — uses **wider-of** ATR SL vs Claude SL
+4. Pre-trade checks pass (12 checks — see Risk Management section)
+5. Place entry order on Zerodha
+6. Fetch actual fill price — scale SL/target proportionally around fill
+7. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
-```
-Every 10 seconds (or 5 seconds when near SL/target):
-  → Same as V1: SL/target check, trailing stop, time-decay, circuit breaker
-  → NEW: Check if any position is within 0.5% of SL or target
-    → If yes: double the poll frequency (10s → 5s) for faster reaction
+### Phase 4 — Monitor Loop (9:20 AM – 3:10 PM)
 
-Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
-  → Re-run candle pattern analysis on all open positions
-  → Log positions with |score| >= 5 (strong signal forming)
-  → AUTO-PROTECT: if contrary signal score reaches ±4 against position:
-      BUY pos + score ≤ -4  → tighten SL (lock 50% profit or move to breakeven)
-      SELL pos + score ≥ +4 → tighten SL (lock 50% profit or move to breakeven)
-    This is immediate, rule-based protection — no Claude cost, no 10-min wait
+| Interval | Action | Cost |
+|----------|--------|------|
+| Every 10s (5s near SL/target) | SL/target check, trailing stop, time-decay | Free |
+| Every 15 min | Re-run candle analysis on open positions. **Auto-protect:** contrary score ≥ ±4 → tighten SL (50% profit lock or breakeven) | Free |
+| Every 15 min | Nifty trend recheck (regime shift detection) | Free |
+| Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (V2) / Free (NoAI) |
+| Every 20 min (V2 only) | Claude reviews open positions with fresh 5-min candle data + pattern analysis | 1 Claude call |
 
-Every NIFTY_RECHECK_MINUTES (default: 15 min) — FREE:
-  → Re-fetch NIFTY 50 index quote from Zerodha
-  → Update market condition (BULLISH/BEARISH/NEUTRAL + volatility)
-  → Log regime shifts (e.g. "BEARISH_NORMAL → NEUTRAL_NORMAL")
-  → Updated condition feeds into subsequent re-scans and Claude reviews
+### Phase 5 — Square Off & Report
 
-Every OPPORTUNITY_RESCAN_MINUTES (default: 30 min) — PAID (1 Claude call):
-  → Triggers ONLY when open_positions < MAX_POSITIONS (free slots exist)
-  → Independent of position close events — proactively fills empty slots
-  → Includes fresh market condition + day P&L in session context
-  → If day P&L is negative, only picks high-conviction setups
-  → Skipped if circuit breaker active or insufficient time remains
-
-Every 20 minutes (CLAUDE_REVIEW_MINUTES) — PAID:
-  → Fetch fresh 5-MINUTE candles for each open position
-  → Run pattern detection + RSI + EMA + VWAP on fresh data
-  → Claude review now sees:
-    "RELIANCE: BUY 50 @ ₹2,400  Current: ₹2,420  P&L: ₹1,000 (+0.8R)
-     5min patterns: [SHOOTING_STAR]  RSI(14): 72  EMA(9/21): BEARISH_CROSS
-     VWAP: ₹2,410"
-  → This tells Claude: "Hey, momentum is fading on this position —
-    consider tightening SL or taking profits"
-```
-
-### Phase 5 — Square Off & Report (same as V1)
+- **2:45 PM (EOD exit):** Exit losing positions at market. Tighten breakeven SL to entry ±0.1%.
+- **3:10 PM (Square off):** Close all remaining positions.
+- Generate `trading_data_{date}.json` + `trading_report_{date}.txt`
+- Record trades to `data/trades.db` (for Claude learning context)
+- Fill intraday tax ledger
 
 ---
 
-## Technical Indicators Explained
+## Risk Management — Entry Pre-Checks
 
-### EMA(9/21) Crossover
-- **What:** 9-period EMA crosses above 21-period EMA = bullish momentum shift
-- **On 15-min candles:** 9 × 15 = 2.25 hour fast, 21 × 15 = 5.25 hour slow
-- **Why it works:** Captures short-term momentum changes within the trading day
-- **Score contribution:** Crossover = ±2, trending spread = ±1
+Every trade must pass these checks in order. If any fails, the trade is rejected:
 
-### RSI(14) — Relative Strength Index
-- **What:** Measures speed and magnitude of price changes (0–100)
-- **On 15-min candles:** 14 × 15 = 3.5 hour lookback
-- **Signal:** RSI < 30 = oversold (potential bounce), RSI > 70 = overbought (potential drop)
-- **Why it works:** Mean-reversion tendency in liquid large-caps. Extreme RSI on intraday = high probability reversal zone
-- **Score contribution:** RSI 20-30 = +2, RSI < 20 = +3, RSI 70-80 = -2, RSI > 80 = -3
-
-### VWAP — Volume Weighted Average Price
-- **What:** Average price weighted by volume — represents institutional "fair value" for the day
-- **Calculation:** Σ(typical_price × volume) / Σ(volume), where typical = (H+L+C)/3
-- **Signal:** Price above VWAP = buyers in control, below = sellers in control
-- **Why it works:** Large funds and algorithms execute relative to VWAP. A stock consistently above VWAP has sustained buying interest
-- **Score contribution:** ±1 (confirmation signal, not primary)
-
-### SuperTrend(10, 3.0)
-- **What:** ATR-based trend-following indicator that plots a single support/resistance line
-- **Parameters:** Period 10 (ATR lookback), Multiplier 3.0 (band width)
-- **On 15-min candles:** 10 × 15 = 2.5 hour ATR lookback, bands = HL2 ± 3 × ATR
-- **Signal:** Trend change (DOWN→UP or UP→DOWN) = strongest signal. Continuing trend = milder confirmation
-- **Why it works:** Widely used in Indian algo trading. The locked-band mechanism prevents whipsaw in the trending direction
-- **Score contribution:** Trend change = ±3 (strongest), continuing trend = ±1
-
-### Daily EMA(9/21) Bias
-- **What:** EMA crossover on daily candles — higher timeframe trend direction
-- **Why it works:** Intraday trades that align with the daily trend have higher win rates
-- **Score contribution:** ±1 (only if spread > 1%)
-
-### Previous Day High/Low as Support/Resistance
-- **What:** Yesterday's high, low, and pivot (H+L+C)/3 are natural support/resistance levels
-- **Why it works:** Institutional traders and algorithms use these levels actively. A stock near yesterday's high faces selling pressure (resistance); near yesterday's low finds buyers (support)
-- **Score contribution:** AT_RESISTANCE = -1, AT_SUPPORT = +1, ABOVE/BELOW_PIVOT = ±0.5
-
-### Volume Confirmation (applied to candle patterns)
-- **What:** Pattern candle volume compared to 10-candle rolling average
-- **Why it works:** A hammer on high volume is a real reversal signal; on low volume it's noise. Investopedia and Zerodha Varsity both emphasise volume as the "single most important confirmation"
-- **Effect:** High volume (>1.5× avg) → pattern strength ×1.3. Low volume (<0.5× avg) → strength ×0.5
-
-### Pattern Freshness Decay
-- **What:** Patterns detected on older candles carry less weight
-- **Why it works:** "Pattern potency decreases rapidly 3-5 bars after completion" (Investopedia). A hammer forming right now is more actionable than one from 45 minutes ago
-- **Decay:** Current candle = 1.0×, 1 candle ago = 0.7×, 2 candles ago = 0.4×
-
-### Relative Volume (RVol)
-- **What:** Today's volume so far compared to the 5-day daily average
-- **Why it works:** RVol > 2.0 = unusual activity (news, institutional flow, catalyst). High RVol stocks are more likely to make meaningful moves
-- **Score contribution:** RVol > 2.0× = +1 bonus, RVol < 0.3× = -1 penalty
-
-### Nifty Trend Hard Filter
-- **What:** When NIFTY 50 is BEARISH, against-trend BUY signals need |score| ≥ 3 (instead of ≥ 2). When BULLISH, against-trend SELL signals need |score| ≥ 3
-- **Why it works:** Institutional practice: trade with the broader market. Weak counter-trend signals fail much more often than with-trend signals
-
-### MACD(12,26,9) Histogram
-- **What:** Measures the distance between the MACD line and its signal line. Positive histogram = bullish momentum, negative = bearish
-- **On 15-min candles:** Fast EMA(12) = 3 hours, Slow EMA(26) = 6.5 hours, Signal EMA(9) = 2.25 hours
-- **Signals:** BULLISH + GROWING = strongest buy confirmation, BEARISH + GROWING = strongest sell. SHRINKING = momentum fading (early warning)
-- **Why it works:** MACD histogram captures momentum acceleration/deceleration. A growing histogram confirms the trend; a shrinking histogram warns of reversal before price shows it
-- **Score contribution:** Bullish growing = +1, bearish growing = -1, fading warning = ±0.5
-
-### Opening Range Breakout (ORB)
-- **What:** Compares current price to the first 15-minute candle's high/low (the "opening range")
-- **Signal:** Price above opening range high = breakout up (+2), below opening range low = breakout down (-2), inside range = no signal
-- **Why it works:** The opening 15 minutes captures the initial battle between overnight orders, pre-market positioning, and opening trades. A decisive break above/below this range often sets the trend for the day. Widely used by professional Indian intraday traders
-- **Score contribution:** ±2 (strong signal — directional breakout from opening range)
-- **Time decay:** Score decays through the day: full before 10:30 AM, ×0.5 from 10:30-11, ×0.25 from 11-12, zero after noon. ORB is a morning signal — stale by afternoon.
-
-### Gap Analysis
-- **What:** Measures the gap between today's open and yesterday's close, with volume confirmation
-- **Signals:** Gap-up > 1% with high volume = continuation (+1), gap-up with low volume = fill risk (-1). Symmetric for gap-down
-- **Volume check:** First candle volume vs expected (daily avg / 25) — confirms whether institutional money is backing the gap
-- **Why it works:** Gaps represent overnight information asymmetry. Gap-ups with strong volume are typically institutional, likely to hold. Gap-ups on weak volume are often retail-driven gap fills
-- **Score contribution:** ±1 (confirmation/warning signal)
-
-### ADX(14) — Average Directional Index
-- **What:** Measures trend strength regardless of direction. Uses Wilder's DI+/DI- system with smoothed true range
-- **On 15-min candles:** 14-period lookback (~3.5 hours)
-- **Signals:** ADX < 20 = WEAK (range-bound, trends unreliable), ADX 20-30 = MODERATE, ADX > 30 = STRONG (well-established trend)
-- **How it modifies scoring:** In WEAK trends, halves the magnitude of EMA spread (±1) and SuperTrend continuation (±1) to avoid false trend signals. In STRONG trends, adds ±0.5 directional bonus aligned with DI+/DI-
-- **Why it works:** Trend-following indicators give many false signals in range-bound markets. ADX acts as a meta-filter — only trusting continuation signals when a real trend exists. Standard professional practice
-- **Score contribution:** ±0.5 (modifier on existing scores)
-
-### Sector Diversification Filter
-- **What:** Maximum 2 stocks per sector (BANKING, IT, PHARMA, AUTO, ENERGY, METALS, FMCG, INFRA, FINANCE, TELECOM, CAPGOODS, OTHER)
-- **Why it works:** Prevents correlated risk. Without this filter, the scanner could pick 5 banking stocks that all drop together on a single RBI announcement. Sector-capping forces diversification across uncorrelated sectors
-- **Implementation:** Applied after score filtering, before final candidate selection
-
-### Extended Move Penalty
-- **What:** Penalizes stocks that have already moved significantly from today's open price
-- **Calculation:** `extended_move_pct = (current_price - today_open) / today_open × 100`
-- **Signal:** Move 1.5-2% from open → penalty ±1.5. Move >2% → penalty ±3.0. Penalty opposes the direction (penalizes BUY on already-up stocks, SELL on already-down).
-- **Why it works:** Chasing extended moves is a primary cause of intraday losses. A stock already up 2% has limited remaining upside for the day and elevated mean-reversion risk.
-- **Score contribution:** ±1.5 to ±3.0 (penalty — reduces score in the extended direction)
-
-### RSI Extreme Hard Cap
-- **What:** Caps the composite score when RSI is at extremes, regardless of other indicators
-- **Signal:** RSI ≥ 75 → score capped at +3 max. RSI ≤ 25 → score capped at -3 min.
-- **Why it works:** Prevents trend-following indicators (SuperTrend, EMA) from overriding extreme overbought/oversold readings. A stock with RSI 80 looks great on trend metrics but is statistically likely to mean-revert.
-
-### Direction Diversification Cap
-- **What:** Maximum `MAX_POSITIONS - 1` positions in the same direction (BUY or SELL)
-- **With MAX_POSITIONS=3:** At most 2 BUY or 2 SELL simultaneously
-- **Why it works:** Prevents all positions from being wiped out by a single market reversal. Forces at least one contrarian/hedge position when fully deployed.
-- **Implementation:** Checked at entry time in `order_engine.py` and as a rejection filter in the Claude prompt.
-
-### Partial Profit Taking
-- **What:** At 1.5× risk profit (TRAIL_AFTER_RISK_MULTIPLE), automatically exits 33% of the position (1/3) and moves SL to breakeven for the remainder
-- **Why it works:** Locks guaranteed profit on a third of the position while letting the remaining two-thirds run with a trailing stop (65% step). The 1.5× risk trigger avoids cutting winners too early — a 1× trigger was found to cap upside excessively in practice
-- **Edge case:** Only triggers when qty >= 3 (can't split smaller). Only triggers once per position
+| # | Check | Config | Behaviour |
+|---|-------|--------|-----------|
+| 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
+| 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
+| 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | SL = wider-of(ATR, Claude). Target uses 1.5:1 R:R. SL capped at 2.5% |
+| 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
+| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = ₹50` | Skip if `|target − entry| × qty < ₹50` |
+| 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
+| 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
+| 8 | **Duplicate guard** | — | No two positions in same stock |
+| 9 | **Sector concentration** | Max 2 per sector | 12 sectors |
+| 10 | **Direction diversification** | Max `N−1` in same direction | Forces contrarian position when full |
+| 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM |
+| 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 
 ---
 
-## Candlestick Patterns Detected
+## Risk Management — During Trade
 
-### Single-Candle Patterns
+### Exchange SL-M Orders (`USE_EXCHANGE_SL = True`)
 
-| Pattern | Signal | Strength | Description |
+SL-M (stop-loss market) orders sit on the NSE exchange. When the trigger price is breached, the exchange executes the exit instantly — no polling delay.
+
+| Event | Action |
+|-------|--------|
+| **Entry** | Place SL-M counter-order with trigger at SL price |
+| **Trail SL** | `modify_order()` updates trigger on exchange |
+| **Partial exit** | Cancel old SL-M, place new one with reduced qty |
+| **SL hit** | Exchange already triggered → skip duplicate exit order |
+| **Non-SL exit** | Cancel pending SL-M first, then place exit order |
+| **EOD tighten / Claude ADJUST_SL** | Modify exchange SL-M trigger in sync |
+
+Only active when `USE_EXCHANGE_SL=True` AND `DRY_RUN=False`.
+
+### Trailing Stop-Loss
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| `TRAIL_AFTER_RISK_MULTIPLE` | 1.5 | Trail starts at 1.5× initial risk profit |
+| `TRAIL_STEP_PCT` | 50% | SL locks 50% of unrealised profit |
+
+**How it works:**
+1. `initial_risk = |entry − initial_sl|`
+2. When `profit ≥ 1.5 × initial_risk`:
+   - **First time, if qty ≥ 3:** Exit 1/3 shares (partial profit). Update SL-M for reduced qty.
+   - Move SL to `entry + 50% × profit` (BUY) or `entry − 50% × profit` (SELL)
+3. SL ratchets in the protective direction only (never loosens)
+
+**TRAIL_STEP_PCT Decision History:**
+| Value | Date | Commit | Rationale |
+|-------|------|--------|-----------|
+| 65% | 2026-03-16 | `4444248` | Set after winning trades reversed into losses. Locks more profit. |
+| 50% | 2026-04-08 | `418d668` | Indian analyst review: 65% too tight for NSE's 0.5-0.7% normal pullbacks. Converted 1.5% winners to 0.3% winners. |
+
+**Optimal range: 40-60%.** Backtest on ≥50 trades before changing.
+
+### Time-Decay Target Reduction
+
+After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`) of entry-to-target distance. Applied once per position. Skipped if late-entry reduction was already applied (prevents stacking).
+
+### EOD Accelerated Exit (2:45 PM)
+
+| Position State | Action |
+|---------------|--------|
+| Losing | Auto-exit at market |
+| Near breakeven | Tighten SL to entry ±0.1% |
+| Winning | Trail stop handles it |
+
+### Circuit Breaker
+
+- Trips when day loss > 3% of budget (`MAX_LOSS_PER_DAY_PCT`)
+- 30-minute cooldown, then baseline resets (only new losses re-trip)
+- Max 2 trips per day → trading stops entirely
+
+### Whipsaw Guard
+
+3 consecutive SL exits → pause new entries for 30 minutes. Counter resets on profitable close.
+
+### Loss-Adjusted Budget (Dry Run)
+
+`effective_budget = budget + day_losses` (floor at 20% of original). Prevents full-size re-entry after SL hits. In live mode, Zerodha's actual margin handles this.
+
+---
+
+## Dynamic MAX_POSITIONS
+
+MAX_POSITIONS auto-scales with budget to keep per-position size viable:
+
+| Budget | MAX_POSITIONS | Per-Position Size | Cost Drag |
+|--------|---------------|-------------------|-----------|
+| < ₹25K | 2 | ₹10-12K | ~0.4% |
+| ₹25-60K | 3 | ₹8-20K | ~0.3% |
+| ₹60K-1L | 4 | ₹15-25K | ~0.2% |
+| > ₹1L | 5 | ₹20K+ | ~0.2% |
+
+Goal: round-trip charges (₹40-50) stay < 0.5% of each position. Set `MAX_POSITIONS_OVERRIDE > 0` to lock manually.
+
+---
+
+## Technical Indicators (14)
+
+All indicators on 15-min candles. Total score range: **-24 to +24**.
+
+### Primary Trend Indicators
+
+| Indicator | Score | Description |
+|-----------|-------|-------------|
+| **SuperTrend(7, 2.0)** | ±3 (change), ±1 (cont.) | ATR trend-follower. Period 7 / multiplier 2.0 optimised for intraday (default 10/3.0 too slow). Indian algo trading standard. Configurable via `SUPERTREND_PERIOD`/`SUPERTREND_MULTIPLIER`. |
+| **EMA(9/21) Crossover** | ±2 (cross), ±1 (spread) | 2.25h vs 5.25h fast/slow. Captures same-day momentum shifts. |
+| **RSI(14)** | ±1 to ±3 | Wilder smoothing. <20 = +3 (oversold), 20-30 = +2, >80 = -3, 70-80 = -2. |
+
+### Confirmation Indicators
+
+| Indicator | Score | Description |
+|-----------|-------|-------------|
+| **VWAP** | ±1 | Institutional fair value (today's candles). Above = buyers in control. |
+| **VWAP SD Bands** | ±0.5 to ±1 | ±2σ = strong mean-reversion (±1), ±1σ = moderate (±0.5). Overrides basic VWAP at extremes. |
+| **MACD(12,26,9)** | ±0.5 to ±1 | Histogram direction + acceleration. Growing = confirm, shrinking = warning. |
+| **ORB (Opening Range)** | ±2 | Uses **2nd candle (9:30-9:45)** — avoids auction noise in 1st candle. Decays through day (×0.5 after 10:30, 0 after noon). |
+| **Gap Analysis** | ±1 | >1% gap + high volume = continuation. Low volume = fill risk. |
+| **Hourly EMA Alignment** | ±1 | Synthetic hourly candles. Both timeframes aligned = confluence bonus. |
+| **Daily EMA(9/21) Bias** | ±1 | Higher timeframe trend (only if spread > 1%). |
+
+### Modifier Indicators
+
+| Indicator | Score | Description |
+|-----------|-------|-------------|
+| **ADX(14)** | ±0.5 modifier | <20 WEAK: halves trend continuation scores. >30 STRONG: +0.5 directional bonus. |
+| **Fibonacci Retracement** | ±0.5 | 38.2/50/61.8% of prev-day range. **Directional**: +0.5 if SuperTrend UP (support), -0.5 if DOWN (resistance). |
+| **Prev-Day S&R** | ±0.5 to ±1 | Yesterday's H/L/C. AT_RESISTANCE = -1, AT_SUPPORT = +1, PIVOT = ±0.5. |
+
+### Penalty / Cap
+
+| Indicator | Effect | Description |
+|-----------|--------|-------------|
+| **Extended Move Penalty** | ±1.5 to ±3 | >2% from open → -3 penalty opposing direction. Prevents chasing. |
+| **RSI Extreme Hard Cap** | caps at ±3 | RSI ≥ 75 → max +3. RSI ≤ 25 → min -3. |
+
+### Score Interpretation
+
+| |Score| | Signal | Action |
+|---------|--------|--------|
+| ≥ 5 | STRONG | High conviction trade |
+| 2-5 | MODERATE | Passes filter — Claude decides |
+| < 2 | WEAK | Filtered out |
+
+---
+
+## Candlestick Patterns (14)
+
+### Single-Candle (6)
+
+| Pattern | Signal | Strength | Key Feature |
 |---------|--------|----------|-------------|
-| Doji | NEUTRAL | 1 | Body < 10% of range. Indecision — prior trend may reverse |
-| Marubozu | BULLISH/BEARISH | 3 | Body > 90% of range. Pure conviction — no shadow means no opposition |
-| Hammer | BULLISH | 2 | Small body at top, long lower shadow. Sellers pushed price down but buyers reclaimed. Requires prior downtrend |
-| Inverted Hammer | BULLISH | 2 | Small body at bottom, long upper shadow. Buyers testing higher levels after decline |
-| Shooting Star | BEARISH | 2 | Same shape as inverted hammer but after uptrend. Buyers failed to hold gains |
-| Hanging Man | BEARISH | 2 | Same shape as hammer but after uptrend. Warning of distribution |
+| Doji | NEUTRAL | 1 | Body < 10% of range. Indecision. |
+| Marubozu | Directional | 3 | Body > 90% of range. Pure conviction. |
+| Hammer | BULLISH | 2 | Small body at top, long lower shadow. Requires prior downtrend. |
+| Inverted Hammer | BULLISH | 2 | Small body at bottom, long upper shadow. |
+| Shooting Star | BEARISH | 2 | Inverted hammer but after uptrend. Buyers failed. |
+| Hanging Man | BEARISH | 2 | Hammer shape after uptrend. Distribution warning. |
 
-### Multi-Candle Patterns
+### Multi-Candle (8)
 
-| Pattern | Signal | Strength | Description |
+| Pattern | Signal | Strength | Key Feature |
 |---------|--------|----------|-------------|
-| Bullish Engulfing | BULLISH | 2-3 | Current bullish candle completely engulfs prior bearish candle. Stronger after a downtrend (strength 3) |
-| Bearish Engulfing | BEARISH | 2-3 | Current bearish candle engulfs prior bullish candle. Stronger after an uptrend |
-| Morning Star | BULLISH | 3 | 3-candle reversal: big bearish → small body → big bullish closing above midpoint of first candle |
-| Evening Star | BEARISH | 3 | 3-candle reversal: big bullish → small body → big bearish closing below midpoint of first |
-| Three White Soldiers | BULLISH | 3 | 3 consecutive bullish candles, each opening higher and closing higher. Strong continuation |
-| Three Black Crows | BEARISH | 3 | 3 consecutive bearish candles, each opening lower and closing lower |
-| Bullish Harami | BULLISH | 1 | Small bullish candle contained within prior large bearish candle. Weak reversal — needs confirmation |
-| Bearish Harami | BEARISH | 1 | Small bearish candle contained within prior large bullish candle |
+| Bullish Engulfing | BULLISH | 2-3 | Engulfs prior bearish candle. 3 if after downtrend. |
+| Bearish Engulfing | BEARISH | 2-3 | Engulfs prior bullish candle. 3 if after uptrend. |
+| Morning Star | BULLISH | 3 | 3-candle reversal: big bear → small body → big bull. |
+| Evening Star | BEARISH | 3 | 3-candle reversal: big bull → small body → big bear. |
+| Three White Soldiers | BULLISH | 3 | 3 consecutive up candles, each higher. Strong continuation. |
+| Three Black Crows | BEARISH | 3 | 3 consecutive down candles, each lower. |
+| Bullish Harami | BULLISH | 1 | Small bull inside prior large bear. Weak — needs confirmation. |
+| Bearish Harami | BEARISH | 1 | Small bear inside prior large bull. |
+
+All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed (1.0× current, 0.7× 1-ago, 0.4× 2-ago).
 
 ---
 
-## Composite Scoring System
+## Configuration Quick Reference
 
-The composite score combines candle patterns + technical indicators:
+### Core (config.py)
 
-```
-Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -24 to +24
-  (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
-   Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1,
-   Hourly EMA ±1, BB Squeeze ±1, ADX ±0.5,
-   Fib +0.5, VWAP Bands ±1, Extended Move Penalty ±3)
-  Note: When VWAP bands are active, basic VWAP position score is removed
-  to prevent cancellation at extremes.
-  Note: RSI extreme hard cap — if RSI ≥ 75, score capped at +3 max;
-  if RSI ≤ 25, score capped at -3 min. Prevents trend indicators from
-  overriding extreme overbought/oversold readings.
-RVol bonus/penalty:    -1 to +1
-
-Total range:           ~-28 to +28
-```
-
-**Score interpretation:**
-- `|score| >= 5` → Strong signal, high conviction
-- `|score| >= 2` → Moderate signal (passes V2_MIN_SCORE filter)
-- `|score| < 2`  → Weak/no signal (filtered out)
-- Positive = net bullish, Negative = net bearish
-
-**Example scoring for a strong BUY setup:**
-```
-RSI(14) = 25 (oversold)           → +3
-EMA(9) crossed above EMA(21)       → +2
-SuperTrend just flipped to UP      → +3
-Price above VWAP                   → +1
-Prev day: AT_SUPPORT               → +1
-MACD: BULLISH, GROWING             → +1
-ORB: BREAKOUT_UP                   → +2
-Gap: GAP_UP_STRONG (high vol)      → +1
-HAMMER pattern (high vol, fresh)   → +2.6  (2 × 1.3)
-RVol = 2.5×                        → +1
-                              Total: +17.6 → STRONG_BUY
-```
-
-**Example scoring for a strong SHORT setup:**
-```
-RSI(14) = 82 (overbought)         → -3
-EMA(9) crossed below EMA(21)      → -2
-SuperTrend flipped to DOWN         → -3
-Price below VWAP                   → -1
-Prev day: AT_RESISTANCE            → -1
-MACD: BEARISH, GROWING             → -1
-ORB: BREAKOUT_DOWN                 → -2
-Gap: GAP_DOWN_STRONG (high vol)    → -1
-SHOOTING_STAR (high vol, fresh)    → -2.6  (2 × 1.3)
-EVENING_STAR (low vol, 1-ago)      → -1.05 (3 × 0.5 × 0.7)
-RVol = 0.2×                        → -1
-                              Total: -19.65 → STRONG_SELL
-```
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `MAX_BUDGET_INR` | 20,000 | Daily capital cap |
+| `MAX_POSITIONS` | 3 (auto-scaled) | See Dynamic MAX_POSITIONS |
+| `MAX_POSITIONS_OVERRIDE` | 0 | 0 = auto; >0 = fixed |
+| `MAX_POSITION_PCT` | 40% | Per-stock cap |
+| `DEFAULT_STOP_LOSS_PCT` | 1.5% | Fallback SL |
+| `DEFAULT_TARGET_PCT` | 1.5% | Fallback target |
+| `ATR_MULTIPLIER` | 1.5 | SL = 1.5×ATR |
+| `TARGET_RR_MULTIPLIER` | 1.5 | 1.5:1 R:R |
+| `MAX_INTRADAY_SL_PCT` | 2.5% | SL hard cap |
+| `TRAIL_AFTER_RISK_MULTIPLE` | 1.5 | Trail trigger |
+| `TRAIL_STEP_PCT` | 50% | Trail lock % |
+| `MIN_EXPECTED_PROFIT` | ₹50 | Min viable profit |
+| `USE_EXCHANGE_SL` | True | SL-M on NSE |
+| `ENTRY_DELAY_MINUTES` | 5 | Post-open observe |
+| `SHORT_ENTRY_CUTOFF_HOUR` | 13 | No shorts after 1 PM |
+| `SUPERTREND_PERIOD` | 7 | Intraday-optimised |
+| `SUPERTREND_MULTIPLIER` | 2.0 | Tighter bands |
+| `V2_MIN_SCORE` | 2.0 | Pre-filter threshold |
+| `TARGET_DECAY_PCT` | 25% | After 2 PM |
+| `MAX_LOSS_PER_DAY_PCT` | 3% | Circuit breaker |
 
 ---
 
-## Configuration (config.py)
+## Database & Verification
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `V2_CANDLE_RESCAN_MINUTES` | 15 | How often to re-run candle analysis during monitoring (FREE, no Claude cost) |
-| `V2_MIN_SCORE` | 2.0 | Minimum |score| to pass into Claude. Lower = more candidates but weaker signals |
-| `V2_CANDLE_INTERVAL` | "15minute" | Primary candle interval for pattern detection |
+### Tables in `data/trades.db`
 
-All V1 settings (budget, timing, SL, trailing, circuit breaker) also apply to V2.
+| Table | Purpose | Updated By |
+|-------|---------|------------|
+| `trades` | Intraday trade history (Claude learning) | `performance_tracker.py`, `verify_trades.py` |
+| `portfolio_analyses` | Portfolio analysis records | `performance_tracker.py` |
+| `intraday_tax_ledger` | Tax-ready ledger with charges | `fill_intraday_ledger.py`, `verify_trades.py` |
+| `capital_gains_ledger` | Delivery capital gains | `import_zerodha_taxpnl.py` |
+
+### Viewer Scripts
+
+| Command | Purpose |
+|---------|---------|
+| `python scripts/view_trades.py` | Raw trade records |
+| `python scripts/view_performance.py` | Performance analytics (daily P&L, win rate, exit stats, indicator correlation) |
+| `python scripts/view_analyses.py` | Portfolio analysis records |
+| `python scripts/view_candle_cache.py` | Candle cache data |
+| `python scripts/view_intraday_ledger.py` | Tax ledger records |
+| `python scripts/view_capital_gains_ledger.py` | Capital gains (STCG/LTCG) |
+
+### Verification & Backup
+
+| Script | Purpose |
+|--------|---------|
+| `python scripts/verify_trades.py` | Same-day API verification — corrects prices in reports + intraday_tax_ledger + trades table |
+| `python scripts/import_zerodha_taxpnl.py` | Quarterly xlsx verification — imports intraday + capital gains |
+| `python scripts/backup_data.py --ssh` | Two-way sync with private Git repo (row-level SQLite merge) |
 
 ---
 
-## Why This Combination Works for Intraday
+## Why These Parameters
 
-1. **SuperTrend** is the Indian market algo-trading standard. Most institutional algo traders use it. Trading in the direction of SuperTrend = swimming with the current.
-
-2. **RSI extremes** on intraday timeframes have mean-reversion tendency in liquid large-caps (Nifty 50/100). RSI(14) below 30 on 15-min = the selling was overdone, likely to bounce.
-
-3. **EMA crossover** captures momentum shifts. When the 9-period EMA crosses the 21-period, it means recent price action is definitively stronger/weaker than the medium-term. On 15-min candles, this is a 2-hour vs 5-hour average — ideal for same-day trades.
-
-4. **VWAP** is the institutional anchor. Hedge funds and algos execute relative to VWAP. A stock consistently above its VWAP has genuine buying interest (not just retail spike).
-
-5. **Candle patterns** provide the "entry timing" layer. Indicators tell you the direction; patterns tell you *when* to enter. A HAMMER at an RSI oversold zone near VWAP support = textbook high-probability long entry.
-
-6. **Confluence** is key. The scoring system rewards setups where multiple independent indicators agree. A stock with score ≥ 5 has at least 3 indicators pointing the same direction — statistically much higher win rate than any single indicator alone.
+| Decision | Rationale |
+|----------|-----------|
+| **R:R 1.5:1** | NSE large-caps move 1-1.5% net/day. 2:1 targets (3% on 1.5% SL) almost never hit intraday. |
+| **SuperTrend(7, 2.0)** | Default (10, 3.0) too slow for intraday. 7/2.0 = 1.75h lookback, tighter bands, more responsive. |
+| **Entry delay 5 min** | 15-min delay missed morning momentum. 5 min lets auction settle while catching early moves. |
+| **Trail step 50%** | 65% too tight — NSE pullbacks of 0.5-0.7% triggered trail exits, converting 1.5% winners to 0.3%. |
+| **ORB 2nd candle** | 1st candle (9:15-9:30) includes auction noise. 2nd candle (9:30-9:45) is first market-driven range. |
+| **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
+| **Short cutoff 1 PM** | Short delivery penalties ₹500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
+| **Min profit ₹50** | Round-trip charges ~₹40-50. Trades below this threshold are guaranteed losers after costs. |
 
 ---
 
-## Fallback Behaviour
+## Known Limitations
 
-- If the V2 pre-filter finds **no candidates** above V2_MIN_SCORE, it falls back to V1 behaviour (sends all prices to Claude)
-- If candle data fetch fails for a stock, that stock is simply skipped (non-blocking)
-- All V1 risk management (SL, trailing, circuit breaker) runs identically in V2
-- If V2 has issues, use `--v1` to run the legacy V1 strategy
+See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-68).
+
+| # | Gap | Priority | Est. Impact |
+|---|-----|----------|-------------|
+| 55 | MARKET → LIMIT orders | HIGH | ₹20-40/day slippage |
+| 56 | Stock price range filter | MEDIUM | Filters out poor-spread stocks |
+| 57 | VWAP incomplete candle | LOW | Slight VWAP skew |
+| 58 | 2 positions for micro budgets | MEDIUM | Further reduce cost drag |

@@ -238,6 +238,19 @@ class StockScanner:
     # ================================================================
     # PROMPT BUILDERS
     # ================================================================
+    # Two main prompts sent to Claude:
+    #
+    # _build_scan_prompt  — "Find new trades": gives Claude market
+    #   snapshot + strict rejection filters + budget constraints.
+    #   Claude returns structured trade plans (BUY/SELL with levels).
+    #
+    # _build_review_prompt — "Manage open positions": gives Claude
+    #   portfolio state + R-multiple framework. Claude recommends
+    #   HOLD/ADJUST_SL/EXIT for each position.
+    #
+    # Both prompts contain time-of-day context because intraday
+    # strategy changes significantly throughout the trading day.
+    # ================================================================
 
     def _build_snapshot(self, quotes: dict) -> str:
         """

@@ -320,6 +320,11 @@ def verify_today(date_str: str | None = None) -> dict:
     # ── Update intraday tax ledger ────────────────────────────
     _update_tax_ledger(data, target_str)
 
+    # ── Update trades table (performance_tracker) ─────────────
+    # The trades table stores entry/exit prices for Claude learning
+    # context. When verification corrects prices, sync them here too.
+    _update_trades_table(data, target_str)
+
     print(f"\n  ✅ Verification complete: {stats['verified']} matched, "
           f"{stats['corrected']} corrected")
     print(f"     Reports saved: {json_path}")
@@ -403,6 +408,55 @@ def _update_tax_ledger(data: dict, date_str: str):
             )
 
     conn.commit()
+    conn.close()
+
+
+def _update_trades_table(data: dict, date_str: str):
+    """Sync corrected prices into the trades table (performance_tracker DB).
+
+    The trades table feeds Claude's learning context — if entry/exit prices
+    are wrong there, the bot learns from incorrect P&L data. This function
+    applies the same corrections that _update_tax_ledger applies to the
+    intraday_tax_ledger.
+    """
+    conn = get_db()
+    positions = data.get("positions", [])
+    updated = 0
+
+    for pos in positions:
+        if pos.get("status") != "CLOSED":
+            continue
+        symbol = pos.get("symbol", "")
+        side   = pos.get("side", "")
+        if not symbol:
+            continue
+
+        # Match by date + symbol + side + qty (no unique order_id in trades table)
+        qty = pos.get("qty", 0) + pos.get("_partial_qty", 0)
+        pnl = round(pos.get("pnl", 0) + pos.get("_partial_pnl", 0), 2)
+
+        row = conn.execute(
+            "SELECT id, entry_price, exit_price, pnl FROM trades "
+            "WHERE date=? AND symbol=? AND side=? AND qty=?",
+            (date_str, symbol, side, qty),
+        ).fetchone()
+
+        if row:
+            needs_update = (
+                abs(row["entry_price"] - pos["entry_price"]) > 0.01
+                or abs((row["exit_price"] or 0) - (pos.get("exit_price") or 0)) > 0.01
+                or abs(row["pnl"] - pnl) > 0.01
+            )
+            if needs_update:
+                conn.execute(
+                    "UPDATE trades SET entry_price=?, exit_price=?, pnl=? WHERE id=?",
+                    (pos["entry_price"], pos.get("exit_price", 0), pnl, row["id"]),
+                )
+                updated += 1
+
+    if updated:
+        conn.commit()
+        print(f"    ✎ Updated {updated} row(s) in trades table")
     conn.close()
 
 
