@@ -49,7 +49,7 @@ For each stock in universe (50-200 stocks):
       • ADX(14) — trend strength filter (modifies continuation signals)
       • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
       • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
-  → Calculate composite score (~-25 to +25)
+  → Calculate composite score (~-28 to +28)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -221,9 +221,9 @@ Every 25 minutes — PAID:
 - **Implementation:** Applied after score filtering, before final candidate selection
 
 ### Partial Profit Taking
-- **What:** At 1× risk profit (TRAIL_AFTER_RISK_MULTIPLE), automatically exits 50% of the position and moves SL to breakeven for the remainder
-- **Why it works:** Locks guaranteed profit on half the position while letting the other half run with a trailing stop. Standard practice in professional Indian intraday trading. The 1× risk trigger is optimal — not too early (0.5× gives back too much edge) and not too late (2× risks giving back unrealised profits)
-- **Edge case:** Only triggers when qty >= 2 (can't split 1 share). Only triggers once per position
+- **What:** At 1.5× risk profit (TRAIL_AFTER_RISK_MULTIPLE), automatically exits 33% of the position (1/3) and moves SL to breakeven for the remainder
+- **Why it works:** Locks guaranteed profit on a third of the position while letting the remaining two-thirds run with a trailing stop (65% step). The 1.5× risk trigger avoids cutting winners too early — a 1× trigger was found to cap upside excessively in practice
+- **Edge case:** Only triggers when qty >= 3 (can't split smaller). Only triggers once per position
 
 ---
 
@@ -261,16 +261,19 @@ The composite score combines candle patterns + technical indicators:
 
 ```
 Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -21 to +21
+Technical score:       -24 to +24
   (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
    Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1,
    Hourly EMA ±1, BB Squeeze ±1, ADX ±0.5,
-   Fib +0.5, VWAP Bands ±1)
+   Fib +0.5, VWAP Bands ±1, Extended Move Penalty ±3)
   Note: When VWAP bands are active, basic VWAP position score is removed
   to prevent cancellation at extremes.
+  Note: RSI extreme hard cap — if RSI ≥ 75, score capped at +3 max;
+  if RSI ≤ 25, score capped at -3 min. Prevents trend indicators from
+  overriding extreme overbought/oversold readings.
 RVol bonus/penalty:    -1 to +1
 
-Total range:           ~-25 to +25
+Total range:           ~-28 to +28
 ```
 
 **Score interpretation:**

@@ -72,7 +72,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 10. ✅ Partial Profit Taking (Scale-Out)
 - **Versions**: V1 (retired), V2, NoAI
 - **Gap**: All-or-nothing exits — full position until SL or target. Professional traders scale out.
-- **Fix**: At 1× risk profit, exit 50% of qty and move SL to breakeven on remainder. Locks in guaranteed profit while letting winners run.
+- **Fix**: At 1.5× risk profit, exit 33% of qty (1/3) and move SL to breakeven on remainder. Trail remainder at 65% step. Locks in guaranteed profit while letting winners run. Min qty threshold: 3.
 - **Source**: Universal risk management principle — "Take some off the table."
 
 ---
@@ -181,10 +181,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Source**: Every professional quant desk backtests before going live.
 - **Effort**: High | **Impact**: Highest (enables all other improvements to be measured)
 
-### 25. Trade Journaling & Performance Analytics
+### 25. 🟡 Trade Journaling & Performance Analytics
 - **Versions**: All (infrastructure)
 - **Gap**: Daily reports exist but no systematic analysis of which patterns/indicators/times win.
 - **Fix**: Write full indicator snapshot at entry to SQLite. Weekly script to compute stats: win rate by pattern, by time of day, by RVol bucket, by score range.
+- **Status**: Partially done — indicator snapshot (entry_score, entry_rsi, entry_time, indicator_snapshot) now recorded to SQLite via `performance_tracker.py`. Weekly analytics script still pending.
 - **Source**: Professional trading discipline — data-driven parameter tuning.
 - **Effort**: Medium | **Impact**: High
 
@@ -336,6 +337,48 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
+## COMPLETED — Profitability Deep Review Fixes (Loss Analysis)
+
+These fixes were identified by analyzing 8 days of actual trade data showing -₹897 cumulative losses. Root causes: late entries chasing extended moves, SL too tight, targets unreachable, winners cut too early, too many small trades eating charges.
+
+### 49. ✅ Wider SL Logic (Structural Level Priority)
+- **Versions**: All
+- **Gap**: `_calculate_sl()` used the TIGHTER of ATR SL and structural SL. Result: SL too tight, shaken out by normal volatility before the trade works.
+- **Fix**: Use the WIDER of ATR SL and structural SL (`min()` for BUY, `max()` for SELL). Structural supports/resistances are respected rather than overridden by ATR noise.
+- **Files**: `order_engine.py`
+
+### 50. ✅ Late-Entry + Time-Decay Mutual Exclusion
+- **Versions**: All
+- **Gap**: A trade entered at 2 PM got BOTH a late-entry target reduction AND time-decay reduction during monitoring. Double penalty made targets unreachable.
+- **Fix**: Late-entry reduction marks `_late_entry_reduced=True`. Time-decay skips positions already reduced. Added R:R floor check — if R:R < 1.2:1 after late reduction, trade is skipped entirely.
+- **Files**: `order_engine.py`
+
+### 51. ✅ Extended Move Score Penalty
+- **Versions**: V2, NoAI
+- **Gap**: Bot entered stocks that had already moved 1-3% from today's open. These are chasing, not trading — the move is already done.
+- **Fix**: In `compute_technical_score()`, calculate extended move % from today's open. |move| > 2%: penalty ±3.0. |move| 1.5-2%: penalty ±1.5. Penalty opposes the direction (penalizes entering in the direction of an already-exhausted move).
+- **Files**: `technical_indicators.py`, `stock_scanner_v2.py` (Claude prompt warning)
+
+### 52. ✅ RSI Extreme Hard Cap on Composite Score
+- **Versions**: V2, NoAI
+- **Gap**: RSI ≥ 75 (overbought) with strong trend indicators could still produce a high positive score, encouraging BUY entries at tops. Trend indicators overrode the mean-reversion signal.
+- **Fix**: If RSI ≥ 75: cap composite score at +3 max. If RSI ≤ 25: cap at -3 min. Prevents trend indicators from overriding extreme overbought/oversold readings.
+- **Files**: `technical_indicators.py`
+
+### 53. ✅ Direction Diversification Cap
+- **Versions**: All
+- **Gap**: All positions could be in the same direction (all BUY or all SELL). A single market reversal wipes them all out simultaneously.
+- **Fix**: Max same-direction positions = MAX_POSITIONS - 1. With MAX_POSITIONS=3, max 2 in same direction. Forces at least one contrarian/hedge position when fully deployed.
+- **Files**: `order_engine.py`, `stock_scanner_v2.py` (Claude prompt filter)
+
+### 54. ✅ Fewer Trades, Bigger Size Config
+- **Versions**: All
+- **Gap**: MAX_POSITIONS=5 with ₹18K budget = ₹3.6K per trade. Transaction costs (brokerage, STT, GST) are ~₹25-30 per trade, eating 0.7-0.8% per round trip on small positions.
+- **Fix**: MAX_POSITIONS 5→3. MIN_BUDGET_UTILISATION_PCT 60→0 (disabled — idle capital is better than forced trades). Concentrates capital into fewer, higher-conviction trades.
+- **Files**: `config.py`
+
+---
+
 ## Implementation Status
 
 | # | Improvement | Versions | Status | Implemented In |
@@ -364,7 +407,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 22 | Regime-shift SL tightening | V2, NoAI | ✅ Done | `manager_v2.py` |
 | 23 | VIX-based sizing | All | ⬜ Pending | — |
 | 24 | Backtesting framework | All | ⬜ Pending | — |
-| 25 | Trade journaling | All | ⬜ Pending | — |
+| 25 | Trade journaling | All | 🟡 Partial | `performance_tracker.py` |
 | 26 | Sector cap at entry time | All | ✅ Done | `order_engine.py` |
 | 27 | EOD accelerated exit | NoAI, V2 | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
 | 28 | ADX trend strength | V2, NoAI | ✅ Done | `technical_indicators.py` |
@@ -387,3 +430,9 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 45 | Multi-day score trend | V2, NoAI | ⬜ Pending | — |
 | 46 | Smart square-off timing | All | ⬜ Pending | — |
 | 47 | Budget auto-scaling | All | ⬜ Pending | — |
+| 49 | Wider SL logic | All | ✅ Done | `order_engine.py` |
+| 50 | Late-entry + time-decay exclusion | All | ✅ Done | `order_engine.py` |
+| 51 | Extended move penalty | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 53 | Direction diversification cap | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
+| 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |

@@ -133,7 +133,7 @@ class Config:
     # MAX_POSITION_PCT: max % of budget allocated to one stock.
     #   40 = no single stock gets more than 40% of your capital.
     #   Prevents concentration risk if Claude is very bullish on one pick.
-    MAX_POSITIONS:    int = 5
+    MAX_POSITIONS:    int = 3
     MAX_POSITION_PCT: int = 40
 
     # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
@@ -173,16 +173,16 @@ class Config:
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: once the price moves this many
     #   multiples of the SL distance in your favour, trailing kicks in.
-    #   1.0 = trail starts once profit equals the initial risk.
-    #   e.g. entry ₹100, SL ₹98 (risk ₹2). At ₹102 (1×risk profit)
-    #   the SL auto-moves to breakeven (₹100).
+    #   1.5 = trail starts once profit equals 1.5× the initial risk.
+    #   e.g. entry ₹100, SL ₹98 (risk ₹2). At ₹103 (1.5×risk profit)
+    #   the bot exits 1/3 qty and moves SL to lock 65% of profit.
     #
-    # TRAIL_STEP_PCT: after the initial trail-to-breakeven,
+    # TRAIL_STEP_PCT: after the initial trail trigger,
     #   the SL is moved up to lock in this % of current profit.
-    #   50 = SL always sits at 50% of the way from entry to current price.
-    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103 (50% of ₹6 gain).
-    TRAIL_AFTER_RISK_MULTIPLE: float = 1.0
-    TRAIL_STEP_PCT:            float = 50.0
+    #   65 = SL sits at 65% of the way from entry to current price.
+    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103.90 (65% of ₹6 gain).
+    TRAIL_AFTER_RISK_MULTIPLE: float = 1.5
+    TRAIL_STEP_PCT:            float = 65.0
 
     # ── Bid-Ask Spread Check ─────────────────────────────────────
     # MAX_SPREAD_PCT: skip stocks with bid-ask spread wider than this %.
@@ -286,7 +286,9 @@ class Config:
     # should deploy across all trades. If Claude picks trades that
     # only use 30% of budget, the bot will auto-increase qty to
     # reach this minimum. Set to 0 to disable.
-    MIN_BUDGET_UTILISATION_PCT: float = 60.0
+    # DISABLED: Forcing deployment into low-conviction trades causes losses.
+    # Better to hold cash than force trades.
+    MIN_BUDGET_UTILISATION_PCT: float = 0.0
 
     # ── Stagnant Position Exit (NoAI) ─────────────────────────────
     # STAGNANT_EXIT_MINUTES: after this many minutes, if a position

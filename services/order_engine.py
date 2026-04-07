@@ -530,12 +530,14 @@ class OrderEngine:
                 f"Dynamic SL: ₹{atr_sl:.2f} | Target: ₹{atr_target:.2f}"
             )
 
-            # Use tighter of ATR vs Claude SL (don't widen Claude's SL)
+            # Use WIDER of ATR vs Claude SL — structural levels matter more
+            # than ATR noise. The tighter approach was causing premature SL
+            # hits from normal intraday volatility.
             if side == "BUY":
-                sl     = max(atr_sl, sl)      # pick whichever SL is closer to entry
+                sl     = min(atr_sl, sl)      # pick whichever SL is farther from entry
                 target = min(atr_target, target) if target > entry else atr_target
             else:
-                sl     = min(atr_sl, sl)      # for shorts, lower SL = tighter
+                sl     = max(atr_sl, sl)      # for shorts, higher SL = wider
                 target = max(atr_target, target) if target < entry else atr_target
         else:
             self.log.info(
@@ -561,6 +563,20 @@ class OrderEngine:
             self.log.info(
                 f"Late entry ({hour_now}:xx): target reduced by {late_reduction:.0f}% → ₹{target:.2f}"
             )
+            # Mark position so time-decay doesn't stack on top
+            trade["_late_entry_reduced"] = True
+
+        # ── Minimum R:R floor for late entries ────────────────────
+        # If target is too close after late-entry reduction, skip the trade
+        if late_reduction > 0:
+            sl_distance = abs(entry - sl)
+            tgt_distance = abs(target - entry)
+            if sl_distance > 0 and tgt_distance / sl_distance < 1.2:
+                self.log.warning(
+                    f"{symbol}: R:R {tgt_distance/sl_distance:.1f}:1 after late-entry "
+                    f"reduction — below 1.2:1 minimum, skipping"
+                )
+                return False
 
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
@@ -624,6 +640,22 @@ class OrderEngine:
             self.log.warning(
                 f"Cannot enter {symbol}: sector {sector} already has "
                 f"{sector_open} open position(s) (max {MAX_PER_SECTOR})"
+            )
+            return False
+
+        # ── Direction diversification guard ───────────────────────
+        # Prevent all positions being in the same direction.
+        # With MAX_POSITIONS=3, allow max 2 in same direction.
+        max_same_dir = max(1, self.cfg.MAX_POSITIONS - 1)
+        same_dir_count = sum(
+            1 for p in self.positions
+            if p["status"] == "OPEN" and p["side"] == side
+        )
+        if same_dir_count >= max_same_dir:
+            self.log.warning(
+                f"Cannot enter {symbol} ({side}): already have {same_dir_count} "
+                f"{side} position(s) — max {max_same_dir} in same direction "
+                f"to maintain diversification"
             )
             return False
 
@@ -733,6 +765,11 @@ class OrderEngine:
             "exit_time":    None,
             "rationale":    rationale,
             "order_id":     order_id,
+            # Indicator snapshot for learning database
+            "_entry_score": trade.get("_entry_score"),
+            "_entry_rsi":   trade.get("_entry_rsi"),
+            "_entry_time":  now.strftime("%H:%M:%S"),
+            "_indicator_snapshot": trade.get("_indicator_snapshot"),
         }
         self.positions.append(position)
         self._log_action("ENTRY", symbol, side, qty, entry, rationale)
@@ -1054,8 +1091,8 @@ class OrderEngine:
                 return  # not enough profit to start trailing
 
             # ── Partial profit taking (once, at first trail trigger) ──
-            if not pos.get("_partial_taken") and pos["qty"] >= 2:
-                partial_qty = pos["qty"] // 2
+            if not pos.get("_partial_taken") and pos["qty"] >= 3:
+                partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
                 remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((current_price - entry) * partial_qty, 2)
 
@@ -1095,8 +1132,8 @@ class OrderEngine:
                 return
 
             # ── Partial profit taking (once, at first trail trigger) ──
-            if not pos.get("_partial_taken") and pos["qty"] >= 2:
-                partial_qty = pos["qty"] // 2
+            if not pos.get("_partial_taken") and pos["qty"] >= 3:
+                partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
                 remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((entry - current_price) * partial_qty, 2)
 
@@ -1143,6 +1180,11 @@ class OrderEngine:
 
         # Already adjusted — don't decay again
         if "original_target" in pos:
+            return
+
+        # Skip if late-entry reduction was already applied at entry —
+        # stacking both reductions makes the R:R unviable.
+        if pos.get("_late_entry_reduced"):
             return
 
         entry  = pos["entry_price"]

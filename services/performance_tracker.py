@@ -50,7 +50,12 @@ class PerformanceTracker:
                     pnl              REAL    DEFAULT 0,
                     exit_reason      TEXT,
                     claude_confidence TEXT,
-                    market_condition TEXT
+                    market_condition TEXT,
+                    entry_score      REAL,
+                    entry_rsi        REAL,
+                    entry_time       TEXT,
+                    exit_time        TEXT,
+                    indicator_snapshot TEXT
                 )
             """)
             conn.execute("""
@@ -86,6 +91,19 @@ class PerformanceTracker:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+            # Add indicator snapshot columns if upgrading from older schema
+            for col, col_type in [
+                ("entry_score", "REAL"),
+                ("entry_rsi", "REAL"),
+                ("entry_time", "TEXT"),
+                ("exit_time", "TEXT"),
+                ("indicator_snapshot", "TEXT"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_type}")
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -118,8 +136,10 @@ class PerformanceTracker:
                 conn.execute(
                     """INSERT INTO trades
                        (date, symbol, side, entry_price, exit_price, qty,
-                        pnl, exit_reason, claude_confidence, market_condition)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        pnl, exit_reason, claude_confidence, market_condition,
+                        entry_score, entry_rsi, entry_time, exit_time,
+                        indicator_snapshot)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         today,
                         p.get("symbol", ""),
@@ -131,6 +151,11 @@ class PerformanceTracker:
                         p.get("exit_reason", ""),
                         p.get("claude_confidence", ""),
                         market_condition,
+                        p.get("_entry_score"),
+                        p.get("_entry_rsi"),
+                        p.get("_entry_time") or p.get("entry_time"),
+                        p.get("_exit_time") or p.get("exit_time"),
+                        p.get("_indicator_snapshot"),
                     ),
                 )
 

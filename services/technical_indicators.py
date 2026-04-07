@@ -1202,7 +1202,34 @@ def compute_technical_score(
         score -= vwap_position_score
     score += vwap_band_data["score"]
 
+    # Extended move penalty — penalize stocks that have already moved
+    # significantly from today's open. These are chasing opportunities
+    # with high mean-reversion risk.
+    extended_move_pct = 0.0
+    if today_candles and price > 0:
+        today_open = today_candles[0]["open"]
+        if today_open > 0:
+            extended_move_pct = (price - today_open) / today_open * 100
+            abs_move = abs(extended_move_pct)
+            if abs_move > 2.0:
+                # Heavy penalty: >2% move from open = very extended
+                penalty = -3.0 if extended_move_pct > 0 else 3.0
+                score += penalty
+            elif abs_move > 1.5:
+                # Moderate penalty: 1.5-2% move
+                penalty = -1.5 if extended_move_pct > 0 else 1.5
+                score += penalty
+
     # Map score to signal
+    # RSI extreme hard cap: if RSI is in euphoria/capitulation zone,
+    # cap the score to prevent trend indicators from overriding the
+    # overbought/oversold warning. Chasing extended RSI = loss.
+    rsi_val = rsi_data.get("rsi", 50)
+    if rsi_val >= 75 and score > 3:
+        score = 3.0
+    elif 0 < rsi_val <= 25 and score < -3:
+        score = -3.0
+
     if score >= 5:
         signal = "STRONG_BUY"
     elif score >= 2:
@@ -1230,4 +1257,5 @@ def compute_technical_score(
         "bb_squeeze": bb_data,
         "fibonacci": fib_data,
         "vwap_bands": vwap_band_data,
+        "extended_move_pct": round(extended_move_pct, 2),
     }

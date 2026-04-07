@@ -516,6 +516,8 @@ class StockScannerV2(StockScanner):
         try:
             raw = self.claude.call(prompt)
             trades = self._parse_scan_response(raw)
+            # Enrich Claude trades with indicator snapshot data for learning
+            self._enrich_trades_with_indicators(trades, candidates)
             trades = self._boost_underdeployed(trades)
             self.log.success(f"Claude recommended {len(trades)} trades from {len(candidates)} candidates")
             return trades
@@ -673,6 +675,9 @@ class StockScannerV2(StockScanner):
                 "qty": qty,
                 "rationale": " | ".join(parts),
                 "status": "PENDING",
+                "_entry_score": score,
+                "_entry_rsi": tech["rsi"]["rsi"],
+                "_indicator_snapshot": self._build_indicator_snapshot(tech, c),
             })
 
         # Validate budget (same logic as Claude path)
@@ -750,6 +755,47 @@ class StockScannerV2(StockScanner):
             f"({final_cost / budget * 100:.0f}%)"
         )
         return trades
+
+    # ================================================================
+    # INDICATOR SNAPSHOT FOR LEARNING
+    # ================================================================
+
+    def _build_indicator_snapshot(self, tech: dict, candidate: dict) -> str:
+        """Builds a compact JSON string of key indicators at entry time."""
+        import json
+        snap = {
+            "score": candidate.get("combined_score", 0),
+            "rsi": tech["rsi"]["rsi"],
+            "ema": tech["ema_cross"]["signal"],
+            "ema_spread": tech["ema_cross"]["spread_pct"],
+            "st": tech["supertrend"]["trend"],
+            "st_signal": tech["supertrend"]["signal"],
+            "vwap_dev": tech["vwap"]["deviation_pct"],
+            "adx": tech.get("adx", {}).get("adx", 0),
+            "adx_strength": tech.get("adx", {}).get("trend_strength", ""),
+            "macd": tech.get("macd", {}).get("signal", ""),
+            "macd_mom": tech.get("macd", {}).get("momentum", ""),
+            "orb": tech.get("orb", {}).get("signal", ""),
+            "rvol": candidate.get("rvol", 0),
+            "ext_move": tech.get("extended_move_pct", 0),
+        }
+        return json.dumps(snap)
+
+    def _enrich_trades_with_indicators(
+        self, trades: list[dict], candidates: list[dict]
+    ):
+        """
+        Adds indicator snapshot data to Claude-parsed trades by matching
+        them against the pre-filter candidates.
+        """
+        cand_by_symbol = {c["symbol"]: c for c in candidates}
+        for t in trades:
+            c = cand_by_symbol.get(t.get("symbol", ""))
+            if c:
+                tech = c["technical"]
+                t["_entry_score"] = c["combined_score"]
+                t["_entry_rsi"] = tech["rsi"]["rsi"]
+                t["_indicator_snapshot"] = self._build_indicator_snapshot(tech, c)
 
     # ================================================================
     # ENRICHED SNAPSHOT BUILDER
@@ -845,6 +891,12 @@ class StockScannerV2(StockScanner):
             if vwap_b.get("signal", "INSIDE") != "INSIDE":
                 vwap_b_str = f"  VWAP-Band: {vwap_b['signal']}"
 
+            # Extended move from open
+            ext_move = tech.get("extended_move_pct", 0)
+            ext_str = ""
+            if abs(ext_move) > 1.5:
+                ext_str = f"  ⚠ ExtMove: {ext_move:+.1f}%"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -854,7 +906,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}{ext_str}"
             )
 
         return "\n".join(lines)
@@ -948,8 +1000,8 @@ MACD:
   *** Any direction + SHRINKING = momentum FADING → do NOT enter new trades in this direction ***
 
 ORB:
-  BREAKOUT_UP = above first 15-min high → strong BUY (best before 10:30 AM, weakens after 11)
-  BREAKOUT_DOWN = below first 15-min low → strong SELL
+  BREAKOUT_UP = above first 15-min high → strong BUY (ONLY before 10:30 AM — weakens rapidly after, near-zero value by 11 AM)
+  BREAKOUT_DOWN = below first 15-min low → strong SELL (same time limit)
 
 Gap:
   GAP_UP_STRONG (with volume) = continuation likely → buy pullbacks to gap edge
@@ -1001,6 +1053,7 @@ HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ✗ REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
 ✗ REJECT if MACD momentum = SHRINKING in the trade's direction — momentum is fading.
 ✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
+✗ REJECT if adding this trade would put more than {max(1, self.cfg.MAX_POSITIONS - 1)} positions in the SAME direction — the system enforces direction diversification to avoid one-sided exposure.
 
 ══════════════════════════════════════════════════════════
 CONFLUENCE REQUIREMENT — Count aligned indicators before every trade:
@@ -1052,11 +1105,12 @@ COMMON MISTAKES TO AVOID (from actual loss patterns):
 ══════════════════════════════════════════════════════════
 ✗ Shorting a stock already down 3-5% ("it'll fall more") — it BOUNCES. RSI <30 on an extended move = EXIT not ENTRY.
 ✗ Buying a stock already up 3-5% — it REVERSES intraday. The easy money was made at the open.
+✗ MOST IMPORTANT: ANY stock with "⚠ ExtMove" in its data line has ALREADY moved >1.5% from today's open. The technical score already penalizes this by -1.5 to -3. Do NOT buy stocks that are ALREADY UP >1.5% or short stocks ALREADY DOWN >1.5% — you are CHASING, not trading. The move is done.
 ✗ Shorting a stock that is UP while the market is DOWN — this stock has relative STRENGTH. It will snap back harder when selling pressure eases.
 ✗ Taking 4-5 trades all SHORT in a bearish market — if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
 ✗ Ignoring volume — breakouts without volume (RVol <1.0) fail 70% of the time.
 ✗ Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
-✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Fewer high-conviction trades > many mediocre trades. 2-3 good trades with large qty beats 5 small trades. Meet deployment target by sizing up your best picks, not adding filler trades.
+✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Pick 1-3 HIGH-CONVICTION trades only. Idle capital is better than forced trades. Do NOT add filler trades to deploy more capital.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
