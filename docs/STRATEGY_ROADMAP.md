@@ -377,6 +377,34 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 - **Fix**: MAX_POSITIONS 5→3. MIN_BUDGET_UTILISATION_PCT 60→0 (disabled — idle capital is better than forced trades). Concentrates capital into fewer, higher-conviction trades.
 - **Files**: `config.py`
 
+### 55. LIMIT Orders for Entry/Exit
+- **Versions**: All
+- **Priority**: HIGH
+- **Gap**: MARKET orders cause adverse fills (₹20-40/day slippage on ₹18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
+- **Fix**: Change `place_order()` calls from `order_type="MARKET"` to `order_type="LIMIT"` with `price=ltp`. Add a 5-10s fill check; if not filled, cancel and retry at updated LTP. Fall back to MARKET after 2 LIMIT failures.
+- **Files**: `order_engine.py`, `zerodha_client.py`
+
+### 56. Scan Universe Price Filter
+- **Versions**: V2, NoAI
+- **Priority**: MEDIUM
+- **Gap**: No guard against very low-price (₹10-50) or very high-price (₹3000+) stocks. Low-price stocks have high % spreads. High-price stocks need too much capital for proper sizing.
+- **Fix**: Add MIN_STOCK_PRICE (default ₹100) and MAX_STOCK_PRICE (default ₹800) config. Filter during scan phase — skip stocks outside range.
+- **Files**: `config.py`, `stock_scanner_v2.py`
+
+### 57. VWAP Exclude Incomplete Candle
+- **Versions**: V2, NoAI
+- **Priority**: LOW
+- **Gap**: The current 15-min candle hasn't closed yet, so including it in VWAP computation skews the volume-weighted average. Early in the candle, volume is partial.
+- **Fix**: In `vwap_score()`, exclude the last candle if its timestamp is within the current 15-min window (i.e., hasn't closed). Only use fully-closed candles for VWAP computation.
+- **Files**: `technical_indicators.py`
+
+### 58. Reduce to 2 Positions for Micro Budgets
+- **Versions**: All
+- **Priority**: MEDIUM
+- **Gap**: With ₹18-20K budget, even 3 positions = ₹6K each. Transaction costs still eat 0.4-0.5% per round trip. 2 positions at ₹9-10K each reduces cost drag to ~0.3%.
+- **Fix**: Add budget-aware MAX_POSITIONS logic: if budget < ₹25K, cap at 2 positions automatically. Otherwise use configured MAX_POSITIONS.
+- **Files**: `config.py`, `order_engine.py`
+
 ---
 
 ## Implementation Status
@@ -436,3 +464,17 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 | 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 53 | Direction diversification cap | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |
+| 55 | LIMIT orders for entry/exit | All | ⬜ Pending | — |
+| 56 | Scan universe price filter | V2, NoAI | ⬜ Pending | — |
+| 57 | VWAP exclude incomplete candle | V2, NoAI | ⬜ Pending | — |
+| 58 | Reduce to 2 positions | All | ⬜ Pending | — |
+| 59 | R:R 1.5:1 + configurable multiplier | All | ✅ Done | `config.py`, `order_engine.py` |
+| 60 | Exchange SL-M orders | All | ✅ Done | `zerodha_client.py`, `order_engine.py`, `config.py` |
+| 61 | SuperTrend params configurable | V2, NoAI | ✅ Done | `config.py`, `technical_indicators.py` |
+| 62 | Fibonacci directional score | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 63 | ORB use 2nd candle (9:30-9:45) | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 64 | Short position time cap | All | ✅ Done | `order_engine.py`, `config.py` |
+| 65 | Pre-trade minimum profit check | All | ✅ Done | `order_engine.py`, `config.py` |
+| 66 | Entry delay 15→5 min | All | ✅ Done | `config.py` |
+| 67 | Trail step 65→50% | All | ✅ Done | `config.py` |
+| 68 | Time-decay 40→25% | All | ✅ Done | `config.py` |

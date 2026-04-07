@@ -137,12 +137,13 @@ class OrderEngine:
             atr = self.calculate_atr(symbol, exchange)
             if atr and atr > 0:
                 multiplier = self.cfg.ATR_MULTIPLIER
+                rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
                 if side == "BUY":
                     sl     = round(avg_price - multiplier * atr, 2)
-                    target = round(avg_price + multiplier * 2 * atr, 2)
+                    target = round(avg_price + multiplier * rr_mult * atr, 2)
                 else:
                     sl     = round(avg_price + multiplier * atr, 2)
-                    target = round(avg_price - multiplier * 2 * atr, 2)
+                    target = round(avg_price - multiplier * rr_mult * atr, 2)
 
                 # Cap SL at MAX_INTRADAY_SL_PCT (same as external adoption)
                 max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
@@ -150,10 +151,10 @@ class OrderEngine:
                 if sl_pct > max_sl_pct:
                     if side == "BUY":
                         sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 + max_sl_pct * 2 / 100), 2)
+                        target = round(avg_price * (1 + max_sl_pct * rr_mult / 100), 2)
                     else:
                         sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 - max_sl_pct * 2 / 100), 2)
+                        target = round(avg_price * (1 - max_sl_pct * rr_mult / 100), 2)
             else:
                 # Fallback: use config defaults (same as sync_external_positions)
                 sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
@@ -255,12 +256,13 @@ class OrderEngine:
             atr = self.calculate_atr(symbol, exchange)
             if atr and atr > 0:
                 multiplier = self.cfg.ATR_MULTIPLIER
+                rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
                 if side == "BUY":
                     sl     = round(avg_price - multiplier * atr, 2)
-                    target = round(avg_price + multiplier * 2 * atr, 2)
+                    target = round(avg_price + multiplier * rr_mult * atr, 2)
                 else:
                     sl     = round(avg_price + multiplier * atr, 2)
-                    target = round(avg_price - multiplier * 2 * atr, 2)
+                    target = round(avg_price - multiplier * rr_mult * atr, 2)
 
                 # Cap SL at MAX_INTRADAY_SL_PCT
                 max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
@@ -268,10 +270,10 @@ class OrderEngine:
                 if sl_pct > max_sl_pct:
                     if side == "BUY":
                         sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 + max_sl_pct * 2 / 100), 2)
+                        target = round(avg_price * (1 + max_sl_pct * rr_mult / 100), 2)
                     else:
                         sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 - max_sl_pct * 2 / 100), 2)
+                        target = round(avg_price * (1 - max_sl_pct * rr_mult / 100), 2)
             else:
                 # Fallback: default SL/target from config
                 sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
@@ -502,12 +504,13 @@ class OrderEngine:
         atr = self.calculate_atr(symbol, exchange)
         if atr and atr > 0:
             multiplier = self.cfg.ATR_MULTIPLIER
+            rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
             if side == "BUY":
                 atr_sl     = round(entry - multiplier * atr, 2)
-                atr_target = round(entry + multiplier * 2 * atr, 2)
+                atr_target = round(entry + multiplier * rr_mult * atr, 2)
             else:  # SELL (short)
                 atr_sl     = round(entry + multiplier * atr, 2)
-                atr_target = round(entry - multiplier * 2 * atr, 2)
+                atr_target = round(entry - multiplier * rr_mult * atr, 2)
 
             # Cap SL at MAX_INTRADAY_SL_PCT to prevent swing-trade-sized stops
             max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
@@ -515,10 +518,10 @@ class OrderEngine:
             if sl_pct > max_sl_pct:
                 if side == "BUY":
                     atr_sl     = round(entry * (1 - max_sl_pct / 100), 2)
-                    atr_target = round(entry * (1 + max_sl_pct * 2 / 100), 2)
+                    atr_target = round(entry * (1 + max_sl_pct * rr_mult / 100), 2)
                 else:
                     atr_sl     = round(entry * (1 + max_sl_pct / 100), 2)
-                    atr_target = round(entry * (1 - max_sl_pct * 2 / 100), 2)
+                    atr_target = round(entry * (1 - max_sl_pct * rr_mult / 100), 2)
                 self.log.info(
                     f"ATR SL was {sl_pct:.1f}% — capped to {max_sl_pct}%: "
                     f"SL ₹{atr_sl:.2f} | Target ₹{atr_target:.2f}"
@@ -577,6 +580,18 @@ class OrderEngine:
                     f"reduction — below 1.2:1 minimum, skipping"
                 )
                 return False
+
+        # ── Pre-trade minimum profit check ────────────────────────
+        # Skip trades where expected profit doesn't cover charges.
+        # Round-trip charges for small intraday trades ~₹40-50.
+        min_profit = getattr(self.cfg, 'MIN_EXPECTED_PROFIT', 50)
+        expected_profit = abs(target - entry) * qty
+        if expected_profit < min_profit:
+            self.log.warning(
+                f"{symbol}: expected profit ₹{expected_profit:.0f} "
+                f"< min ₹{min_profit} (charges will eat it). Skipping."
+            )
+            return False
 
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
@@ -656,6 +671,20 @@ class OrderEngine:
                 f"Cannot enter {symbol} ({side}): already have {same_dir_count} "
                 f"{side} position(s) — max {max_same_dir} in same direction "
                 f"to maintain diversification"
+            )
+            return False
+
+        # ── Short entry time cutoff ───────────────────────────────
+        # Don't open new SHORT positions after cutoff hour.
+        # Short delivery if cover fails is extremely expensive
+        # (₹500-5000+ in penalties). Early cutoff gives time to
+        # handle order failures before Zerodha's 3:25 auto-square.
+        short_cutoff = getattr(self.cfg, 'SHORT_ENTRY_CUTOFF_HOUR', 13)
+        if side == "SELL" and now.hour >= short_cutoff:
+            self.log.warning(
+                f"Cannot short {symbol} after {short_cutoff}:00 — "
+                f"short delivery risk too high if cover fails. "
+                f"Current time: {now.strftime('%H:%M')}"
             )
             return False
 
@@ -772,6 +801,30 @@ class OrderEngine:
             # Late-entry flag — prevents time-decay from stacking
             "_late_entry_reduced": trade.get("_late_entry_reduced", False),
         }
+
+        # ── Place SL-M order on exchange for instant SL execution ─
+        # The SL-M sits on the exchange and triggers without polling
+        # delay. Software monitoring still tracks target + trailing.
+        use_exchange_sl = getattr(self.cfg, 'USE_EXCHANGE_SL', False)
+        if use_exchange_sl and not self.cfg.DRY_RUN and hasattr(self.zerodha, 'place_sl_m_order'):
+            sl_side = "SELL" if side == "BUY" else "BUY"
+            sl_order_id = self.zerodha.place_sl_m_order(
+                symbol=symbol, exchange=exchange,
+                qty=qty, side=sl_side,
+                trigger_price=sl,
+            )
+            if sl_order_id:
+                position["_sl_order_id"] = sl_order_id
+                self.log.info(
+                    f"Exchange SL-M placed for {symbol}: {sl_side} {qty}x "
+                    f"trigger ₹{sl:.2f} | ID: {sl_order_id}"
+                )
+            else:
+                self.log.warning(
+                    f"SL-M placement failed for {symbol} — "
+                    f"falling back to software SL monitoring"
+                )
+
         self.positions.append(position)
         self._log_action("ENTRY", symbol, side, qty, entry, rationale)
         return True
@@ -820,6 +873,29 @@ class OrderEngine:
             exit_side = "BUY"
 
         # Place exit order (or simulate)
+        sl_order_id = position.get("_sl_order_id")
+        sl_m_handled = False
+
+        # ── Handle exchange SL-M order ────────────────────────────
+        if sl_order_id and not self.cfg.DRY_RUN:
+            if reason == "STOP_LOSS":
+                # SL-M on exchange already triggered — don't place
+                # another exit order (would double the exit).
+                self.log.info(
+                    f"SL-M {sl_order_id} triggered for {symbol} — "
+                    f"skipping duplicate exit order"
+                )
+                position["_sl_order_id"] = None
+                sl_m_handled = True
+            else:
+                # Non-SL exit (target, review, square-off) — cancel
+                # the pending SL-M before placing our own exit order.
+                self.log.info(
+                    f"Cancelling SL-M {sl_order_id} before {reason} exit for {symbol}"
+                )
+                self.zerodha.cancel_order(sl_order_id)
+                position["_sl_order_id"] = None
+
         if self.cfg.DRY_RUN:
             tag = f"\033[96m[DRY RUN]\033[0m"
             pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
@@ -827,6 +903,12 @@ class OrderEngine:
                 f"{tag} EXIT {exit_side} {qty}x {symbol} @ ₹{exit_price:.2f} | "
                 f"Reason: {reason} | "
                 f"P&L: {pnl_color}₹{pnl:+,.2f}\033[0m"
+            )
+        elif sl_m_handled:
+            # Exchange SL-M already filled — no order to place
+            pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+            self.log.info(
+                f"Exchange SL exit for {symbol}: {pnl_color}₹{pnl:+,.2f}\033[0m"
             )
         else:
             try:
@@ -1113,6 +1195,8 @@ class OrderEngine:
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
                     pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
                     pos["_partial_exit_price"] = fill
+                    # Update exchange SL-M for reduced qty
+                    self._replace_exchange_sl(pos, pos["stop_loss"])
 
             # New SL = entry + trail_pct of current profit
             new_sl = round(entry + profit * trail_pct, 2)
@@ -1120,6 +1204,7 @@ class OrderEngine:
             # SL must only move UP (more protective)
             if new_sl > sl:
                 pos["stop_loss"] = new_sl
+                self._update_exchange_sl(pos, new_sl)
                 self.log.info(
                     f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
                     f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
@@ -1152,18 +1237,55 @@ class OrderEngine:
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
                     pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
                     pos["_partial_exit_price"] = fill
+                    # Update exchange SL-M for reduced qty
+                    self._replace_exchange_sl(pos, pos["stop_loss"])
 
             new_sl = round(entry - profit * trail_pct, 2)
 
             # SL must only move DOWN for shorts (more protective)
             if new_sl < sl:
                 pos["stop_loss"] = new_sl
+                self._update_exchange_sl(pos, new_sl)
                 self.log.info(
                     f"AUTO-TRAIL {symbol}: SL ₹{sl:.2f} → ₹{new_sl:.2f} "
                     f"(locking {trail_pct*100:.0f}% of ₹{profit:.2f} profit)"
                 )
                 self._log_action("AUTO_TRAIL_SL", symbol, "", 0, new_sl,
                                  f"Auto trailing: profit ₹{profit:.2f}")
+
+    def _update_exchange_sl(self, pos: dict, new_trigger: float):
+        """Modify the exchange SL-M order trigger price when trailing."""
+        sl_order_id = pos.get("_sl_order_id")
+        if not sl_order_id or self.cfg.DRY_RUN:
+            return
+        if not hasattr(self.zerodha, 'modify_order'):
+            return
+        ok = self.zerodha.modify_order(sl_order_id, trigger_price=new_trigger)
+        if not ok:
+            self.log.warning(
+                f"Could not update exchange SL-M for {pos['symbol']} "
+                f"(order {sl_order_id}) — software SL still active"
+            )
+
+    def _replace_exchange_sl(self, pos: dict, trigger_price: float):
+        """Cancel old SL-M and place new one with current qty (after partial exit)."""
+        sl_order_id = pos.get("_sl_order_id")
+        if not sl_order_id or self.cfg.DRY_RUN:
+            return
+        if not hasattr(self.zerodha, 'place_sl_m_order'):
+            return
+        # Cancel old
+        self.zerodha.cancel_order(sl_order_id)
+        pos["_sl_order_id"] = None
+        # Place new with reduced qty
+        sl_side = "SELL" if pos["side"] == "BUY" else "BUY"
+        new_id = self.zerodha.place_sl_m_order(
+            symbol=pos["symbol"], exchange=pos["exchange"],
+            qty=pos["qty"], side=sl_side,
+            trigger_price=trigger_price,
+        )
+        if new_id:
+            pos["_sl_order_id"] = new_id
 
     # ================================================================
     # TIME-DECAY TARGET ADJUSTMENT
@@ -1324,6 +1446,7 @@ class OrderEngine:
                     tight_sl = round(entry * 0.999, 2)
                     if tight_sl > pos["stop_loss"]:
                         pos["stop_loss"] = tight_sl
+                        self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
                             f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
                         )
@@ -1331,6 +1454,7 @@ class OrderEngine:
                     tight_sl = round(entry * 1.001, 2)
                     if tight_sl < pos["stop_loss"]:
                         pos["stop_loss"] = tight_sl
+                        self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
                             f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
                         )
@@ -1445,6 +1569,7 @@ class OrderEngine:
                         continue
 
                     pos["stop_loss"] = new_sl
+                    self._update_exchange_sl(pos, new_sl)
                     self.log.info(
                         f"CLAUDE REVIEW → ADJUST SL {symbol}: "
                         f"₹{old_sl:.2f} → ₹{new_sl:.2f} | {reason}"

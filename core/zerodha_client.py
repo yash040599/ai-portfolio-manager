@@ -482,6 +482,94 @@ class ZerodhaClient:
         except Exception as e:
             self.log.warning(f"Could not cancel order {order_id}: {e}")
 
+    def place_sl_m_order(
+        self,
+        symbol:        str,
+        exchange:      str,
+        qty:           int,
+        side:          str,            # "BUY" or "SELL"
+        trigger_price: float,
+    ) -> str | None:
+        """
+        Places an SL-M (stop-loss market) intraday order on Zerodha.
+        This order sits on the exchange and triggers instantly when
+        price hits the trigger_price — no polling delay.
+
+        Args:
+            symbol:        Trading symbol e.g. "RELIANCE"
+            exchange:      "NSE" or "BSE"
+            qty:           Number of shares
+            side:          "BUY" (to cover a short) or "SELL" (to stop a long)
+            trigger_price: Price at which the SL-M triggers
+
+        Returns:
+            Zerodha order ID string on success, None on failure.
+        """
+        self._require_login()
+
+        transaction = (
+            self._kite.TRANSACTION_TYPE_BUY if side.upper() == "BUY"
+            else self._kite.TRANSACTION_TYPE_SELL
+        )
+
+        try:
+            order_id = self._kite.place_order(
+                variety=self._kite.VARIETY_REGULAR,
+                tradingsymbol=symbol,
+                exchange=exchange,
+                transaction_type=transaction,
+                quantity=qty,
+                product=self._kite.PRODUCT_MIS,
+                order_type=getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
+                trigger_price=trigger_price,
+                validity=self._kite.VALIDITY_DAY,
+            )
+            self.log.success(
+                f"SL-M order placed: {side} {qty}x {symbol} "
+                f"trigger ₹{trigger_price:.2f} | ID: {order_id}"
+            )
+            return str(order_id)
+        except Exception as e:
+            self.log.error(
+                f"SL-M order FAILED: {side} {qty}x {symbol} "
+                f"trigger ₹{trigger_price:.2f} — {e}"
+            )
+            return None
+
+    def modify_order(
+        self,
+        order_id:      str,
+        trigger_price: float | None = None,
+        price:         float | None = None,
+        quantity:      int | None = None,
+    ) -> bool:
+        """
+        Modifies a pending order on Zerodha (e.g. update SL-M trigger).
+
+        Returns True on success, False on failure.
+        """
+        self._require_login()
+
+        kwargs = {}
+        if trigger_price is not None:
+            kwargs["trigger_price"] = trigger_price
+        if price is not None:
+            kwargs["price"] = price
+        if quantity is not None:
+            kwargs["quantity"] = quantity
+
+        try:
+            self._kite.modify_order(
+                variety=self._kite.VARIETY_REGULAR,
+                order_id=order_id,
+                **kwargs,
+            )
+            self.log.info(f"Order modified: {order_id} | {kwargs}")
+            return True
+        except Exception as e:
+            self.log.warning(f"Could not modify order {order_id}: {e}")
+            return False
+
     def get_positions(self) -> dict:
         """
         Returns current day's positions from Zerodha.

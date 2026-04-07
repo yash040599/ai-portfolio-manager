@@ -89,7 +89,7 @@ class Config:
     #   minutes before entering positions. Only stocks with >0.3% directional
     #   movement from open price are entered. Helps avoid opening whipsaws.
     #   Set to 0 to enter immediately at market open (old behaviour).
-    ENTRY_DELAY_MINUTES: int = 15
+    ENTRY_DELAY_MINUTES: int = 5
     ENTRY_MIN_MOVE_PCT:  float = 0.3   # min % move from open to confirm direction
 
     # ── Polling & Claude Review Intervals ─────────────────────────
@@ -158,14 +158,20 @@ class Config:
     #   3.0 on ₹10K = stops trading after ₹300 total loss.
     #   Set to 0 to disable the circuit breaker (not recommended).
     DEFAULT_STOP_LOSS_PCT: float = 1.5
-    DEFAULT_TARGET_PCT:    float = 2.0
+    DEFAULT_TARGET_PCT:    float = 1.5
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
 
     # ATR_MULTIPLIER: multiplier for ATR to compute dynamic stop-loss.
     #   SL = entry - (ATR_MULTIPLIER × ATR) for longs.
-    #   Target = entry + (ATR_MULTIPLIER × 2 × ATR) for 2:1 reward:risk.
+    #   Target = entry + (ATR_MULTIPLIER × TARGET_RR_MULTIPLIER × ATR).
     #   Falls back to DEFAULT_STOP_LOSS_PCT if historical data is unavailable.
+    #
+    # TARGET_RR_MULTIPLIER: reward-to-risk ratio for ATR targets.
+    #   1.5 = target distance is 1.5× the SL distance (1.5:1 R:R).
+    #   Higher = bigger wins but lower hit rate. 1.5:1 is optimal for
+    #   Indian intraday where most stocks move 1-1.5% net per day.
     ATR_MULTIPLIER: float = 1.5
+    TARGET_RR_MULTIPLIER: float = 1.5
     ATR_PERIOD:     int   = 14    # number of candles for ATR calculation
     ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
@@ -179,10 +185,12 @@ class Config:
     #
     # TRAIL_STEP_PCT: after the initial trail trigger,
     #   the SL is moved up to lock in this % of current profit.
-    #   65 = SL sits at 65% of the way from entry to current price.
-    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103.90 (65% of ₹6 gain).
+    #   50 = SL sits at 50% of the way from entry to current price.
+    #   e.g. entry ₹100, current ₹106 → SL moves to ₹103.00 (50% of ₹6 gain).
+    #   Lower = more room for pullbacks, lets winners run longer.
+    #   Higher = tighter trail, locks more but exits on minor dips.
     TRAIL_AFTER_RISK_MULTIPLE: float = 1.5
-    TRAIL_STEP_PCT:            float = 65.0
+    TRAIL_STEP_PCT:            float = 50.0
 
     # ── Bid-Ask Spread Check ─────────────────────────────────────
     # MAX_SPREAD_PCT: skip stocks with bid-ask spread wider than this %.
@@ -204,7 +212,7 @@ class Config:
     # targets by TARGET_DECAY_PCT% to account for less time remaining.
     # e.g. After 2:00 PM, a ₹100 → ₹106 target becomes ₹100 → ₹103.60
     TARGET_DECAY_AFTER_HOUR: int   = 14     # 2:00 PM IST
-    TARGET_DECAY_PCT:        float = 40.0   # reduce target by this %
+    TARGET_DECAY_PCT:        float = 25.0   # reduce target by this %
 
     # ── Late Entry Guard ──────────────────────────────────────────
     # MIN_MINUTES_FOR_ENTRY: don't open new positions if fewer than
@@ -232,6 +240,13 @@ class Config:
     LATE_ENTRY_HOUR_2:       int   = 14
     LATE_ENTRY_REDUCTION_2:  float = 35.0
 
+    # ── Short Position Safety ─────────────────────────────────────
+    # SHORT_ENTRY_CUTOFF_HOUR: don't open new SHORT positions after
+    #   this hour. Short delivery if cover fails is very expensive
+    #   (₹500-5000+ penalties). Earlier cutoff gives more time to
+    #   handle order failures before Zerodha's 3:25 PM auto-square.
+    SHORT_ENTRY_CUTOFF_HOUR: int = 13   # 1:00 PM — no new shorts after 1 PM
+
     # ── Thursday Expiry Adjustments ───────────────────────────────
     # On weekly F&O expiry Thursdays, NIFTY stocks see wider swings.
     # EXPIRY_ATR_BUMP: added to ATR_MULTIPLIER (wider SLs).
@@ -256,6 +271,32 @@ class Config:
     # This is FREE (no Claude cost) — just Zerodha historical API calls.
     # Lower = detect new setups faster, but more API calls.
     V2_CANDLE_RESCAN_MINUTES: int = 15
+
+    # ── SuperTrend Parameters ─────────────────────────────────────
+    # SuperTrend is the primary trend-following indicator.
+    # SUPERTREND_PERIOD: ATR lookback period (on 15-min candles).
+    #   7 = 1.75 hour lookback — faster reversals for intraday.
+    #   10 = 2.5 hours — original, slower, better for daily charts.
+    # SUPERTREND_MULTIPLIER: band width multiplier.
+    #   2.0 = tighter bands, flips faster — better for intraday.
+    #   3.0 = wider bands, fewer flips — original daily setting.
+    SUPERTREND_PERIOD:     int   = 7
+    SUPERTREND_MULTIPLIER: float = 2.0
+
+    # ── Exchange SL Orders ────────────────────────────────────────
+    # USE_EXCHANGE_SL: place SL-M (stop-loss market) orders on NSE
+    #   at trade entry. The exchange triggers the exit instantly when
+    #   price breaches the SL — no more 10-second polling delay.
+    #   This is the standard approach for algo trading in India.
+    #   When trailing, the SL-M order is modified on the exchange.
+    #   Set to False to use the legacy software-monitored SL polling.
+    USE_EXCHANGE_SL: bool = True
+
+    # MIN_EXPECTED_PROFIT: skip trades where expected profit (target
+    # distance × qty) is less than this amount in ₹. Prevents
+    # entering trades where brokerage + STT eats all the profit.
+    # Round-trip charges for small intraday trades ~₹40-50.
+    MIN_EXPECTED_PROFIT: float = 50.0
 
     # V2_MIN_SCORE: minimum absolute technical score for a stock to
     # pass the pre-filter. Lower = more candidates for Claude to

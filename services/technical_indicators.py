@@ -446,6 +446,7 @@ def fibonacci_score(
     candles_day: list[dict],
     current_price: float,
     proximity_pct: float = 0.5,
+    trend_direction: str = "NEUTRAL",
 ) -> dict:
     """
     Checks if the current price is near a Fibonacci retracement level
@@ -495,10 +496,14 @@ def fibonacci_score(
         if dist_pct <= proximity_pct and dist_pct < best_dist:
             best_dist = dist_pct
             result["nearest_level"] = name
-            # Price near any Fib level = structural S&R zone.
-            # Always +0.5 (unsigned) — directional indicators (EMA, SuperTrend)
-            # already determine trade direction; Fib just confirms a level exists.
-            result["score"] = 0.5
+            # Directional Fib: support in uptrends (+0.5), resistance
+            # in downtrends (-0.5). Uses trend_direction param from caller.
+            if trend_direction == "UP":
+                result["score"] = 0.5   # Fib level acts as support (bullish)
+            elif trend_direction == "DOWN":
+                result["score"] = -0.5  # Fib level acts as resistance (bearish)
+            else:
+                result["score"] = 0.5   # Neutral — just confirm level exists
             result["signal"] = "AT_FIB_LEVEL"
 
     return result
@@ -671,23 +676,27 @@ def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
     if not candles_15m or current_price <= 0:
         return {"score": 0, "or_high": 0, "or_low": 0, "signal": "NONE"}
 
-    # Find the first candle of today
+    # Find the second candle of today (9:30-9:45) for ORB.
+    # The first candle (9:15-9:30) includes auction noise from NSE's
+    # pre-open session. Professional ORB uses the range AFTER the
+    # auction settles.
     today = datetime.date.today()
-    first_candle = None
+    today_candles_for_orb = []
     for c in candles_15m:
         dt = c.get("date")
         if dt is None:
             continue
         cdate = dt.date() if hasattr(dt, "date") else dt
         if cdate == today:
-            first_candle = c
-            break
+            today_candles_for_orb.append(c)
 
-    if first_candle is None:
+    # Need at least 2 candles (first + second)
+    if len(today_candles_for_orb) < 2:
         return {"score": 0, "or_high": 0, "or_low": 0, "signal": "NONE"}
 
-    or_high = first_candle["high"]
-    or_low = first_candle["low"]
+    or_candle = today_candles_for_orb[1]  # 2nd candle = 9:30-9:45
+    or_high = or_candle["high"]
+    or_low = or_candle["low"]
 
     if or_high <= 0 or or_low <= 0 or or_high == or_low:
         return {"score": 0, "or_high": or_high, "or_low": or_low, "signal": "NONE"}
@@ -1023,6 +1032,7 @@ def compute_technical_score(
     candles_15m: list[dict],
     candles_day: list[dict] | None = None,
     current_price: float | None = None,
+    config=None,
 ) -> dict:
     """
     Computes a composite technical score from multiple indicators
@@ -1088,8 +1098,10 @@ def compute_technical_score(
     elif vwap_data["signal"] == "BELOW_VWAP":
         score -= 1
 
-    # SuperTrend (10, 3.0 on 15m candles)
-    st_data = supertrend(candles_15m, period=10, multiplier=3.0)
+    # SuperTrend (configurable params, default 7/2.0 for intraday)
+    st_period = getattr(config, 'SUPERTREND_PERIOD', 7) if config else 7
+    st_mult = getattr(config, 'SUPERTREND_MULTIPLIER', 2.0) if config else 2.0
+    st_data = supertrend(candles_15m, period=st_period, multiplier=st_mult)
     if st_data["signal"] == "BULLISH":
         score += 3
     elif st_data["signal"] == "BEARISH":
@@ -1196,7 +1208,9 @@ def compute_technical_score(
     score += bb_data["score"]
 
     # Fibonacci retracement levels (prev day's range)
-    fib_data = fibonacci_score(candles_day, price) if candles_day else {
+    # Directional: +0.5 if SuperTrend UP (support), -0.5 if DOWN (resistance)
+    fib_trend = st_data.get("trend", "NEUTRAL") if st_data else "NEUTRAL"
+    fib_data = fibonacci_score(candles_day, price, trend_direction=fib_trend) if candles_day else {
         "score": 0, "fib_38": 0, "fib_50": 0, "fib_62": 0,
         "nearest_level": "NONE", "signal": "NONE"
     }

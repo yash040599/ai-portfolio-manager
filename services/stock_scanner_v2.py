@@ -313,7 +313,7 @@ class StockScannerV2(StockScanner):
         current_price = candles_15m[-1]["close"] if candles_15m else 0
 
         # Technical indicators (now includes prev-day S&R)
-        tech = compute_technical_score(candles_15m, candles_day, current_price)
+        tech = compute_technical_score(candles_15m, candles_day, current_price, config=self.cfg)
 
         # Combine scores: candle patterns + technical indicators
         combined_score = pattern_summary["score"] + tech["score"]
