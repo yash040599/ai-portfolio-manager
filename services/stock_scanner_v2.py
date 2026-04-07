@@ -386,9 +386,9 @@ class StockScannerV2(StockScanner):
         by combined score.
 
         If nifty_trend is "BEARISH", BUY signals need a higher score
-        threshold (≥5 instead of default). Vice versa for "BULLISH"
-        — SELL signals need ≥5. This prevents trading against the
-        broad market direction with weak signals.
+        threshold (≥3 instead of default). Vice versa for "BULLISH"
+        — SELL signals need |score| ≥3. This prevents trading against
+        the broad market direction with weak signals.
 
         Stocks below V2_MIN_SCORE are filtered out entirely.
         Both bullish AND bearish signals pass through (since we can

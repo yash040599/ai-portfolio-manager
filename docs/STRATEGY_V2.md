@@ -46,7 +46,7 @@ For each stock in universe (50-200 stocks):
       • Gap analysis — pre-market gap continuation vs fill
   → Calculate composite score (~-24 to +24)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
-  → Nifty trend hard filter: against-trend signals need |score| >= 5
+  → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
   → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
   → Rank by absolute score (strongest signals first)
@@ -179,7 +179,7 @@ Every 25 minutes — PAID:
 - **Score contribution:** RVol > 2.0× = +1 bonus, RVol < 0.3× = -1 penalty
 
 ### Nifty Trend Hard Filter
-- **What:** When NIFTY 50 is BEARISH, against-trend BUY signals need score ≥ 5 (instead of ≥ 2). When BULLISH, against-trend SELL signals need ≥ 5
+- **What:** When NIFTY 50 is BEARISH, against-trend BUY signals need |score| ≥ 3 (instead of ≥ 2). When BULLISH, against-trend SELL signals need |score| ≥ 3
 - **Why it works:** Institutional practice: trade with the broader market. Weak counter-trend signals fail much more often than with-trend signals
 
 ### MACD(12,26,9) Histogram

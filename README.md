@@ -84,7 +84,7 @@ python main.py --mode trade --v1
 
 ### Test Mode
 
-Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 9 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
+Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 11 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
 
 ```bash
 # V2 strategy test (shows what Claude would receive)
