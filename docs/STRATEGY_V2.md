@@ -66,7 +66,7 @@ Cost: ₹0 — pure computation on free Zerodha historical data.
 
 **V2 (Claude):** Sends enriched snapshot per candidate — price, RSI, EMA signal, VWAP, SuperTrend direction, detected patterns, prev-day S&R, RVol, composite score. The prompt includes:
 - Time-phase context (Opening / Morning Trend / Midday Lull / Afternoon / Late Session)
-- 13-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, MACD, ORB, RVol, Hourly EMA, BB Squeeze, ADX, Fib, VWAP Bands)
+- 14-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, VWAP Bands, MACD, ORB, Gap, RVol, Hourly EMA, BB Squeeze, ADX, Fib, Prev-Day S&R, Daily EMA Bias)
 - Hard rejection filters (extended move >2%, RSI extremes, R:R <1:1.5, against-SuperTrend without reversal)
 - Indian market awareness (NIFTY regime, F&O expiry, sector clustering)
 - Common mistakes to avoid (chasing extended moves, all-same-direction)
@@ -230,6 +230,7 @@ All indicators on 15-min candles. Total score range: **-24 to +24**.
 | **ORB (Opening Range)** | ±2 | Uses **2nd candle (9:30-9:45)** — avoids auction noise in 1st candle. Decays through day (×0.5 after 10:30, 0 after noon). |
 | **Gap Analysis** | ±1 | >1% gap + high volume = continuation. Low volume = fill risk. |
 | **Hourly EMA Alignment** | ±1 | Synthetic hourly candles. Both timeframes aligned = confluence bonus. |
+| **Bollinger Squeeze** | ±0.5 | BB width < 20-period average = squeeze. Breakout from squeeze adds ±0.5 directionally. |
 | **Daily EMA(9/21) Bias** | ±1 | Higher timeframe trend (only if spread > 1%). |
 
 ### Modifier Indicators

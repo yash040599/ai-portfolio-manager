@@ -7,9 +7,14 @@ Handles DB connection, table creation / migration, and FY utilities.
 import datetime
 import os
 import sqlite3
+from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH      = os.path.join(PROJECT_ROOT, "data", "trades.db")
+
+_IST = ZoneInfo("Asia/Kolkata")
+def _today_ist() -> datetime.date:
+    return datetime.datetime.now(_IST).date()
 
 
 # ── Financial Year helpers ────────────────────────────────────────
@@ -29,7 +34,7 @@ def fy_date_range(fy_start: int) -> tuple[str, str]:
 
 
 def current_fy() -> int:
-    today = datetime.date.today()
+    today = _today_ist()
     return today.year if today.month >= 4 else today.year - 1
 
 

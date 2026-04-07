@@ -24,6 +24,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.tax_db import get_db, indian_fy, fy_label
+from config import now_ist
 
 ZERODHA_DIR = os.path.join(PROJECT_ROOT, "data", "ZerodhaTaxPL")
 
@@ -451,7 +452,7 @@ def _update_trading_reports(zerodha_trades: list[dict], conn) -> dict:
         }
 
         # ── Write updated JSON ────────────────────────────────
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_ist().strftime("%Y-%m-%d %H:%M:%S")
         data["positions"] = positions
         data["pnl"] = pnl
         data["verified"] = True

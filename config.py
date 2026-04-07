@@ -13,9 +13,20 @@
 # ================================================================
 
 import os
+import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Timezone ──────────────────────────────────────────────────
+# All market-timing logic must use IST regardless of system TZ.
+IST = ZoneInfo("Asia/Kolkata")
+
+def now_ist() -> datetime.datetime:
+    """Returns current time in IST (naive). Use instead of datetime.now()
+    to guarantee correct results regardless of system timezone."""
+    return datetime.datetime.now(IST).replace(tzinfo=None)
 
 
 class Config:

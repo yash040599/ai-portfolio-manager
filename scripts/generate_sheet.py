@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import json
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 import anthropic
@@ -104,7 +105,7 @@ def main():
         list_available_dates()
         return
 
-    date_str = args.date or str(datetime.date.today())
+    date_str = args.date or str(datetime.datetime.now(ZoneInfo("Asia/Kolkata")).date())
     try:
         date_obj = datetime.date.fromisoformat(date_str)
     except ValueError:

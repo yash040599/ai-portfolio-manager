@@ -1,4 +1,4 @@
-# ================================================================
+﻿# ================================================================
 # services/stock_scanner_v2.py
 # ================================================================
 # V2 stock scanner: candle-pattern + technical-indicator pre-filter
@@ -7,7 +7,7 @@
 # WHY V2 EXISTS:
 # V1 sends ALL 50-100+ stock prices to Claude as a flat text table.
 # Claude picks trades purely from price/volume data + its training.
-# This is like asking a doctor to diagnose from a photo — it works
+# This is like asking a doctor to diagnose from a photo â€” it works
 # sometimes but has no structured clinical data.
 #
 # V2 first runs FREE mathematical analysis (no Claude cost) on every
@@ -22,7 +22,7 @@
 #
 # FLOW:
 #   1. Fetch 15-min and daily candles for the entire universe
-#      (sequential Zerodha API calls — ~2-3 min for NIFTY100)
+#      (sequential Zerodha API calls â€” ~2-3 min for NIFTY100)
 #   2. Run candle pattern detection + technical indicators on each
 #   3. Filter by V2_MIN_SCORE, rank by composite score
 #   4. Send top 15 filtered candidates to Claude with enriched data
@@ -35,7 +35,7 @@
 
 import datetime
 
-from config                          import Config
+from config                          import Config, now_ist
 from core.logger                     import Logger
 from core.claude_client              import ClaudeClient
 from core.zerodha_client             import ZerodhaClient
@@ -55,7 +55,7 @@ MAX_CANDIDATES = 15
 MAX_PER_SECTOR = 2
 
 # ================================================================
-# SECTOR MAPPING — NSE NIFTY STOCKS
+# SECTOR MAPPING â€” NSE NIFTY STOCKS
 # ================================================================
 # Used by the sector diversification filter.
 # Stocks not in this map default to "OTHER".
@@ -112,7 +112,7 @@ SECTOR_MAP = {
     "BHARTIARTL": "TELECOM", "TATACOMM": "TELECOM",
     "INDUSTOWER": "TELECOM",
     # Aviation
-    "INDIGO": "OTHER",  # InterGlobe Aviation — airline, not telecom
+    "INDIGO": "OTHER",  # InterGlobe Aviation â€” airline, not telecom
     # Capital Goods / Engineering
     "ABB": "CAPGOODS", "SIEMENS": "CAPGOODS", "HAL": "CAPGOODS",
     "BEL": "CAPGOODS", "CUMMINSIND": "CAPGOODS", "CGPOWER": "CAPGOODS",
@@ -170,7 +170,7 @@ class StockScannerV2(StockScanner):
         Returns list of candle dicts: {date, open, high, low, close, volume}.
         Returns empty list on failure (non-blocking).
         """
-        today = datetime.date.today()
+        today = now_ist().date()
 
         # Dynamic lookback: start with days_back, widen up to +3 extra
         # days if cache returns nothing (handles weekends, holidays,
@@ -187,14 +187,14 @@ class StockScannerV2(StockScanner):
                     break
 
         if not cached and days_back > 0:
-            # Cold cache — single Zerodha call for full range (avoids
+            # Cold cache â€” single Zerodha call for full range (avoids
             # a wasted live-only call that the fallback would duplicate)
             try:
                 from_dt = datetime.datetime.combine(
                     from_date, datetime.time(9, 0),
                 )
                 all_candles = self.zerodha.get_historical(
-                    symbol, exchange, from_dt, datetime.datetime.now(), interval,
+                    symbol, exchange, from_dt, now_ist(), interval,
                 )
                 if all_candles:
                     self._cache.store_candles(symbol, exchange, interval, all_candles)
@@ -203,12 +203,12 @@ class StockScannerV2(StockScanner):
                 self.log.info(f"Candle fetch failed for {symbol}: {e}")
             return []
 
-        # Cache hit — check for corporate action (split/bonus) before using
+        # Cache hit â€” check for corporate action (split/bonus) before using
         if cached:
             last_cached_close = cached[-1]["close"]
             try:
                 today_start = datetime.datetime.combine(today, datetime.time(9, 0))
-                now = datetime.datetime.now()
+                now = now_ist()
                 live = self.zerodha.get_historical(
                     symbol, exchange, today_start, now, interval,
                 )
@@ -221,14 +221,14 @@ class StockScannerV2(StockScanner):
                 first_live_open = live[0]["open"]
                 gap = abs(first_live_open - last_cached_close) / last_cached_close
                 if gap > 0.35:
-                    # Likely split/bonus — invalidate cache, refetch everything
+                    # Likely split/bonus â€” invalidate cache, refetch everything
                     self._cache.invalidate_symbol(symbol, exchange)
                     try:
                         from_dt = datetime.datetime.combine(
                             from_date, datetime.time(9, 0),
                         )
                         all_candles = self.zerodha.get_historical(
-                            symbol, exchange, from_dt, datetime.datetime.now(), interval,
+                            symbol, exchange, from_dt, now_ist(), interval,
                         )
                         if all_candles:
                             self._cache.store_candles(symbol, exchange, interval, all_candles)
@@ -250,7 +250,7 @@ class StockScannerV2(StockScanner):
         Previous days' candles are served from cache; only missing
         dates are fetched from Zerodha.
         """
-        today = datetime.date.today()
+        today = now_ist().date()
         from_date = today - datetime.timedelta(days=days_back)
 
         # Check cache for previous days
@@ -259,13 +259,13 @@ class StockScannerV2(StockScanner):
         )
 
         if cached:
-            # Cache has data — return it (daily candles for past days don't change)
+            # Cache has data â€” return it (daily candles for past days don't change)
             # Corporate action detection is handled by _fetch_intraday_candles
             # (called first in _analyse_stock) which invalidates ALL intervals
             # for the symbol if a >35% price gap is detected.
             return cached
 
-        # Nothing cached — fetch full range from Zerodha and cache
+        # Nothing cached â€” fetch full range from Zerodha and cache
         try:
             candles = self.zerodha.get_historical(
                 symbol, exchange, from_date, today, "day",
@@ -318,11 +318,11 @@ class StockScannerV2(StockScanner):
         # Combine scores: candle patterns + technical indicators
         combined_score = pattern_summary["score"] + tech["score"]
 
-        # ── Relative Volume (RVol) bonus/penalty ──────────────
+        # â”€â”€ Relative Volume (RVol) bonus/penalty â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Compare today's volume so far to the average from recent
         # daily candles, pro-rated to full day. Without pro-rating,
         # early-morning scans (1-2 candles) would show tiny RVol.
-        # NSE session: 9:15 AM – 3:30 PM = 375 min = 25 × 15-min candles.
+        # NSE session: 9:15 AM â€“ 3:30 PM = 375 min = 25 Ã— 15-min candles.
         rvol = 0.0
         today_candles = self._filter_today_candles(candles_15m)
         if today_candles and candles_day and len(candles_day) >= 5:
@@ -361,7 +361,7 @@ class StockScannerV2(StockScanner):
 
     def _filter_today_candles(self, candles: list[dict]) -> list[dict]:
         """Filters candles to only today's intraday data (for VWAP)."""
-        today = datetime.date.today()
+        today = now_ist().date()
         result = []
         for c in candles:
             dt = c.get("date")
@@ -386,8 +386,8 @@ class StockScannerV2(StockScanner):
         by combined score.
 
         If nifty_trend is "BEARISH", BUY signals need a higher score
-        threshold (≥3 instead of default). Vice versa for "BULLISH"
-        — SELL signals need |score| ≥3. This prevents trading against
+        threshold (â‰¥3 instead of default). Vice versa for "BULLISH"
+        â€” SELL signals need |score| â‰¥3. This prevents trading against
         the broad market direction with weak signals.
 
         Stocks below V2_MIN_SCORE are filtered out entirely.
@@ -427,10 +427,10 @@ class StockScannerV2(StockScanner):
             abs_score = abs(s["combined_score"])
             if nifty_trend == "BEARISH" and s["combined_score"] > 0 and abs_score < 3:
                 dropped_trend += 1
-                continue  # weak BUY in a bearish market — skip
+                continue  # weak BUY in a bearish market â€” skip
             if nifty_trend == "BULLISH" and s["combined_score"] < 0 and abs_score < 3:
                 dropped_trend += 1
-                continue  # weak SELL in a bullish market — skip
+                continue  # weak SELL in a bullish market â€” skip
             filtered.append(s)
 
         if dropped_trend:
@@ -506,7 +506,7 @@ class StockScannerV2(StockScanner):
         snapshot = self._build_enriched_snapshot(candidates, quotes)
 
         if not snapshot:
-            self.log.warning("No valid enriched snapshot — falling back to V1")
+            self.log.warning("No valid enriched snapshot â€” falling back to V1")
             return super().scan(quotes, nifty_context, perf_context, session_context)
 
         # Step 3: Send to Claude with technical context
@@ -527,7 +527,7 @@ class StockScannerV2(StockScanner):
             return []
 
     # ================================================================
-    # NO-AI SCAN — AUTO-SELECT FROM TECHNICAL SCORES
+    # NO-AI SCAN â€” AUTO-SELECT FROM TECHNICAL SCORES
     # ================================================================
 
     def scan_noai(
@@ -536,7 +536,7 @@ class StockScannerV2(StockScanner):
         day_pnl: float = 0.0,
     ) -> list[dict]:
         """
-        Selects trades purely from technical scores — no Claude call.
+        Selects trades purely from technical scores â€” no Claude call.
         Uses the same candle pre-filter as V2, then auto-generates
         trade plans from the top candidates.
 
@@ -547,7 +547,7 @@ class StockScannerV2(StockScanner):
         if max_trades <= 0:
             max_trades = self.cfg.MAX_POSITIONS
         if max_trades <= 0:
-            self.log.warning("NoAI scan: MAX_POSITIONS is 0 — cannot select trades")
+            self.log.warning("NoAI scan: MAX_POSITIONS is 0 â€” cannot select trades")
             return []
 
         # Extract Nifty trend for hard filter
@@ -564,8 +564,8 @@ class StockScannerV2(StockScanner):
             if loss_pct >= self.cfg.LOSS_SCORE_BUMP_PCT:
                 min_score_override = self.cfg.V2_MIN_SCORE + self.cfg.LOSS_SCORE_BUMP_AMOUNT
                 self.log.info(
-                    f"Dynamic score threshold: day loss {loss_pct:.1f}% ≥ "
-                    f"{self.cfg.LOSS_SCORE_BUMP_PCT}% — raising MIN_SCORE "
+                    f"Dynamic score threshold: day loss {loss_pct:.1f}% â‰¥ "
+                    f"{self.cfg.LOSS_SCORE_BUMP_PCT}% â€” raising MIN_SCORE "
                     f"to {min_score_override:.1f}"
                 )
 
@@ -710,8 +710,8 @@ class StockScannerV2(StockScanner):
             return trades  # already meeting minimum
 
         self.log.info(
-            f"Capital under-deployed: ₹{total_cost:,.0f} / ₹{budget:,.0f} "
-            f"({total_cost / budget * 100:.0f}%) — minimum is {min_util_pct:.0f}%"
+            f"Capital under-deployed: â‚¹{total_cost:,.0f} / â‚¹{budget:,.0f} "
+            f"({total_cost / budget * 100:.0f}%) â€” minimum is {min_util_pct:.0f}%"
         )
 
         # Boost each trade proportionally, respecting per-stock cap
@@ -728,13 +728,13 @@ class StockScannerV2(StockScanner):
                 new_qty = int(max_per / entry)
             if new_qty > t["qty"]:
                 self.log.info(
-                    f"  {t['symbol']}: qty {t['qty']} → {new_qty} "
-                    f"(₹{t['qty'] * entry:,.0f} → ₹{new_qty * entry:,.0f})"
+                    f"  {t['symbol']}: qty {t['qty']} â†’ {new_qty} "
+                    f"(â‚¹{t['qty'] * entry:,.0f} â†’ â‚¹{new_qty * entry:,.0f})"
                 )
                 t["qty"] = new_qty
             new_total += t["entry_price"] * t["qty"]
 
-        # Final budget check — don't exceed total budget
+        # Final budget check â€” don't exceed total budget
         if new_total > budget:
             # Scale back the last trade(s) to fit
             excess = new_total - budget
@@ -751,7 +751,7 @@ class StockScannerV2(StockScanner):
 
         final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
         self.log.info(
-            f"After boost: ₹{final_cost:,.0f} / ₹{budget:,.0f} "
+            f"After boost: â‚¹{final_cost:,.0f} / â‚¹{budget:,.0f} "
             f"({final_cost / budget * 100:.0f}%)"
         )
         return trades
@@ -836,7 +836,7 @@ class StockScannerV2(StockScanner):
             if sr_signal in ("AT_RESISTANCE", "AT_SUPPORT", "ABOVE_PIVOT", "BELOW_PIVOT"):
                 sr_str = f"  PrevDay: {sr_signal}"
             if sr.get("pivot", 0) > 0:
-                sr_str += f"  Pivot: ₹{sr['pivot']:.2f}"
+                sr_str += f"  Pivot: â‚¹{sr['pivot']:.2f}"
 
             # Relative volume
             rvol_str = ""
@@ -895,13 +895,13 @@ class StockScannerV2(StockScanner):
             ext_move = tech.get("extended_move_pct", 0)
             ext_str = ""
             if abs(ext_move) > 1.5:
-                ext_str = f"  ⚠ ExtMove: {ext_move:+.1f}%"
+                ext_str = f"  âš  ExtMove: {ext_move:+.1f}%"
 
             lines.append(
                 f"{symbol:<14} "
-                f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
+                f"â‚¹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
                 f"Vol: {volume:>12,}{rvol_str}  "
-                f"VWAP: ₹{c['vwap']:.2f}  "
+                f"VWAP: â‚¹{c['vwap']:.2f}  "
                 f"RSI: {rsi_val:.0f}  "
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
@@ -916,8 +916,8 @@ class StockScannerV2(StockScanner):
         perf_context: str = "", session_context: str = "",
     ) -> str:
         """Claude prompt with enriched technical data for V2 candidates."""
-        today  = datetime.date.today().strftime("%B %d, %Y")
-        now    = datetime.datetime.now().strftime("%I:%M %p")
+        today  = now_ist().date().strftime("%B %d, %Y")
+        now    = now_ist().strftime("%I:%M %p")
         budget = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
@@ -925,8 +925,8 @@ class StockScannerV2(StockScanner):
         default_target = self.cfg.DEFAULT_TARGET_PCT
 
         # Time-of-day context for strategy adaptation
-        hour = datetime.datetime.now().hour
-        minute = datetime.datetime.now().minute
+        hour = now_ist().hour
+        minute = now_ist().minute
         if hour == 9 and minute < 45:
             time_phase = "OPENING (9:15-9:45 AM): High volatility. ORB setups are strongest now. Wait for 15-min candle close before entry. Avoid chasing opening spikes."
         elif hour < 11:
@@ -941,36 +941,36 @@ class StockScannerV2(StockScanner):
         min_util = self.cfg.MIN_BUDGET_UTILISATION_PCT
 
         return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks.
-You have 15 years of experience with deep knowledge of Indian market microstructure — FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
+You have 15 years of experience with deep knowledge of Indian market microstructure â€” FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
 
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
 CURRENT TIME PHASE: {time_phase}
 
-BUDGET: ₹{budget:,} total capital.
-MAX POSITIONS: {max_positions} stocks simultaneously (₹{budget // max_positions:,} per slot).
-MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
-MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= ₹{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty — NOT by adding mediocre trades. Idle capital earns nothing intraday.
+BUDGET: â‚¹{budget:,} total capital.
+MAX POSITIONS: {max_positions} stocks simultaneously (â‚¹{budget // max_positions:,} per slot).
+MAX PER STOCK: {max_pct}% of budget (= â‚¹{budget * max_pct // 100:,} max per stock).
+MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= â‚¹{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty â€” NOT by adding mediocre trades. Idle capital earns nothing intraday.
 {nifty_context}{perf_context}{session_context}
 The stocks below are PRE-FILTERED by mathematical technical analysis.
-Each stock shows real-time indicators — use them for precise, evidence-based decisions.
+Each stock shows real-time indicators â€” use them for precise, evidence-based decisions.
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 INDICATOR INTERPRETATION:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 RSI:
-  >70 = overbought → SHORT candidate or AVOID for BUY (but 70-80 can sustain in strong trends)
-  <30 = oversold → BUY candidate (but wait for a REVERSAL CANDLE to confirm bottom)
-  *** RSI <25 = CAPITULATION ZONE → DO NOT SHORT — bounce is imminent ***
-  *** RSI >80 = EUPHORIA ZONE → DO NOT BUY — sharp pullback is imminent ***
-  40-60 = neutral — rely on other indicators for direction
+  >70 = overbought â†’ SHORT candidate or AVOID for BUY (but 70-80 can sustain in strong trends)
+  <30 = oversold â†’ BUY candidate (but wait for a REVERSAL CANDLE to confirm bottom)
+  *** RSI <25 = CAPITULATION ZONE â†’ DO NOT SHORT â€” bounce is imminent ***
+  *** RSI >80 = EUPHORIA ZONE â†’ DO NOT BUY â€” sharp pullback is imminent ***
+  40-60 = neutral â€” rely on other indicators for direction
 
 EMA(9/21):
-  BULLISH_CROSS = fast EMA crossed above slow → BUY signal (strongest when recent)
-  BEARISH_CROSS = fast EMA crossed below slow → SELL signal
+  BULLISH_CROSS = fast EMA crossed above slow â†’ BUY signal (strongest when recent)
+  BEARISH_CROSS = fast EMA crossed below slow â†’ SELL signal
   Price above both EMAs = bullish structure | Price below both = bearish structure
 
 SuperTrend:
-  UP = bullish trend → favour BUY on pullbacks | DOWN = bearish trend → favour SELL on rallies
+  UP = bullish trend â†’ favour BUY on pullbacks | DOWN = bearish trend â†’ favour SELL on rallies
   *** Trend CHANGE is a stronger signal than trend continuation ***
   *** DO NOT trade against SuperTrend unless you have a confirmed reversal candle pattern ***
 
@@ -981,14 +981,14 @@ VWAP:
   Best entries: BUY on pullback TO VWAP in uptrend | SELL on rally TO VWAP in downtrend
 
 Volume (RVol):
-  >2.0 = unusual activity → high conviction signal
-  1.0-2.0 = normal → standard conviction
-  *** <0.5 = NO INTEREST → SKIP this stock regardless of other signals ***
+  >2.0 = unusual activity â†’ high conviction signal
+  1.0-2.0 = normal â†’ standard conviction
+  *** <0.5 = NO INTEREST â†’ SKIP this stock regardless of other signals ***
 
 PrevDay S&R:
-  AT_RESISTANCE = near yesterday's high → headwind for BUY, clean SHORT level
-  AT_SUPPORT = near yesterday's low → floor for BUY, risky to SHORT
-  Pivot = (H+L+C)/3 → institutional reference. Breaks above/below are significant.
+  AT_RESISTANCE = near yesterday's high â†’ headwind for BUY, clean SHORT level
+  AT_SUPPORT = near yesterday's low â†’ floor for BUY, risky to SHORT
+  Pivot = (H+L+C)/3 â†’ institutional reference. Breaks above/below are significant.
 
 Candle Patterns:
   Bullish reversal: HAMMER, BULLISH_ENGULFING, MORNING_STAR
@@ -997,27 +997,27 @@ Candle Patterns:
 
 MACD:
   BULLISH/GROWING = momentum accelerating up | BEARISH/GROWING = accelerating down
-  *** Any direction + SHRINKING = momentum FADING → do NOT enter new trades in this direction ***
+  *** Any direction + SHRINKING = momentum FADING â†’ do NOT enter new trades in this direction ***
 
 ORB:
-  BREAKOUT_UP = above first 15-min high → strong BUY (ONLY before 10:30 AM — weakens rapidly after, near-zero value by 11 AM)
-  BREAKOUT_DOWN = below first 15-min low → strong SELL (same time limit)
+  BREAKOUT_UP = above first 15-min high â†’ strong BUY (ONLY before 10:30 AM â€” weakens rapidly after, near-zero value by 11 AM)
+  BREAKOUT_DOWN = below first 15-min low â†’ strong SELL (same time limit)
 
 Gap:
-  GAP_UP_STRONG (with volume) = continuation likely → buy pullbacks to gap edge
-  GAP_UP_WEAK (low volume) = gap fill risk → possible SHORT
-  GAP_DOWN_STRONG (with volume) = continuation down → sell rallies to gap edge
-  GAP_DOWN_WEAK (low volume) = gap fill likely → possible BUY
+  GAP_UP_STRONG (with volume) = continuation likely â†’ buy pullbacks to gap edge
+  GAP_UP_WEAK (low volume) = gap fill risk â†’ possible SHORT
+  GAP_DOWN_STRONG (with volume) = continuation down â†’ sell rallies to gap edge
+  GAP_DOWN_WEAK (low volume) = gap fill likely â†’ possible BUY
 
 Hourly EMA:
-  ALIGNED_BULL = both 15-min and hourly EMA(9/21) are bullish → stronger BUY conviction
-  ALIGNED_BEAR = both timeframes bearish → stronger SELL conviction
+  ALIGNED_BULL = both 15-min and hourly EMA(9/21) are bullish â†’ stronger BUY conviction
+  ALIGNED_BEAR = both timeframes bearish â†’ stronger SELL conviction
   *** Multi-timeframe agreement is a high-quality confluence signal ***
 
 BB Squeeze:
-  SQUEEZE_BULL = Bollinger Bands contracted + price above middle band → bullish breakout imminent
-  SQUEEZE_BEAR = BB contracted + price below middle band → bearish breakout imminent
-  *** Squeeze = low volatility → breakout is coming. Direction biased by price position ***
+  SQUEEZE_BULL = Bollinger Bands contracted + price above middle band â†’ bullish breakout imminent
+  SQUEEZE_BEAR = BB contracted + price below middle band â†’ bearish breakout imminent
+  *** Squeeze = low volatility â†’ breakout is coming. Direction biased by price position ***
 
 ADX (trend strength):
   ADX < 20 (WEAK) = range-bound market. Trend-following signals (EMA, SuperTrend continuation) are unreliable. Prefer mean-reversion setups or skip.
@@ -1026,98 +1026,98 @@ ADX (trend strength):
   *** When ADX is WEAK, EMA/SuperTrend continuation scores are automatically halved by the system ***
 
 Fibonacci Retracement:
-  AT_FIB_LEVEL = price near a Fib level (38.2/50/61.8% of prev day range) — structural S&R zone
+  AT_FIB_LEVEL = price near a Fib level (38.2/50/61.8% of prev day range) â€” structural S&R zone
   *** Fib levels are natural S&R where institutional traders place orders ***
 
 VWAP Bands:
-  AT_LOWER_2SD = price at VWAP -2σ → strong mean-reversion BUY signal (deeply oversold vs avg)
-  AT_LOWER_1SD = price at VWAP -1σ → moderate BUY signal
-  AT_UPPER_1SD = price at VWAP +1σ → moderate SELL signal
-  AT_UPPER_2SD = price at VWAP +2σ → strong mean-reversion SELL signal (deeply overbought vs avg)
+  AT_LOWER_2SD = price at VWAP -2Ïƒ â†’ strong mean-reversion BUY signal (deeply oversold vs avg)
+  AT_LOWER_1SD = price at VWAP -1Ïƒ â†’ moderate BUY signal
+  AT_UPPER_1SD = price at VWAP +1Ïƒ â†’ moderate SELL signal
+  AT_UPPER_2SD = price at VWAP +2Ïƒ â†’ strong mean-reversion SELL signal (deeply overbought vs avg)
   *** VWAP SD bands measure how far price has deviated from institutional consensus ***
 
 Score:
   |score| >= 5 = high conviction (3+ aligned indicators)
   |score| 3-5 = moderate (needs confirming indicators)
-  |score| < 3 = weak → skip unless other factors are very strong
+  |score| < 3 = weak â†’ skip unless other factors are very strong
 
-══════════════════════════════════════════════════════════
-HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
-══════════════════════════════════════════════════════════
-✗ REJECT BUY if stock already UP >2% from today's open — move is EXTENDED, mean-reversion risk is high.
-✗ REJECT SHORT if stock already DOWN >2% from today's open — move is EXTENDED, bounce risk is high.
-✗ REJECT SHORT if RSI < 25 — stock is in CAPITULATION zone, a bounce is almost certain.
-✗ REJECT BUY if RSI > 80 — stock is in EUPHORIA zone, a pullback is almost certain.
-✗ REJECT if Risk:Reward < 1:1.5 — not enough edge to cover costs and slippage.
-✗ REJECT if RVol < 0.5 — no institutional participation, random noise.
-✗ REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
-✗ REJECT if MACD momentum = SHRINKING in the trade's direction — momentum is fading.
-✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
-✗ REJECT if adding this trade would put more than {max(1, self.cfg.MAX_POSITIONS - 1)} positions in the SAME direction — the system enforces direction diversification to avoid one-sided exposure.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+HARD REJECTION FILTERS â€” REJECT any trade that fails even ONE:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+âœ— REJECT BUY if stock already UP >2% from today's open â€” move is EXTENDED, mean-reversion risk is high.
+âœ— REJECT SHORT if stock already DOWN >2% from today's open â€” move is EXTENDED, bounce risk is high.
+âœ— REJECT SHORT if RSI < 25 â€” stock is in CAPITULATION zone, a bounce is almost certain.
+âœ— REJECT BUY if RSI > 80 â€” stock is in EUPHORIA zone, a pullback is almost certain.
+âœ— REJECT if Risk:Reward < 1:1.5 â€” not enough edge to cover costs and slippage.
+âœ— REJECT if RVol < 0.5 â€” no institutional participation, random noise.
+âœ— REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
+âœ— REJECT if MACD momentum = SHRINKING in the trade's direction â€” momentum is fading.
+âœ— REJECT if total position cost across ALL trades would exceed â‚¹{budget:,}.
+âœ— REJECT if adding this trade would put more than {max(1, self.cfg.MAX_POSITIONS - 1)} positions in the SAME direction â€” the system enforces direction diversification to avoid one-sided exposure.
 
-══════════════════════════════════════════════════════════
-CONFLUENCE REQUIREMENT — Count aligned indicators before every trade:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+CONFLUENCE REQUIREMENT â€” Count aligned indicators before every trade:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 For BUY, count TRUE items:
-  □ SuperTrend = UP
-  □ EMA cross = BULLISH (or price above both EMAs)
-  □ RSI 35-65 (room to run, not overbought)
-  □ Bullish candle pattern present
-  □ Price near/above VWAP (or pulling back to VWAP from above)
-  □ MACD = BULLISH/GROWING
-  □ ORB = BREAKOUT_UP (if before 11 AM)
-  □ RVol > 1.5
-  □ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
-  □ BB = SQUEEZE_BULL (volatility breakout imminent)
-  □ ADX > 20 (trend is developing or strong — not range-bound)
-  □ Fib = AT_FIB_LEVEL (price near Fibonacci retracement level)
-  □ VWAP-Band = AT_LOWER_1SD or AT_LOWER_2SD (mean-reversion support)
+  â–¡ SuperTrend = UP
+  â–¡ EMA cross = BULLISH (or price above both EMAs)
+  â–¡ RSI 35-65 (room to run, not overbought)
+  â–¡ Bullish candle pattern present
+  â–¡ Price near/above VWAP (or pulling back to VWAP from above)
+  â–¡ MACD = BULLISH/GROWING
+  â–¡ ORB = BREAKOUT_UP (if before 11 AM)
+  â–¡ RVol > 1.5
+  â–¡ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
+  â–¡ BB = SQUEEZE_BULL (volatility breakout imminent)
+  â–¡ ADX > 20 (trend is developing or strong â€” not range-bound)
+  â–¡ Fib = AT_FIB_LEVEL (price near Fibonacci retracement level)
+  â–¡ VWAP-Band = AT_LOWER_1SD or AT_LOWER_2SD (mean-reversion support)
 
 For SELL, mirror with bearish signals.
-→ 2 or fewer = DO NOT TRADE (insufficient evidence)
-→ 3-4 = acceptable trade (moderate conviction)
-→ 5+ = strong trade (high conviction — use full position size)
+â†’ 2 or fewer = DO NOT TRADE (insufficient evidence)
+â†’ 3-4 = acceptable trade (moderate conviction)
+â†’ 5+ = strong trade (high conviction â€” use full position size)
 
 Explicitly state the confluence count in your RATIONALE (e.g. "6/13 confluence").
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 INDIAN MARKET AWARENESS:
-══════════════════════════════════════════════════════════
-• If NIFTY is DOWN >1.5%: This is a RISK-OFF session. SHORT cyclicals (Banking, Auto, Metals, Infra). AVOID BUY trades except in defensive sectors (Pharma, FMCG, IT).
-• If NIFTY is UP >1.5%: RISK-ON session. BUY cyclicals. AVOID shorting defensives.
-• Sector relative strength: A stock outperforming its sector on a weak day = genuine strength (good BUY). A stock underperforming its sector on a strong day = hidden weakness (good SHORT).
-• Thursday is weekly F&O expiry — wider intraday swings, use slightly wider SL (add 0.2%).
-• BANKING stocks amplify NIFTY moves by 1.5-2×. If shorting banks, use tighter SL.
-• DO NOT cluster all trades in one sector — max 2 trades in same sector to avoid correlated losses.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+â€¢ If NIFTY is DOWN >1.5%: This is a RISK-OFF session. SHORT cyclicals (Banking, Auto, Metals, Infra). AVOID BUY trades except in defensive sectors (Pharma, FMCG, IT).
+â€¢ If NIFTY is UP >1.5%: RISK-ON session. BUY cyclicals. AVOID shorting defensives.
+â€¢ Sector relative strength: A stock outperforming its sector on a weak day = genuine strength (good BUY). A stock underperforming its sector on a strong day = hidden weakness (good SHORT).
+â€¢ Thursday is weekly F&O expiry â€” wider intraday swings, use slightly wider SL (add 0.2%).
+â€¢ BANKING stocks amplify NIFTY moves by 1.5-2Ã—. If shorting banks, use tighter SL.
+â€¢ DO NOT cluster all trades in one sector â€” max 2 trades in same sector to avoid correlated losses.
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 STOP-LOSS AND TARGET RULES:
-══════════════════════════════════════════════════════════
-• Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, Fibonacci retracement level, or recent swing high/low. DO NOT use arbitrary fixed percentages.
-• SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
-• Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
-• For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
-• NOTE: At 1.5× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at 65% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
-• NOTE: The system uses the WIDER of Claude's SL vs ATR SL (14-period, 15-min candles). Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+â€¢ Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, Fibonacci retracement level, or recent swing high/low. DO NOT use arbitrary fixed percentages.
+â€¢ SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
+â€¢ Target: minimum 1.5Ã— the SL distance from entry. Prefer 2Ã— for afternoon entries when time is short.
+â€¢ For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
+â€¢ NOTE: At 1.5Ã— risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at 65% of profit. Factor this into your qty sizing â€” prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
+â€¢ NOTE: The system uses the WIDER of Claude's SL vs ATR SL (14-period, 15-min candles). Set your SL at the structural level you actually want â€” don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 COMMON MISTAKES TO AVOID (from actual loss patterns):
-══════════════════════════════════════════════════════════
-✗ Shorting a stock already down 3-5% ("it'll fall more") — it BOUNCES. RSI <30 on an extended move = EXIT not ENTRY.
-✗ Buying a stock already up 3-5% — it REVERSES intraday. The easy money was made at the open.
-✗ MOST IMPORTANT: ANY stock with "⚠ ExtMove" in its data line has ALREADY moved >1.5% from today's open. The technical score already penalizes this by -1.5 to -3. Do NOT buy stocks that are ALREADY UP >1.5% or short stocks ALREADY DOWN >1.5% — you are CHASING, not trading. The move is done.
-✗ Shorting a stock that is UP while the market is DOWN — this stock has relative STRENGTH. It will snap back harder when selling pressure eases.
-✗ Taking 4-5 trades all SHORT in a bearish market — if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
-✗ Ignoring volume — breakouts without volume (RVol <1.0) fail 70% of the time.
-✗ Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
-✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Pick 1-3 HIGH-CONVICTION trades only. Idle capital is better than forced trades. Do NOT add filler trades to deploy more capital.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+âœ— Shorting a stock already down 3-5% ("it'll fall more") â€” it BOUNCES. RSI <30 on an extended move = EXIT not ENTRY.
+âœ— Buying a stock already up 3-5% â€” it REVERSES intraday. The easy money was made at the open.
+âœ— MOST IMPORTANT: ANY stock with "âš  ExtMove" in its data line has ALREADY moved >1.5% from today's open. The technical score already penalizes this by -1.5 to -3. Do NOT buy stocks that are ALREADY UP >1.5% or short stocks ALREADY DOWN >1.5% â€” you are CHASING, not trading. The move is done.
+âœ— Shorting a stock that is UP while the market is DOWN â€” this stock has relative STRENGTH. It will snap back harder when selling pressure eases.
+âœ— Taking 4-5 trades all SHORT in a bearish market â€” if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
+âœ— Ignoring volume â€” breakouts without volume (RVol <1.0) fail 70% of the time.
+âœ— Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
+âœ— Over-trading: With â‚¹{budget:,} capital, every trade costs ~â‚¹15-25 in charges. Pick 1-3 HIGH-CONVICTION trades only. Idle capital is better than forced trades. Do NOT add filler trades to deploy more capital.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
 
-══════════════════════════════════════════════════════════
-RESPONSE FORMAT — STRICTLY FOLLOW:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+RESPONSE FORMAT â€” STRICTLY FOLLOW:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 One block per trade. No text before or after.
 If no trades pass ALL hard rejection filters, respond with exactly: NO_TRADES_TODAY
 Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
@@ -1126,8 +1126,8 @@ TRADE 1:
 SYMBOL: [NSE stock symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price near current price]
-STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/Fib/swing]
-TARGET: [target price — at least 1.5× SL distance from entry]
+STOP_LOSS: [price based on structural level â€” state which: VWAP/SuperTrend/pivot/Fib/swing]
+TARGET: [target price â€” at least 1.5Ã— SL distance from entry]
 QTY: [number of shares within budget constraints]
 RATIONALE: [2-3 sentences: (1) confluence count X/13 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
@@ -1175,7 +1175,7 @@ TRADE 2:
                     f"  5min patterns: [{pattern_str}]  "
                     f"RSI(14): {rsi_val:.0f}  "
                     f"EMA(9/21): {ema_data['signal']}  "
-                    f"VWAP: ₹{current_vwap:.2f}"
+                    f"VWAP: â‚¹{current_vwap:.2f}"
                 )
 
             position_context.append((pos, tech_ctx))
@@ -1195,7 +1195,7 @@ TRADE 2:
             return actions
         except Exception as e:
             error = ClaudeClient.classify_error(e)
-            self.log.warning(f"Claude V2 review failed: {error} — keeping current positions")
+            self.log.warning(f"Claude V2 review failed: {error} â€” keeping current positions")
             return []
 
     def _build_v2_review_prompt(
@@ -1208,8 +1208,8 @@ TRADE 2:
         closed_positions: list[dict] | None = None,
     ) -> str:
         """Builds review prompt with injected candle pattern data per position."""
-        today = datetime.date.today().strftime("%B %d, %Y")
-        now   = datetime.datetime.now().strftime("%I:%M %p")
+        today = now_ist().date().strftime("%B %d, %Y")
+        now   = now_ist().strftime("%I:%M %p")
 
         budget         = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
@@ -1217,7 +1217,7 @@ TRADE 2:
         max_per        = budget * max_pct // 100
         max_reentries  = self.cfg.MAX_REENTRIES_PER_STOCK
 
-        now_dt = datetime.datetime.now()
+        now_dt = now_ist()
         square_off = now_dt.replace(
             hour=self.cfg.SQUARE_OFF_HOUR,
             minute=self.cfg.SQUARE_OFF_MINUTE,
@@ -1242,9 +1242,9 @@ TRADE 2:
             entry_time = pos.get('entry_time', '')
             entry_time_str = f"  Entered: {entry_time}" if entry_time else ""
             pos_text += (
-                f"  {pos['symbol']}: {pos['side']} {pos['qty']} shares @ ₹{entry:.2f}  "
-                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
-                f"SL: ₹{pos.get('stop_loss', 'N/A')}  Target: ₹{pos.get('target_price', 'N/A')}"
+                f"  {pos['symbol']}: {pos['side']} {pos['qty']} shares @ â‚¹{entry:.2f}  "
+                f"Current: â‚¹{current_price:.2f}  P&L: â‚¹{pnl:.2f} ({r_multiple:+.1f}R)  "
+                f"SL: â‚¹{pos.get('stop_loss', 'N/A')}  Target: â‚¹{pos.get('target_price', 'N/A')}"
                 f"{entry_time_str}\n"
             )
             if tech_ctx:
@@ -1257,8 +1257,8 @@ TRADE 2:
             sym = cp.get("symbol", "")
             reentry_counts[sym] = reentry_counts.get(sym, 0) + 1
             closed_text += (
-                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ ₹{cp.get('entry_price', 0):.2f}  "
-                f"Exit: ₹{cp.get('exit_price', 0):.2f}  P&L: ₹{cp.get('pnl', 0):.2f}  "
+                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ â‚¹{cp.get('entry_price', 0):.2f}  "
+                f"Exit: â‚¹{cp.get('exit_price', 0):.2f}  P&L: â‚¹{cp.get('pnl', 0):.2f}  "
                 f"Reason: {cp.get('exit_reason', '?')}\n"
             )
 
@@ -1282,52 +1282,52 @@ CURRENT OPEN POSITIONS (with live 5-min technical indicators):
 CLOSED TRADES TODAY:
 {closed_text if closed_text else "  (none)"}
 
-DAY P&L SO FAR: ₹{day_pnl:,.2f}
-REMAINING BUDGET: ₹{budget_remaining:,.2f}
+DAY P&L SO FAR: â‚¹{day_pnl:,.2f}
+REMAINING BUDGET: â‚¹{budget_remaining:,.2f}
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
+MAX PER STOCK: {max_pct}% of â‚¹{budget:,} = â‚¹{max_per:,} max per stock.
 {blocked_text}
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 POSITION MANAGEMENT FRAMEWORK (R-multiple based):
-══════════════════════════════════════════════════════════
-AUTOMATIC ACTIONS (handled by the system — do NOT suggest these):
-  • At 1R profit: system auto-exits 50% of qty and begins trailing SL (you'll see reduced qty in positions above).
-  • Trailing SL: system continuously moves SL to lock in {int(self.cfg.TRAIL_STEP_PCT)}% of current profit. This is automatic — do NOT suggest SL adjustments that are LESS protective than current SL.
-  • Candle re-scan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES} min, the system auto-tightens SL if a strong contrary candle signal forms.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+AUTOMATIC ACTIONS (handled by the system â€” do NOT suggest these):
+  â€¢ At 1R profit: system auto-exits 50% of qty and begins trailing SL (you'll see reduced qty in positions above).
+  â€¢ Trailing SL: system continuously moves SL to lock in {int(self.cfg.TRAIL_STEP_PCT)}% of current profit. This is automatic â€” do NOT suggest SL adjustments that are LESS protective than current SL.
+  â€¢ Candle re-scan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES} min, the system auto-tightens SL if a strong contrary candle signal forms.
 
-YOUR ROLE — Use the R-multiple to guide ADDITIONAL decisions:
+YOUR ROLE â€” Use the R-multiple to guide ADDITIONAL decisions:
   Deep loser (<-0.5R): Trade thesis is FAILING. Unless a fresh reversal pattern is forming IN YOUR FAVOUR per the 5-min indicators, EXIT immediately. Do not hope for recovery.
-  Losing (-0.5R to 0R): Still within initial risk. Check if indicators still support the trade direction. If yes → HOLD. If indicators have flipped → EXIT.
+  Losing (-0.5R to 0R): Still within initial risk. Check if indicators still support the trade direction. If yes â†’ HOLD. If indicators have flipped â†’ EXIT.
   Breakeven (0R to +0.5R): HOLD and let it develop. System trailing is not yet active.
-  Small winner (+0.5R to +1R): HOLD — working as planned. System will auto-take partial profit at 1R.
-  Good winner (+1R to +2R): Partial profit already taken by system. Remaining position has trailing SL. HOLD unless 5-min reversal pattern is forming — then EXIT remainder.
+  Small winner (+0.5R to +1R): HOLD â€” working as planned. System will auto-take partial profit at 1R.
+  Good winner (+1R to +2R): Partial profit already taken by system. Remaining position has trailing SL. HOLD unless 5-min reversal pattern is forming â€” then EXIT remainder.
   Large winner (>+2R): System trailing is active. Consider whether target is still achievable in remaining time. If time is short (<60 min), suggest ADJUST_TARGET closer.
 
-══════════════════════════════════════════════════════════
-REVIEW RULES — MUST FOLLOW:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+REVIEW RULES â€” MUST FOLLOW:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 1. USE THE 5-MIN TECHNICAL INDICATORS shown for each position:
-   • Reversal candle AGAINST your position (e.g. HAMMER forming on your SHORT) → EXIT or tighten SL to within 0.3%.
-   • RSI divergence (RSI rising while price falling on your SHORT, or vice versa) → early warning, tighten SL.
-   • EMA cross AGAINST your position → strong exit signal unless within 0.3% of target.
+   â€¢ Reversal candle AGAINST your position (e.g. HAMMER forming on your SHORT) â†’ EXIT or tighten SL to within 0.3%.
+   â€¢ RSI divergence (RSI rising while price falling on your SHORT, or vice versa) â†’ early warning, tighten SL.
+   â€¢ EMA cross AGAINST your position â†’ strong exit signal unless within 0.3% of target.
 
 2. RSI EXTREMES (check before acting):
-   • LONG position with RSI >75 → if system already took partial profit (qty reduced), HOLD remainder with tight SL. If no partial taken yet, suggest EXIT.
-   • SHORT position with RSI <25 → same logic: if partial already taken, HOLD. If not, suggest EXIT.
-   • These are exhaustion zones — but if the auto-trail already locked in profit on the remainder, let it ride to target or tight SL hit.
+   â€¢ LONG position with RSI >75 â†’ if system already took partial profit (qty reduced), HOLD remainder with tight SL. If no partial taken yet, suggest EXIT.
+   â€¢ SHORT position with RSI <25 â†’ same logic: if partial already taken, HOLD. If not, suggest EXIT.
+   â€¢ These are exhaustion zones â€” but if the auto-trail already locked in profit on the remainder, let it ride to target or tight SL hit.
 
 3. TRAILING STOP (handled automatically by the system at {int(self.cfg.TRAIL_STEP_PCT)}% of profit):
    The system auto-trails SL. You should only suggest ADJUST_SL if you want to tighten SL MORE than the auto-trail (e.g. due to a bearish reversal candle on a long position).
    *** NEVER suggest loosening SL (moving it further from current price). ***
 
 4. TIME MANAGEMENT (based on {mins_left:.0f} min remaining):
-   • >120 min: Full discretion. HOLD winners, manage losers normally.
-   • 60-120 min: Reduce open targets by 30%. No new trades unless score ≥5.
-   • 30-60 min: Reduce open targets by 50%. EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
-   • <30 min: EXIT ALL positions unless they are within 0.3% of target. Do NOT hold into square-off hoping for last-minute moves.
+   â€¢ >120 min: Full discretion. HOLD winners, manage losers normally.
+   â€¢ 60-120 min: Reduce open targets by 30%. No new trades unless score â‰¥5.
+   â€¢ 30-60 min: Reduce open targets by 50%. EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
+   â€¢ <30 min: EXIT ALL positions unless they are within 0.3% of target. Do NOT hold into square-off hoping for last-minute moves.
 
-5. CUT LOSERS: If position is underwater AND 5-min candle shows a reversal pattern forming (e.g. HAMMER on your SHORT), EXIT immediately. Dead positions that drift sideways for 2+ reviews should also be exited — capital is better used elsewhere.
+5. CUT LOSERS: If position is underwater AND 5-min candle shows a reversal pattern forming (e.g. HAMMER on your SHORT), EXIT immediately. Dead positions that drift sideways for 2+ reviews should also be exited â€” capital is better used elsewhere.
 
 6. DO NOT AVERAGE DOWN on any existing position.
 
@@ -1336,10 +1336,10 @@ REVIEW RULES — MUST FOLLOW:
 8. NIFTY ALIGNMENT: If NIFTY has reversed direction since your trade entry (e.g. you're LONG but NIFTY turned bearish), tighten SL to within 0.5% of current price regardless of other factors.
 
 9. NEW TRADES IN REVIEW: Be very selective. Only suggest if ALL of:
-   • 60+ minutes remain
-   • Strong technical setup (score ≥ 5 with 3+ indicator confluence)
-   • Stock is NOT already extended (within ±2% of today's open)
-   • Budget available and would not exceed max positions
+   â€¢ 60+ minutes remain
+   â€¢ Strong technical setup (score â‰¥ 5 with 3+ indicator confluence)
+   â€¢ Stock is NOT already extended (within Â±2% of today's open)
+   â€¢ Budget available and would not exceed max positions
 
 Review each position. For each, respond:
 
@@ -1348,7 +1348,7 @@ SYMBOL: [symbol]
 ACTION: [HOLD | EXIT | ADJUST_SL | ADJUST_TARGET]
 NEW_SL: [new stop-loss price if ADJUST_SL, otherwise blank]
 NEW_TARGET: [new target price if ADJUST_TARGET, otherwise blank]
-REASON: [1-2 sentences — reference specific R-multiple, time remaining, and technical indicators (RSI value, candle pattern, EMA direction) that support your decision]
+REASON: [1-2 sentences â€” reference specific R-multiple, time remaining, and technical indicators (RSI value, candle pattern, EMA direction) that support your decision]
 ---
 
 For new trades (optional, strict criteria above):
@@ -1357,9 +1357,9 @@ SYMBOL: [symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [price]
 STOP_LOSS: [price based on structural level]
-TARGET: [price — reduced target given time remaining]
-QTY: [must satisfy: QTY × ENTRY ≤ ₹{min(budget_remaining, max_per):,.0f}]
-RATIONALE: [1-2 sentences — confluence count, which indicators align, and why this is worth the late-day risk]
+TARGET: [price â€” reduced target given time remaining]
+QTY: [must satisfy: QTY Ã— ENTRY â‰¤ â‚¹{min(budget_remaining, max_per):,.0f}]
+RATIONALE: [1-2 sentences â€” confluence count, which indicators align, and why this is worth the late-day risk]
 ---
 ===END===
 """

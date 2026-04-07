@@ -1,4 +1,4 @@
-# ================================================================
+﻿# ================================================================
 # services/stock_scanner.py
 # ================================================================
 # Pre-market stock scanner for Phase 2 intraday trading.
@@ -26,7 +26,7 @@
 import re
 import datetime
 
-from config             import Config
+from config             import Config, now_ist
 from core.logger        import Logger
 from core.claude_client import ClaudeClient
 
@@ -35,7 +35,7 @@ from core.claude_client import ClaudeClient
 # NIFTY INDEX CONSTITUENTS
 # ================================================================
 # These lists are used when SCAN_UNIVERSE is set to NIFTY50/100/200.
-# Update periodically — NSE rebalances indices every 6 months.
+# Update periodically â€” NSE rebalances indices every 6 months.
 # Last updated: April 2026.
 # ================================================================
 
@@ -66,7 +66,7 @@ NIFTY100_EXTRA = [
     "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "ZYDUSLIFE",
 ]
 
-# Nifty 200 adds mid-caps — only a representative subset here.
+# Nifty 200 adds mid-caps â€” only a representative subset here.
 # For full Nifty 200, consider loading from an API or CSV.
 NIFTY200_EXTRA = [
     "AUROPHARMA", "BALKRISIND", "BHARATFORG", "BIOCON", "CANFINHOME",
@@ -120,7 +120,7 @@ class StockScanner:
         self.claude = claude
         self.log    = log
 
-        # Dynamic budget — set by PortfolioManager after fetching Zerodha funds.
+        # Dynamic budget â€” set by PortfolioManager after fetching Zerodha funds.
         # Falls back to MAX_BUDGET_INR if not set.
         self._budget: float = float(config.MAX_BUDGET_INR)
 
@@ -178,7 +178,7 @@ class StockScanner:
         snapshot = self._build_snapshot(quotes)
 
         if not snapshot:
-            self.log.warning("No valid quotes to scan — snapshot is empty")
+            self.log.warning("No valid quotes to scan â€” snapshot is empty")
             return []
 
         prompt = self._build_scan_prompt(snapshot, nifty_context, perf_context, session_context)
@@ -232,7 +232,7 @@ class StockScanner:
             return actions
         except Exception as e:
             error = ClaudeClient.classify_error(e)
-            self.log.warning(f"Claude review failed: {error} — keeping current positions")
+            self.log.warning(f"Claude review failed: {error} â€” keeping current positions")
             return []
 
     # ================================================================
@@ -240,11 +240,11 @@ class StockScanner:
     # ================================================================
     # Two main prompts sent to Claude:
     #
-    # _build_scan_prompt  — "Find new trades": gives Claude market
+    # _build_scan_prompt  â€” "Find new trades": gives Claude market
     #   snapshot + strict rejection filters + budget constraints.
     #   Claude returns structured trade plans (BUY/SELL with levels).
     #
-    # _build_review_prompt — "Manage open positions": gives Claude
+    # _build_review_prompt â€” "Manage open positions": gives Claude
     #   portfolio state + R-multiple framework. Claude recommends
     #   HOLD/ADJUST_SL/EXIT for each position.
     #
@@ -273,12 +273,12 @@ class StockScanner:
 
             lines.append(
                 f"{symbol:<16} "
-                f"₹{price:>10.2f}  "
+                f"â‚¹{price:>10.2f}  "
                 f"Chg: {change_pct:>+6.2f}%  "
-                f"O: ₹{ohlc.get('open', 0):.2f}  "
-                f"H: ₹{ohlc.get('high', 0):.2f}  "
-                f"L: ₹{ohlc.get('low', 0):.2f}  "
-                f"PrevClose: ₹{ohlc.get('close', 0):.2f}  "
+                f"O: â‚¹{ohlc.get('open', 0):.2f}  "
+                f"H: â‚¹{ohlc.get('high', 0):.2f}  "
+                f"L: â‚¹{ohlc.get('low', 0):.2f}  "
+                f"PrevClose: â‚¹{ohlc.get('close', 0):.2f}  "
                 f"Vol: {volume:>12,}"
             )
 
@@ -290,8 +290,8 @@ class StockScanner:
         Claude is given the full price data and budget constraints,
         and must return trade plans in a strict parseable format.
         """
-        today  = datetime.date.today().strftime("%B %d, %Y")
-        now    = datetime.datetime.now().strftime("%I:%M %p")
+        today  = now_ist().date().strftime("%B %d, %Y")
+        now    = now_ist().strftime("%I:%M %p")
         budget = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
@@ -299,7 +299,7 @@ class StockScanner:
         default_target = self.cfg.DEFAULT_TARGET_PCT
 
         # Time-of-day context
-        hour = datetime.datetime.now().hour
+        hour = now_ist().hour
         if hour < 10:
             time_phase = "OPENING (before 10 AM): ORB trades strongest. Wait for 15-min candle close. Avoid chasing opening spikes."
         elif hour < 11:
@@ -307,7 +307,7 @@ class StockScanner:
         elif hour < 13:
             time_phase = "MIDDAY (11 AM-1 PM): Volume drops. Favour mean-reversion near day's VWAP."
         elif hour < 14:
-            time_phase = "AFTERNOON (1-2 PM): Reduce targets by 30%. European market opens — fresh volatility but less time."
+            time_phase = "AFTERNOON (1-2 PM): Reduce targets by 30%. European market opens â€” fresh volatility but less time."
         else:
             time_phase = "LATE SESSION (after 2 PM): Only high-conviction setups. Reduce targets by 50%."
 
@@ -315,25 +315,25 @@ class StockScanner:
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
 CURRENT TIME PHASE: {time_phase}
 
-BUDGET: ₹{budget:,} total capital (₹{budget // max_positions:,} per slot).
+BUDGET: â‚¹{budget:,} total capital (â‚¹{budget // max_positions:,} per slot).
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
+MAX PER STOCK: {max_pct}% of budget (= â‚¹{budget * max_pct // 100:,} max per stock).
 {nifty_context}{perf_context}{session_context}
-══════════════════════════════════════════════════════════
-HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
-══════════════════════════════════════════════════════════
-✗ REJECT BUY if stock already UP >2% from PrevClose — move is extended, mean-reversion risk.
-✗ REJECT SELL if stock already DOWN >2% from PrevClose — move is extended, bounce risk.
-✗ REJECT if Risk:Reward < 1:1.5 — insufficient edge after costs.
-✗ REJECT if no clear structural level for stop-loss — no random % stops.
-✗ REJECT if stock gapped up/down >1.5% AND is still near the extreme — do NOT chase gaps. If it pulled back toward the gap edge, a pullback entry is acceptable.
-✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+HARD REJECTION FILTERS â€” REJECT any trade that fails even ONE:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+âœ— REJECT BUY if stock already UP >2% from PrevClose â€” move is extended, mean-reversion risk.
+âœ— REJECT SELL if stock already DOWN >2% from PrevClose â€” move is extended, bounce risk.
+âœ— REJECT if Risk:Reward < 1:1.5 â€” insufficient edge after costs.
+âœ— REJECT if no clear structural level for stop-loss â€” no random % stops.
+âœ— REJECT if stock gapped up/down >1.5% AND is still near the extreme â€” do NOT chase gaps. If it pulled back toward the gap edge, a pullback entry is acceptable.
+âœ— REJECT if total position cost across ALL trades would exceed â‚¹{budget:,}.
 
-NOTE: The system automatically takes partial profit (50% of qty) at 1× risk profit and trails SL on the remainder. Prefer qty >= 2 so partial exits can work.
+NOTE: The system automatically takes partial profit (50% of qty) at 1Ã— risk profit and trails SL on the remainder. Prefer qty >= 2 so partial exits can work.
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 TRADING APPROACH (use price action from the data below):
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 WHAT YOU HAVE: OHLC, % change from previous close, and volume for each stock.
 Use these to infer setups:
 
@@ -343,40 +343,40 @@ Use these to infer setups:
    Best before 10:30 AM, weakens after 11 AM.
 
 2. MEAN-REVERSION (best setup for small capital):
-   • BUY: stock DOWN 0.5-1.5% but Open was near PrevClose (no gap) → price likely reverting to open.
-   • SELL: stock UP 0.5-1.5% but Open was near PrevClose → price likely reverting to open.
-   • SL on wrong side of the open price. Target = halfway back to PrevClose.
+   â€¢ BUY: stock DOWN 0.5-1.5% but Open was near PrevClose (no gap) â†’ price likely reverting to open.
+   â€¢ SELL: stock UP 0.5-1.5% but Open was near PrevClose â†’ price likely reverting to open.
+   â€¢ SL on wrong side of the open price. Target = halfway back to PrevClose.
 
 3. RELATIVE STRENGTH/WEAKNESS:
-   • Compare each stock's Chg% to NIFTY's Chg%. Stocks significantly outperforming = strong (BUY on pullback). Stocks significantly underperforming = weak (SELL on rally).
-   • If NIFTY is DOWN >1.5%: SHORT cyclicals (Banking, Auto, Metals). AVOID BUY except defensives (Pharma, IT, FMCG).
-   • If NIFTY is UP >1.5%: BUY cyclicals. AVOID shorting defensives.
+   â€¢ Compare each stock's Chg% to NIFTY's Chg%. Stocks significantly outperforming = strong (BUY on pullback). Stocks significantly underperforming = weak (SELL on rally).
+   â€¢ If NIFTY is DOWN >1.5%: SHORT cyclicals (Banking, Auto, Metals). AVOID BUY except defensives (Pharma, IT, FMCG).
+   â€¢ If NIFTY is UP >1.5%: BUY cyclicals. AVOID shorting defensives.
 
 4. VOLUME CONFIRMATION:
    High volume (relative to position in sorted list) confirms the move is real.
-   Low volume on a breakout = likely false breakout → avoid.
+   Low volume on a breakout = likely false breakout â†’ avoid.
 
 5. STOP-LOSS PLACEMENT:
    BUY: SL just below today's low or open (whichever is tighter and structural). Range: {default_sl}%-2%.
    SELL: SL just above today's high or open. Range: {default_sl}%-2%.
-   NEVER use arbitrary fixed % — always reference a structural level (O, H, L, PrevClose).
+   NEVER use arbitrary fixed % â€” always reference a structural level (O, H, L, PrevClose).
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 COMMON MISTAKES (from actual loss patterns):
-══════════════════════════════════════════════════════════
-✗ Shorting a stock already down 3-5% hoping it falls more — it BOUNCES.
-✗ Buying a stock already up 3-5% hoping it goes higher — it REVERSES.
-✗ Shorting a stock that is UP while the market is DOWN — it has relative strength and will snap back.
-✗ All trades in same direction on same sector — if sector reverses, ALL lose together.
-✗ Over-trading: With ₹{budget:,} capital, fewer high-conviction trades always beat many mediocre ones. 2-3 good trades > 5 weak ones.
-✗ Chasing gaps: wait for the pullback to the gap edge, don't buy/sell at the extremes.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+âœ— Shorting a stock already down 3-5% hoping it falls more â€” it BOUNCES.
+âœ— Buying a stock already up 3-5% hoping it goes higher â€” it REVERSES.
+âœ— Shorting a stock that is UP while the market is DOWN â€” it has relative strength and will snap back.
+âœ— All trades in same direction on same sector â€” if sector reverses, ALL lose together.
+âœ— Over-trading: With â‚¹{budget:,} capital, fewer high-conviction trades always beat many mediocre ones. 2-3 good trades > 5 weak ones.
+âœ— Chasing gaps: wait for the pullback to the gap edge, don't buy/sell at the extremes.
 
 CURRENT MARKET DATA (live prices):
 {snapshot}
 
-══════════════════════════════════════════════════════════
-RESPONSE FORMAT — STRICTLY FOLLOW:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+RESPONSE FORMAT â€” STRICTLY FOLLOW:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 One block per trade. No text before or after.
 If no trades pass ALL rejection filters, respond with exactly: NO_TRADES_TODAY
 Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
@@ -384,10 +384,10 @@ Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
 TRADE 1:
 SYMBOL: [NSE stock symbol e.g. RELIANCE]
 SIDE: [BUY or SELL]
-ENTRY_PRICE: [realistic entry price in ₹, near current price]
-STOP_LOSS: [stop-loss price in ₹ — state which structural level: today's L/H, Open, or PrevClose]
-TARGET: [target price in ₹ — must be at least 1.5× the SL distance from entry]
-QTY: [number of shares — must fit within budget constraints]
+ENTRY_PRICE: [realistic entry price in â‚¹, near current price]
+STOP_LOSS: [stop-loss price in â‚¹ â€” state which structural level: today's L/H, Open, or PrevClose]
+TARGET: [target price in â‚¹ â€” must be at least 1.5Ã— the SL distance from entry]
+QTY: [number of shares â€” must fit within budget constraints]
 RATIONALE: [2-3 sentences: (1) what setup (ORB/mean-reversion/relative strength), (2) structural SL level, (3) R:R ratio. If Chg >2%, explain why it's NOT an extended-move violation.]
 ---
 TRADE 2:
@@ -408,8 +408,8 @@ TRADE 2:
         """
         Builds the periodic review prompt for open positions.
         """
-        today = datetime.date.today().strftime("%B %d, %Y")
-        now   = datetime.datetime.now().strftime("%I:%M %p")
+        today = now_ist().date().strftime("%B %d, %Y")
+        now   = now_ist().strftime("%I:%M %p")
 
         budget         = self._budget
         max_positions  = self.cfg.MAX_POSITIONS
@@ -418,7 +418,7 @@ TRADE 2:
         max_reentries  = self.cfg.MAX_REENTRIES_PER_STOCK
 
         # Calculate minutes until square-off for time-pressure context
-        now_dt = datetime.datetime.now()
+        now_dt = now_ist()
         square_off = now_dt.replace(
             hour=self.cfg.SQUARE_OFF_HOUR,
             minute=self.cfg.SQUARE_OFF_MINUTE,
@@ -442,9 +442,9 @@ TRADE 2:
             r_multiple = (pnl / (risk_per_share * p.get("qty", 1))) if risk_per_share > 0 else 0
 
             pos_text += (
-                f"  {p['symbol']}: {p['side']} {p['qty']} shares @ ₹{entry:.2f}  "
-                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
-                f"SL: ₹{p.get('stop_loss', 'N/A')}  Target: ₹{p.get('target_price', 'N/A')}\n"
+                f"  {p['symbol']}: {p['side']} {p['qty']} shares @ â‚¹{entry:.2f}  "
+                f"Current: â‚¹{current_price:.2f}  P&L: â‚¹{pnl:.2f} ({r_multiple:+.1f}R)  "
+                f"SL: â‚¹{p.get('stop_loss', 'N/A')}  Target: â‚¹{p.get('target_price', 'N/A')}\n"
             )
 
         # Build closed/failed trade history so Claude doesn't re-enter losers
@@ -454,8 +454,8 @@ TRADE 2:
             sym = cp.get("symbol", "")
             reentry_counts[sym] = reentry_counts.get(sym, 0) + 1
             closed_text += (
-                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ ₹{cp.get('entry_price', 0):.2f}  "
-                f"Exit: ₹{cp.get('exit_price', 0):.2f}  P&L: ₹{cp.get('pnl', 0):.2f}  "
+                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ â‚¹{cp.get('entry_price', 0):.2f}  "
+                f"Exit: â‚¹{cp.get('exit_price', 0):.2f}  P&L: â‚¹{cp.get('pnl', 0):.2f}  "
                 f"Reason: {cp.get('exit_reason', '?')}\n"
             )
 
@@ -480,42 +480,42 @@ CURRENT OPEN POSITIONS:
 CLOSED TRADES TODAY:
 {closed_text if closed_text else "  (none)"}
 
-DAY P&L SO FAR: ₹{day_pnl:,.2f}
-REMAINING BUDGET: ₹{budget_remaining:,.2f}
+DAY P&L SO FAR: â‚¹{day_pnl:,.2f}
+REMAINING BUDGET: â‚¹{budget_remaining:,.2f}
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
+MAX PER STOCK: {max_pct}% of â‚¹{budget:,} = â‚¹{max_per:,} max per stock.
 {blocked_text}
 
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 POSITION MANAGEMENT FRAMEWORK (R-multiple based):
-══════════════════════════════════════════════════════════
-AUTOMATIC ACTIONS (handled by the system — do NOT suggest these):
-  • At 1R profit: system auto-exits 50% of qty and begins trailing SL (you'll see reduced qty in positions above).
-  • Trailing SL: system continuously moves SL to lock in {int(self.cfg.TRAIL_STEP_PCT)}% of current profit. This is automatic.
-  • You should only suggest ADJUST_SL to tighten BEYOND what the system already set, never to loosen.
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+AUTOMATIC ACTIONS (handled by the system â€” do NOT suggest these):
+  â€¢ At 1R profit: system auto-exits 50% of qty and begins trailing SL (you'll see reduced qty in positions above).
+  â€¢ Trailing SL: system continuously moves SL to lock in {int(self.cfg.TRAIL_STEP_PCT)}% of current profit. This is automatic.
+  â€¢ You should only suggest ADJUST_SL to tighten BEYOND what the system already set, never to loosen.
 
-YOUR ROLE — Use the R-multiple to guide ADDITIONAL decisions:
+YOUR ROLE â€” Use the R-multiple to guide ADDITIONAL decisions:
   Deep loser (<-0.5R): Trade thesis is FAILING. Unless price is clearly reversing back in your favour, EXIT.
-  Losing (-0.5R to 0R): Still within initial risk. Check if NIFTY trend still supports trade direction. If yes → HOLD. If NIFTY reversed → EXIT.
+  Losing (-0.5R to 0R): Still within initial risk. Check if NIFTY trend still supports trade direction. If yes â†’ HOLD. If NIFTY reversed â†’ EXIT.
   Breakeven (0R to +0.5R): HOLD and let it develop.
-  Small winner (+0.5R to +1R): HOLD — system will auto-take partial profit at 1R.
+  Small winner (+0.5R to +1R): HOLD â€” system will auto-take partial profit at 1R.
   Good winner (+1R to +2R): Partial profit already taken by system. Remaining position has trailing SL. HOLD unless trend has clearly reversed.
   Large winner (>+2R): System trailing is active. Consider ADJUST_TARGET closer if time is short (<60 min remain).
 
-══════════════════════════════════════════════════════════
-REVIEW RULES — MUST FOLLOW:
-══════════════════════════════════════════════════════════
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+REVIEW RULES â€” MUST FOLLOW:
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 1. TRAILING STOP (handled automatically at {int(self.cfg.TRAIL_STEP_PCT)}% of profit):
    Only suggest ADJUST_SL to tighten MORE than the auto-trail (e.g. due to NIFTY reversal).
    *** NEVER suggest loosening SL (moving it further from current price). ***
 
 2. TIME MANAGEMENT ({mins_left:.0f} min remaining):
-   • >120 min: Full discretion. Manage positions normally.
-   • 60-120 min: Reduce targets by 30%. No new trades unless strong setup.
-   • 30-60 min: Reduce targets by 50%. EXIT underwater positions. HOLD only profitable positions with strong momentum.
-   • <30 min: EXIT ALL positions unless within 0.3% of target.
+   â€¢ >120 min: Full discretion. Manage positions normally.
+   â€¢ 60-120 min: Reduce targets by 30%. No new trades unless strong setup.
+   â€¢ 30-60 min: Reduce targets by 50%. EXIT underwater positions. HOLD only profitable positions with strong momentum.
+   â€¢ <30 min: EXIT ALL positions unless within 0.3% of target.
 
-3. CUT LOSERS: Positions underwater that have been drifting sideways for 2+ review cycles → EXIT. Dead money is worse than a small loss.
+3. CUT LOSERS: Positions underwater that have been drifting sideways for 2+ review cycles â†’ EXIT. Dead money is worse than a small loss.
 
 4. DO NOT AVERAGE DOWN on losing positions. Only suggest NEW trades for fresh setups.
 
@@ -526,11 +526,11 @@ REVIEW RULES — MUST FOLLOW:
 7. PROTECT WINNERS: DO NOT exit profitable positions just because of "time pressure" when 30+ min remain AND the trend is intact. Tighten SL instead of exiting. Only exit if trend has clearly reversed or target is unreachable.
 
 8. NEW TRADES (strict criteria):
-   • Only if 60+ minutes remain
-   • Stock must NOT already be extended (within ±2% of previous close)
-   • Budget must be available
-   • QTY × ENTRY_PRICE ≤ min(REMAINING BUDGET ₹{budget_remaining:,.0f}, MAX PER STOCK ₹{max_per:,})
-   • Prefer FEWER new trades — 1 good trade > 2 mediocre trades
+   â€¢ Only if 60+ minutes remain
+   â€¢ Stock must NOT already be extended (within Â±2% of previous close)
+   â€¢ Budget must be available
+   â€¢ QTY Ã— ENTRY_PRICE â‰¤ min(REMAINING BUDGET â‚¹{budget_remaining:,.0f}, MAX PER STOCK â‚¹{max_per:,})
+   â€¢ Prefer FEWER new trades â€” 1 good trade > 2 mediocre trades
 
 Review each position. For each, respond with EXACTLY this format:
 
@@ -539,7 +539,7 @@ SYMBOL: [symbol]
 ACTION: [HOLD | EXIT | ADJUST_SL | ADJUST_TARGET]
 NEW_SL: [new stop-loss price if ADJUST_SL, otherwise leave blank]
 NEW_TARGET: [new target price if ADJUST_TARGET, otherwise leave blank]
-REASON: [1-2 sentences — reference the R-multiple, time remaining, and NIFTY alignment in your decision]
+REASON: [1-2 sentences â€” reference the R-multiple, time remaining, and NIFTY alignment in your decision]
 ---
 
 For new trades (optional, strict criteria above):
@@ -547,10 +547,10 @@ NEW_TRADE:
 SYMBOL: [symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [price]
-STOP_LOSS: [price — based on structural level]
-TARGET: [price — reduced for time remaining]
-QTY: [quantity — MUST satisfy budget constraint above]
-RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk]
+STOP_LOSS: [price â€” based on structural level]
+TARGET: [price â€” reduced for time remaining]
+QTY: [quantity â€” MUST satisfy budget constraint above]
+RATIONALE: [1-2 sentences â€” setup type, R:R ratio, why worth the late-day risk]
 ---
 ===END===
 """
@@ -666,7 +666,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
             "target_price": round(target_price, 2),
             "qty":          quantity,
             "rationale":    reason,
-            "status":       "PENDING",   # PENDING → OPEN → CLOSED
+            "status":       "PENDING",   # PENDING â†’ OPEN â†’ CLOSED
         }
 
     def _validate_budget(self, trades: list[dict]) -> list[dict]:
@@ -684,38 +684,38 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
             cost = t["entry_price"] * t["qty"]
             entry = t["entry_price"]
 
-            # Check per-stock limit — reduce qty to fit if needed
+            # Check per-stock limit â€” reduce qty to fit if needed
             if cost > max_per and entry > 0:
                 new_qty = int(max_per / entry)
                 if new_qty >= 1:
                     self.log.warning(
-                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
-                        f"per-stock limit ₹{max_per:,.0f}. Reducing qty to {new_qty}"
+                        f"{t['symbol']}: {t['qty']}x @ â‚¹{entry:.2f} = â‚¹{cost:,.0f} exceeds "
+                        f"per-stock limit â‚¹{max_per:,.0f}. Reducing qty to {new_qty}"
                     )
                     t["qty"] = new_qty
                     cost = entry * new_qty
                 else:
                     self.log.warning(
-                        f"Dropping {t['symbol']}: ₹{cost:,.0f} exceeds "
-                        f"per-stock limit of ₹{max_per:,.0f} and min qty is 1"
+                        f"Dropping {t['symbol']}: â‚¹{cost:,.0f} exceeds "
+                        f"per-stock limit of â‚¹{max_per:,.0f} and min qty is 1"
                     )
                     continue
 
-            # Check total budget — reduce qty to fit if needed
+            # Check total budget â€” reduce qty to fit if needed
             if allocated + cost > budget and entry > 0:
                 remaining = budget - allocated
                 new_qty = int(remaining / entry)
                 if new_qty >= 1:
                     self.log.warning(
-                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
-                        f"remaining budget ₹{remaining:,.0f}. Reducing qty to {new_qty}"
+                        f"{t['symbol']}: {t['qty']}x @ â‚¹{entry:.2f} = â‚¹{cost:,.0f} exceeds "
+                        f"remaining budget â‚¹{remaining:,.0f}. Reducing qty to {new_qty}"
                     )
                     t["qty"] = new_qty
                     cost = entry * new_qty
                 else:
                     self.log.warning(
-                        f"Dropping {t['symbol']}: ₹{cost:,.0f} would exceed "
-                        f"total budget of ₹{budget:,} (only ₹{remaining:,.0f} left)"
+                        f"Dropping {t['symbol']}: â‚¹{cost:,.0f} would exceed "
+                        f"total budget of â‚¹{budget:,} (only â‚¹{remaining:,.0f} left)"
                     )
                     continue
 
@@ -724,7 +724,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
         if valid:
             self.log.info(
-                f"Total allocated: ₹{allocated:,.0f} / ₹{budget:,} "
+                f"Total allocated: â‚¹{allocated:,.0f} / â‚¹{budget:,} "
                 f"({allocated / budget * 100:.1f}%)"
             )
 

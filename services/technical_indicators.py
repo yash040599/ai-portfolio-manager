@@ -1,47 +1,48 @@
-# ================================================================
+﻿# ================================================================
 # services/technical_indicators.py
 # ================================================================
 # Technical indicator calculations for V2 candle-based trading.
 #
 # All functions take a list of candle dicts (OHLCV) and return
-# computed values. No external dependencies — pure arithmetic.
+# computed values. No external dependencies â€” pure arithmetic.
 #
 # Indicators and their trading purpose:
-#   EMA (Exponential Moving Average) — trend direction & momentum.
+#   EMA (Exponential Moving Average) â€” trend direction & momentum.
 #       9/21 crossover is a standard intraday signal.
-#   RSI (Relative Strength Index)     — overbought/oversold detection.
+#   RSI (Relative Strength Index)     â€” overbought/oversold detection.
 #       Uses Wilder smoothing (the original method from 1978).
-#   VWAP (Volume Weighted Avg Price)  — intraday institutional fair value.
+#   VWAP (Volume Weighted Avg Price)  â€” intraday institutional fair value.
 #       Stocks above VWAP = institutional buying pressure.
-#   SuperTrend                        — ATR-based trend-following system.
+#   SuperTrend                        â€” ATR-based trend-following system.
 #       Provides dynamic support/resistance levels that adapt to
 #       volatility. Widely used in Indian market algo trading.
 #
 # The composite score weights indicators by reliability:
-#   SuperTrend change: ±3  (strongest — captures trend reversals)
-#   EMA crossover:     ±2  (confirmed momentum shift)
-#   RSI extreme:       ±1-3 (overbought/oversold, scaled by severity)
-#   VWAP position:     ±1  (institutional bias)
-#   Daily EMA bias:    ±1  (higher timeframe confluence)
-#   Prev-day S&R:      ±0.5-1 (support/resistance proximity)
-#   MACD histogram:    ±0.5-1 (momentum confirmation + fading warning)
-#   ORB breakout:      ±2  (opening range breakout, decays after 10:30 AM)
-#   Gap analysis:      ±1  (pre-market gap continuation vs fill)
-#   Hourly EMA align:  ±1  (multi-timeframe confluence confirmation)
-#   BB squeeze:        ±1  (volatility contraction → breakout imminent)
-#   ADX modifier:      ±0.5 (dampens trend scores in range-bound, bonus in strong trend)
+#   SuperTrend change: Â±3  (strongest â€” captures trend reversals)
+#   EMA crossover:     Â±2  (confirmed momentum shift)
+#   RSI extreme:       Â±1-3 (overbought/oversold, scaled by severity)
+#   VWAP position:     Â±1  (institutional bias)
+#   Daily EMA bias:    Â±1  (higher timeframe confluence)
+#   Prev-day S&R:      Â±0.5-1 (support/resistance proximity)
+#   MACD histogram:    Â±0.5-1 (momentum confirmation + fading warning)
+#   ORB breakout:      Â±2  (opening range breakout, decays after 10:30 AM)
+#   Gap analysis:      Â±1  (pre-market gap continuation vs fill)
+#   Hourly EMA align:  Â±1  (multi-timeframe confluence confirmation)
+#   BB squeeze:        Â±1  (volatility contraction â†’ breakout imminent)
+#   ADX modifier:      Â±0.5 (dampens trend scores in range-bound, bonus in strong trend)
 #   Fib retracement:   +0.5 (proximity to Fibonacci level)
-#   VWAP SD bands:     ±1  (mean-reversion at ±2σ extremes)
-#   Extended move:     ±1.5-3 (penalty for chasing stocks already extended from open)
-#   RSI hard cap:      caps score at ±3 when RSI ≥ 75 or ≤ 25
-#   → Technical score range: ~-24 to +24
+#   VWAP SD bands:     Â±1  (mean-reversion at Â±2Ïƒ extremes)
+#   Extended move:     Â±1.5-3 (penalty for chasing stocks already extended from open)
+#   RSI hard cap:      caps score at Â±3 when RSI â‰¥ 75 or â‰¤ 25
+#   â†’ Technical score range: ~-24 to +24
 # ================================================================
 
 import datetime
+from config import now_ist
 
 
 # ================================================================
-# EMA — EXPONENTIAL MOVING AVERAGE
+# EMA â€” EXPONENTIAL MOVING AVERAGE
 # ================================================================
 
 def ema(candles: list[dict], period: int, field: str = "close") -> list[float]:
@@ -82,7 +83,7 @@ def ema_crossover(candles: list[dict], fast: int = 9, slow: int = 21) -> dict:
         "signal": "BULLISH_CROSS" | "BEARISH_CROSS" | "NONE",
         "fast_ema": float,   # current fast EMA value
         "slow_ema": float,   # current slow EMA value
-        "spread_pct": float, # (fast - slow) / slow × 100
+        "spread_pct": float, # (fast - slow) / slow Ã— 100
       }
     """
     if len(candles) < slow + 2:
@@ -114,16 +115,16 @@ def ema_crossover(candles: list[dict], fast: int = 9, slow: int = 21) -> dict:
 
 
 # ================================================================
-# RSI — RELATIVE STRENGTH INDEX
+# RSI â€” RELATIVE STRENGTH INDEX
 # ================================================================
 
 def rsi(candles: list[dict], period: int = 14) -> float:
     """
-    Computes the RSI (0–100) using the standard Wilder smoothing method.
+    Computes the RSI (0â€“100) using the standard Wilder smoothing method.
     Returns -1 if insufficient data.
 
-    RSI > 70 → overbought (bearish signal)
-    RSI < 30 → oversold (bullish signal)
+    RSI > 70 â†’ overbought (bearish signal)
+    RSI < 30 â†’ oversold (bullish signal)
     """
     if len(candles) < period + 1:
         return -1
@@ -177,13 +178,13 @@ def rsi_signal(candles: list[dict], period: int = 14) -> dict:
 
 
 # ================================================================
-# VWAP — VOLUME WEIGHTED AVERAGE PRICE
+# VWAP â€” VOLUME WEIGHTED AVERAGE PRICE
 # ================================================================
 
 def vwap(candles: list[dict]) -> float:
     """
     Computes VWAP from intraday candles.
-    VWAP = Σ(typical_price × volume) / Σ(volume)
+    VWAP = Î£(typical_price Ã— volume) / Î£(volume)
     Typical price = (high + low + close) / 3
 
     Returns 0 if no volume data.
@@ -206,15 +207,15 @@ def vwap_signal(candles: list[dict]) -> dict:
     """
     Computes VWAP and returns signal based on current price vs VWAP.
 
-    Price above VWAP → bullish (stock stronger than average)
-    Price below VWAP → bearish (stock weaker than average)
-    Near VWAP (within 0.3%) → potential mean-reversion zone
+    Price above VWAP â†’ bullish (stock stronger than average)
+    Price below VWAP â†’ bearish (stock weaker than average)
+    Near VWAP (within 0.3%) â†’ potential mean-reversion zone
 
     Returns:
       {
         "vwap": float,
         "price": float,         # latest close
-        "deviation_pct": float, # (price - vwap) / vwap × 100
+        "deviation_pct": float, # (price - vwap) / vwap Ã— 100
         "signal": "ABOVE_VWAP" | "BELOW_VWAP" | "AT_VWAP",
       }
     """
@@ -254,8 +255,8 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
 
     SuperTrend plots a single line that flips between support (UP trend)
     and resistance (DOWN trend) based on ATR volatility bands:
-      Upper band = HL2 + (multiplier × ATR)
-      Lower band = HL2 - (multiplier × ATR)
+      Upper band = HL2 + (multiplier Ã— ATR)
+      Lower band = HL2 - (multiplier Ã— ATR)
 
     The key innovation: bands are "locked" in the protective direction
     (lower band only moves up, upper band only moves down) until a
@@ -293,7 +294,7 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
         atr_values[i] = (atr_values[i - 1] * (period - 1) + true_ranges[i]) / period
 
     # Compute SuperTrend bands
-    # We align: candles[1:] has index i → true_ranges[i-1], atr_values[i-1]
+    # We align: candles[1:] has index i â†’ true_ranges[i-1], atr_values[i-1]
     # Let's work with indices over candles[1:]
     n = len(candles)
     upper_band = [0.0] * n
@@ -325,7 +326,7 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
         # Determine trend
         close = candles[i]["close"]
         if trend[i - 1] == 1:
-            # Was UP trend — continue UP unless close drops below lower band
+            # Was UP trend â€” continue UP unless close drops below lower band
             if close < lower_band[i]:
                 trend[i] = -1
                 st[i] = upper_band[i]
@@ -333,7 +334,7 @@ def supertrend(candles: list[dict], period: int = 10, multiplier: float = 3.0) -
                 trend[i] = 1
                 st[i] = lower_band[i]
         else:
-            # Was DOWN trend — continue DOWN unless close rises above upper band
+            # Was DOWN trend â€” continue DOWN unless close rises above upper band
             if close > upper_band[i]:
                 trend[i] = 1
                 st[i] = lower_band[i]
@@ -368,11 +369,11 @@ def prev_day_sr_score(
 ) -> dict:
     """
     Checks if the current price is near the previous day's high, low,
-    or pivot point — natural support/resistance levels.
+    or pivot point â€” natural support/resistance levels.
 
-    - Near prev day's high (within proximity_pct%) → resistance for longs
-    - Near prev day's low  (within proximity_pct%) → support for shorts
-    - Pivot = (H + L + C) / 3 — institutional reference level.
+    - Near prev day's high (within proximity_pct%) â†’ resistance for longs
+    - Near prev day's low  (within proximity_pct%) â†’ support for shorts
+    - Pivot = (H + L + C) / 3 â€” institutional reference level.
 
     Returns:
       {
@@ -406,7 +407,7 @@ def prev_day_sr_score(
     near_low = dist_low_pct <= proximity_pct
 
     if near_high and near_low:
-        # Near both — pick the closer level
+        # Near both â€” pick the closer level
         if dist_high_pct <= dist_low_pct:
             score -= 1
             signal = "AT_RESISTANCE"
@@ -414,10 +415,10 @@ def prev_day_sr_score(
             score += 1
             signal = "AT_SUPPORT"
     elif near_high:
-        score -= 1  # at resistance — headwind for longs
+        score -= 1  # at resistance â€” headwind for longs
         signal = "AT_RESISTANCE"
     elif near_low:
-        score += 1  # at support — tailwind for longs
+        score += 1  # at support â€” tailwind for longs
         signal = "AT_SUPPORT"
 
     # Pivot bias (if not already near H/L)
@@ -457,7 +458,7 @@ def fibonacci_score(
 
     Returns:
       {
-        "score": float,       # ±0.5 near a level
+        "score": float,       # Â±0.5 near a level
         "fib_38": float,
         "fib_50": float,
         "fib_62": float,
@@ -503,7 +504,7 @@ def fibonacci_score(
             elif trend_direction == "DOWN":
                 result["score"] = -0.5  # Fib level acts as resistance (bearish)
             else:
-                result["score"] = 0.5   # Neutral — just confirm level exists
+                result["score"] = 0.5   # Neutral â€” just confirm level exists
             result["signal"] = "AT_FIB_LEVEL"
 
     return result
@@ -515,18 +516,18 @@ def fibonacci_score(
 
 def vwap_bands(candles: list[dict]) -> dict:
     """
-    Computes VWAP with ±1σ and ±2σ standard deviation bands.
-    Price at ±2σ → strong mean-reversion signal (±1).
-    Price between ±1σ and ±2σ → moderate signal (±0.5).
+    Computes VWAP with Â±1Ïƒ and Â±2Ïƒ standard deviation bands.
+    Price at Â±2Ïƒ â†’ strong mean-reversion signal (Â±1).
+    Price between Â±1Ïƒ and Â±2Ïƒ â†’ moderate signal (Â±0.5).
 
     Returns:
       {
         "score": float,
         "vwap": float,
-        "upper_1": float,   # VWAP + 1σ
-        "lower_1": float,   # VWAP - 1σ
-        "upper_2": float,   # VWAP + 2σ
-        "lower_2": float,   # VWAP - 2σ
+        "upper_1": float,   # VWAP + 1Ïƒ
+        "lower_1": float,   # VWAP - 1Ïƒ
+        "upper_2": float,   # VWAP + 2Ïƒ
+        "lower_2": float,   # VWAP - 2Ïƒ
         "signal": str,      # "AT_LOWER_2SD" | "AT_LOWER_1SD" | "AT_UPPER_1SD" | "AT_UPPER_2SD" | "INSIDE"
       }
     """
@@ -569,13 +570,13 @@ def vwap_bands(candles: list[dict]) -> dict:
     signal = "INSIDE"
 
     if price <= lower_2:
-        score = 1.0    # deep below VWAP — strong buy signal
+        score = 1.0    # deep below VWAP â€” strong buy signal
         signal = "AT_LOWER_2SD"
     elif price <= lower_1:
         score = 0.5
         signal = "AT_LOWER_1SD"
     elif price >= upper_2:
-        score = -1.0   # deep above VWAP — strong sell signal
+        score = -1.0   # deep above VWAP â€” strong sell signal
         signal = "AT_UPPER_2SD"
     elif price >= upper_1:
         score = -0.5
@@ -661,9 +662,9 @@ def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
     Opening Range Breakout (ORB): uses the first 15-min candle of
     the trading day as the opening range.
 
-    - Price breaks above OR high → bullish (+2)
-    - Price breaks below OR low → bearish (-2)
-    - Price inside range → neutral (0)
+    - Price breaks above OR high â†’ bullish (+2)
+    - Price breaks below OR low â†’ bearish (-2)
+    - Price inside range â†’ neutral (0)
 
     Returns:
       {
@@ -680,7 +681,7 @@ def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
     # The first candle (9:15-9:30) includes auction noise from NSE's
     # pre-open session. Professional ORB uses the range AFTER the
     # auction settles.
-    today = datetime.date.today()
+    today = now_ist().date()
     today_candles_for_orb = []
     for c in candles_15m:
         dt = c.get("date")
@@ -723,10 +724,10 @@ def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict
     """
     Analyses the gap between yesterday's close and today's open.
 
-    - Gap-up >1% → likely continuation if volume confirms (+1)
-    - Gap-up >1% with weak volume → gap fill likely (-1 for longs)
-    - Gap-down >1% → likely continuation if volume confirms (-1)
-    - Gap-down >1% with weak volume → gap fill likely (+1 for shorts)
+    - Gap-up >1% â†’ likely continuation if volume confirms (+1)
+    - Gap-up >1% with weak volume â†’ gap fill likely (-1 for longs)
+    - Gap-down >1% â†’ likely continuation if volume confirms (-1)
+    - Gap-down >1% with weak volume â†’ gap fill likely (+1 for shorts)
 
     Volume confirmation uses today's first candle volume vs avg of last
     5 days' first candle volume (approximated from daily candles).
@@ -746,7 +747,7 @@ def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict
         return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
 
     # Find today's open from first intraday candle
-    today = datetime.date.today()
+    today = now_ist().date()
     today_open = None
     today_first_vol = 0
     for c in candles_15m:
@@ -801,7 +802,7 @@ def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict
 
 
 # ================================================================
-# MULTI-TIMEFRAME — HOURLY EMA FROM 15-MIN CANDLES
+# MULTI-TIMEFRAME â€” HOURLY EMA FROM 15-MIN CANDLES
 # ================================================================
 
 def hourly_ema_alignment(candles_15m: list[dict]) -> dict:
@@ -819,7 +820,7 @@ def hourly_ema_alignment(candles_15m: list[dict]) -> dict:
     Adds +1 when 15-min AND hourly are both bullish, -1 when both
     bearish. Neutral when they conflict (no added conviction).
     """
-    if len(candles_15m) < 60:  # need ~15 hourly candles × 4
+    if len(candles_15m) < 60:  # need ~15 hourly candles Ã— 4
         return {"score": 0, "signal": "NEUTRAL", "hourly_spread_pct": 0}
 
     # Build hourly candles by grouping 15-min candles by hour
@@ -874,7 +875,7 @@ def hourly_ema_alignment(candles_15m: list[dict]) -> dict:
 
 def bollinger_squeeze(candles: list[dict], period: int = 20, num_std: float = 2.0) -> dict:
     """
-    Detects Bollinger Band squeeze — when bandwidth is below its
+    Detects Bollinger Band squeeze â€” when bandwidth is below its
     rolling average, a volatility expansion (breakout) is imminent.
 
     Returns:
@@ -886,9 +887,9 @@ def bollinger_squeeze(candles: list[dict], period: int = 20, num_std: float = 2.
       }
 
     Score logic:
-      Squeeze + price above middle band → +1 (bullish breakout likely)
-      Squeeze + price below middle band → -1 (bearish breakout likely)
-      No squeeze → 0
+      Squeeze + price above middle band â†’ +1 (bullish breakout likely)
+      Squeeze + price below middle band â†’ -1 (bearish breakout likely)
+      No squeeze â†’ 0
     """
     if len(candles) < period + 10:
         return {"score": 0, "signal": "NO_SQUEEZE", "bandwidth": 0, "squeeze": False}
@@ -934,16 +935,16 @@ def bollinger_squeeze(candles: list[dict], period: int = 20, num_std: float = 2.
 
 
 # ================================================================
-# ADX — AVERAGE DIRECTIONAL INDEX (TREND STRENGTH)
+# ADX â€” AVERAGE DIRECTIONAL INDEX (TREND STRENGTH)
 # ================================================================
 
 def adx(candles: list[dict], period: int = 14) -> dict:
     """
     Compute ADX (Average Directional Index) to measure trend strength.
 
-    ADX < 20  → range-bound / weak trend (whipsaw risk)
-    ADX 20-30 → developing trend
-    ADX > 30  → strong trend
+    ADX < 20  â†’ range-bound / weak trend (whipsaw risk)
+    ADX 20-30 â†’ developing trend
+    ADX > 30  â†’ strong trend
 
     Returns:
       {
@@ -1082,8 +1083,8 @@ def compute_technical_score(
     elif rsi_data["signal"] == "OVERBOUGHT":
         score -= rsi_data["strength"]
 
-    # VWAP — must use today's candles only (VWAP resets daily)
-    today = datetime.date.today()
+    # VWAP â€” must use today's candles only (VWAP resets daily)
+    today = now_ist().date()
     today_candles = []
     for c in candles_15m:
         dt = c.get("date")
@@ -1125,12 +1126,12 @@ def compute_technical_score(
     adx_data = adx(candles_15m, period=14)
     if adx_data["trend_strength"] == "WEAK":
         # Range-bound market: dampen trend-following scores already added
-        # EMA cross contributed ±2 or ±1, SuperTrend continuation ±1
+        # EMA cross contributed Â±2 or Â±1, SuperTrend continuation Â±1
         # We retroactively halve only the continuation components.
-        # (reversal signals like SuperTrend BULLISH/BEARISH ±3 stay — reversals
+        # (reversal signals like SuperTrend BULLISH/BEARISH Â±3 stay â€” reversals
         # are meaningful even in low-ADX, they mark regime *start*)
         if ema_data["signal"] not in ("BULLISH_CROSS", "BEARISH_CROSS"):
-            # Undo spread-based ±1 and add back halved
+            # Undo spread-based Â±1 and add back halved
             if ema_data["spread_pct"] > 0.5:
                 score -= 0.5
             elif ema_data["spread_pct"] < -0.5:
@@ -1176,11 +1177,11 @@ def compute_technical_score(
 
     # Opening Range Breakout (first 15-min candle of today)
     # Suppress when < 3 today candles (too early for meaningful ORB)
-    # ORB signal decays after 10:30 AM — near-zero value by afternoon
+    # ORB signal decays after 10:30 AM â€” near-zero value by afternoon
     if len(today_candles) >= 3:
         orb_data = opening_range_score(candles_15m, price)
-        now_hour = datetime.datetime.now().hour
-        now_min  = datetime.datetime.now().minute
+        now_hour = now_ist().hour
+        now_min  = now_ist().minute
         if now_hour >= 12:
             orb_data["score"] = 0  # No ORB value after noon
         elif now_hour >= 11:
@@ -1221,15 +1222,15 @@ def compute_technical_score(
         "score": 0, "vwap": 0, "upper_1": 0, "lower_1": 0,
         "upper_2": 0, "lower_2": 0, "signal": "INSIDE"
     }
-    # When VWAP bands give a non-zero score (price at ±1σ/±2σ), undo the
+    # When VWAP bands give a non-zero score (price at Â±1Ïƒ/Â±2Ïƒ), undo the
     # basic VWAP position score to avoid cancellation at extremes.  E.g.
-    # price at lower-2σ: VWAP position = -1, bands = +1 → cancel to 0.
+    # price at lower-2Ïƒ: VWAP position = -1, bands = +1 â†’ cancel to 0.
     # The bands signal is more specific, so keep it and drop the position score.
     if vwap_band_data["score"] != 0:
         score -= vwap_position_score
     score += vwap_band_data["score"]
 
-    # Extended move penalty — penalize stocks that have already moved
+    # Extended move penalty â€” penalize stocks that have already moved
     # significantly from today's open. These are chasing opportunities
     # with high mean-reversion risk.
     extended_move_pct = 0.0

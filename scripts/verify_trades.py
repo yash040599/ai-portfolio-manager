@@ -1,4 +1,4 @@
-"""
+﻿"""
 Verify today's trades against Zerodha's actual API data.
 
 Uses kite.trades() (trade fills) and kite.positions() (day positions)
@@ -9,7 +9,7 @@ Run this after market close (or after square-off) on the same day.
 Requires a valid Zerodha session token (bot must have logged in today).
 
 Usage
-─────
+â”€â”€â”€â”€â”€
     python scripts/verify_trades.py              # verify today
     python scripts/verify_trades.py 2026-04-07   # verify specific date (same-day only)
     python scripts/verify_trades.py --status      # show verification status for all dates
@@ -24,7 +24,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from config import Config
+from config import Config, now_ist
 from core.logger import Logger
 from core.zerodha_client import ZerodhaClient
 from scripts.tax_db import get_db
@@ -32,7 +32,7 @@ from scripts.tax_db import get_db
 REPORTS_DIR = os.path.join(PROJECT_ROOT, "reports", "trading")
 
 
-# ── Helpers ───────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _trading_file_paths(d: datetime.date) -> tuple[str, str]:
     base = os.path.join(REPORTS_DIR, str(d.year), f"{d.month:02d}")
@@ -53,7 +53,7 @@ def _show_status():
         return
 
     print(f"\n  {'Date':<14} {'Mode':<10} {'Verified':<12} {'Trades':<8} {'Net P&L':>10}")
-    print(f"  {'─'*14} {'─'*10} {'─'*12} {'─'*8} {'─'*10}")
+    print(f"  {'â”€'*14} {'â”€'*10} {'â”€'*12} {'â”€'*8} {'â”€'*10}")
 
     for f in files:
         try:
@@ -61,30 +61,30 @@ def _show_status():
                 data = json.load(fh)
             date_str = data.get("date", "?")
             mode = data.get("mode", "?")
-            verified = "✓ Yes" if data.get("verified") else "✗ No"
+            verified = "âœ“ Yes" if data.get("verified") else "âœ— No"
             positions = data.get("positions", [])
             closed = [p for p in positions if p.get("status") == "CLOSED"]
             net = data.get("pnl", {}).get("net_profit", 0)
-            print(f"  {date_str:<14} {mode:<10} {verified:<12} {len(closed):<8} ₹{net:>+9.2f}")
+            print(f"  {date_str:<14} {mode:<10} {verified:<12} {len(closed):<8} â‚¹{net:>+9.2f}")
         except Exception:
             pass
 
     print()
 
 
-# ── Core verification ─────────────────────────────────────────────
+# â”€â”€ Core verification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def verify_today(date_str: str | None = None) -> dict:
     """
     Verify trades for the given date (default: today) using Zerodha API.
     Returns stats dict: {verified, corrected, skipped, errors}.
     """
-    target_date = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+    target_date = datetime.date.fromisoformat(date_str) if date_str else now_ist().date()
     target_str  = target_date.isoformat()
 
     json_path, txt_path = _trading_file_paths(target_date)
     if not os.path.exists(json_path):
-        print(f"\n  ❌ No trading data for {target_str}: {json_path}")
+        print(f"\n  âŒ No trading data for {target_str}: {json_path}")
         return {"errors": ["No trading data file"]}
 
     # Load internal data
@@ -92,20 +92,20 @@ def verify_today(date_str: str | None = None) -> dict:
         data = json.load(f)
 
     if data.get("verified"):
-        print(f"\n  ✓ Already verified on {data.get('verified_on', '?')}")
+        print(f"\n  âœ“ Already verified on {data.get('verified_on', '?')}")
         return {"verified": len([p for p in data.get("positions", []) if p.get("status") == "CLOSED"])}
 
     if data.get("mode") != "live":
-        print(f"\n  ⊘ Skipping — mode is '{data.get('mode')}' (only live trades need verification)")
+        print(f"\n  âŠ˜ Skipping â€” mode is '{data.get('mode')}' (only live trades need verification)")
         return {"skipped": "not live mode"}
 
     positions = data.get("positions", [])
     closed = [p for p in positions if p.get("status") == "CLOSED"]
     if not closed:
-        print(f"\n  ⊘ No closed positions to verify")
+        print(f"\n  âŠ˜ No closed positions to verify")
         return {"skipped": "no closed positions"}
 
-    # ── Connect to Zerodha ────────────────────────────────────
+    # â”€â”€ Connect to Zerodha â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     log = Logger("verify")
     zerodha = ZerodhaClient(Config, log)
 
@@ -113,21 +113,21 @@ def verify_today(date_str: str | None = None) -> dict:
     try:
         zerodha.login(interactive=False)
     except Exception as e:
-        print(f"\n  ❌ Cannot login to Zerodha: {e}")
+        print(f"\n  âŒ Cannot login to Zerodha: {e}")
         print(f"     The bot must have logged in today for the token to be valid.")
         return {"errors": [f"Login failed: {e}"]}
 
-    # ── Fetch Zerodha data ────────────────────────────────────
+    # â”€â”€ Fetch Zerodha data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print(f"  Fetching trades and positions from Zerodha...")
 
     z_trades = zerodha.get_todays_trades()
     z_positions = zerodha.get_todays_positions()
 
     if not z_trades and not z_positions:
-        print(f"\n  ⚠ No trade data from Zerodha API (token may be expired)")
+        print(f"\n  âš  No trade data from Zerodha API (token may be expired)")
         return {"errors": ["No data from Zerodha"]}
 
-    # ── Build lookups ─────────────────────────────────────────
+    # â”€â”€ Build lookups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     # Group Zerodha trades by order_id (for entry fill prices)
     z_by_order: dict[str, list[dict]] = {}
@@ -147,7 +147,7 @@ def verify_today(date_str: str | None = None) -> dict:
         if sym:
             z_pos_by_sym[sym] = zp
 
-    # ── Phase 1: correct entry prices from order fills ────────
+    # â”€â”€ Phase 1: correct entry prices from order fills â”€â”€â”€â”€â”€â”€â”€â”€
     stats = {"verified": 0, "corrected": 0, "no_match": 0}
 
     for pos in closed:
@@ -160,10 +160,10 @@ def verify_today(date_str: str | None = None) -> dict:
                            for f in fills) / total_qty
                 wavg = round(wavg, 2)
                 if abs(wavg - pos["entry_price"]) > 0.01:
-                    print(f"    ✎ {pos['symbol']}: entry ₹{pos['entry_price']:.2f}→₹{wavg:.2f}")
+                    print(f"    âœŽ {pos['symbol']}: entry â‚¹{pos['entry_price']:.2f}â†’â‚¹{wavg:.2f}")
                     pos["entry_price"] = wavg
 
-    # ── Phase 2: correct exit prices using Zerodha aggregate P&L ─
+    # â”€â”€ Phase 2: correct exit prices using Zerodha aggregate P&L â”€
     # Group closed positions by symbol
     from collections import defaultdict
     sym_positions: dict[str, list[dict]] = defaultdict(list)
@@ -193,7 +193,7 @@ def verify_today(date_str: str | None = None) -> dict:
             changes = []
             if z_exit > 0 and abs(z_exit - old_exit) > 0.01:
                 if not pos.get("_partial_qty", 0):
-                    changes.append(f"exit ₹{old_exit:.2f}→₹{z_exit:.2f}")
+                    changes.append(f"exit â‚¹{old_exit:.2f}â†’â‚¹{z_exit:.2f}")
                     pos["exit_price"] = round(z_exit, 2)
 
             # Recalculate P&L
@@ -204,18 +204,18 @@ def verify_today(date_str: str | None = None) -> dict:
                 new_pnl = round((pos["entry_price"] - pos["exit_price"]) * qty, 2)
 
             if abs(new_pnl - pos.get("pnl", 0)) > 0.01:
-                changes.append(f"P&L ₹{pos['pnl']:+,.2f}→₹{new_pnl:+,.2f}")
+                changes.append(f"P&L â‚¹{pos['pnl']:+,.2f}â†’â‚¹{new_pnl:+,.2f}")
                 pos["pnl"] = new_pnl
 
             if changes:
                 stats["corrected"] += 1
-                print(f"    ✎ {symbol}: {' | '.join(changes)}")
+                print(f"    âœŽ {symbol}: {' | '.join(changes)}")
             else:
                 stats["verified"] += 1
-                print(f"    ✓ {symbol}: matches Zerodha")
+                print(f"    âœ“ {symbol}: matches Zerodha")
 
         else:
-            # Multiple trades for same symbol — use aggregate P&L
+            # Multiple trades for same symbol â€” use aggregate P&L
             # to distribute corrections.
             # First, recalculate each trade's P&L from current entry/exit
             for pos in pos_list:
@@ -229,10 +229,10 @@ def verify_today(date_str: str | None = None) -> dict:
             diff = round(z_pnl - internal_total, 2)
 
             if abs(diff) <= 0.10:
-                # Close enough — consider verified
+                # Close enough â€” consider verified
                 for pos in pos_list:
                     stats["verified"] += 1
-                    print(f"    ✓ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
+                    print(f"    âœ“ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
             else:
                 # Distribute P&L difference to the last trade's exit price.
                 # The last trade is most likely where the discrepancy is
@@ -257,15 +257,15 @@ def verify_today(date_str: str | None = None) -> dict:
 
                 for pos in pos_list[:-1]:
                     stats["verified"] += 1
-                    print(f"    ✓ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
+                    print(f"    âœ“ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
 
                 stats["corrected"] += 1
-                print(f"    ✎ {symbol} ({last_pos.get('entry_time','?')}): "
-                      f"exit ₹{old_exit:.2f}→₹{last_pos['exit_price']:.2f} | "
-                      f"P&L ₹{old_pnl:+,.2f}→₹{last_pos['pnl']:+,.2f} "
+                print(f"    âœŽ {symbol} ({last_pos.get('entry_time','?')}): "
+                      f"exit â‚¹{old_exit:.2f}â†’â‚¹{last_pos['exit_price']:.2f} | "
+                      f"P&L â‚¹{old_pnl:+,.2f}â†’â‚¹{last_pos['pnl']:+,.2f} "
                       f"(from Zerodha aggregate {z_pnl:+.2f})")
 
-    # ── Recalculate charges from Zerodha positions ────────────
+    # â”€â”€ Recalculate charges from Zerodha positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Use Zerodha's actual turnover data for accurate charge calculation
     total_buy = 0.0
     total_sell = 0.0
@@ -282,16 +282,16 @@ def verify_today(date_str: str | None = None) -> dict:
         charges = _compute_charges(total_buy, total_sell, total_turnover, data)
         data["pnl"]["charges"] = charges
 
-    # ── Recalculate P&L totals ────────────────────────────────
+    # â”€â”€ Recalculate P&L totals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     gross_pnl = round(sum(p.get("pnl", 0) for p in positions if p.get("status") == "CLOSED"), 2)
 
     # Cross-check: aggregate Zerodha P&L vs our corrected total
     z_total_pnl = round(sum(zp.get("pnl", 0) for zp in z_pos_by_sym.values()), 2)
     if abs(gross_pnl - z_total_pnl) > 0.50:
-        print(f"\n    ⚠ P&L mismatch: internal ₹{gross_pnl:+.2f} vs Zerodha ₹{z_total_pnl:+.2f} "
-              f"(diff ₹{gross_pnl - z_total_pnl:+.2f})")
+        print(f"\n    âš  P&L mismatch: internal â‚¹{gross_pnl:+.2f} vs Zerodha â‚¹{z_total_pnl:+.2f} "
+              f"(diff â‚¹{gross_pnl - z_total_pnl:+.2f})")
     else:
-        print(f"\n    ✓ Gross P&L confirmed: ₹{gross_pnl:+.2f} (Zerodha: ₹{z_total_pnl:+.2f})")
+        print(f"\n    âœ“ Gross P&L confirmed: â‚¹{gross_pnl:+.2f} (Zerodha: â‚¹{z_total_pnl:+.2f})")
 
     total_costs = data["pnl"]["charges"]["total_costs"]
     net_profit = round(gross_pnl - total_costs, 2)
@@ -307,8 +307,8 @@ def verify_today(date_str: str | None = None) -> dict:
     data["pnl"]["estimated_tax"]    = estimated_tax
     data["pnl"]["profit_after_tax"] = round(net_profit - estimated_tax, 2)
 
-    # ── Mark as verified and save ─────────────────────────────
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # â”€â”€ Mark as verified and save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    now_str = now_ist().strftime("%Y-%m-%d %H:%M:%S")
     data["verified"]    = True
     data["verified_on"] = now_str
 
@@ -317,15 +317,15 @@ def verify_today(date_str: str | None = None) -> dict:
 
     _write_verified_txt(txt_path, data, now_str)
 
-    # ── Update intraday tax ledger ────────────────────────────
+    # â”€â”€ Update intraday tax ledger â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     _update_tax_ledger(data, target_str)
 
-    # ── Update trades table (performance_tracker) ─────────────
+    # â”€â”€ Update trades table (performance_tracker) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # The trades table stores entry/exit prices for Claude learning
     # context. When verification corrects prices, sync them here too.
     _update_trades_table(data, target_str)
 
-    print(f"\n  ✅ Verification complete: {stats['verified']} matched, "
+    print(f"\n  âœ… Verification complete: {stats['verified']} matched, "
           f"{stats['corrected']} corrected")
     print(f"     Reports saved: {json_path}")
     print(f"                    {txt_path}")
@@ -339,7 +339,7 @@ def _compute_charges(total_buy: float, total_sell: float,
     old_charges = data.get("pnl", {}).get("charges", {})
     num_orders = old_charges.get("num_orders", 0)
 
-    # Brokerage: min(₹20, 0.03% of per-order value) per order
+    # Brokerage: min(â‚¹20, 0.03% of per-order value) per order
     per_order_turnover = total_turnover / num_orders if num_orders > 0 else total_turnover
     brokerage_per_order = min(
         Config.ZERODHA_BROKERAGE_FLAT,
@@ -414,7 +414,7 @@ def _update_tax_ledger(data: dict, date_str: str):
 def _update_trades_table(data: dict, date_str: str):
     """Sync corrected prices into the trades table (performance_tracker DB).
 
-    The trades table feeds Claude's learning context — if entry/exit prices
+    The trades table feeds Claude's learning context â€” if entry/exit prices
     are wrong there, the bot learns from incorrect P&L data. This function
     applies the same corrections that _update_tax_ledger applies to the
     intraday_tax_ledger.
@@ -456,15 +456,15 @@ def _update_trades_table(data: dict, date_str: str):
 
     if updated:
         conn.commit()
-        print(f"    ✎ Updated {updated} row(s) in trades table")
+        print(f"    âœŽ Updated {updated} row(s) in trades table")
     conn.close()
 
 
 def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
     """Regenerate the .txt trading report from verified data."""
     SEP_MAJOR = "=" * 58
-    SEP_MINOR = "─" * 58
-    SEP_TABLE = "─" * 86
+    SEP_MINOR = "â”€" * 58
+    SEP_TABLE = "â”€" * 86
 
     date_str = data["date"]
     mode_label = "DRY RUN (simulated)" if data.get("mode") == "dry_run" else "LIVE TRADING"
@@ -484,12 +484,12 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(f"{SEP_MAJOR}\n")
-        f.write(f"  ✓ VERIFIED — Data verified via Zerodha API (same-day)\n")
+        f.write(f"  âœ“ VERIFIED â€” Data verified via Zerodha API (same-day)\n")
         f.write(f"  Updated on: {verified_on}\n")
         f.write(f"{SEP_MAJOR}\n\n")
 
         f.write(f"{SEP_MAJOR}\n")
-        f.write(f"  INTRADAY TRADING REPORT — {date_str}\n")
+        f.write(f"  INTRADAY TRADING REPORT â€” {date_str}\n")
         f.write(f"  Mode: {mode_label}\n")
         if session_count > 1:
             f.write(f"  Sessions: {session_count} (combined)\n")
@@ -498,7 +498,7 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write("CONFIGURATION\n")
         f.write(f"{SEP_MINOR}\n")
         f.write(f"Claude plan     : {config.get('claude_plan', 'PRO').upper()}\n")
-        f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
+        f.write(f"Budget          : â‚¹{budget:,.2f} (from Zerodha funds)\n")
         f.write(f"Universe        : {config.get('universe', 'NIFTY100')}\n")
         if market_condition:
             f.write(f"Market condition: {market_condition}\n")
@@ -528,53 +528,53 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write(f"{SEP_TABLE}\n")
 
         for p in positions:
-            exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
-            pnl_val = f"₹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
+            exit_p  = f"â‚¹{p['exit_price']:.2f}" if p.get("exit_price") else "â€”"
+            pnl_val = f"â‚¹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "â€”"
             f.write(
                 f"{p['symbol']:<12} {p['side']:<6} {p['qty']:>5} "
-                f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
+                f"â‚¹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                 f"{(p.get('exit_reason') or 'OPEN'):<14} "
-                f"{(p.get('entry_time') or '—'):<10} "
-                f"{(p.get('exit_time') or '—'):<10}\n"
+                f"{(p.get('entry_time') or 'â€”'):<10} "
+                f"{(p.get('exit_time') or 'â€”'):<10}\n"
             )
         f.write("\n")
 
         f.write("TRADE RATIONALES\n")
         f.write(f"{SEP_MINOR}\n")
         for p in positions:
-            f.write(f"  {p['symbol']}: {p.get('rationale', '—')}\n")
+            f.write(f"  {p['symbol']}: {p.get('rationale', 'â€”')}\n")
         f.write("\n")
 
         f.write(f"{SEP_MAJOR}\n")
         f.write("P&L BREAKDOWN\n")
         f.write(f"{SEP_MAJOR}\n\n")
 
-        f.write(f"Gross P&L               : ₹{pnl['gross_pnl']:+,.2f}\n\n")
+        f.write(f"Gross P&L               : â‚¹{pnl['gross_pnl']:+,.2f}\n\n")
 
         f.write("CHARGES & TAXES:\n")
-        f.write(f"  Brokerage             : ₹{charges['brokerage']:,.2f}\n")
-        f.write(f"  STT (sell side)       : ₹{charges['stt']:,.2f}\n")
-        f.write(f"  Exchange transaction  : ₹{charges['exchange_txn']:,.2f}\n")
-        f.write(f"  GST (18%)             : ₹{charges['gst']:,.2f}\n")
-        f.write(f"  SEBI charges          : ₹{charges['sebi_charges']:,.4f}\n")
-        f.write(f"  Stamp duty (buy side) : ₹{charges['stamp_duty']:,.2f}\n")
-        f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total tax & charges   : ₹{charges['total_tax_and_charges']:,.2f}\n\n")
+        f.write(f"  Brokerage             : â‚¹{charges['brokerage']:,.2f}\n")
+        f.write(f"  STT (sell side)       : â‚¹{charges['stt']:,.2f}\n")
+        f.write(f"  Exchange transaction  : â‚¹{charges['exchange_txn']:,.2f}\n")
+        f.write(f"  GST (18%)             : â‚¹{charges['gst']:,.2f}\n")
+        f.write(f"  SEBI charges          : â‚¹{charges['sebi_charges']:,.4f}\n")
+        f.write(f"  Stamp duty (buy side) : â‚¹{charges['stamp_duty']:,.2f}\n")
+        f.write(f"  {'â”€' * 40}\n")
+        f.write(f"  Total tax & charges   : â‚¹{charges['total_tax_and_charges']:,.2f}\n\n")
 
         f.write("CLAUDE API COST:\n")
-        f.write(f"  Claude API usage      : ₹{charges['claude_api_cost']:,.2f}  "
-                f"(est. ₹{Config.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
-        f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total all costs       : ₹{charges['total_costs']:,.2f}\n\n")
+        f.write(f"  Claude API usage      : â‚¹{charges['claude_api_cost']:,.2f}  "
+                f"(est. â‚¹{Config.CLAUDE_COST_PER_CALL}/call Ã— actual calls)\n")
+        f.write(f"  {'â”€' * 40}\n")
+        f.write(f"  Total all costs       : â‚¹{charges['total_costs']:,.2f}\n\n")
 
         f.write(f"{'=' * 42}\n")
-        f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
+        f.write(f"  NET PROFIT AFTER ALL  : â‚¹{pnl['net_profit']:+,.2f}\n")
         f.write(f"{'=' * 42}\n")
-        profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
+        profitable = "YES âœ“" if pnl["is_profitable"] else "NO âœ—"
         f.write(f"  Profitable?           : {profitable}\n")
         if budget > 0:
             returns_pct = pnl["net_profit"] / budget * 100
-            f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
+            f.write(f"  Day returns           : {returns_pct:+.2f}% on â‚¹{budget:,.0f} budget\n")
         f.write("\n")
 
         tax_rate_pct = pnl.get("tax_rate_pct", 0)
@@ -584,23 +584,23 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write(f"  Tax slab rate         : {Config.TAX_RATE_PCT}% + "
                 f"{Config.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
         if pnl["net_profit"] > 0:
-            f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
-            f.write(f"  Profit after tax      : ₹{pnl['profit_after_tax']:+,.2f}\n")
+            f.write(f"  Estimated tax         : â‚¹{estimated_tax:,.2f}\n")
+            f.write(f"  Profit after tax      : â‚¹{pnl['profit_after_tax']:+,.2f}\n")
         else:
-            f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
+            f.write(f"  Estimated tax         : â‚¹0.00 (no tax on losses)\n")
             f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
         f.write("\n")
 
         f.write(f"  FYI: Zerodha Kite Connect subscription is "
-                f"₹{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
+                f"â‚¹{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
         f.write(f"  Track cumulative daily profits to ensure they cover "
                 f"this monthly cost.\n\n")
 
         f.write("TURNOVER DETAILS\n")
         f.write(f"{SEP_MINOR}\n")
-        f.write(f"  Buy turnover          : ₹{charges['buy_turnover']:,.2f}\n")
-        f.write(f"  Sell turnover         : ₹{charges['sell_turnover']:,.2f}\n")
-        f.write(f"  Total turnover        : ₹{charges['total_turnover']:,.2f}\n")
+        f.write(f"  Buy turnover          : â‚¹{charges['buy_turnover']:,.2f}\n")
+        f.write(f"  Sell turnover         : â‚¹{charges['sell_turnover']:,.2f}\n")
+        f.write(f"  Total turnover        : â‚¹{charges['total_turnover']:,.2f}\n")
         f.write(f"  Total orders          : {charges['num_orders']}\n\n")
 
         if trade_log:
@@ -610,13 +610,13 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
                 f.write(
                     f"  [{entry['time']}] {entry['action']:<14} "
                     f"{entry['symbol']:<12} {entry['side']:<5} "
-                    f"{entry['qty']:>5}  ₹{entry['price']:>10}  "
+                    f"{entry['qty']:>5}  â‚¹{entry['price']:>10}  "
                     f"{entry['detail']}\n"
                 )
             f.write("\n")
 
 
-# ── CLI ───────────────────────────────────────────────────────────
+# â”€â”€ CLI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def main():
     parser = argparse.ArgumentParser(
@@ -636,13 +636,13 @@ def main():
         _show_status()
         return
 
-    print(f"\n  🔍 Zerodha Trade Verification")
-    print(f"  {'─' * 40}")
+    print(f"\n  ðŸ” Zerodha Trade Verification")
+    print(f"  {'â”€' * 40}")
 
     stats = verify_today(args.date)
 
     if stats.get("errors"):
-        print(f"\n  ❌ Verification failed: {stats['errors'][0]}")
+        print(f"\n  âŒ Verification failed: {stats['errors'][0]}")
         sys.exit(1)
 
 

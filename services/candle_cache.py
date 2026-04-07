@@ -1,18 +1,18 @@
-# ================================================================
+﻿# ================================================================
 # services/candle_cache.py
 # ================================================================
 # SQLite-backed cache for historical candle data from Zerodha.
 #
 # Caches candle data that doesn't change during a trading session:
-#   - Daily candles (previous days only — today's daily candle updates)
+#   - Daily candles (previous days only â€” today's daily candle updates)
 #   - Previous day's 15-min candles (finalized once that day ends)
 #
-# Today's intraday candles are NEVER cached — they update every
+# Today's intraday candles are NEVER cached â€” they update every
 # 15 minutes as new candles form during the live session.
 #
 # Cache is stored in data/candle_cache.db (separate DB for git transferability).
 # One row per candle: (symbol, interval, date, OHLCV).
-# Lookup key: (symbol, interval) → all candles for that combo.
+# Lookup key: (symbol, interval) â†’ all candles for that combo.
 #
 # This saves ~100 Zerodha API calls per scan on a 100-stock universe
 # when daily candles are already cached, and ~100 more when previous
@@ -22,6 +22,8 @@
 import datetime
 import os
 import sqlite3
+
+from config import now_ist
 
 DB_DIR  = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "candle_cache.db")
@@ -59,9 +61,9 @@ class CandleCache:
                 )
             """)
 
-    # ────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # PUBLIC API
-    # ────────────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def get_cached_candles(
         self,
@@ -76,8 +78,8 @@ class CandleCache:
         Only returns candles from BEFORE today (today's data is never cached).
         Returns empty list if nothing is cached.
         """
-        today = datetime.date.today()
-        # Never return cached data for today — it changes intraday
+        today = now_ist().date()
+        # Never return cached data for today â€” it changes intraday
         cache_end = min(to_date, today - datetime.timedelta(days=1))
         if cache_end < from_date:
             return []
@@ -117,7 +119,7 @@ class CandleCache:
         Today's candles are silently skipped (they change intraday).
         Uses INSERT OR IGNORE to avoid duplicates.
         """
-        today = datetime.date.today()
+        today = now_ist().date()
         rows = []
 
         for c in candles:
@@ -192,7 +194,7 @@ class CandleCache:
 
     def cleanup_old(self, keep_days: int = 45):
         """Removes cached candles older than keep_days (default 45 days)."""
-        cutoff = str(datetime.date.today() - datetime.timedelta(days=keep_days))
+        cutoff = str(now_ist().date() - datetime.timedelta(days=keep_days))
         with self._connect() as conn:
             deleted = conn.execute(
                 "DELETE FROM candle_cache WHERE candle_date < ?", (cutoff,)
