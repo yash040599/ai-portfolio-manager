@@ -55,7 +55,7 @@ A fully automated intraday trading bot that:
 - **Minimum capital deployment** — ensures at least 60% of budget is deployed by instructing Claude to size positions larger and auto-boosting qty when Claude under-sizes. Prevents scenarios where only a fraction of capital is used
 - Anti-momentum-chasing rules — avoids stocks already up >2% (for BUY) or already down >2% (for SELL) at scan time. Extended moves are likely to revert
 - **Performance database** — stores every trade in SQLite, feeds recent win rates and P&L history into Claude's next-day stock selection
-- **Slippage model** in dry-run mode for realistic P&L simulation
+- **Slippage model** in dry-run mode — time-of-day-adjusted slippage on both entry and exit (2× at market open, 1.5× in last hour) for realistic P&L simulation
 - Squares off all positions before market close (3:10 PM)
 - Generates a full P&L report with taxes, charges, and net profit
 - **Estimated income tax** — shows per-day tax liability at your slab rate (configurable `TAX_RATE_PCT` in config.py, default 30%)
@@ -77,6 +77,9 @@ A fully automated intraday trading bot that:
 - **Late-entry target reduction** — positions entered after 1 PM get reduced profit targets (20% at 1 PM, 35% at 2 PM) since less time remains for the move
 - **3-day candle lookback** — fetches 3 days of 15-min candle history instead of 2, improving pattern detection and indicator warm-up
 - **Today-candle-count guard** — suppresses ORB and gap signals when fewer than 3 today candles exist, preventing false signals on early/stale data
+- **Fibonacci retracement levels** — computes 38.2%, 50%, 61.8% retracement of prev day's range as S&R levels. Adds ±0.5 score when price is near a Fib level
+- **VWAP standard deviation bands** — computes ±1σ and ±2σ bands around VWAP. Price at ±2σ = strong mean-reversion signal (±1 score). Used by Claude for institutional-style VWAP analysis
+- **Bid-ask spread check** — before placing any live order, checks Zerodha's order book depth. Skips stocks with bid-ask spread > 0.3% to avoid slippage eating into tight ATR targets
 
 ```bash
 python main.py --mode trade
@@ -301,7 +304,8 @@ Open `config.py` and review these key settings:
 | `STAGNANT_EXIT_MIN_MOVE_PCT` | `0.3%` | NoAI: minimum favourable move to stay alive |
 | `TRAIL_AFTER_RISK_MULTIPLE` | `1.0` | Start trailing SL after profit reaches 1× initial risk |
 | `TRAIL_STEP_PCT` | `50.0%` | Trail SL by 50% of unrealised profit |
-| `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run entries |
+| `SLIPPAGE_PCT` | `0.15%` | Simulated slippage on dry-run trades (time-of-day adjusted: 2× at open, 1.5× last hour) |
+| `MAX_SPREAD_PCT` | `0.3%` | Skip stocks with bid-ask spread wider than this % (0 = disable) |
 | `TARGET_DECAY_AFTER_HOUR` | `14` | After 2 PM, start reducing targets (24h format) |
 | `TARGET_DECAY_PCT` | `40.0%` | How much to reduce targets after decay hour |
 | `MIN_MINUTES_FOR_ENTRY` | `45` | Don't open new trades if fewer than this many min remain |
@@ -791,6 +795,7 @@ To be profitable, daily gross trading profits need to exceed ~₹50-100 in Claud
 - **Order API retry + circuit breaker** — each Zerodha order retries 3× with backoff; 3 consecutive failures = stop Claude calls, square off, shutdown
 - **Market protection on orders** — all MARKET and SL-M orders include `market_protection = -1`, a Zerodha-mandated safeguard (w.e.f. April 2026) that caps execution at exchange-defined price bands to prevent runaway fills. Requires `kiteconnect ≥ 5.1.0`
 - **Fill price sanity check** — rejects corrupted fill prices (>5% deviation from expected quote)
+- **Bid-ask spread check** — skips stocks with wide bid-ask spreads (>0.3%) that would eat into tight intraday targets
 - **Time-decay targets** — reduces targets after 2 PM to lock in profits before square-off
 - **Late entry guard** — blocks new positions when insufficient time remains in session
 - **Session-aware re-scans** — mid-day re-scans account for current P&L and traded symbols

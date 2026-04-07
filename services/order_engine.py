@@ -459,6 +459,7 @@ class OrderEngine:
 
         # ── Validate entry price against live quote ───────────────
         # Claude can hallucinate prices. Always cross-check vs Zerodha.
+        live_quotes = {}
         try:
             live_quotes = self.zerodha.get_quotes(
                 [{"symbol": symbol, "exchange": exchange}]
@@ -479,6 +480,23 @@ class OrderEngine:
                 )
                 entry = live_price
                 trade["entry_price"] = entry
+
+        # ── Bid-ask spread check ──────────────────────────────────
+        max_spread = getattr(self.cfg, "MAX_SPREAD_PCT", 0)
+        if max_spread > 0 and not self.cfg.DRY_RUN:
+            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
+            depth = quote_data.get("depth", {})
+            best_bid = (depth.get("buy", [{}]) or [{}])[0].get("price", 0)
+            best_ask = (depth.get("sell", [{}]) or [{}])[0].get("price", 0)
+            if best_bid > 0 and best_ask > 0:
+                spread_pct = (best_ask - best_bid) / best_bid * 100
+                if spread_pct > max_spread:
+                    self.log.warning(
+                        f"{symbol}: bid-ask spread {spread_pct:.2f}% exceeds "
+                        f"MAX_SPREAD_PCT ({max_spread}%) — skipping "
+                        f"(bid ₹{best_bid:.2f} / ask ₹{best_ask:.2f})"
+                    )
+                    return False
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
@@ -546,7 +564,8 @@ class OrderEngine:
 
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
-            slip = entry * self.cfg.SLIPPAGE_PCT / 100
+            slip_pct = self._adjusted_slippage(now.hour)
+            slip = entry * slip_pct / 100
             if side == "BUY":
                 entry = round(entry + slip, 2)   # buy slightly higher
             else:
@@ -744,6 +763,15 @@ class OrderEngine:
         qty      = position["qty"]
         entry    = position["entry_price"]
         now      = datetime.datetime.now()
+
+        # Apply exit slippage in dry-run mode (adverse fill)
+        if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
+            slip_pct = self._adjusted_slippage(now.hour)
+            slip = exit_price * slip_pct / 100
+            if side == "BUY":
+                exit_price = round(exit_price - slip, 2)   # sell fill slightly lower
+            else:
+                exit_price = round(exit_price + slip, 2)   # cover fill slightly higher
 
         # Calculate P&L
         if side == "BUY":
@@ -1677,6 +1705,19 @@ class OrderEngine:
             p["entry_price"] * p["qty"]
             for p in self.positions if p["status"] == "OPEN"
         )
+
+    def _adjusted_slippage(self, hour: int) -> float:
+        """
+        Returns time-of-day-adjusted slippage % for dry-run mode.
+        Opening hour has wider spreads (2×), last hour before
+        square-off has moderate widening (1.5×).
+        """
+        base = self.cfg.SLIPPAGE_PCT
+        if hour <= self.cfg.MARKET_OPEN_HOUR:
+            return base * 2.0    # opening volatility
+        if hour >= self.cfg.SQUARE_OFF_HOUR - 1:
+            return base * 1.5    # last hour — reduced liquidity
+        return base
 
     def _find_open_position(self, symbol: str) -> dict | None:
         """Finds the first open position for a given symbol."""

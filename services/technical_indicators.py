@@ -30,7 +30,7 @@
 #   Hourly EMA align:  ±1  (multi-timeframe confluence confirmation)
 #   BB squeeze:        ±1  (volatility contraction → breakout imminent)
 #   ADX modifier:      ±0.5 (dampens trend scores in range-bound, bonus in strong trend)
-#   → Technical score range: ~-19 to +19
+#   → Technical score range: ~-21 to +21
 # ================================================================
 
 import datetime
@@ -430,6 +430,159 @@ def prev_day_sr_score(
         "prev_high": prev_high,
         "prev_low": prev_low,
         "pivot": pivot,
+        "signal": signal,
+    }
+
+
+# ================================================================
+# FIBONACCI RETRACEMENT LEVELS
+# ================================================================
+
+def fibonacci_score(
+    candles_day: list[dict],
+    current_price: float,
+    proximity_pct: float = 0.5,
+) -> dict:
+    """
+    Checks if the current price is near a Fibonacci retracement level
+    of the previous day's range. Fib levels act as natural S&R.
+
+    Retracement levels: 38.2%, 50%, 61.8% of prev day's high-low range.
+    Proximity within `proximity_pct`% triggers a score.
+
+    Returns:
+      {
+        "score": float,       # ±0.5 near a level
+        "fib_38": float,
+        "fib_50": float,
+        "fib_62": float,
+        "nearest_level": str, # "FIB_38" | "FIB_50" | "FIB_62" | "NONE"
+        "signal": str,        # "AT_FIB_SUPPORT" | "AT_FIB_RESISTANCE" | "NONE"
+      }
+    """
+    default = {"score": 0, "fib_38": 0, "fib_50": 0, "fib_62": 0,
+               "nearest_level": "NONE", "signal": "NONE"}
+
+    if not candles_day or len(candles_day) < 1 or current_price <= 0:
+        return default
+
+    prev = candles_day[-1]
+    prev_high = prev["high"]
+    prev_low = prev["low"]
+    day_range = prev_high - prev_low
+
+    if day_range <= 0:
+        return default
+
+    # Fibonacci retracement levels (measured from HIGH downward)
+    fib_38 = round(prev_high - day_range * 0.382, 2)
+    fib_50 = round(prev_high - day_range * 0.500, 2)
+    fib_62 = round(prev_high - day_range * 0.618, 2)
+
+    result = {"score": 0, "fib_38": fib_38, "fib_50": fib_50, "fib_62": fib_62,
+              "nearest_level": "NONE", "signal": "NONE"}
+
+    # Check proximity to each level (closest wins)
+    best_dist = float("inf")
+    for name, level in [("FIB_38", fib_38), ("FIB_50", fib_50), ("FIB_62", fib_62)]:
+        if level <= 0:
+            continue
+        dist_pct = abs(current_price - level) / level * 100
+        if dist_pct <= proximity_pct and dist_pct < best_dist:
+            best_dist = dist_pct
+            result["nearest_level"] = name
+            # Price near a Fib level = S&R zone
+            # If price is approaching from above → support (+0.5)
+            # If price is approaching from below → resistance (-0.5)
+            if current_price >= level:
+                result["score"] = 0.5
+                result["signal"] = "AT_FIB_SUPPORT"
+            else:
+                result["score"] = -0.5
+                result["signal"] = "AT_FIB_RESISTANCE"
+
+    return result
+
+
+# ================================================================
+# VWAP STANDARD DEVIATION BANDS
+# ================================================================
+
+def vwap_bands(candles: list[dict]) -> dict:
+    """
+    Computes VWAP with ±1σ and ±2σ standard deviation bands.
+    Price at ±2σ → strong mean-reversion signal (±1).
+    Price between ±1σ and ±2σ → moderate signal (±0.5).
+
+    Returns:
+      {
+        "score": float,
+        "vwap": float,
+        "upper_1": float,   # VWAP + 1σ
+        "lower_1": float,   # VWAP - 1σ
+        "upper_2": float,   # VWAP + 2σ
+        "lower_2": float,   # VWAP - 2σ
+        "signal": str,      # "AT_LOWER_2SD" | "AT_LOWER_1SD" | "AT_UPPER_1SD" | "AT_UPPER_2SD" | "INSIDE"
+      }
+    """
+    default = {"score": 0, "vwap": 0, "upper_1": 0, "lower_1": 0,
+               "upper_2": 0, "lower_2": 0, "signal": "INSIDE"}
+
+    if not candles or len(candles) < 5:
+        return default
+
+    # Compute VWAP
+    cum_tp_vol = 0.0
+    cum_vol = 0
+    for c in candles:
+        tp = (c["high"] + c["low"] + c["close"]) / 3
+        vol = c.get("volume", 0)
+        cum_tp_vol += tp * vol
+        cum_vol += vol
+
+    if cum_vol == 0:
+        return default
+
+    v = cum_tp_vol / cum_vol
+
+    # Compute volume-weighted standard deviation of typical price from VWAP
+    cum_var_vol = 0.0
+    for c in candles:
+        tp = (c["high"] + c["low"] + c["close"]) / 3
+        vol = c.get("volume", 0)
+        cum_var_vol += vol * (tp - v) ** 2
+
+    sd = (cum_var_vol / cum_vol) ** 0.5 if cum_vol > 0 else 0
+
+    upper_1 = round(v + sd, 2)
+    lower_1 = round(v - sd, 2)
+    upper_2 = round(v + 2 * sd, 2)
+    lower_2 = round(v - 2 * sd, 2)
+
+    price = candles[-1]["close"]
+    score = 0.0
+    signal = "INSIDE"
+
+    if price <= lower_2:
+        score = 1.0    # deep below VWAP — strong buy signal
+        signal = "AT_LOWER_2SD"
+    elif price <= lower_1:
+        score = 0.5
+        signal = "AT_LOWER_1SD"
+    elif price >= upper_2:
+        score = -1.0   # deep above VWAP — strong sell signal
+        signal = "AT_UPPER_2SD"
+    elif price >= upper_1:
+        score = -0.5
+        signal = "AT_UPPER_1SD"
+
+    return {
+        "score": score,
+        "vwap": round(v, 2),
+        "upper_1": upper_1,
+        "lower_1": lower_1,
+        "upper_2": upper_2,
+        "lower_2": lower_2,
         "signal": signal,
     }
 
@@ -875,7 +1028,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: ~-19 to +19
+    Score range: ~-21 to +21
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal
@@ -895,6 +1048,8 @@ def compute_technical_score(
         "gap": dict,
         "hourly_ema": dict,
         "bb_squeeze": dict,
+        "fibonacci": dict,
+        "vwap_bands": dict,
       }
     """
     score = 0.0
@@ -1023,6 +1178,20 @@ def compute_technical_score(
     bb_data = bollinger_squeeze(candles_15m, period=20, num_std=2.0)
     score += bb_data["score"]
 
+    # Fibonacci retracement levels (prev day's range)
+    fib_data = fibonacci_score(candles_day, price) if candles_day else {
+        "score": 0, "fib_38": 0, "fib_50": 0, "fib_62": 0,
+        "nearest_level": "NONE", "signal": "NONE"
+    }
+    score += fib_data["score"]
+
+    # VWAP standard deviation bands (today's candles only)
+    vwap_band_data = vwap_bands(today_candles) if len(today_candles) >= 5 else {
+        "score": 0, "vwap": 0, "upper_1": 0, "lower_1": 0,
+        "upper_2": 0, "lower_2": 0, "signal": "INSIDE"
+    }
+    score += vwap_band_data["score"]
+
     # Map score to signal
     if score >= 5:
         signal = "STRONG_BUY"
@@ -1049,4 +1218,6 @@ def compute_technical_score(
         "gap": gap_data,
         "hourly_ema": hourly_data,
         "bb_squeeze": bb_data,
+        "fibonacci": fib_data,
+        "vwap_bands": vwap_band_data,
     }

@@ -184,6 +184,13 @@ class Config:
     TRAIL_AFTER_RISK_MULTIPLE: float = 1.0
     TRAIL_STEP_PCT:            float = 50.0
 
+    # ── Bid-Ask Spread Check ─────────────────────────────────────
+    # MAX_SPREAD_PCT: skip stocks with bid-ask spread wider than this %.
+    #   Wide spreads eat into tight ATR targets. 0.3% is typical for
+    #   NIFTY100 stocks; illiquid small-caps can be 0.5-1%.
+    #   Set to 0 to disable the check.
+    MAX_SPREAD_PCT: float = 0.3
+
     # ── Dry-Run Realism ──────────────────────────────────────────
     # SLIPPAGE_PCT: simulated slippage added to entries and exits
     #   in dry-run mode. Makes simulated P&L more realistic.

@@ -238,19 +238,19 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ## FUTURE — Remaining Deep Review Findings
 
-### 33. Fibonacci Retracement Levels
+### 33. ✅ Fibonacci Retracement Levels
 - **Versions**: V2, NoAI
 - **Gap**: Only uses previous day H/L and VWAP as reference levels. Fibonacci retracements (38.2%, 50%, 61.8%) of the day's range provide additional support/resistance.
 - **Fix**: Compute day's high-low Fib levels, add ±0.5 when price is near a level. Feed Fib level proximity to Claude snapshot.
 - **Effort**: Low | **Impact**: Medium
 
-### 34. Volume Profile / VWAP Standard Deviation Bands
+### 34. ✅ Volume Profile / VWAP Standard Deviation Bands
 - **Versions**: V2, NoAI
 - **Gap**: VWAP is used as a single line. Institutional traders also watch ±1σ and ±2σ bands — price touching -2σ VWAP band is a much stronger buy signal than simply "below VWAP".
 - **Fix**: Compute VWAP SD bands. Price at ±2σ → ±1 score bonus. Price between ±1-2σ → ±0.5.
 - **Effort**: Medium | **Impact**: Medium
 
-### 35. Order Book Depth / Bid-Ask Spread Check
+### 35. ✅ Order Book Depth / Bid-Ask Spread Check
 - **Versions**: All
 - **Gap**: Entry assumes tight spreads. Illiquid stocks can have wide bid-ask (0.5-1%), eating into the already-tight ATR target.
 - **Fix**: Before placing an order, check top 5 bid-ask levels via Zerodha's depth data. Skip stocks with spread > 0.3%.
@@ -268,10 +268,10 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Track intraday correlation between open positions. If new entry has >0.7 correlation with an existing position, reduce qty by 50%.
 - **Effort**: High | **Impact**: Medium
 
-### 38. Improved Slippage Model for Dry Run
+### 38. ✅ Improved Slippage Model for Dry Run
 - **Versions**: Dry Run
 - **Gap**: Fixed 0.15% slippage doesn't reflect real-world patterns. Slippage is higher at open (0.3-0.5%), near market close (0.2%), and for illiquid stocks.
-- **Fix**: Time-of-day and RVol-adjusted slippage: open hour ×2, last 30 min ×1.5, low RVol ×1.5.
+- **Fix**: Time-of-day adjusted slippage: opening hour ×2, last hour ×1.5. Applied on both entry and exit.
 - **Effort**: Low | **Impact**: Low (only affects dry-run realism)
 
 ### 39. ATR Percentile Ranking
@@ -372,12 +372,12 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 30 | 3-day candle lookback | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
 | 31 | Today-candle-count guard | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 32 | Late-entry target reduction | All | ✅ Done | `order_engine.py`, `config.py` |
-| 33 | Fibonacci retracement levels | V2, NoAI | ⬜ Pending | — |
-| 34 | VWAP SD bands | V2, NoAI | ⬜ Pending | — |
-| 35 | Bid-ask spread check | All | ⬜ Pending | — |
+| 33 | Fibonacci retracement levels | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 34 | VWAP SD bands | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 35 | Bid-ask spread check | All | ✅ Done | `order_engine.py`, `config.py` |
 | 36 | Intraday momentum (RoC) | V2, NoAI | ⬜ Pending | — |
 | 37 | Correlation-based sizing | All | ⬜ Pending | — |
-| 38 | Improved slippage model | Dry Run | ⬜ Pending | — |
+| 38 | Improved slippage model | Dry Run | ✅ Done | `order_engine.py` |
 | 39 | ATR percentile ranking | V2, NoAI | ⬜ Pending | — |
 | 40 | Claude prompt feedback loop | V2 | ⬜ Pending | — |
 | 41 | Holiday-shifted expiry | All | ⬜ Pending | — |

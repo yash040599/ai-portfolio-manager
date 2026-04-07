@@ -652,6 +652,12 @@ class StockScannerV2(StockScanner):
             adx_info = tech.get("adx", {})
             if adx_info.get("adx", 0) > 0:
                 parts.append(f"ADX {adx_info['adx']:.0f}({adx_info['trend_strength']})")
+            fib_info = tech.get("fibonacci", {})
+            if fib_info.get("signal", "NONE") != "NONE":
+                parts.append(f"Fib {fib_info['signal']}")
+            vwap_b_info = tech.get("vwap_bands", {})
+            if vwap_b_info.get("signal", "INSIDE") != "INSIDE":
+                parts.append(f"VWAP-Band {vwap_b_info['signal']}")
             if ps["patterns"]:
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
@@ -827,6 +833,18 @@ class StockScannerV2(StockScanner):
             if adx_info.get("adx", 0) > 0:
                 adx_str = f"  ADX: {adx_info['adx']:.0f}({adx_info['trend_strength']})"
 
+            # Fibonacci retracement levels
+            fib = tech.get("fibonacci", {})
+            fib_str = ""
+            if fib.get("signal", "NONE") != "NONE":
+                fib_str = f"  Fib: {fib['signal']}({fib['nearest_level']})"
+
+            # VWAP SD bands
+            vwap_b = tech.get("vwap_bands", {})
+            vwap_b_str = ""
+            if vwap_b.get("signal", "INSIDE") != "INSIDE":
+                vwap_b_str = f"  VWAP-Band: {vwap_b['signal']}"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -836,7 +854,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}"
             )
 
         return "\n".join(lines)
@@ -955,6 +973,18 @@ ADX (trend strength):
   ADX > 30 (STRONG) = strong trend. Trend-following signals are high conviction. Counter-trend trades are VERY risky.
   *** When ADX is WEAK, EMA/SuperTrend continuation scores are automatically halved by the system ***
 
+Fibonacci Retracement:
+  AT_FIB_SUPPORT = price near a Fib level (38.2/50/61.8% of prev day range) from above → support
+  AT_FIB_RESISTANCE = price near a Fib level from below → resistance
+  *** Fib levels are natural S&R where institutional traders place orders ***
+
+VWAP Bands:
+  AT_LOWER_2SD = price at VWAP -2σ → strong mean-reversion BUY signal (deeply oversold vs avg)
+  AT_LOWER_1SD = price at VWAP -1σ → moderate BUY signal
+  AT_UPPER_1SD = price at VWAP +1σ → moderate SELL signal
+  AT_UPPER_2SD = price at VWAP +2σ → strong mean-reversion SELL signal (deeply overbought vs avg)
+  *** VWAP SD bands measure how far price has deviated from institutional consensus ***
+
 Score:
   |score| >= 5 = high conviction (3+ aligned indicators)
   |score| 3-5 = moderate (needs confirming indicators)
@@ -988,13 +1018,15 @@ For BUY, count TRUE items:
   □ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
   □ BB = SQUEEZE_BULL (volatility breakout imminent)
   □ ADX > 20 (trend is developing or strong — not range-bound)
+  □ Fib = AT_FIB_SUPPORT (price bouncing off Fibonacci level)
+  □ VWAP-Band = AT_LOWER_1SD or AT_LOWER_2SD (mean-reversion support)
 
 For SELL, mirror with bearish signals.
 → 2 or fewer = DO NOT TRADE (insufficient evidence)
 → 3-4 = acceptable trade (moderate conviction)
 → 5+ = strong trade (high conviction — use full position size)
 
-Explicitly state the confluence count in your RATIONALE (e.g. "6/11 confluence").
+Explicitly state the confluence count in your RATIONALE (e.g. "6/13 confluence").
 
 ══════════════════════════════════════════════════════════
 INDIAN MARKET AWARENESS:
