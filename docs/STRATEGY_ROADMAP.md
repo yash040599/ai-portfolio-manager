@@ -241,7 +241,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 33. ✅ Fibonacci Retracement Levels
 - **Versions**: V2, NoAI
 - **Gap**: Only uses previous day H/L and VWAP as reference levels. Fibonacci retracements (38.2%, 50%, 61.8%) of the day's range provide additional support/resistance.
-- **Fix**: Compute day's high-low Fib levels, add ±0.5 when price is near a level. Feed Fib level proximity to Claude snapshot.
+- **Fix**: Compute day's high-low Fib levels, add +0.5 (unsigned) when price is near a level. Feed Fib level proximity to Claude snapshot.
 - **Effort**: Low | **Impact**: Medium
 
 ### 34. ✅ Volume Profile / VWAP Standard Deviation Bands

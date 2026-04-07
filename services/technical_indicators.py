@@ -457,7 +457,7 @@ def fibonacci_score(
         "fib_50": float,
         "fib_62": float,
         "nearest_level": str, # "FIB_38" | "FIB_50" | "FIB_62" | "NONE"
-        "signal": str,        # "AT_FIB_SUPPORT" | "AT_FIB_RESISTANCE" | "NONE"
+        "signal": str,        # "AT_FIB_LEVEL" | "NONE"
       }
     """
     default = {"score": 0, "fib_38": 0, "fib_50": 0, "fib_62": 0,
@@ -491,15 +491,11 @@ def fibonacci_score(
         if dist_pct <= proximity_pct and dist_pct < best_dist:
             best_dist = dist_pct
             result["nearest_level"] = name
-            # Price near a Fib level = S&R zone
-            # If price is approaching from above → support (+0.5)
-            # If price is approaching from below → resistance (-0.5)
-            if current_price >= level:
-                result["score"] = 0.5
-                result["signal"] = "AT_FIB_SUPPORT"
-            else:
-                result["score"] = -0.5
-                result["signal"] = "AT_FIB_RESISTANCE"
+            # Price near any Fib level = structural S&R zone.
+            # Always +0.5 (unsigned) — directional indicators (EMA, SuperTrend)
+            # already determine trade direction; Fib just confirms a level exists.
+            result["score"] = 0.5
+            result["signal"] = "AT_FIB_LEVEL"
 
     return result
 
@@ -1099,6 +1095,14 @@ def compute_technical_score(
     elif st_data["trend"] == "DOWN":
         score -= 1
 
+    # Remember VWAP position score before ADX section (used later to avoid
+    # double-counting with VWAP bands).
+    vwap_position_score = 0
+    if vwap_data["signal"] == "ABOVE_VWAP":
+        vwap_position_score = 1
+    elif vwap_data["signal"] == "BELOW_VWAP":
+        vwap_position_score = -1
+
     # ADX trend strength (14-period on 15m candles)
     # Halves EMA cross / SuperTrend continuation scores when trend is weak.
     # Adds bonus when trend is strong.
@@ -1190,6 +1194,12 @@ def compute_technical_score(
         "score": 0, "vwap": 0, "upper_1": 0, "lower_1": 0,
         "upper_2": 0, "lower_2": 0, "signal": "INSIDE"
     }
+    # When VWAP bands give a non-zero score (price at ±1σ/±2σ), undo the
+    # basic VWAP position score to avoid cancellation at extremes.  E.g.
+    # price at lower-2σ: VWAP position = -1, bands = +1 → cancel to 0.
+    # The bands signal is more specific, so keep it and drop the position score.
+    if vwap_band_data["score"] != 0:
+        score -= vwap_position_score
     score += vwap_band_data["score"]
 
     # Map score to signal

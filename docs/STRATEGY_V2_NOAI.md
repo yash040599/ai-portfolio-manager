@@ -54,6 +54,8 @@ For each stock in universe (50-200 stocks):
       • Hourly EMA(9/21) alignment — multi-timeframe confluence
       • Bollinger Band squeeze — volatility contraction breakout signal
       • ADX(14) — trend strength filter (halves continuation signals in weak trends, bonus in strong)
+      • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
+      • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
   → Calculate composite score (~-25 to +25)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3

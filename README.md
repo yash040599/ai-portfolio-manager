@@ -26,7 +26,7 @@ A fully automated intraday trading bot that:
 - Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
-- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 12 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R, Hourly EMA, BB Squeeze, ADX), and composite scoring (~-25 to +25). Only the top 15 strongest setups are sent to Claude
+- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 14 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R, Hourly EMA, BB Squeeze, ADX, Fibonacci, VWAP Bands), and composite scoring (~-25 to +25). Only the top 15 strongest setups are sent to Claude
 - **Sector diversification** — max 2 stocks per sector (BANKING, IT, PHARMA, AUTO, etc.) prevents correlated risk
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from 15-minute intraday candles to set intelligent SL/target levels sized for intraday moves (falls back to Claude's values if data unavailable). SL is hard-capped at 2.5% to prevent swing-trade-sized stops. When both ATR and Claude provide SL levels, the tighter (closer to entry) SL is used
@@ -77,7 +77,7 @@ A fully automated intraday trading bot that:
 - **Late-entry target reduction** — positions entered after 1 PM get reduced profit targets (20% at 1 PM, 35% at 2 PM) since less time remains for the move
 - **3-day candle lookback** — fetches 3 days of 15-min candle history instead of 2, improving pattern detection and indicator warm-up
 - **Today-candle-count guard** — suppresses ORB and gap signals when fewer than 3 today candles exist, preventing false signals on early/stale data
-- **Fibonacci retracement levels** — computes 38.2%, 50%, 61.8% retracement of prev day's range as S&R levels. Adds ±0.5 score when price is near a Fib level
+- **Fibonacci retracement levels** — computes 38.2%, 50%, 61.8% retracement of prev day's range as S&R levels. Adds +0.5 score when price is near a Fib level (unsigned — direction determined by other indicators)
 - **VWAP standard deviation bands** — computes ±1σ and ±2σ bands around VWAP. Price at ±2σ = strong mean-reversion signal (±1 score). Used by Claude for institutional-style VWAP analysis
 - **Bid-ask spread check** — before placing any live order, checks Zerodha's order book depth. Skips stocks with bid-ask spread > 0.3% to avoid slippage eating into tight ATR targets
 
@@ -95,7 +95,7 @@ python main.py --mode trade --v1
 
 ### Test Mode
 
-Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 12 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
+Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 14 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
 
 ```bash
 # V2 strategy test (shows what Claude would receive)
@@ -387,7 +387,7 @@ ai-portfolio-manager/
 │   ├── stock_scanner_v2.py  # V2 candle pre-filter + enriched Claude scan (extends V1)
 │   ├── candle_patterns.py   # 14 candlestick pattern detectors (pure math, no dependencies)
 │   ├── candle_cache.py      # SQLite cache for historical candle data (avoids redundant API calls)
-│   ├── technical_indicators.py # EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, composite scoring
+│   ├── technical_indicators.py # 14 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, ADX, Fibonacci, VWAP Bands + 4 more) + composite scoring
 │   ├── order_engine.py      # Order execution, position tracking, SL/target monitoring, P&L + taxes
 │   ├── report_writer.py     # Generates .txt reports and .json data dumps
 │   └── performance_tracker.py # SQLite database for trade history + portfolio analysis tracking

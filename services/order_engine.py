@@ -463,7 +463,7 @@ class OrderEngine:
         try:
             live_quotes = self.zerodha.get_quotes(
                 [{"symbol": symbol, "exchange": exchange}]
-            )
+            ) or {}
             live_price = live_quotes.get(
                 f"{exchange}:{symbol}", {}
             ).get("last_price", 0)
@@ -1713,7 +1713,7 @@ class OrderEngine:
         square-off has moderate widening (1.5×).
         """
         base = self.cfg.SLIPPAGE_PCT
-        if hour <= self.cfg.MARKET_OPEN_HOUR:
+        if hour == self.cfg.MARKET_OPEN_HOUR:
             return base * 2.0    # opening volatility
         if hour >= self.cfg.SQUARE_OFF_HOUR - 1:
             return base * 1.5    # last hour — reduced liquidity

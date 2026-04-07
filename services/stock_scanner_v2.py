@@ -974,8 +974,7 @@ ADX (trend strength):
   *** When ADX is WEAK, EMA/SuperTrend continuation scores are automatically halved by the system ***
 
 Fibonacci Retracement:
-  AT_FIB_SUPPORT = price near a Fib level (38.2/50/61.8% of prev day range) from above → support
-  AT_FIB_RESISTANCE = price near a Fib level from below → resistance
+  AT_FIB_LEVEL = price near a Fib level (38.2/50/61.8% of prev day range) — structural S&R zone
   *** Fib levels are natural S&R where institutional traders place orders ***
 
 VWAP Bands:
@@ -1018,7 +1017,7 @@ For BUY, count TRUE items:
   □ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
   □ BB = SQUEEZE_BULL (volatility breakout imminent)
   □ ADX > 20 (trend is developing or strong — not range-bound)
-  □ Fib = AT_FIB_SUPPORT (price bouncing off Fibonacci level)
+  □ Fib = AT_FIB_LEVEL (price near Fibonacci retracement level)
   □ VWAP-Band = AT_LOWER_1SD or AT_LOWER_2SD (mean-reversion support)
 
 For SELL, mirror with bearish signals.
@@ -1041,7 +1040,7 @@ INDIAN MARKET AWARENESS:
 ══════════════════════════════════════════════════════════
 STOP-LOSS AND TARGET RULES:
 ══════════════════════════════════════════════════════════
-• Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, or recent swing high/low. DO NOT use arbitrary fixed percentages.
+• Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, Fibonacci retracement level, or recent swing high/low. DO NOT use arbitrary fixed percentages.
 • SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
 • Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
 • For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
@@ -1073,10 +1072,10 @@ TRADE 1:
 SYMBOL: [NSE stock symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price near current price]
-STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/swing]
+STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/Fib/swing]
 TARGET: [target price — at least 1.5× SL distance from entry]
 QTY: [number of shares within budget constraints]
-RATIONALE: [2-3 sentences: (1) confluence count X/11 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
+RATIONALE: [2-3 sentences: (1) confluence count X/13 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
 TRADE 2:
 ...

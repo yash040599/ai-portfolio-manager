@@ -47,6 +47,8 @@ For each stock in universe (50-200 stocks):
       • Hourly EMA(9/21) alignment — multi-timeframe confluence
       • Bollinger Band squeeze — volatility contraction breakout signal
       • ADX(14) — trend strength filter (modifies continuation signals)
+      • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
+      • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
   → Calculate composite score (~-25 to +25)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
@@ -259,10 +261,13 @@ The composite score combines candle patterns + technical indicators:
 
 ```
 Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -19 to +19
+Technical score:       -21 to +21
   (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
    Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1,
-   Hourly EMA ±1, BB Squeeze ±1, ADX ±0.5)
+   Hourly EMA ±1, BB Squeeze ±1, ADX ±0.5,
+   Fib +0.5, VWAP Bands ±1)
+  Note: When VWAP bands are active, basic VWAP position score is removed
+  to prevent cancellation at extremes.
 RVol bonus/penalty:    -1 to +1
 
 Total range:           ~-25 to +25
