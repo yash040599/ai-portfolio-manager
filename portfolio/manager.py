@@ -1351,7 +1351,7 @@ class PortfolioManager:
         tr_color = "\033[92m" if total_realised >= 0 else "\033[91m"
 
         net_line = (
-            f"           "
+            f"  "
             f"Net today: {total_closed} trades  "
             f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
             f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
@@ -1371,7 +1371,7 @@ class PortfolioManager:
     def _clear_status_line(self):
         """Call before any log/print that interrupts the 2-line status display."""
         if self._status_lines_printed:
-            print()  # finish the partial line so log output starts clean
+            print("\n")  # finish the partial line + blank separator
             self._status_lines_printed = False
 
     def _print_pnl_summary(self, pnl: dict):
