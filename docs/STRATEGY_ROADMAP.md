@@ -121,7 +121,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
-## MEDIUM PRIORITY — Proven, moderate effort
+## COMPLETED — Indicator Enhancements
 
 ### 17. ✅ Multi-Timeframe Alignment (Hourly)
 - **Versions**: V2, NoAI
@@ -165,10 +165,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
-## MEDIUM PRIORITY — Proven, moderate effort
+## MEDIUM PRIORITY — Data-Driven Optimization
 
 ### 23. Volatility Regime Detection (India VIX)
-- **Versions**: V1 (retired), V2, NoAI
+- **Versions**: All
+- **Priority**: MEDIUM
 - **Gap**: Every market day treated the same. Low-vol days and high-vol days need different strategies.
 - **Fix**: Fetch India VIX at open. VIX < 13 → tighten targets, widen SL slightly. VIX > 22 → widen targets, reduce position size.
 - **Source**: Institutional practice — volatility-adaptive position sizing.
@@ -176,22 +177,23 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ### 24. Backtesting Framework
 - **Versions**: All (infrastructure)
+- **Priority**: HIGH
 - **Gap**: No way to measure which indicators actually contribute to winning trades. Flying blind.
 - **Fix**: Replay V2 scoring on historical 15-min data, simulate ATR-based entries/exits, compute win rate per indicator combination.
 - **Source**: Every professional quant desk backtests before going live.
 - **Effort**: High | **Impact**: Highest (enables all other improvements to be measured)
 
-### 25. 🟡 Trade Journaling & Performance Analytics
+### 25. ✅ Trade Journaling & Performance Analytics
 - **Versions**: All (infrastructure)
 - **Gap**: Daily reports exist but no systematic analysis of which patterns/indicators/times win.
-- **Fix**: Write full indicator snapshot at entry to SQLite. Weekly script to compute stats: win rate by pattern, by time of day, by RVol bucket, by score range.
-- **Status**: Partially done — indicator snapshot (entry_score, entry_rsi, entry_time, indicator_snapshot) now recorded to SQLite via `performance_tracker.py`. Weekly analytics script still pending.
+- **Fix**: Write full indicator snapshot at entry to SQLite. `view_performance.py` script for analytics: daily P&L, win rate, exit reason stats, side breakdown, indicator correlation.
+- **Status**: Done — indicator snapshot recorded to SQLite via `performance_tracker.py`. Analytics viewer: `scripts/view_performance.py` (--days, --date, --summary flags).
 - **Source**: Professional trading discipline — data-driven parameter tuning.
 - **Effort**: Medium | **Impact**: High
 
 ---
 
-## HIGH PRIORITY — Next Implementation Batch (Deep Review Findings)
+## COMPLETED — Deep Review Entry & Timing Fixes
 
 ### 26. ✅ Sector Cap Enforcement at Entry Time
 - **Versions**: All
@@ -237,7 +239,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
-## FUTURE — Remaining Deep Review Findings
+## PENDING — Execution & Indicator Improvements
 
 ### 33. ✅ Fibonacci Retracement Levels
 - **Versions**: V2, NoAI
@@ -379,7 +381,7 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 
 ### 55. LIMIT Orders for Entry/Exit
 - **Versions**: All
-- **Priority**: HIGH
+- **Priority**: CRITICAL
 - **Gap**: MARKET orders cause adverse fills (₹20-40/day slippage on ₹18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
 - **Fix**: Change `place_order()` calls from `order_type="MARKET"` to `order_type="LIMIT"` with `price=ltp`. Add a 5-10s fill check; if not filled, cancel and retry at updated LTP. Fall back to MARKET after 2 LIMIT failures.
 - **Files**: `order_engine.py`, `zerodha_client.py`
@@ -398,12 +400,46 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 - **Fix**: In `vwap_score()`, exclude the last candle if its timestamp is within the current 15-min window (i.e., hasn't closed). Only use fully-closed candles for VWAP computation.
 - **Files**: `technical_indicators.py`
 
-### 58. Reduce to 2 Positions for Micro Budgets
+### 58. ✅ Dynamic Position Sizing by Budget
 - **Versions**: All
-- **Priority**: MEDIUM
-- **Gap**: With ₹18-20K budget, even 3 positions = ₹6K each. Transaction costs still eat 0.4-0.5% per round trip. 2 positions at ₹9-10K each reduces cost drag to ~0.3%.
-- **Fix**: Add budget-aware MAX_POSITIONS logic: if budget < ₹25K, cap at 2 positions automatically. Otherwise use configured MAX_POSITIONS.
+- **Priority**: Done
+- **Gap**: With ₹18-20K budget, even 3 positions = ₹6K each. Transaction costs still eat 0.4-0.5% per round trip.
+- **Fix**: `dynamic_max_positions()` classmethod auto-scales with budget: <₹25K→2, 25-60K→3, 60-1L→4, >1L→5. Called from `set_budget()` at startup. `MAX_POSITIONS_OVERRIDE` for manual lock.
 - **Files**: `config.py`, `order_engine.py`
+
+---
+
+## COMPLETED — Financial Audit Fixes (April 2026)
+
+Bugs identified during expert code review. All fixed in commit that added this section.
+
+### 69. ✅ SL Sanity Check After Entry Price Override
+- **Versions**: All
+- **Priority**: CRITICAL (was)
+- **Gap**: When Claude's entry price is overridden to live Zerodha quote (>5% deviation), the SL calculated by Claude for the old entry could end up on the WRONG side of the new entry (e.g. SL above entry for a BUY). If ATR was unavailable, this invalid SL was used.
+- **Fix**: After all SL calculations, validate SL is on correct side of entry. If BUY and SL >= entry, or SELL and SL <= entry → reset to DEFAULT_STOP_LOSS_PCT with proper R:R target.
+- **Files**: `order_engine.py`
+
+### 70. ✅ SL-M Partial Fill Verification
+- **Versions**: All (live mode)
+- **Priority**: CRITICAL (was)
+- **Gap**: When SL-M triggers on exchange, code assumed full qty was filled. SL-M can partially fill if insufficient liquidity. Remaining shares would be UNPROTECTED.
+- **Fix**: Query Zerodha for actual filled qty via `get_order_filled_qty()`. If partial fill, place MARKET exit for remaining shares immediately.
+- **Files**: `order_engine.py`, `zerodha_client.py`
+
+### 71. ✅ Fill Price Scaling Re-validates SL Cap
+- **Versions**: All (live mode)
+- **Priority**: HIGH (was)
+- **Gap**: After order fills at a different price, SL/target are scaled proportionally. This scaling could push SL beyond MAX_INTRADAY_SL_PCT (e.g. from 2.5% to 2.7%).
+- **Fix**: After proportional scaling, re-check SL distance %. If it exceeds MAX_INTRADAY_SL_PCT, re-cap SL and recalculate target.
+- **Files**: `order_engine.py`
+
+### 72. ✅ Store Initial SL at Entry Time
+- **Versions**: All
+- **Priority**: MEDIUM (was)
+- **Gap**: `initial_sl` was set on first call to `_auto_trail_stop()`, not at entry. If Claude adjusted SL between entry and first trail event, trailing risk baseline was wrong (used the adjusted SL, not the original entry SL).
+- **Fix**: Store `initial_sl` in position dict at entry time in `enter_trade()`.
+- **Files**: `order_engine.py`
 
 ---
 
@@ -435,7 +471,7 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 | 22 | Regime-shift SL tightening | V2, NoAI | ✅ Done | `manager_v2.py` |
 | 23 | VIX-based sizing | All | ⬜ Pending | — |
 | 24 | Backtesting framework | All | ⬜ Pending | — |
-| 25 | Trade journaling | All | 🟡 Partial | `performance_tracker.py` |
+| 25 | Trade journaling + analytics | All | ✅ Done | `performance_tracker.py`, `view_performance.py` |
 | 26 | Sector cap at entry time | All | ✅ Done | `order_engine.py` |
 | 27 | EOD accelerated exit | NoAI, V2 | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
 | 28 | ADX trend strength | V2, NoAI | ✅ Done | `technical_indicators.py` |
@@ -464,10 +500,10 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 | 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 53 | Direction diversification cap | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |
-| 55 | LIMIT orders for entry/exit | All | ⬜ Pending | — |
+| 55 | **LIMIT orders for entry/exit** | All | ⬜ **CRITICAL** | — |
 | 56 | Scan universe price filter | V2, NoAI | ⬜ Pending | — |
 | 57 | VWAP exclude incomplete candle | V2, NoAI | ⬜ Pending | — |
-| 58 | Reduce to 2 positions | All | ⬜ Pending | — |
+| 58 | Dynamic position sizing by budget | All | ✅ Done | `config.py`, `order_engine.py` |
 | 59 | R:R 1.5:1 + configurable multiplier | All | ✅ Done | `config.py`, `order_engine.py` |
 | 60 | Exchange SL-M orders | All | ✅ Done | `zerodha_client.py`, `order_engine.py`, `config.py` |
 | 61 | SuperTrend params configurable | V2, NoAI | ✅ Done | `config.py`, `technical_indicators.py` |
@@ -478,3 +514,7 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 | 66 | Entry delay 15→5 min | All | ✅ Done | `config.py` |
 | 67 | Trail step 65→50% | All | ✅ Done | `config.py` |
 | 68 | Time-decay 40→25% | All | ✅ Done | `config.py` |
+| 69 | SL sanity check after entry override | All | ✅ Done | `order_engine.py` |
+| 70 | SL-M partial fill verification | All | ✅ Done | `order_engine.py`, `zerodha_client.py` |
+| 71 | Fill price SL cap re-validation | All | ✅ Done | `order_engine.py` |
+| 72 | Store initial_sl at entry | All | ✅ Done | `order_engine.py` |

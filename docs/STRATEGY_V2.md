@@ -365,11 +365,15 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 ## Known Limitations
 
-See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-68).
+See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-72).
 
 | # | Gap | Priority | Est. Impact |
 |---|-----|----------|-------------|
-| 55 | MARKET → LIMIT orders | HIGH | ₹20-40/day slippage |
+| 55 | MARKET → LIMIT orders | CRITICAL | ₹20-40/day slippage |
+| 24 | Backtesting framework | HIGH | Enables measured optimization |
+| 40 | Claude prompt feedback loop | HIGH | Better trade selection |
+| 44 | WebSocket tick data | HIGH | Faster SL/target execution |
+| 23 | VIX-based volatility sizing | MEDIUM | Adapt to market regime |
 | 56 | Stock price range filter | MEDIUM | Filters out poor-spread stocks |
 | 57 | VWAP incomplete candle | LOW | Slight VWAP skew |
-| 58 | 2 positions for micro budgets | MEDIUM | Further reduce cost drag |
+| 41 | Holiday-shifted expiry detection | LOW | ~2-3 days/year edge case |

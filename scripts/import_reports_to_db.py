@@ -80,6 +80,14 @@ def ensure_tables(conn):
         )
     except sqlite3.OperationalError:
         pass
+    # Add indicator snapshot columns if upgrading from older schema
+    for col, col_type in [("entry_score", "REAL"), ("entry_rsi", "REAL"),
+                          ("entry_time", "TEXT"), ("exit_time", "TEXT"),
+                          ("indicator_snapshot", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
 
 

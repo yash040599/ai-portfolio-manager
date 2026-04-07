@@ -678,6 +678,17 @@ class ZerodhaClient:
         self.log.warning(f"Could not get fill price for order {order_id} after {timeout}s")
         return None
 
+    def get_order_filled_qty(self, order_id: str) -> int | None:
+        """Returns total filled quantity for an order, or None on failure."""
+        self._require_login()
+        try:
+            trades = self._kite.order_trades(order_id)
+            if trades:
+                return sum(t["quantity"] for t in trades)
+            return 0
+        except Exception:
+            return None
+
     # ================================================================
     # END-OF-DAY TRADE RECONCILIATION
     # ================================================================

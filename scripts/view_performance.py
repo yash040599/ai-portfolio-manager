@@ -28,17 +28,26 @@ def get_trades(date_filter: str | None = None, last_n_days: int | None = None) -
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
+    # Ensure newer columns exist (older DBs may lack them)
+    for col, col_type in [("entry_score", "REAL"), ("entry_rsi", "REAL"),
+                          ("entry_time", "TEXT"), ("exit_time", "TEXT"),
+                          ("indicator_snapshot", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     if date_filter:
         rows = conn.execute(
-            "SELECT * FROM trades WHERE date=? ORDER BY entry_time", (date_filter,)
+            "SELECT * FROM trades WHERE date=? ORDER BY entry_time, id", (date_filter,)
         ).fetchall()
     elif last_n_days:
         rows = conn.execute(
-            "SELECT * FROM trades WHERE date >= date('now', ?) ORDER BY date, entry_time",
+            "SELECT * FROM trades WHERE date >= date('now', ?) ORDER BY date, entry_time, id",
             (f"-{last_n_days} days",),
         ).fetchall()
     else:
-        rows = conn.execute("SELECT * FROM trades ORDER BY date, entry_time").fetchall()
+        rows = conn.execute("SELECT * FROM trades ORDER BY date, entry_time, id").fetchall()
 
     conn.close()
     return rows

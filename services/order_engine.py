@@ -569,6 +569,26 @@ class OrderEngine:
                 f"ATR unavailable for {symbol} — using Claude SL: ₹{sl:.2f} / Target: ₹{target:.2f}"
             )
 
+        # ── SL sanity check: ensure SL is on the correct side of entry ─
+        # Can happen when entry was overridden to live price but SL was
+        # calculated by Claude using a stale/hallucinated entry price.
+        if side == "BUY" and sl >= entry:
+            default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
+            sl = round(entry * (1 - default_sl_pct / 100), 2)
+            target = round(entry * (1 + default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
+            self.log.warning(
+                f"{symbol}: SL was above entry (invalid for BUY) — "
+                f"reset to default {default_sl_pct}%: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+            )
+        elif side == "SELL" and sl <= entry:
+            default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
+            sl = round(entry * (1 + default_sl_pct / 100), 2)
+            target = round(entry * (1 - default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
+            self.log.warning(
+                f"{symbol}: SL was below entry (invalid for SELL) — "
+                f"reset to default {default_sl_pct}%: SL ₹{sl:.2f} | Target ₹{target:.2f}"
+            )
+
         # ── Late-entry target reduction ───────────────────────────
         # Two-tier cutoffs based on time remaining before 3:10 PM square-off:
         #   13:00+ → 20% target reduction (still ~2h to hit target)
@@ -779,6 +799,20 @@ class OrderEngine:
                         ratio = fill_price / estimated_entry
                         sl     = round(sl * ratio, 2)
                         target = round(target * ratio, 2)
+                        # Re-validate SL cap after scaling (scaling can push SL beyond MAX_INTRADAY_SL_PCT)
+                        max_sl_pct = getattr(self.cfg, 'MAX_INTRADAY_SL_PCT', 2.5)
+                        actual_sl_pct = abs(sl - entry) / entry * 100 if entry > 0 else 0
+                        if actual_sl_pct > max_sl_pct:
+                            rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
+                            if side == 'BUY':
+                                sl = round(entry * (1 - max_sl_pct / 100), 2)
+                                target = round(entry * (1 + max_sl_pct * rr_mult / 100), 2)
+                            else:
+                                sl = round(entry * (1 + max_sl_pct / 100), 2)
+                                target = round(entry * (1 - max_sl_pct * rr_mult / 100), 2)
+                            self.log.info(
+                                f"SL re-capped after fill scaling: {actual_sl_pct:.1f}% → {max_sl_pct}%"
+                            )
                         self.log.info(
                             f"SL/Target scaled to fill: SL ₹{sl:.2f} | Target ₹{target:.2f}"
                         )
@@ -827,6 +861,8 @@ class OrderEngine:
             "_indicator_snapshot": trade.get("_indicator_snapshot"),
             # Late-entry flag — prevents time-decay from stacking
             "_late_entry_reduced": trade.get("_late_entry_reduced", False),
+            # Store initial SL at entry for correct trailing risk calculation
+            "initial_sl": sl,
         }
 
         # ── Place SL-M order on exchange for instant SL execution ─
@@ -907,12 +943,37 @@ class OrderEngine:
         # ── Handle exchange SL-M order ────────────────────────────
         if sl_order_id and not self.cfg.DRY_RUN:
             if reason == "STOP_LOSS":
-                # SL-M on exchange already triggered — don't place
-                # another exit order (would double the exit).
-                self.log.info(
-                    f"SL-M {sl_order_id} triggered for {symbol} — "
-                    f"skipping duplicate exit order"
-                )
+                # SL-M on exchange should have triggered. Verify fill qty
+                # matches position qty — SL-M can partially fill if
+                # insufficient liquidity at trigger price.
+                sl_filled_qty = qty  # default: assume full fill
+                try:
+                    sl_filled_qty = self.zerodha.get_order_filled_qty(sl_order_id) or qty
+                except Exception:
+                    pass  # API unavailable — assume full fill
+
+                if sl_filled_qty >= qty:
+                    self.log.info(
+                        f"SL-M {sl_order_id} triggered for {symbol} — "
+                        f"full fill confirmed ({sl_filled_qty} shares)"
+                    )
+                else:
+                    # Partial fill — place market exit for remaining shares
+                    remaining = qty - sl_filled_qty
+                    self.log.warning(
+                        f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares. "
+                        f"Placing MARKET exit for remaining {remaining} shares."
+                    )
+                    try:
+                        self.zerodha.place_order(
+                            symbol=symbol, exchange=exchange,
+                            qty=remaining, side=exit_side, order_type="MARKET",
+                        )
+                    except Exception as e:
+                        self.log.error(
+                            f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
+                            f"MANUAL INTERVENTION NEEDED"
+                        )
                 position["_sl_order_id"] = None
                 sl_m_handled = True
             else:

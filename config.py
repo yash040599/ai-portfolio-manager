@@ -126,17 +126,11 @@ class Config:
     ]
 
     # ── Position Limits ───────────────────────────────────────────
-    # MAX_POSITIONS: max simultaneous positions. Overridden at runtime
-    #   by dynamic_max_positions() which scales with budget:
-    #     budget < ₹25K  → 2 positions (₹10-12K each, ~0.3% cost drag)
-    #     budget ₹25-60K → 3 positions (₹8-20K each)
-    #     budget ₹60-1L  → 4 positions (₹15-25K each)
-    #     budget > ₹1L   → 5 positions (₹20K+ each)
-    #   This ensures per-position size stays large enough that
-    #   transaction costs (₹40-50 round trip) are < 0.5% of position.
-    #   Set MAX_POSITIONS_OVERRIDE to a non-zero value to lock it manually.
-    MAX_POSITIONS:    int = 3
-    MAX_POSITIONS_OVERRIDE: int = 0  # 0 = auto-scale with budget; >0 = fixed
+    # MAX_POSITIONS: auto-set at runtime by dynamic_max_positions().
+    #   DO NOT manually edit this — it is overwritten when set_budget() runs.
+    #   To force a specific value, set MAX_POSITIONS_OVERRIDE instead.
+    MAX_POSITIONS:    int = 3   # runtime default; overwritten by dynamic_max_positions()
+    MAX_POSITIONS_OVERRIDE: int = 0  # 0 = auto-scale with budget; >0 = locked manual value
     MAX_POSITION_PCT: int = 40
 
     # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
