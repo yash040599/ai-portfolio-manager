@@ -29,7 +29,8 @@
 #   Gap analysis:      ±1  (pre-market gap continuation vs fill)
 #   Hourly EMA align:  ±1  (multi-timeframe confluence confirmation)
 #   BB squeeze:        ±1  (volatility contraction → breakout imminent)
-#   → Technical score range: ~-18 to +18
+#   ADX modifier:      ±0.5 (dampens trend scores in range-bound, bonus in strong trend)
+#   → Technical score range: ~-19 to +19
 # ================================================================
 
 import datetime
@@ -770,6 +771,101 @@ def bollinger_squeeze(candles: list[dict], period: int = 20, num_std: float = 2.
         return {"score": -1, "signal": "SQUEEZE_BEAR", "bandwidth": round(bandwidth, 3), "squeeze": True}
 
 
+# ================================================================
+# ADX — AVERAGE DIRECTIONAL INDEX (TREND STRENGTH)
+# ================================================================
+
+def adx(candles: list[dict], period: int = 14) -> dict:
+    """
+    Compute ADX (Average Directional Index) to measure trend strength.
+
+    ADX < 20  → range-bound / weak trend (whipsaw risk)
+    ADX 20-30 → developing trend
+    ADX > 30  → strong trend
+
+    Returns:
+      {
+        "adx": float (0-100),
+        "plus_di": float,
+        "minus_di": float,
+        "trend_strength": "WEAK" | "MODERATE" | "STRONG",
+      }
+    """
+    n = len(candles)
+    if n < period + 2:
+        return {"adx": 0, "plus_di": 0, "minus_di": 0, "trend_strength": "WEAK"}
+
+    # True Range + Directional Movement
+    tr_list = []
+    plus_dm_list = []
+    minus_dm_list = []
+
+    for i in range(1, n):
+        high  = candles[i]["high"]
+        low   = candles[i]["low"]
+        prev_close = candles[i - 1]["close"]
+        prev_high  = candles[i - 1]["high"]
+        prev_low   = candles[i - 1]["low"]
+
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        tr_list.append(tr)
+
+        up_move   = high - prev_high
+        down_move = prev_low - low
+
+        plus_dm  = up_move if (up_move > down_move and up_move > 0) else 0
+        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0
+        plus_dm_list.append(plus_dm)
+        minus_dm_list.append(minus_dm)
+
+    if len(tr_list) < period:
+        return {"adx": 0, "plus_di": 0, "minus_di": 0, "trend_strength": "WEAK"}
+
+    # Smoothed TR, +DM, -DM using Wilder's smoothing
+    atr_smooth = sum(tr_list[:period])
+    pdm_smooth = sum(plus_dm_list[:period])
+    mdm_smooth = sum(minus_dm_list[:period])
+
+    dx_list = []
+    for i in range(period, len(tr_list)):
+        atr_smooth = atr_smooth - atr_smooth / period + tr_list[i]
+        pdm_smooth = pdm_smooth - pdm_smooth / period + plus_dm_list[i]
+        mdm_smooth = mdm_smooth - mdm_smooth / period + minus_dm_list[i]
+
+        plus_di  = (pdm_smooth / atr_smooth * 100) if atr_smooth > 0 else 0
+        minus_di = (mdm_smooth / atr_smooth * 100) if atr_smooth > 0 else 0
+
+        di_sum = plus_di + minus_di
+        dx = abs(plus_di - minus_di) / di_sum * 100 if di_sum > 0 else 0
+        dx_list.append(dx)
+
+    if len(dx_list) < period:
+        return {"adx": 0, "plus_di": 0, "minus_di": 0, "trend_strength": "WEAK"}
+
+    # ADX = smoothed average of DX
+    adx_val = sum(dx_list[:period]) / period
+    for i in range(period, len(dx_list)):
+        adx_val = (adx_val * (period - 1) + dx_list[i]) / period
+
+    # Current +DI / -DI
+    cur_plus_di  = (pdm_smooth / atr_smooth * 100) if atr_smooth > 0 else 0
+    cur_minus_di = (mdm_smooth / atr_smooth * 100) if atr_smooth > 0 else 0
+
+    if adx_val >= 30:
+        strength = "STRONG"
+    elif adx_val >= 20:
+        strength = "MODERATE"
+    else:
+        strength = "WEAK"
+
+    return {
+        "adx": round(adx_val, 1),
+        "plus_di": round(cur_plus_di, 1),
+        "minus_di": round(cur_minus_di, 1),
+        "trend_strength": strength,
+    }
+
+
 def compute_technical_score(
     candles_15m: list[dict],
     candles_day: list[dict] | None = None,
@@ -779,7 +875,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: ~-18 to +18
+    Score range: ~-19 to +19
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal
@@ -792,6 +888,7 @@ def compute_technical_score(
         "rsi": dict,
         "vwap": dict,
         "supertrend": dict,
+        "adx": dict,
         "prev_day_sr": dict,
         "macd": dict,
         "orb": dict,
@@ -847,6 +944,33 @@ def compute_technical_score(
     elif st_data["trend"] == "DOWN":
         score -= 1
 
+    # ADX trend strength (14-period on 15m candles)
+    # Halves EMA cross / SuperTrend continuation scores when trend is weak.
+    # Adds bonus when trend is strong.
+    adx_data = adx(candles_15m, period=14)
+    if adx_data["trend_strength"] == "WEAK":
+        # Range-bound market: dampen trend-following scores already added
+        # EMA cross contributed ±2 or ±1, SuperTrend continuation ±1
+        # We retroactively halve only the continuation components.
+        # (reversal signals like SuperTrend BULLISH/BEARISH ±3 stay — reversals
+        # are meaningful even in low-ADX, they mark regime *start*)
+        if ema_data["signal"] not in ("BULLISH_CROSS", "BEARISH_CROSS"):
+            # Undo spread-based ±1 and add back halved
+            if ema_data["spread_pct"] > 0.5:
+                score -= 0.5
+            elif ema_data["spread_pct"] < -0.5:
+                score += 0.5
+        if st_data["trend"] == "UP" and st_data["signal"] not in ("BULLISH", "BEARISH"):
+            score -= 0.5
+        elif st_data["trend"] == "DOWN" and st_data["signal"] not in ("BULLISH", "BEARISH"):
+            score += 0.5
+    elif adx_data["trend_strength"] == "STRONG":
+        # Strong trend: add directional bonus
+        if adx_data["plus_di"] > adx_data["minus_di"]:
+            score += 0.5
+        else:
+            score -= 0.5
+
     # MACD histogram (12,26,9 on 15m candles)
     macd_data = macd_histogram(candles_15m, fast=12, slow=26, signal_period=9)
     if macd_data["signal"] == "BULLISH" and macd_data["momentum"] == "GROWING":
@@ -876,13 +1000,19 @@ def compute_technical_score(
     score += sr_data["score"]
 
     # Opening Range Breakout (first 15-min candle of today)
-    orb_data = opening_range_score(candles_15m, price)
+    # Suppress when < 3 today candles (too early for meaningful ORB)
+    if len(today_candles) >= 3:
+        orb_data = opening_range_score(candles_15m, price)
+    else:
+        orb_data = {"score": 0, "or_high": 0, "or_low": 0, "signal": "NO_DATA"}
     score += orb_data["score"]
 
     # Pre-market gap analysis (yesterday's close vs today's open)
-    gap_data = gap_analysis_score(candles_day, candles_15m) if candles_day else {
-        "score": 0, "gap_pct": 0, "signal": "NO_GAP"
-    }
+    # Suppress when < 3 today candles (gap signal is stale once confirmed)
+    if candles_day and len(today_candles) >= 3:
+        gap_data = gap_analysis_score(candles_day, candles_15m)
+    else:
+        gap_data = {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
     score += gap_data["score"]
 
     # Multi-timeframe: hourly EMA alignment (from 15-min candles)
@@ -912,6 +1042,7 @@ def compute_technical_score(
         "rsi": rsi_data,
         "vwap": vwap_data,
         "supertrend": st_data,
+        "adx": adx_data,
         "prev_day_sr": sr_data,
         "macd": macd_data,
         "orb": orb_data,

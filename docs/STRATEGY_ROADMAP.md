@@ -190,6 +190,52 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ---
 
+## HIGH PRIORITY — Next Implementation Batch (Deep Review Findings)
+
+### 26. ✅ Sector Cap Enforcement at Entry Time
+- **Versions**: All
+- **Gap**: Sector cap (max 2/sector) is only checked during pre-filter scan. Re-scans and opportunity scans can bypass this since they don't see existing open positions. 3 banking stocks could be open simultaneously.
+- **Fix**: In `enter_trade()`, check the sector of the new stock against sectors of existing open positions. Reject if sector already has MAX_PER_SECTOR open positions.
+- **Source**: Portfolio theory — correlated positions amplify drawdown when a sector drops.
+
+### 27. ✅ End-of-Day Accelerated Exit (NoAI)
+- **Versions**: NoAI, V2
+- **Gap**: Claude prompt says "EXIT ALL underwater positions <30 min", but NoAI code doesn't enforce this. Losing positions sit until 15:10 square-off, risking slippage in low-liquidity closing minutes.
+- **Fix**: After `EOD_EXIT_AFTER_HOUR:EOD_EXIT_AFTER_MINUTE` (default 14:45), auto-exit any position that is at a loss. Breakeven positions get SL tightened to entry - 0.1%.
+- **Source**: Professional day trading — don't hold losers into the close.
+
+### 28. ✅ ADX Trend Strength Filter
+- **Versions**: V2, NoAI
+- **Gap**: SuperTrend/EMA give whipsaw signals in range-bound markets. No way to distinguish trending vs ranging conditions per stock.
+- **Fix**: ADX(14) on 15-min candles. ADX < 20: halve EMA crossover and SuperTrend continuation scores. ADX > 30: +0.5 trend-strength bonus. Feed ADX value to Claude snapshot.
+- **Source**: ADX is the standard trend strength indicator. Avoids overtrading in choppy conditions.
+
+### 29. ✅ Thursday F&O Expiry-Day Handling
+- **Versions**: All
+- **Gap**: Thursday is weekly F&O expiry — wider intraday swings. Claude prompt mentions this but code doesn't adjust parameters.
+- **Fix**: On Thursdays: widen ATR_MULTIPLIER by +0.3 (wider SLs), reduce MAX_POSITIONS by 1, raise V2_MIN_SCORE by +0.5. Applied dynamically at start of trading day.
+- **Source**: NSE F&O expiry drives massive intraday volatility, especially in banking stocks.
+
+### 30. ✅ Increase Candle Lookback to 3 Days
+- **Versions**: V2, NoAI
+- **Gap**: MACD(12,26,9) needs 35+ candle warmup. 2-day lookback gives ~50 candles, only 15 real MACD values after warmup. Bollinger Bands similarly marginal.
+- **Fix**: Increase `days_back` from 2 to 3 for 15-min candle fetches. Gives ~75 candles — enough for all indicators to stabilize.
+- **Source**: Technical analysis data requirements — indicators need sufficient warm-up.
+
+### 31. ✅ Today-Candle-Count Guard for Early Scans
+- **Versions**: V2, NoAI
+- **Gap**: At 9:30 AM (1 today candle), VWAP is computed on a single candle (meaningless), ORB can't detect breakouts yet, RVol is unreliable. Indicators silently produce garbage.
+- **Fix**: In `compute_technical_score()`, suppress ORB and gap scores when fewer than 3 today candles exist. Let time-insensitive indicators (EMA, RSI, SuperTrend) still contribute.
+- **Source**: Data quality — indicators need minimum data to be meaningful.
+
+### 32. ✅ Late-Entry Target Reduction
+- **Versions**: All
+- **Gap**: A trade at 2 PM gets the same ATR target as one at 9:30 AM, but has only 70 min for target to hit vs 340 min. Probability of hitting target is dramatically lower.
+- **Fix**: Apply target reduction at entry time (not just existing time-decay on open positions). After 1 PM: reduce target by 20%. After 2 PM: reduce by 35%.
+- **Source**: Time-value decay in intraday positions — targets must be realistic for remaining time.
+
+---
+
 ## Implementation Status
 
 | # | Improvement | Versions | Status | Implemented In |
@@ -219,3 +265,10 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 | 23 | VIX-based sizing | All | ⬜ Pending | — |
 | 24 | Backtesting framework | All | ⬜ Pending | — |
 | 25 | Trade journaling | All | ⬜ Pending | — |
+| 26 | Sector cap at entry time | All | ✅ Done | `order_engine.py` |
+| 27 | EOD accelerated exit | NoAI, V2 | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
+| 28 | ADX trend strength | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 29 | Thursday expiry handling | All | ✅ Done | `manager.py`, `config.py` |
+| 30 | 3-day candle lookback | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
+| 31 | Today-candle-count guard | V2, NoAI | ✅ Done | `technical_indicators.py` |
+| 32 | Late-entry target reduction | All | ✅ Done | `order_engine.py`, `config.py` |

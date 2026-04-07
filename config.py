@@ -209,6 +209,32 @@ class Config:
     # too late when full-day targets are impossible.
     MIN_MINUTES_FOR_ENTRY: int = 60
 
+    # ── End-of-Day Accelerated Exit ───────────────────────────────
+    # EOD_EXIT_AFTER_HOUR / MINUTE: after this time, auto-exit any
+    #   losing position. Prevents holding losers into the close where
+    #   liquidity drops and square-off slippage is higher.
+    # Breakeven positions get SL tightened to entry ± 0.1%.
+    EOD_EXIT_AFTER_HOUR:   int = 14   # 2:45 PM IST
+    EOD_EXIT_AFTER_MINUTE: int = 45
+
+    # ── Late Entry Target Reduction ───────────────────────────────
+    # Trades entered after 1 PM get reduced targets (less time to hit).
+    # LATE_ENTRY_HOUR_1 / REDUCTION_1: after 1 PM, reduce by 20%.
+    # LATE_ENTRY_HOUR_2 / REDUCTION_2: after 2 PM, reduce by 35%.
+    LATE_ENTRY_HOUR_1:       int   = 13
+    LATE_ENTRY_REDUCTION_1:  float = 20.0
+    LATE_ENTRY_HOUR_2:       int   = 14
+    LATE_ENTRY_REDUCTION_2:  float = 35.0
+
+    # ── Thursday Expiry Adjustments ───────────────────────────────
+    # On weekly F&O expiry Thursdays, NIFTY stocks see wider swings.
+    # EXPIRY_ATR_BUMP: added to ATR_MULTIPLIER (wider SLs).
+    # EXPIRY_POSITION_REDUCTION: MAX_POSITIONS reduced by this many.
+    # EXPIRY_SCORE_BUMP: added to V2_MIN_SCORE (demand stronger signals).
+    EXPIRY_ATR_BUMP:           float = 0.3
+    EXPIRY_POSITION_REDUCTION: int   = 1
+    EXPIRY_SCORE_BUMP:         float = 0.5
+
     # ══════════════════════════════════════════════════════════════
     # V2 — CANDLE STRATEGY SETTINGS (used with --v2 flag)
     # ══════════════════════════════════════════════════════════════

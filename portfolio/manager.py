@@ -201,6 +201,9 @@ class PortfolioManager:
                     f"skipping to monitor loop"
                 )
 
+        # ── Step 5c: Thursday F&O expiry adjustments ────────────
+        self._apply_expiry_day_adjustments()
+
         if resumed > 0:
             # Already have live positions — run an immediate Claude
             # review so it can assess the resumed positions, then
@@ -790,6 +793,13 @@ class PortfolioManager:
                 self._run_claude_review(quotes)
                 last_review_time = time.time()
 
+            # ── End-of-day accelerated exit ─────────────────────
+            if self.engine.open_positions():
+                eod_closed = self.engine.check_eod_exit(quotes)
+                if eod_closed > 0:
+                    self._clear_status_line()
+                    self.log.info(f"{eod_closed} losing position(s) exited (EOD accelerated exit)")
+
             # ── Print compact status line ─────────────────────────
             self._print_status(quotes)
 
@@ -903,6 +913,38 @@ class PortfolioManager:
         returned funds amount for budget calculation.
         """
         self._available_funds = self.zerodha.print_account_snapshot()
+
+    # ================================================================
+    # THURSDAY F&O EXPIRY ADJUSTMENTS
+    # ================================================================
+
+    def _apply_expiry_day_adjustments(self):
+        """
+        On weekly F&O expiry Thursdays, NIFTY stocks see wider swings.
+        Dynamically widen SLs, reduce position count, and raise min score.
+        NOTE: When Thursday is an NSE holiday, expiry shifts to Wednesday.
+        That edge case (~2-3 days/year) is not handled yet.
+        """
+        if getattr(self, '_expiry_applied', False):
+            return
+        today = datetime.datetime.now()
+        if today.weekday() != 3:  # 3 = Thursday
+            return
+        self._expiry_applied = True
+
+        bump_atr   = self.cfg.EXPIRY_ATR_BUMP
+        reduce_pos = self.cfg.EXPIRY_POSITION_REDUCTION
+        bump_score = self.cfg.EXPIRY_SCORE_BUMP
+
+        self.cfg.ATR_MULTIPLIER += bump_atr
+        self.cfg.MAX_POSITIONS = max(1, self.cfg.MAX_POSITIONS - reduce_pos)
+        self.cfg.V2_MIN_SCORE += bump_score
+
+        self.log.info(
+            f"📅 Thursday F&O expiry: ATR multiplier → {self.cfg.ATR_MULTIPLIER:.1f}, "
+            f"max positions → {self.cfg.MAX_POSITIONS}, "
+            f"min score → {self.cfg.V2_MIN_SCORE:.1f}"
+        )
 
     # ================================================================
     # NIFTY INDEX TREND FILTER

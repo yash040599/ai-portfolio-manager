@@ -134,10 +134,10 @@ class PortfolioManagerV2(PortfolioManager):
         print("  ┌─────────────────────────────────────────────────┐")
         print("  │ 1. Fetch candle data (15-min + daily)           │")
         print("  │ 2. Run 14 candlestick pattern detectors         │")
-        print("  │ 3. Compute 11 technical indicators              │")
+        print("  │ 3. Compute 12 technical indicators              │")
         print("  │    EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap,  │")
-        print("  │    Daily EMA, Prev-Day S&R, Hourly EMA, BB Sqz  │")
-        print("  │ 4. Score each stock (~-24 to +24)               │")
+        print("  │    Daily EMA, Prev-Day S&R, Hourly EMA, BB, ADX │")
+        print("  │ 4. Score each stock (~-25 to +25)               │")
         print("  │ 5. Filter by min score threshold                │")
         print("  │ 6. Apply Nifty trend hard filter                │")
         print("  │ 7. Apply sector diversification (max 2/sector)  │")
@@ -697,6 +697,13 @@ class PortfolioManagerV2(PortfolioManager):
                         self._last_opportunity_scan = time.time()
                         continue
                 break
+
+            # ── End-of-day accelerated exit ─────────────────────
+            if self.engine.open_positions():
+                eod_closed = self.engine.check_eod_exit(quotes)
+                if eod_closed > 0:
+                    self._clear_status_line()
+                    self.log.info(f"{eod_closed} losing position(s) exited (EOD accelerated exit)")
 
             # ── Dynamic poll rate ─────────────────────────────────
             if self.engine.open_positions():

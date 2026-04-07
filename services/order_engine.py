@@ -28,6 +28,7 @@ import datetime
 import time
 
 from config              import Config
+from services.stock_scanner_v2 import SECTOR_MAP, MAX_PER_SECTOR
 from core.logger         import Logger
 from core.zerodha_client import ZerodhaClient
 
@@ -523,6 +524,26 @@ class OrderEngine:
                 f"ATR unavailable for {symbol} — using Claude SL: ₹{sl:.2f} / Target: ₹{target:.2f}"
             )
 
+        # ── Late-entry target reduction ───────────────────────────
+        # Trades entered late get reduced targets (less time to hit)
+        hour_now = now.hour
+        late_reduction = 0.0
+        if hour_now >= getattr(self.cfg, "LATE_ENTRY_HOUR_2", 14):
+            late_reduction = getattr(self.cfg, "LATE_ENTRY_REDUCTION_2", 35.0)
+        elif hour_now >= getattr(self.cfg, "LATE_ENTRY_HOUR_1", 13):
+            late_reduction = getattr(self.cfg, "LATE_ENTRY_REDUCTION_1", 20.0)
+
+        if late_reduction > 0:
+            if side == "BUY":
+                distance = target - entry
+                target = round(entry + distance * (1 - late_reduction / 100), 2)
+            else:
+                distance = entry - target
+                target = round(entry - distance * (1 - late_reduction / 100), 2)
+            self.log.info(
+                f"Late entry ({hour_now}:xx): target reduced by {late_reduction:.0f}% → ₹{target:.2f}"
+            )
+
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
             slip = entry * self.cfg.SLIPPAGE_PCT / 100
@@ -570,6 +591,20 @@ class OrderEngine:
             self.log.warning(
                 f"Cannot enter {symbol}: already have an open position "
                 f"(bot or external)"
+            )
+            return False
+
+        # ── Sector concentration guard ────────────────────────────
+        sector = SECTOR_MAP.get(symbol, "OTHER")
+        sector_open = sum(
+            1 for p in self.positions
+            if p["status"] == "OPEN"
+            and SECTOR_MAP.get(p["symbol"], "OTHER") == sector
+        )
+        if sector_open >= MAX_PER_SECTOR:
+            self.log.warning(
+                f"Cannot enter {symbol}: sector {sector} already has "
+                f"{sector_open} open position(s) (max {MAX_PER_SECTOR})"
             )
             return False
 
@@ -1170,6 +1205,64 @@ class OrderEngine:
                 )
                 self.exit_position(pos, current_price, "STAGNANT_EXIT")
                 closed += 1
+
+        return closed
+
+    # ================================================================
+    # END-OF-DAY ACCELERATED EXIT
+    # ================================================================
+
+    def check_eod_exit(self, quotes: dict) -> int:
+        """
+        After EOD_EXIT_AFTER_HOUR:MINUTE, auto-exit losing positions
+        and tighten SL on breakeven positions. Prevents holding losers
+        into the illiquid closing minutes.
+
+        Returns the number of positions exited.
+        """
+        eod_hour = self.cfg.EOD_EXIT_AFTER_HOUR
+        eod_min  = self.cfg.EOD_EXIT_AFTER_MINUTE
+        now = datetime.datetime.now()
+        eod_time = now.replace(hour=eod_hour, minute=eod_min, second=0, microsecond=0)
+        if now < eod_time:
+            return 0
+
+        closed = 0
+        for pos in self.open_positions():
+            key = f"{pos['exchange']}:{pos['symbol']}"
+            q = quotes.get(key, {})
+            current_price = q.get("last_price", 0)
+            if current_price <= 0:
+                continue
+
+            entry = pos["entry_price"]
+            side  = pos["side"]
+            pnl   = (current_price - entry) * pos["qty"] if side == "BUY" \
+                else (entry - current_price) * pos["qty"]
+
+            if pnl < 0:
+                self.log.warning(
+                    f"EOD EXIT: {pos['symbol']} {side} — losing ₹{pnl:+,.2f}, "
+                    f"exiting before close"
+                )
+                self.exit_position(pos, current_price, "EOD_EXIT")
+                closed += 1
+            elif abs(pnl) < entry * pos["qty"] * 0.001:
+                # Near breakeven — tighten SL to entry ± 0.1%
+                if side == "BUY":
+                    tight_sl = round(entry * 0.999, 2)
+                    if tight_sl > pos["stop_loss"]:
+                        pos["stop_loss"] = tight_sl
+                        self.log.info(
+                            f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
+                        )
+                else:
+                    tight_sl = round(entry * 1.001, 2)
+                    if tight_sl < pos["stop_loss"]:
+                        pos["stop_loss"] = tight_sl
+                        self.log.info(
+                            f"EOD TIGHTEN: {pos['symbol']} — SL → ₹{tight_sl:.2f} (breakeven protect)"
+                        )
 
         return closed
 

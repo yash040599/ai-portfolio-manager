@@ -299,7 +299,7 @@ class StockScannerV2(StockScanner):
 
         Returns a scored dict or None if insufficient data.
         """
-        candles_15m = self._fetch_intraday_candles(symbol, exchange, "15minute", days_back=2)
+        candles_15m = self._fetch_intraday_candles(symbol, exchange, "15minute", days_back=3)
         candles_day = self._fetch_daily_candles(symbol, exchange, days_back=30)
 
         if len(candles_15m) < 10:
@@ -649,6 +649,9 @@ class StockScannerV2(StockScanner):
             bb_info = tech.get("bb_squeeze", {})
             if bb_info.get("squeeze", False):
                 parts.append(f"BB {bb_info['signal']}")
+            adx_info = tech.get("adx", {})
+            if adx_info.get("adx", 0) > 0:
+                parts.append(f"ADX {adx_info['adx']:.0f}({adx_info['trend_strength']})")
             if ps["patterns"]:
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
@@ -818,6 +821,12 @@ class StockScannerV2(StockScanner):
             if bb.get("squeeze", False):
                 bb_str = f"  BB: {bb['signal']}"
 
+            # ADX trend strength
+            adx_info = tech.get("adx", {})
+            adx_str = ""
+            if adx_info.get("adx", 0) > 0:
+                adx_str = f"  ADX: {adx_info['adx']:.0f}({adx_info['trend_strength']})"
+
             lines.append(
                 f"{symbol:<14} "
                 f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -827,7 +836,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}"
             )
 
         return "\n".join(lines)
@@ -940,6 +949,12 @@ BB Squeeze:
   SQUEEZE_BEAR = BB contracted + price below middle band → bearish breakout imminent
   *** Squeeze = low volatility → breakout is coming. Direction biased by price position ***
 
+ADX (trend strength):
+  ADX < 20 (WEAK) = range-bound market. Trend-following signals (EMA, SuperTrend continuation) are unreliable. Prefer mean-reversion setups or skip.
+  ADX 20-30 (MODERATE) = developing trend. Normal signals apply.
+  ADX > 30 (STRONG) = strong trend. Trend-following signals are high conviction. Counter-trend trades are VERY risky.
+  *** When ADX is WEAK, EMA/SuperTrend continuation scores are automatically halved by the system ***
+
 Score:
   |score| >= 5 = high conviction (3+ aligned indicators)
   |score| 3-5 = moderate (needs confirming indicators)
@@ -972,13 +987,14 @@ For BUY, count TRUE items:
   □ RVol > 1.5
   □ Hourly EMA = ALIGNED_BULL (multi-timeframe confirmation)
   □ BB = SQUEEZE_BULL (volatility breakout imminent)
+  □ ADX > 20 (trend is developing or strong — not range-bound)
 
 For SELL, mirror with bearish signals.
 → 2 or fewer = DO NOT TRADE (insufficient evidence)
 → 3-4 = acceptable trade (moderate conviction)
 → 5+ = strong trade (high conviction — use full position size)
 
-Explicitly state the confluence count in your RATIONALE (e.g. "5/10 confluence").
+Explicitly state the confluence count in your RATIONALE (e.g. "6/11 confluence").
 
 ══════════════════════════════════════════════════════════
 INDIAN MARKET AWARENESS:
@@ -1028,7 +1044,7 @@ ENTRY_PRICE: [realistic entry price near current price]
 STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/swing]
 TARGET: [target price — at least 1.5× SL distance from entry]
 QTY: [number of shares within budget constraints]
-RATIONALE: [2-3 sentences: (1) confluence count X/10 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
+RATIONALE: [2-3 sentences: (1) confluence count X/11 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
 TRADE 2:
 ...

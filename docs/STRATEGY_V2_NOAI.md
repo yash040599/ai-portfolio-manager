@@ -40,7 +40,7 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 
 ```
 For each stock in universe (50-200 stocks):
-  → Fetch 15-minute candles (last 2 days) from Zerodha Historical API
+  → Fetch 15-minute candles (last 3 days) from Zerodha Historical API
   → Fetch daily candles (last 30 days) for trend context
   → Run 14 candlestick pattern detectors on 15-min data
       • Volume confirmation: pattern strength ×1.3 if candle volume > 1.5× avg
@@ -53,7 +53,8 @@ For each stock in universe (50-200 stocks):
       • Gap analysis — pre-market gap continuation vs fill
       • Hourly EMA(9/21) alignment — multi-timeframe confluence
       • Bollinger Band squeeze — volatility contraction breakout signal
-  → Calculate composite score (~-24 to +24)
+      • ADX(14) — trend strength filter (halves continuation signals in weak trends, bonus in strong)
+  → Calculate composite score (~-25 to +25)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)

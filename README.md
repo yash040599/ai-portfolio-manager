@@ -26,7 +26,7 @@ A fully automated intraday trading bot that:
 - Logs into Zerodha and shows your account snapshot (balance, portfolio, P&L)
 - Waits for market open (handles weekends + NSE holidays automatically)
 - If started after market hours, shows a countdown timer to the next trading day and auto-resumes
-- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 11 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R, Hourly EMA, BB Squeeze), and composite scoring (~-24 to +24). Only the top 15 strongest setups are sent to Claude
+- **Pre-market candle analysis** — fetches 15-minute + daily candles for every stock in the universe from Zerodha's historical API (free). Runs 14 candlestick pattern detectors, 12 technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap, Daily EMA, Prev-Day S&R, Hourly EMA, BB Squeeze, ADX), and composite scoring (~-25 to +25). Only the top 15 strongest setups are sent to Claude
 - **Sector diversification** — max 2 stocks per sector (BANKING, IT, PHARMA, AUTO, etc.) prevents correlated risk
 - **Delayed market entry** — observes prices for 15 min after open, only enters stocks with confirmed directional movement (>0.3%). **Smart delay**: if started after 9:30 AM (opening volatility already passed), automatically reduces to a 5-min observation instead of the full 15
 - **ATR-based dynamic stop-losses** — computes Average True Range from 15-minute intraday candles to set intelligent SL/target levels sized for intraday moves (falls back to Claude's values if data unavailable). SL is hard-capped at 2.5% to prevent swing-trade-sized stops. When both ATR and Claude provide SL levels, the tighter (closer to entry) SL is used
@@ -69,6 +69,13 @@ A fully automated intraday trading bot that:
 - **Regime-shift protection** — when Nifty flips from BULLISH→BEARISH (or vice versa), immediately tightens SLs on positions contradicting the new regime: locks 50% of profit or moves SL to breakeven
 - **Multi-timeframe alignment** — builds hourly candles from 15-min data and checks EMA(9/21) alignment across both timeframes. Adds conviction (+1) only when both agree
 - **Bollinger Band squeeze** — detects periods of unusually low volatility (bandwidth below 75% of average). Squeeze + price above middle band → bullish breakout signal
+- **ADX trend strength filter** — ADX(14) measures trend strength. In weak trends (ADX<20), halves EMA/SuperTrend continuation scores to avoid false signals. In strong trends (ADX>30), adds ±0.5 directional bonus
+- **Sector cap at entry** — enforces max 2 stocks per sector at order time (not just at scan time), preventing sector overload from re-scans
+- **EOD accelerated exit** — after 2:45 PM, auto-exits losing positions and tightens breakeven SLs to minimize end-of-day risk
+- **Thursday F&O expiry handling** — on weekly expiry days, widens ATR multiplier, reduces max positions, and raises min score threshold to account for expiry volatility
+- **Late-entry target reduction** — positions entered after 1 PM get reduced profit targets (20% at 1 PM, 35% at 2 PM) since less time remains for the move
+- **3-day candle lookback** — fetches 3 days of 15-min candle history instead of 2, improving pattern detection and indicator warm-up
+- **Today-candle-count guard** — suppresses ORB and gap signals when fewer than 3 today candles exist, preventing false signals on early/stale data
 
 ```bash
 python main.py --mode trade
@@ -84,7 +91,7 @@ python main.py --mode trade --v1
 
 ### Test Mode
 
-Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 11 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
+Shows the complete strategy analysis pipeline — how the bot fetches candle data, runs 14 candlestick pattern detectors, computes 12 technical indicators, scores each stock, applies filters, and what it would do next. Zero cost, zero risk. Useful for understanding the strategy and verifying the pipeline works.
 
 ```bash
 # V2 strategy test (shows what Claude would receive)
@@ -297,6 +304,15 @@ Open `config.py` and review these key settings:
 | `TARGET_DECAY_AFTER_HOUR` | `14` | After 2 PM, start reducing targets (24h format) |
 | `TARGET_DECAY_PCT` | `40.0%` | How much to reduce targets after decay hour |
 | `MIN_MINUTES_FOR_ENTRY` | `60` | Don't open new trades if fewer than this many min remain |
+| `EOD_EXIT_AFTER_HOUR` | `14` | Hour (24h) to start accelerated EOD exits |
+| `EOD_EXIT_AFTER_MINUTE` | `45` | Minute to start accelerated EOD exits (2:45 PM default) |
+| `LATE_ENTRY_HOUR_1` | `13` | After 1 PM, reduce new-entry targets by `LATE_ENTRY_REDUCTION_1` |
+| `LATE_ENTRY_REDUCTION_1` | `20.0%` | Target reduction % for entries after hour 1 |
+| `LATE_ENTRY_HOUR_2` | `14` | After 2 PM, reduce new-entry targets by `LATE_ENTRY_REDUCTION_2` |
+| `LATE_ENTRY_REDUCTION_2` | `35.0%` | Target reduction % for entries after hour 2 |
+| `EXPIRY_ATR_BUMP` | `0.3` | Thursday: widen ATR multiplier by this amount |
+| `EXPIRY_POSITION_REDUCTION` | `1` | Thursday: reduce MAX_POSITIONS by this count |
+| `EXPIRY_SCORE_BUMP` | `0.5` | Thursday: raise V2_MIN_SCORE by this amount |
 | `V2_CANDLE_RESCAN_MINUTES` | `15` | V2 only: how often to re-run candle analysis (free, no Claude cost) |
 | `V2_MIN_SCORE` | `2.0` | V2 only: minimum technical score to pass pre-filter |
 | `V2_CANDLE_INTERVAL` | `15minute` | V2 only: primary candle interval for pattern detection |

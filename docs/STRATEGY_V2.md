@@ -29,7 +29,7 @@ V2 is the **default** trading strategy. It inherits everything from V1 (ATR-base
 
 ```
 For each stock in universe (50-200 stocks):
-  → Fetch 15-minute candles (last 2 days) from Zerodha Historical API
+  → Fetch 15-minute candles (last 3 days) from Zerodha Historical API
   → Fetch daily candles (last 30 days) for trend context
   → Run 14 candlestick pattern detectors on 15-min data
       • Volume confirmation: pattern strength ×1.3 if candle volume > 1.5× avg
@@ -44,7 +44,10 @@ For each stock in universe (50-200 stocks):
       • MACD(12,26,9) histogram — momentum confirmation/divergence
       • Opening Range Breakout (ORB) — first candle breakout signal
       • Gap analysis — pre-market gap continuation vs fill
-  → Calculate composite score (~-24 to +24)
+      • Hourly EMA(9/21) alignment — multi-timeframe confluence
+      • Bollinger Band squeeze — volatility contraction breakout signal
+      • ADX(14) — trend strength filter (modifies continuation signals)
+  → Calculate composite score (~-25 to +25)
   → Compute RVol (today's volume / 5-day average) — bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -202,6 +205,14 @@ Every 25 minutes — PAID:
 - **Why it works:** Gaps represent overnight information asymmetry. Gap-ups with strong volume are typically institutional, likely to hold. Gap-ups on weak volume are often retail-driven gap fills
 - **Score contribution:** ±1 (confirmation/warning signal)
 
+### ADX(14) — Average Directional Index
+- **What:** Measures trend strength regardless of direction. Uses Wilder's DI+/DI- system with smoothed true range
+- **On 15-min candles:** 14-period lookback (~3.5 hours)
+- **Signals:** ADX < 20 = WEAK (range-bound, trends unreliable), ADX 20-30 = MODERATE, ADX > 30 = STRONG (well-established trend)
+- **How it modifies scoring:** In WEAK trends, halves the magnitude of EMA spread (±1) and SuperTrend continuation (±1) to avoid false trend signals. In STRONG trends, adds ±0.5 directional bonus aligned with DI+/DI-
+- **Why it works:** Trend-following indicators give many false signals in range-bound markets. ADX acts as a meta-filter — only trusting continuation signals when a real trend exists. Standard professional practice
+- **Score contribution:** ±0.5 (modifier on existing scores)
+
 ### Sector Diversification Filter
 - **What:** Maximum 2 stocks per sector (BANKING, IT, PHARMA, AUTO, ENERGY, METALS, FMCG, INFRA, FINANCE, TELECOM, CAPGOODS, OTHER)
 - **Why it works:** Prevents correlated risk. Without this filter, the scanner could pick 5 banking stocks that all drop together on a single RBI announcement. Sector-capping forces diversification across uncorrelated sectors
@@ -248,13 +259,13 @@ The composite score combines candle patterns + technical indicators:
 
 ```
 Candle pattern score:  -6 to +6 (volume-adjusted, freshness-decayed)
-Technical score:       -18 to +18
+Technical score:       -19 to +19
   (EMA ±2, RSI ±3, VWAP ±1, SuperTrend ±3, Daily EMA ±1,
    Prev Day S&R ±1, MACD ±1.5, ORB ±2, Gap ±1,
-   Hourly EMA ±1, BB Squeeze ±1)
+   Hourly EMA ±1, BB Squeeze ±1, ADX ±0.5)
 RVol bonus/penalty:    -1 to +1
 
-Total range:           ~-24 to +24
+Total range:           ~-25 to +25
 ```
 
 **Score interpretation:**
