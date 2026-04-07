@@ -6,7 +6,7 @@
 
 V1 is a **Claude-first** intraday trading strategy. Claude AI receives a table of live stock prices from the selected universe (Nifty 50/100/200) and picks trades entirely on its own judgment. Risk management is handled by rule-based systems (ATR-based SL, trailing stops, circuit breaker).
 
-**Run with:** `python main.py --mode trade`
+**Run with:** `python main.py --mode trade --v1`
 
 ---
 
@@ -51,7 +51,7 @@ Every 10 seconds (PRICE_POLL_SECONDS):
   → Fetch live quotes for all open positions
   → Check SL hit → auto-exit at SL price
   → Check target hit → auto-exit at target price
-  → Apply trailing stop-loss (after 1× risk profit)
+  → Apply trailing stop-loss (after 1.5× risk profit, partial exit 33%)
   → Apply time-decay target (after 2 PM, reduce by 40%)
   → Check circuit breaker (total day loss > 3% of budget → stop all)
 
@@ -82,9 +82,9 @@ Close all remaining open positions at market price
 | Layer | Type | Description |
 |-------|------|-------------|
 | ATR-based SL | Rule-based | Dynamic stop-loss based on 14-day volatility (tighter for calm stocks, wider for volatile ones) |
-| Trailing stop-loss | Rule-based | After profit reaches 1× initial risk, SL moves to breakeven. Then locks 50% of unrealised profit |
+| Trailing stop-loss | Rule-based | At 1.5× initial risk profit, exits 33% of qty and trails SL at 65% of unrealised profit |
 | Time-decay target | Rule-based | After 2 PM, reduce open targets by 40% to avoid holding into close with shrinking upside |
-| Circuit breaker | Rule-based | Day loss > 3% of budget → exit ALL positions, stop trading |
+| Circuit breaker | Rule-based | Day loss > 3% of budget → exit ALL positions, cooldown 30 min, resume with loss-adjusted budget |
 | Entry price validation | Rule-based | Reject Claude's entry if it differs >5% from live Zerodha quote (prevents hallucinated prices) |
 | Re-entry limit | Rule-based | Max 2 entries per stock per day (prevents stop-loss chasing) |
 | Budget cap | Rule-based | Max 40% of budget per stock, total capped at MAX_BUDGET_INR |

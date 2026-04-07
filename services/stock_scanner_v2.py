@@ -1097,8 +1097,8 @@ STOP-LOSS AND TARGET RULES:
 • SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
 • Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
 • For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
-• NOTE: At 1× risk profit, the system AUTOMATICALLY exits 50% of the position and trails SL. Factor this into your qty sizing — prefer qty >= 2 so partial exits can split. Claude does NOT need to suggest partial exits.
-• NOTE: The system may tighten your SL further using ATR (14-period, 15-min candles). It uses the TIGHTER of Claude's SL vs ATR SL. So a wider SL you suggest may be narrowed automatically. Entry price is also overridden by the live Zerodha quote at execution time.
+• NOTE: At 1.5× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at 65% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
+• NOTE: The system uses the WIDER of Claude's SL vs ATR SL (14-period, 15-min candles). Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
 
 ══════════════════════════════════════════════════════════
 COMMON MISTAKES TO AVOID (from actual loss patterns):

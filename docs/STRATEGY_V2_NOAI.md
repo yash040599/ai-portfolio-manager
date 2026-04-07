@@ -21,12 +21,12 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | SL / Target | Claude sets, ATR may override | Config defaults, ATR overrides in `enter_trade` |
 | Position sizing | Claude sets qty, budget-validated | Auto-sized to fit budget and per-stock limits |
 | Rationale | Claude writes qualitative analysis | Auto-generated from indicator values |
-| Position reviews | Claude reviews every 25 min | Stagnant position exit after 90 min (rule-based) |
+| Position reviews | Claude reviews every 20 min | Stagnant position exit after 90 min (rule-based) |
 | Mid-day re-scan | Claude picks from new candidates | Auto-select from new candidates (same as initial scan) |
 | Candle re-scan | Every 15 min, auto-protect + Claude can see patterns | Every 15 min, auto-protect only (no Claude review) |
 | NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
 | Opportunity scan | Every 30 min, fills free slots (1 Claude call) | Every 30 min, fills free slots (0 cost — uses scan_noai) |
-| Min deployment | Claude prompted to deploy ≥60% + code boost | Code boost only (same _boost_underdeployed logic) |
+| Min deployment | Claude prompted to deploy capital + code boost | Code boost only (same _boost_underdeployed logic, disabled by default) |
 | Loss-adjusted sizing | Yes — reduces budget after losses | Yes — same mechanism |
 | Circuit breaker cooldown | Yes — resumes after 30 min | Yes — same mechanism |
 | API cost | ~₹50-100/day (Claude) | ₹0 |
@@ -56,7 +56,7 @@ For each stock in universe (50-200 stocks):
       • ADX(14) — trend strength filter (halves continuation signals in weak trends, bonus in strong)
       • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
       • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
-  → Calculate composite score (~-25 to +25)
+  → Calculate composite score (~-28 to +28)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -81,7 +81,7 @@ Take top N candidates (N = MAX_POSITIONS - open_positions):
   → Validate total budget allocation
 ```
 
-**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best 5 with nuanced reasoning. NoAI simply takes the top N by score — no qualitative judgment.
+**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best trades with nuanced reasoning. NoAI simply takes the top N by score — no qualitative judgment.
 
 ### Phase 3 — Entry (same as V1/V2)
 
@@ -90,7 +90,7 @@ Observation period (ENTRY_DELAY_MINUTES from market open):
   → Wait for price direction to confirm
   → Validate: BUY only if price > day open, SELL only if price < day open
   → ATR-based SL/target override (15-min candles, capped at MAX_INTRADAY_SL_PCT)
-  → Uses tighter of ATR SL vs config SL
+  → Uses wider of ATR SL vs config SL (structural levels respected)
   → Smart position sizing (reduce qty if budget insufficient)
 ```
 
@@ -106,7 +106,7 @@ Every 10 seconds (or 5s when near SL/target):
   → Circuit breaker check (MAX_LOSS_PER_DAY_PCT)
   → Dynamic poll: halve interval when any position within 0.5% of SL/target
 
-Every CLAUDE_REVIEW_MINUTES (default: 25 min) — FREE in NoAI:
+Every CLAUDE_REVIEW_MINUTES (default: 20 min) — FREE in NoAI:
   → Stagnant position check: exit positions open > STAGNANT_EXIT_MINUTES (90 min)
     that haven't moved > STAGNANT_EXIT_MIN_MOVE_PCT (0.3%) toward target
   → Frees slots for stronger setups (replaces Claude's "momentum faded, exit" judgment)
@@ -166,7 +166,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 |-------|--------|---------------|
 | ATR-based SL/target | Order engine (15-min candles) | Yes |
 | SL cap (MAX_INTRADAY_SL_PCT) | Order engine | Yes |
-| Tighter-of ATR vs config SL | Order engine | Yes |
+| Tighter-of ATR vs config SL | Order engine | Yes — now uses **wider-of** ATR vs config SL |
 | Trailing stop-loss | Order engine | Yes |
 | Time-decay targets | Monitor loop | Yes |
 | Circuit breaker (daily loss limit) | Monitor loop | Yes |
@@ -187,7 +187,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Late entry guard (60 min before close) | Monitor loop | Yes |
 | Max re-entry limit (2×/day per stock) | Order engine | Yes |
 | Order API failure circuit breaker | Order engine | Yes |
-| Partial profit taking (50% at 1×risk) | Order engine | Yes |
+| Partial profit taking (33% at 1.5×risk, trail 65%) | Order engine | Yes |
 | Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
 | **Claude position reviews** | **V2 monitor (every 25 min)** | **No (replaced by stagnant exit)** |
@@ -257,4 +257,4 @@ NoAI uses the same config settings as V2. No additional configuration required.
 - If the pre-filter finds **no candidates** above V2_MIN_SCORE, no trades are taken (no V1 fallback — there's no Claude to fall back to)
 - If candle data fetch fails for a stock, that stock is skipped (non-blocking)
 - All V1/V2 risk management (SL, trailing, circuit breaker, crash recovery) runs identically
-- If NoAI has issues, switch to V2 (`--v2`) or V1 (no flags) for Claude-assisted trading
+- If NoAI has issues, switch to V2 (default, no flags) or V1 (`--v1`) for Claude-assisted trading

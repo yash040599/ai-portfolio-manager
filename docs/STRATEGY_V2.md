@@ -113,7 +113,7 @@ Every OPPORTUNITY_RESCAN_MINUTES (default: 30 min) — PAID (1 Claude call):
   → If day P&L is negative, only picks high-conviction setups
   → Skipped if circuit breaker active or insufficient time remains
 
-Every 25 minutes — PAID:
+Every 20 minutes (CLAUDE_REVIEW_MINUTES) — PAID:
   → Fetch fresh 5-MINUTE candles for each open position
   → Run pattern detection + RSI + EMA + VWAP on fresh data
   → Claude review now sees:
@@ -199,6 +199,7 @@ Every 25 minutes — PAID:
 - **Signal:** Price above opening range high = breakout up (+2), below opening range low = breakout down (-2), inside range = no signal
 - **Why it works:** The opening 15 minutes captures the initial battle between overnight orders, pre-market positioning, and opening trades. A decisive break above/below this range often sets the trend for the day. Widely used by professional Indian intraday traders
 - **Score contribution:** ±2 (strong signal — directional breakout from opening range)
+- **Time decay:** Score decays through the day: full before 10:30 AM, ×0.5 from 10:30-11, ×0.25 from 11-12, zero after noon. ORB is a morning signal — stale by afternoon.
 
 ### Gap Analysis
 - **What:** Measures the gap between today's open and yesterday's close, with volume confirmation
@@ -219,6 +220,24 @@ Every 25 minutes — PAID:
 - **What:** Maximum 2 stocks per sector (BANKING, IT, PHARMA, AUTO, ENERGY, METALS, FMCG, INFRA, FINANCE, TELECOM, CAPGOODS, OTHER)
 - **Why it works:** Prevents correlated risk. Without this filter, the scanner could pick 5 banking stocks that all drop together on a single RBI announcement. Sector-capping forces diversification across uncorrelated sectors
 - **Implementation:** Applied after score filtering, before final candidate selection
+
+### Extended Move Penalty
+- **What:** Penalizes stocks that have already moved significantly from today's open price
+- **Calculation:** `extended_move_pct = (current_price - today_open) / today_open × 100`
+- **Signal:** Move 1.5-2% from open → penalty ±1.5. Move >2% → penalty ±3.0. Penalty opposes the direction (penalizes BUY on already-up stocks, SELL on already-down).
+- **Why it works:** Chasing extended moves is a primary cause of intraday losses. A stock already up 2% has limited remaining upside for the day and elevated mean-reversion risk.
+- **Score contribution:** ±1.5 to ±3.0 (penalty — reduces score in the extended direction)
+
+### RSI Extreme Hard Cap
+- **What:** Caps the composite score when RSI is at extremes, regardless of other indicators
+- **Signal:** RSI ≥ 75 → score capped at +3 max. RSI ≤ 25 → score capped at -3 min.
+- **Why it works:** Prevents trend-following indicators (SuperTrend, EMA) from overriding extreme overbought/oversold readings. A stock with RSI 80 looks great on trend metrics but is statistically likely to mean-revert.
+
+### Direction Diversification Cap
+- **What:** Maximum `MAX_POSITIONS - 1` positions in the same direction (BUY or SELL)
+- **With MAX_POSITIONS=3:** At most 2 BUY or 2 SELL simultaneously
+- **Why it works:** Prevents all positions from being wiped out by a single market reversal. Forces at least one contrarian/hedge position when fully deployed.
+- **Implementation:** Checked at entry time in `order_engine.py` and as a rejection filter in the Claude prompt.
 
 ### Partial Profit Taking
 - **What:** At 1.5× risk profit (TRAIL_AFTER_RISK_MULTIPLE), automatically exits 33% of the position (1/3) and moves SL to breakeven for the remainder
@@ -348,4 +367,4 @@ All V1 settings (budget, timing, SL, trailing, circuit breaker) also apply to V2
 - If the V2 pre-filter finds **no candidates** above V2_MIN_SCORE, it falls back to V1 behaviour (sends all prices to Claude)
 - If candle data fetch fails for a stock, that stock is simply skipped (non-blocking)
 - All V1 risk management (SL, trailing, circuit breaker) runs identically in V2
-- If V2 has issues, just drop the `--v2` flag to run V1
+- If V2 has issues, use `--v1` to run the legacy V1 strategy

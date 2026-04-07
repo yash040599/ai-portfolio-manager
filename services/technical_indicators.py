@@ -24,13 +24,17 @@
 #   VWAP position:     ±1  (institutional bias)
 #   Daily EMA bias:    ±1  (higher timeframe confluence)
 #   Prev-day S&R:      ±0.5-1 (support/resistance proximity)
-#   MACD histogram:    ±1-1.5 (momentum confirmation + fading warning)
-#   ORB breakout:      ±2  (opening range breakout — strong intraday signal)
+#   MACD histogram:    ±0.5-1 (momentum confirmation + fading warning)
+#   ORB breakout:      ±2  (opening range breakout, decays after 10:30 AM)
 #   Gap analysis:      ±1  (pre-market gap continuation vs fill)
 #   Hourly EMA align:  ±1  (multi-timeframe confluence confirmation)
 #   BB squeeze:        ±1  (volatility contraction → breakout imminent)
 #   ADX modifier:      ±0.5 (dampens trend scores in range-bound, bonus in strong trend)
-#   → Technical score range: ~-21 to +21
+#   Fib retracement:   +0.5 (proximity to Fibonacci level)
+#   VWAP SD bands:     ±1  (mean-reversion at ±2σ extremes)
+#   Extended move:     ±1.5-3 (penalty for chasing stocks already extended from open)
+#   RSI hard cap:      caps score at ±3 when RSI ≥ 75 or ≤ 25
+#   → Technical score range: ~-24 to +24
 # ================================================================
 
 import datetime
@@ -1024,7 +1028,7 @@ def compute_technical_score(
     Computes a composite technical score from multiple indicators
     using 15-minute intraday candles + optional daily candles.
 
-    Score range: ~-21 to +21
+    Score range: ~-24 to +24
       Positive = bullish setup
       Negative = bearish setup
       |score| >= 5 = strong signal

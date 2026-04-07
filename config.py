@@ -242,14 +242,14 @@ class Config:
     EXPIRY_SCORE_BUMP:         float = 0.5
 
     # ══════════════════════════════════════════════════════════════
-    # V2 — CANDLE STRATEGY SETTINGS (used with --v2 flag)
+    # V2 — CANDLE STRATEGY SETTINGS (default strategy)
     # ══════════════════════════════════════════════════════════════
     # V2 pre-filters stocks using candlestick patterns and technical
     # indicators (EMA, RSI, VWAP, SuperTrend) before sending the
     # top candidates to Claude. This gives Claude richer technical
     # context and higher signal-to-noise ratio.
     #
-    # These settings only apply when running: python main.py --mode trade --v2
+    # These settings apply when running: python main.py --mode trade (default)
 
     # V2_CANDLE_RESCAN_MINUTES: how often to re-run candle analysis
     # on the universe during monitoring (separate from Claude review).

@@ -189,8 +189,8 @@ Open `config.py` and review the key settings. Everything is commented — the ma
 |---------|---------|-----------------|
 | `MAX_BUDGET_INR` | `20,000` | Maximum capital the bot can deploy per day |
 | `SCAN_UNIVERSE` | `NIFTY100` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
-| `MAX_POSITIONS` | `5` | Max simultaneous trades |
-| `DRY_RUN` | `True` | Simulate trades without placing real orders |
+| `MAX_POSITIONS` | `3` | Max simultaneous trades |
+| `DRY_RUN` | `False` | Simulate trades without placing real orders (use `--dryrun` flag) |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
 
 All timing, risk management, indicator, and tax settings are in `config.py` with detailed comments.
