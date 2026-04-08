@@ -177,7 +177,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 |-------|--------|---------------|
 | ATR-based SL/target | Order engine (15-min candles) | Yes |
 | SL cap (MAX_INTRADAY_SL_PCT) | Order engine | Yes |
-| Tighter-of ATR vs config SL | Order engine | Yes — now uses **wider-of** ATR vs config SL |
+| Wider-of ATR vs config SL | Order engine | Yes |
 | Trailing stop-loss | Order engine | Yes |
 | Time-decay targets | Monitor loop | Yes |
 | Circuit breaker (daily loss limit) | Monitor loop | Yes |

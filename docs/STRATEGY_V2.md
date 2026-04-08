@@ -372,7 +372,7 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 ## Known Limitations
 
-See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-72).
+See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-77).
 
 | # | Gap | Priority | Est. Impact |
 |---|-----|----------|-------------|
