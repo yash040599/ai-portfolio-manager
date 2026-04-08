@@ -367,11 +367,11 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 - **Fix**: If RSI ≥ 75: cap composite score at +3 max. If RSI ≤ 25: cap at -3 min. Prevents trend indicators from overriding extreme overbought/oversold readings.
 - **Files**: `technical_indicators.py`
 
-### 53. ✅ Direction Diversification Cap
+### 53. ✅ Direction Diversification Cap (Score-Aware)
 - **Versions**: All
 - **Gap**: All positions could be in the same direction (all BUY or all SELL). A single market reversal wipes them all out simultaneously.
-- **Fix**: Max same-direction positions = MAX_POSITIONS - 1. With MAX_POSITIONS=3, max 2 in same direction. Forces at least one contrarian/hedge position when fully deployed.
-- **Files**: `order_engine.py`, `stock_scanner_v2.py` (Claude prompt filter)
+- **Fix**: Smart direction allocation: if score gap ≥3 between best BUY/SELL candidates, dominant direction gets all MAX_POSITIONS slots (don't force weak counter-trend trades). score < 5 → normal limit (MAX_POSITIONS - 1). scan_noai pre-filters candidates by direction before building trade plans.
+- **Files**: `order_engine.py`, `stock_scanner_v2.py`
 
 ### 54. ✅ Fewer Trades, Bigger Size Config
 - **Versions**: All
@@ -441,6 +441,36 @@ Bugs identified during expert code review. All fixed in commit that added this s
 - **Fix**: Store `initial_sl` in position dict at entry time in `enter_trade()`.
 - **Files**: `order_engine.py`
 
+### 73. ✅ Fallback Candidate Pool
+- **Versions**: All (NoAI primary beneficiary)
+- **Gap**: `scan_noai` selected exactly N candidates. If any failed entry sanity checks (R:R too low after late-entry reduction, min profit, etc.), that slot was wasted — "selected 1, entered 0".
+- **Fix**: Return primary picks + up to 5 fallback candidates. `_enter_positions` tries each in score order and stops when MAX_POSITIONS slots are full. Budget validation only on primary; fallbacks use per-slot sizing with dynamic budget enforcement in `enter_trade`.
+- **Files**: `stock_scanner_v2.py`, `manager.py`, `manager_v2.py`
+
+### 74. ✅ Periodic Manual Trade Sync
+- **Versions**: All
+- **Gap**: Manual MIS positions opened on Zerodha app weren't detected until the next full re-scan (~30 min). Meanwhile, they had no SL protection from the bot.
+- **Fix**: External position sync every 15 min (aligned with candle rescan) in both V1 and V2 monitor loops. Runs BEFORE quote fetch so adopted positions immediately get SL/target monitoring. Adopted positions get ATR-based SL/targets.
+- **Files**: `manager.py`, `manager_v2.py`
+
+### 75. ✅ --max Budget CLI Flag
+- **Versions**: All
+- **Gap**: Budget was fixed at MAX_BUDGET_INR in config.py. No way to cap today's exposure without editing code.
+- **Fix**: `--max 30000` (or `30_000` / `30,000`) overrides MAX_BUDGET_INR for the session. Validated as positive integer.
+- **Files**: `main.py`
+
+### 76. ✅ Smart Direction Diversification (Score-Aware)
+- **Versions**: All (NoAI scanner + shared enter_trade guard)
+- **Gap**: Fixed direction cap (MAX_POSITIONS - 1) forced counter-trend trades on strongly trending days. E.g. KOTAKBANK not entered because BUY slot was full, despite being the best setup.
+- **Fix**: scan_noai compares best BUY vs SELL score. Gap ≥ 3 → dominant direction gets all slots. enter_trade: score ≥ 5 bypasses limit (safety net). Gap < 3 → normal N−1 limit for diversification.
+- **Files**: `order_engine.py`, `stock_scanner_v2.py`
+
+### 77. ✅ Entry Count Logging Fix
+- **Versions**: All
+- **Gap**: `_enter_positions` logged "Entered N positions" based on `len(open_positions())` which included pre-existing positions. Showed "Entered 1" when 0 were actually entered.
+- **Fix**: Count `enter_trade()` return values instead.
+- **Files**: `manager.py`
+
 ---
 
 ## Implementation Status
@@ -498,7 +528,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 50 | Late-entry + time-decay exclusion | All | ✅ Done | `order_engine.py` |
 | 51 | Extended move penalty | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 53 | Direction diversification cap | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
+| 53 | Direction diversification (score-aware) | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |
 | 55 | **LIMIT orders for entry/exit** | All | ⬜ **CRITICAL** | — |
 | 56 | Scan universe price filter | V2, NoAI | ⬜ Pending | — |
@@ -518,3 +548,8 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 70 | SL-M partial fill verification | All | ✅ Done | `order_engine.py`, `zerodha_client.py` |
 | 71 | Fill price SL cap re-validation | All | ✅ Done | `order_engine.py` |
 | 72 | Store initial_sl at entry | All | ✅ Done | `order_engine.py` |
+| 73 | Fallback candidate pool | All | ✅ Done | `stock_scanner_v2.py`, `manager.py`, `manager_v2.py` |
+| 74 | Periodic manual trade sync | All | ✅ Done | `manager.py`, `manager_v2.py` |
+| 75 | --max budget CLI flag | All | ✅ Done | `main.py` |
+| 76 | Smart direction diversification | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
+| 77 | Entry count logging fix | All | ✅ Done | `manager.py` |
