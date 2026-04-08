@@ -394,8 +394,53 @@ class Config:
     LOSS_SCORE_BUMP_PCT: float = 1.5
     LOSS_SCORE_BUMP_AMOUNT: float = 1.5
 
+    # ══════════════════════════════════════════════════════════════    # MARKET INTELLIGENCE — VIX, PRE-OPEN, FII/DII
     # ══════════════════════════════════════════════════════════════
-    # COST & TAX PARAMETERS (for P&L calculation)
+
+    # ── India VIX Thresholds ──────────────────────────────────
+    # India VIX measures 30-day expected volatility of NIFTY.
+    # High VIX = fear/uncertainty, low VIX = complacency.
+    # Fetched once at startup and rechecked during NIFTY rechecks.
+    #
+    # VIX_HIGH_THRESHOLD: above this, reduce exposure. Typical
+    #   high-VIX regime occurs during corrections, earnings season,
+    #   or global events. Indian intraday gets whippier — wider SLs
+    #   needed but fewer positions to limit drawdown.
+    # VIX_LOW_THRESHOLD: below this, breakout strategies work better.
+    #   Market is calm/complacent — SL-triggered exits are fewer.
+    # VIX_SPIKE_PCT: if VIX jumps this much intraday (vs day open),
+    #   pause new entries and protect existing positions.
+    # VIX_HIGH_POSITION_REDUCTION: reduce MAX_POSITIONS by this in high VIX.
+    # VIX_HIGH_SCORE_BUMP: raise V2_MIN_SCORE by this in high VIX.
+    VIX_HIGH_THRESHOLD: float = 20.0
+    VIX_LOW_THRESHOLD:  float = 12.0
+    VIX_SPIKE_PCT:      float = 10.0
+    VIX_HIGH_POSITION_REDUCTION: int   = 1
+    VIX_HIGH_SCORE_BUMP:         float = 1.0
+
+    # ── Pre-Open Auction ──────────────────────────────────────
+    # NSE pre-open session runs 9:00-9:08 AM. After 9:08, the
+    # equilibrium (opening) price is set for each stock.
+    # Fetching quotes at ~9:08 gives gap direction, magnitude,
+    # and pre-open volume before the first candle forms.
+    #
+    # PREOPEN_ENABLED: enable pre-open data collection.
+    # PREOPEN_GAP_SIGNIFICANT_PCT: minimum gap % to flag as significant.
+    #   Stocks gapping > this with high volume → institutional interest.
+    PREOPEN_ENABLED: bool = True
+    PREOPEN_GAP_SIGNIFICANT_PCT: float = 1.0
+
+    # ── FII/DII Flow Bias ─────────────────────────────────────
+    # Previous day's FII/DII net buy/sell data from NSE.
+    # Used as a morning bias signal (one-time fetch at startup).
+    # Both buying = bullish, both selling = bearish, mixed = neutral.
+    #
+    # FII_DII_ENABLED: enable FII/DII data fetch (from NSE website).
+    #   If the fetch fails (NSE blocking, timeout), it's silently
+    #   skipped — no impact on trading.
+    FII_DII_ENABLED: bool = True
+
+    # ══════════════════════════════════════════════════════════════    # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════
     # These are used to calculate the REAL net profit after all
     # charges. Update if Zerodha changes their fee structure.

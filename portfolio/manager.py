@@ -79,6 +79,13 @@ class PortfolioManager:
         self._status_lines_printed = False       # tracks 2-line status display
         self._last_external_sync: float = 0.0    # periodic manual trade detection
 
+        # ── Market intelligence ───────────────────────────────────
+        self._india_vix: float = 0.0           # India VIX value (0 = unavailable)
+        self._india_vix_open: float = 0.0      # VIX at market open (for spike detection)
+        self._vix_adjustments_applied = False   # prevent double-applying VIX tweaks
+        self._preopen_data: dict = {}          # symbol → {gap_pct, volume, direction}
+        self._fii_dii_bias: str = ""           # BULLISH / BEARISH / NEUTRAL / ""
+
     # ================================================================
     # RUN — MAIN ENTRY POINT
     # ================================================================
@@ -207,6 +214,12 @@ class PortfolioManager:
 
         # ── Step 5c: Thursday F&O expiry adjustments ────────────
         self._apply_expiry_day_adjustments()
+
+        # ── Step 5d: Market intelligence (VIX, FII/DII, pre-open) ─
+        self._fetch_fii_dii_data()
+        self._build_nifty_context()      # also fetches India VIX
+        self._apply_vix_adjustments()
+        self._fetch_preopen_data()
 
         if resumed > 0:
             # Already have live positions — run an immediate Claude
@@ -1072,6 +1085,73 @@ class PortfolioManager:
 
             self._market_condition = f"{condition}_{volatility_label}"
 
+            # ── Fetch India VIX ───────────────────────────────────
+            vix_text = ""
+            try:
+                vix_quote = self.zerodha.get_quotes(
+                    [{"symbol": "INDIA VIX", "exchange": "NSE"}]
+                )
+                vix_q = vix_quote.get("NSE:INDIA VIX", {})
+                vix_price = vix_q.get("last_price", 0)
+                if vix_price > 0:
+                    self._india_vix = vix_price
+                    vix_ohlc = vix_q.get("ohlc", {})
+                    vix_day_open = vix_ohlc.get("open", 0)
+                    if vix_day_open > 0 and self._india_vix_open == 0:
+                        self._india_vix_open = vix_day_open
+
+                    vix_regime = "NORMAL"
+                    if vix_price >= self.cfg.VIX_HIGH_THRESHOLD:
+                        vix_regime = "HIGH"
+                    elif vix_price <= self.cfg.VIX_LOW_THRESHOLD:
+                        vix_regime = "LOW"
+
+                    vix_text = f"\n  India VIX: {vix_price:.2f} ({vix_regime})"
+                    if vix_regime == "HIGH":
+                        vix_text += (
+                            f" — HIGH FEAR: reduce position sizes, widen SLs, "
+                            f"only high-conviction setups"
+                        )
+                    elif vix_regime == "LOW":
+                        vix_text += (
+                            f" — LOW VIX: market is calm, breakout strategies "
+                            f"favoured, tighter targets work"
+                        )
+
+                    # Detect intraday VIX spike
+                    if self._india_vix_open > 0:
+                        vix_change_pct = (
+                            (vix_price - self._india_vix_open)
+                            / self._india_vix_open * 100
+                        )
+                        if vix_change_pct >= self.cfg.VIX_SPIKE_PCT:
+                            vix_text += (
+                                f"\n  ⚠ VIX SPIKE: +{vix_change_pct:.1f}% intraday "
+                                f"— CAUTION with new entries"
+                            )
+            except Exception:
+                pass  # VIX data is optional
+
+            # ── FII/DII bias (if available) ───────────────────────
+            fii_dii_text = ""
+            if self._fii_dii_bias:
+                fii_dii_text = f"\n  FII/DII bias (prev day): {self._fii_dii_bias}"
+
+            # ── Pre-open intelligence (if available) ──────────────
+            preopen_text = ""
+            if self._preopen_data:
+                sig_gaps = [
+                    (sym, d) for sym, d in self._preopen_data.items()
+                    if abs(d["gap_pct"]) >= self.cfg.PREOPEN_GAP_SIGNIFICANT_PCT
+                ]
+                if sig_gaps:
+                    preopen_text = f"\n  Pre-open significant gaps:"
+                    for sym, d in sig_gaps[:8]:
+                        arrow = "↑" if d["gap_pct"] > 0 else "↓"
+                        preopen_text += (
+                            f"\n    {sym}: {arrow}{abs(d['gap_pct']):.1f}% gap"
+                        )
+
             sector_advice = ""
             if condition == "BEARISH":
                 sector_advice = (
@@ -1091,10 +1171,220 @@ class PortfolioManager:
                 f"PrevClose: ₹{prev_close:,.2f}\n"
                 f"  Market bias: {bias}"
                 f"{sector_advice}"
-                f"{volatility_text}\n"
+                f"{volatility_text}"
+                f"{vix_text}"
+                f"{fii_dii_text}"
+                f"{preopen_text}\n"
             )
         except Exception:
             return ""
+
+    # ================================================================
+    # INDIA VIX — VOLATILITY REGIME ADJUSTMENTS
+    # ================================================================
+
+    def _apply_vix_adjustments(self):
+        """
+        Applies config adjustments based on India VIX level.
+        Called once after the first NIFTY context fetch (which also
+        fetches VIX). Prevents double-application via flag.
+
+        High VIX (≥20): reduce MAX_POSITIONS, raise V2_MIN_SCORE.
+        Low VIX (≤12): no config changes — just informational.
+        """
+        if self._vix_adjustments_applied:
+            return
+        if self._india_vix <= 0:
+            return
+        self._vix_adjustments_applied = True
+
+        if self._india_vix >= self.cfg.VIX_HIGH_THRESHOLD:
+            reduce_pos = self.cfg.VIX_HIGH_POSITION_REDUCTION
+            bump_score = self.cfg.VIX_HIGH_SCORE_BUMP
+
+            self._pre_vix_max_pos = self.cfg.MAX_POSITIONS
+            self._pre_vix_min_score = self.cfg.V2_MIN_SCORE
+
+            self.cfg.MAX_POSITIONS = max(1, self.cfg.MAX_POSITIONS - reduce_pos)
+            self.cfg.V2_MIN_SCORE += bump_score
+
+            self.log.info(
+                f"📈 India VIX {self._india_vix:.1f} ≥ {self.cfg.VIX_HIGH_THRESHOLD} "
+                f"(HIGH VOLATILITY): max positions → {self.cfg.MAX_POSITIONS}, "
+                f"min score → {self.cfg.V2_MIN_SCORE:.1f}"
+            )
+        elif self._india_vix <= self.cfg.VIX_LOW_THRESHOLD:
+            self.log.info(
+                f"📉 India VIX {self._india_vix:.1f} ≤ {self.cfg.VIX_LOW_THRESHOLD} "
+                f"(LOW VOLATILITY): breakout-friendly market, tighter targets"
+            )
+        else:
+            self.log.info(
+                f"📊 India VIX {self._india_vix:.1f} (NORMAL range)"
+            )
+
+    def _check_vix_spike(self) -> bool:
+        """
+        Checks if India VIX has spiked intraday. Called during NIFTY
+        rechecks in the monitor loop. Returns True if spike detected.
+        """
+        if self._india_vix_open <= 0 or self._india_vix <= 0:
+            return False
+        vix_change_pct = (
+            (self._india_vix - self._india_vix_open)
+            / self._india_vix_open * 100
+        )
+        return vix_change_pct >= self.cfg.VIX_SPIKE_PCT
+
+    # ================================================================
+    # PRE-OPEN AUCTION DATA
+    # ================================================================
+
+    def _fetch_preopen_data(self):
+        """
+        Fetches quotes for the stock universe and computes gap analysis
+        from the pre-open auction session. Called between 9:08 and 9:15
+        when pre-open equilibrium prices are available.
+
+        Stores gap direction, magnitude, and volume per stock in
+        self._preopen_data. This data enriches the scan context.
+        """
+        if not self.cfg.PREOPEN_ENABLED:
+            return
+
+        try:
+            universe = self.scanner.get_universe()
+            stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
+            quotes = self.zerodha.get_quotes_safe(stocks)
+            if not quotes:
+                return
+
+            significant = 0
+            for symbol in universe:
+                key = f"NSE:{symbol}"
+                q = quotes.get(key, {})
+                if not q:
+                    continue
+
+                ohlc = q.get("ohlc", {})
+                prev_close = ohlc.get("close", 0)
+                day_open = ohlc.get("open", 0)
+                last_price = q.get("last_price", 0)
+                volume = q.get("volume", 0)
+
+                # Use day_open if available (post 9:08), else last_price
+                ref_price = day_open if day_open > 0 else last_price
+                if ref_price <= 0 or prev_close <= 0:
+                    continue
+
+                gap_pct = (ref_price - prev_close) / prev_close * 100
+                direction = "BUY" if gap_pct > 0 else "SELL" if gap_pct < 0 else "FLAT"
+
+                self._preopen_data[symbol] = {
+                    "gap_pct": round(gap_pct, 2),
+                    "volume": volume,
+                    "direction": direction,
+                    "open_price": ref_price,
+                    "prev_close": prev_close,
+                }
+
+                if abs(gap_pct) >= self.cfg.PREOPEN_GAP_SIGNIFICANT_PCT:
+                    significant += 1
+
+            self.log.info(
+                f"Pre-open data: {len(self._preopen_data)} stocks analysed, "
+                f"{significant} with significant gaps (≥{self.cfg.PREOPEN_GAP_SIGNIFICANT_PCT}%)"
+            )
+
+            # Log significant gaps
+            sig_gaps = sorted(
+                [(s, d) for s, d in self._preopen_data.items()
+                 if abs(d["gap_pct"]) >= self.cfg.PREOPEN_GAP_SIGNIFICANT_PCT],
+                key=lambda x: abs(x[1]["gap_pct"]),
+                reverse=True,
+            )
+            for sym, d in sig_gaps[:10]:
+                arrow = "↑" if d["gap_pct"] > 0 else "↓"
+                self.log.info(
+                    f"  {sym}: {arrow}{abs(d['gap_pct']):.1f}% gap from prev close "
+                    f"(₹{d['prev_close']:.2f} → ₹{d['open_price']:.2f})"
+                )
+
+        except Exception as e:
+            self.log.warning(f"Pre-open data fetch failed: {e}")
+
+    # ================================================================
+    # FII/DII FLOW BIAS
+    # ================================================================
+
+    def _fetch_fii_dii_data(self):
+        """
+        Fetches previous day's FII/DII net buy/sell data from NSE.
+        Sets self._fii_dii_bias to BULLISH / BEARISH / NEUTRAL.
+
+        NSE publishes this data daily. We use it as a morning bias
+        signal — not a hard filter, just context for Claude and a
+        slight preference for institutional-aligned trades.
+
+        Falls back gracefully if NSE blocks the request.
+        """
+        if not self.cfg.FII_DII_ENABLED:
+            return
+
+        import urllib.request
+        import ssl
+
+        try:
+            url = "https://www.nseindia.com/api/fiidiiTradeReact"
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0")
+            req.add_header("Accept", "application/json")
+            req.add_header("Referer", "https://www.nseindia.com/")
+
+            # NSE requires TLS; skip cert verification for reliability
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                import json as _json
+                data = _json.loads(resp.read().decode("utf-8"))
+
+            # Parse FII/DII net values
+            # NSE response is a list of dicts with category, buyValue, sellValue
+            fii_net = 0.0
+            dii_net = 0.0
+            for entry in data:
+                category = entry.get("category", "").upper()
+                buy_val = float(entry.get("buyValue", 0) or 0)
+                sell_val = float(entry.get("sellValue", 0) or 0)
+                net = buy_val - sell_val
+
+                if "FII" in category or "FPI" in category:
+                    fii_net += net
+                elif "DII" in category:
+                    dii_net += net
+
+            # Classify bias
+            if fii_net > 0 and dii_net > 0:
+                self._fii_dii_bias = "BULLISH (FII + DII both net buyers)"
+            elif fii_net < 0 and dii_net < 0:
+                self._fii_dii_bias = "BEARISH (FII + DII both net sellers)"
+            elif fii_net < 0 and dii_net > 0:
+                self._fii_dii_bias = "MIXED (FII selling, DII absorbing)"
+            elif fii_net > 0 and dii_net < 0:
+                self._fii_dii_bias = "MIXED (FII buying, DII selling)"
+            else:
+                self._fii_dii_bias = "NEUTRAL"
+
+            fii_label = f"+₹{fii_net/1e7:,.0f}Cr" if fii_net >= 0 else f"-₹{abs(fii_net)/1e7:,.0f}Cr"
+            dii_label = f"+₹{dii_net/1e7:,.0f}Cr" if dii_net >= 0 else f"-₹{abs(dii_net)/1e7:,.0f}Cr"
+            self.log.info(
+                f"FII/DII (prev day): FII {fii_label}, DII {dii_label} → {self._fii_dii_bias}"
+            )
+
+        except Exception as e:
+            self.log.warning(f"FII/DII data fetch failed: {e} — skipping (no impact on trading)")
 
     # ================================================================
     # ACCOUNT FUNDS & BUDGET

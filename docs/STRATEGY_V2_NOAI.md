@@ -1,36 +1,37 @@
-# NoAI Trading Strategy — Fully Automated, Zero Claude Calls
+# NoAI Trading Strategy — Fully Automated, Zero Claude Calls (Default)
 
 ## Overview
 
-NoAI is a **Claude-free variant of V2** that uses the same candle pattern + technical indicator pipeline for everything — stock selection, monitoring, and re-scans. It replaces every Claude call with rule-based math logic.
+NoAI is the **default V2 mode** that uses the candle pattern + technical indicator pipeline for everything — stock selection, monitoring, and re-scans. It replaces every Claude call with rule-based math logic.
 
-**Run with:** `python main.py --mode trade --noai` (or `--noai --max 30000` to cap budget)
+**Run with:** `python main.py --mode trade` (default, or explicitly `--noai`)
+**With Claude:** `python main.py --mode trade --ai` (enables Claude for selection & reviews)
 
-NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle re-scan auto-protect) and V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). The only difference: no Claude API calls anywhere in the pipeline.
+NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle re-scan auto-protect) and V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). The only difference from `--ai` mode: no Claude API calls anywhere in the pipeline.
 
 **Cost:** ₹0 per trading day (only Zerodha data API charges apply).
 
 ---
 
-## What's Different from V2
+## What's Different from V2 + Claude (`--ai`)
 
-| Aspect | V2 | NoAI |
-|--------|----|----|
-| Stock selection | Pre-filter → top 15 → Claude picks | Pre-filter → auto-select top N by score |
-| Trade side | Claude decides BUY/SELL | Score sign: positive = BUY, negative = SELL |
-| SL / Target | Claude sets, ATR may override | Config defaults, ATR overrides in `enter_trade` |
-| Position sizing | Claude sets qty, budget-validated | Auto-sized to fit budget and per-stock limits |
-| Rationale | Claude writes qualitative analysis | Auto-generated from indicator values |
-| Position reviews | Claude reviews every 20 min | Stagnant position exit after 90 min (rule-based) |
-| Mid-day re-scan | Claude picks from new candidates | Auto-select from new candidates (same as initial scan) |
-| Candle re-scan | Every 15 min, auto-protect + Claude can see patterns | Every 15 min, auto-protect only (no Claude review) |
+| Aspect | NoAI (Default) | V2 + Claude (`--ai`) |
+|--------|----------------|----------------------|
+| Stock selection | Pre-filter → auto-select top N by score | Pre-filter → top 15 → Claude picks |
+| Trade side | Score sign: positive = BUY, negative = SELL | Claude decides BUY/SELL |
+| SL / Target | Config defaults, ATR overrides in `enter_trade` | Claude sets, ATR may override |
+| Position sizing | Auto-sized to fit budget and per-stock limits | Claude sets qty, budget-validated |
+| Rationale | Auto-generated from indicator values | Claude writes qualitative analysis |
+| Position reviews | Stagnant position exit after 90 min (rule-based) | Claude reviews every 20 min |
+| Mid-day re-scan | Auto-select from new candidates (same as initial scan) | Claude picks from new candidates |
+| Candle re-scan | Every 15 min, auto-protect only (no Claude review) | Every 15 min, auto-protect + Claude can see patterns |
 | NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
-| Opportunity scan | Every 30 min, fills free slots (1 Claude call) | Every 30 min, fills free slots (0 cost — uses scan_noai) |
-| Min deployment | Claude prompted to deploy capital + code boost | Code boost only (same _boost_underdeployed logic, disabled by default) |
+| Opportunity scan | Every 30 min, fills free slots (0 cost — uses scan_noai) | Every 30 min, fills free slots (1 Claude call) |
+| Min deployment | Code boost only (same _boost_underdeployed logic, disabled by default) | Claude prompted to deploy capital + code boost |
 | Loss-adjusted sizing | Yes — reduces budget after losses | Yes — same mechanism |
 | Circuit breaker cooldown | Yes — resumes after 30 min | Yes — same mechanism |
-| API cost | ~₹50-100/day (Claude) | ₹0 |
-| Latency | 10-30s per Claude call | Instant |
+| API cost | ₹0 | ~₹50-100/day (Claude) |
+| Latency | Instant | 10-30s per Claude call |
 
 ---
 
@@ -46,7 +47,7 @@ For each stock in universe (50-200 stocks):
       • Volume confirmation: pattern strength ×1.3 if candle volume > 1.5× avg
       • Freshness decay: current candle = 1.0×, 1-ago = 0.7×, 2-ago = 0.4×
   → Compute technical indicators:
-      • EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(10, 3.0)
+      • EMA(9/21) crossover, RSI(14), VWAP, SuperTrend(7, 2.0)
       • Daily EMA(9/21) bias, Previous day S&R
       • MACD(12,26,9) histogram — momentum confirmation/divergence
       • Opening Range Breakout (ORB) — first candle breakout signal

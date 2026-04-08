@@ -22,24 +22,25 @@
 
 ## Overview
 
-V2 is an **intraday equity trading bot** for NSE (India) via Zerodha Kite Connect. It combines a free mathematical pre-filter (candlestick patterns + 14 technical indicators) with Claude AI for stock selection. The bot trades MIS (intraday) positions on Nifty 100 stocks.
+V2 is an **intraday equity trading bot** for NSE (India) via Zerodha Kite Connect. It combines a free mathematical pre-filter (candlestick patterns + 14 technical indicators) with automatic stock selection by score. Optionally, Claude AI can be enabled for selection and reviews via `--ai`.
 
-**Run with:** `python main.py --mode trade` (V2 with Claude) or `--noai` (V2 NoAI)
+**Default:** `python main.py --mode trade` (NoAI — pure technical signals, zero Claude calls)
+**With AI:** `python main.py --mode trade --ai` (Claude selects from pre-filtered candidates)
 
 V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery). V1 is retired — use `--v1` only for testing.
 
 ---
 
-## V2 vs V2 NoAI
+## V2 NoAI (Default) vs V2 + Claude
 
-| Aspect | V2 (Claude) | V2 NoAI |
+| Aspect | V2 NoAI (Default) | V2 + Claude (`--ai`) |
 |--------|-------------|---------|
-| Stock selection | Claude picks from top 15 pre-filtered | Auto-picks by score sign + magnitude |
-| Entry logic | Claude sets SL/target/rationale | Default SL/target from config + ATR overrides |
-| Position review | Claude reviews every 20 min | Stagnant exit after 90 min |
-| Score threshold raise | No | Yes — after day losses, V2_MIN_SCORE rises |
-| Claude API cost | ~₹20-40/day (5-15 calls) | ₹0 |
-| Mid-day re-scan | Yes (every 30 min when free slots) | Yes (same logic, no Claude call) |
+| Stock selection | Auto-picks by score sign + magnitude | Claude picks from top 15 pre-filtered |
+| Entry logic | Default SL/target from config + ATR overrides | Claude sets SL/target/rationale |
+| Position review | Stagnant exit after 90 min | Claude reviews every 20 min |
+| Score threshold raise | Yes — after day losses, V2_MIN_SCORE rises | No |
+| Claude API cost | ₹0 | ~₹20-40/day (5-15 calls) |
+| Mid-day re-scan | Yes (every 30 min, no Claude call) | Yes (every 30 min, 1 Claude call) |
 
 Both modes share: pre-filter, risk management, SL-M orders, trailing stop, circuit breaker, time-decay, EOD exit, direction diversification.
 
@@ -372,15 +373,14 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 ## Known Limitations
 
-See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list (#55-77).
+See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list. All remaining items are LOW or MEDIUM priority.
 
 | # | Gap | Priority | Est. Impact |
 |---|-----|----------|-------------|
-| 55 | MARKET → LIMIT orders | CRITICAL | ₹20-40/day slippage |
-| 24 | Backtesting framework | HIGH | Enables measured optimization |
-| 40 | Claude prompt feedback loop | HIGH | Better trade selection |
-| 44 | WebSocket tick data | HIGH | Faster SL/target execution |
-| 23 | VIX-based volatility sizing | MEDIUM | Adapt to market regime |
+| 55 | MARKET → LIMIT orders | MEDIUM | ₹20-40/day slippage |
+| 24 | Backtesting framework | MEDIUM | Enables measured optimization (V3 infra) |
+| 44 | WebSocket tick data | MEDIUM | Faster SL/target execution |
+| 40 | Claude prompt feedback loop | LOW | Only applies to `--ai` mode |
 | 56 | Stock price range filter | MEDIUM | Filters out poor-spread stocks |
 | 57 | VWAP incomplete candle | LOW | Slight VWAP skew |
 | 41 | Holiday-shifted expiry detection | LOW | ~2-3 days/year edge case |

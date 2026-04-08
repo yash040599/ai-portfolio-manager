@@ -84,6 +84,8 @@ class CandleCache:
         if cache_end < from_date:
             return []
 
+        # candle_date is stored as full datetime string ("2026-04-07 09:15:00")
+        # so the upper bound needs a time component to include all candles on that date
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT candle_date, open, high, low, close, volume
@@ -92,7 +94,7 @@ class CandleCache:
                      AND candle_date >= ? AND candle_date <= ?
                    ORDER BY candle_date ASC""",
                 (symbol, exchange, interval,
-                 str(from_date), str(cache_end)),
+                 str(from_date), str(cache_end) + " 23:59:59"),
             ).fetchall()
 
         return [

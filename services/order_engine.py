@@ -229,7 +229,8 @@ class OrderEngine:
 
         try:
             positions_data = self.zerodha.get_positions()
-        except Exception:
+        except Exception as e:
+            self.log.warning(f"sync_external_positions: failed to fetch positions — {e}")
             return 0
 
         net_positions = positions_data.get("net", [])
@@ -323,8 +324,8 @@ class OrderEngine:
             self._log_action("ADOPT_EXTERNAL", symbol, side, abs_qty, avg_price,
                              "Manual intraday position adopted for management")
 
-        # Detect externally-opened positions that the user has closed
-        # on Zerodha — mark them closed with EXTERNAL_CLOSE reason
+        # Detect positions (external OR bot-opened) that the user closed
+        # on Zerodha — mark them EXTERNAL_CLOSE internally
         zerodha_open = {
             pos.get("tradingsymbol", "")
             for pos in net_positions
@@ -333,7 +334,6 @@ class OrderEngine:
         for p in self.positions:
             if (
                 p["status"] == "OPEN"
-                and p.get("_external")
                 and p["symbol"] not in zerodha_open
             ):
                 # Fetch exit price from Zerodha's day position data
@@ -358,13 +358,24 @@ class OrderEngine:
                 else:
                     pnl = (p["entry_price"] - exit_price) * p["qty"]
 
+                # Cancel pending SL-M order for bot-opened positions
+                sl_oid = p.get("_sl_order_id")
+                if sl_oid and not self.cfg.DRY_RUN:
+                    try:
+                        self.zerodha.cancel_order(sl_oid)
+                        self.log.info(f"Cancelled orphaned SL-M {sl_oid} for {p['symbol']}")
+                    except Exception:
+                        pass  # order may already be cancelled/completed
+                    p["_sl_order_id"] = None
+
+                origin = "External" if p.get("_external") else "Bot"
                 p["status"] = "CLOSED"
                 p["exit_price"] = round(exit_price, 2)
                 p["exit_reason"] = "EXTERNAL_CLOSE"
                 p["exit_time"] = now_ist().strftime("%H:%M:%S")
                 p["pnl"] = round(pnl, 2)
                 self.log.info(
-                    f"External position closed by user: {p['side']} {p['qty']}x "
+                    f"{origin} position closed by user: {p['side']} {p['qty']}x "
                     f"{p['symbol']} @ ₹{exit_price:.2f} | P&L: ₹{pnl:+,.2f}"
                 )
                 self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],

@@ -1,6 +1,6 @@
 # AI Portfolio Manager
 
-An AI-powered intraday trading bot for the Indian stock market (NSE) that uses **Claude AI** for stock selection and **Zerodha Kite** for market data and order execution.
+An automated intraday trading bot for the Indian stock market (NSE) that uses **technical indicators + candlestick patterns** for stock selection and **Zerodha Kite** for market data and order execution. Optionally uses **Claude AI** for selection and reviews via `--ai` flag.
 
 > **⚠️ V1 is DEPRECATED and FROZEN (April 2026).** Do not modify V1-specific
 > code (`portfolio/manager.py`'s `PortfolioManager` base class methods,
@@ -20,18 +20,21 @@ python main.py --mode analyze
 
 ### Phase 2 — Intraday Trading Bot (V2 — Default)
 
-A fully automated intraday trading bot. The core loop:
+A fully automated intraday trading bot. Default mode is **NoAI** (pure technical signals, zero Claude calls). The core loop:
 
-1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, and more), then sends the top candidates to Claude
+1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, and more), auto-selects best candidates by score
 2. **Execution** — enters positions with ATR-based dynamic stop-losses, validates entry prices against live Zerodha quotes, checks bid-ask spreads, and tries fallback candidates if primary picks fail entry checks
-3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, and has Claude review positions periodically
-4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, crash recovery, and manual trade adoption
+3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, runs stagnant position exit
+4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, and manual trade adoption
 5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API
+
+With `--ai` flag, Claude AI handles stock selection from pre-filtered candidates and periodic position reviews.
 
 All thresholds, timing, and limits are configurable in `config.py`. For the complete feature list and scoring system, see **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)**.
 
 ```bash
-python main.py --mode trade
+python main.py --mode trade                  # NoAI (default)
+python main.py --mode trade --ai             # with Claude AI
 ```
 
 ### Other Modes
@@ -43,11 +46,16 @@ python main.py --mode trade --dryrun
 # Test — see the analysis pipeline (no Claude, no trades, no cost)
 python main.py --mode trade --test
 
-# NoAI — fully automated, zero Claude calls (pure technical)
+# Claude AI — use Claude for stock selection + position reviews
+python main.py --mode trade --ai
+python main.py --mode trade --ai --dryrun
+python main.py --mode trade --ai --test
+
+# NoAI — explicitly request no-AI mode (same as default)
 python main.py --mode trade --noai
 
 # Budget cap — limit today's capital to ₹30,000
-python main.py --mode trade --noai --max 30000
+python main.py --mode trade --max 30000
 
 # V1 legacy (retired — sends raw prices to Claude)
 python main.py --mode trade --v1
@@ -79,7 +87,7 @@ Previous days' candle data is cached in `data/candle_cache.db` (SQLite) to avoid
 - **Python 3.10+** (uses modern type syntax)
 - **Windows/Linux/Mac** — works on headless servers too (Zerodha login supports manual/paste mode for SSH-only VMs)
 - A **Zerodha trading account** with Kite Connect API access
-- A **Claude API key** from Anthropic
+- A **Claude API key** from Anthropic (only needed for `--ai` mode and `--mode analyze`)
 
 ---
 

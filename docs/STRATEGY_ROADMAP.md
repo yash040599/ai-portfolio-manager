@@ -4,8 +4,8 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 **Version guide:**
 - **V1** — Claude-only stock selection (retired, kept for comparison via `--v1`)
-- **V2** — Math pre-filter + Claude selection (default: `python main.py --mode trade`)
-- **V2 NoAI** — Same math pre-filter, zero Claude calls (`--noai`)
+- **V2 NoAI** — Math pre-filter + auto-select by score, zero Claude calls (default: `python main.py --mode trade`)
+- **V2 + Claude** — Same math pre-filter, Claude selects from candidates (`--ai`)
 
 ---
 
@@ -167,17 +167,16 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ## MEDIUM PRIORITY — Data-Driven Optimization
 
-### 23. Volatility Regime Detection (India VIX)
+### 23. ✅ Volatility Regime Detection (India VIX)
 - **Versions**: All
-- **Priority**: MEDIUM
 - **Gap**: Every market day treated the same. Low-vol days and high-vol days need different strategies.
-- **Fix**: Fetch India VIX at open. VIX < 13 → tighten targets, widen SL slightly. VIX > 22 → widen targets, reduce position size.
+- **Fix**: Fetch India VIX via Zerodha at startup and during periodic NIFTY rechecks. VIX ≥ 20 → reduce MAX_POSITIONS by 1, raise V2_MIN_SCORE by 1.0 (high fear, fewer/stronger trades). VIX ≤ 12 → informational (breakout-friendly). Intraday VIX spike ≥ 10% from open → pause new entries and log warning. VIX data feeds into NIFTY context string for Claude/NoAI prompts.
 - **Source**: Institutional practice — volatility-adaptive position sizing.
-- **Effort**: Medium | **Impact**: Medium
+- **Files**: `config.py`, `manager.py`
 
 ### 24. Backtesting Framework
 - **Versions**: All (infrastructure)
-- **Priority**: HIGH
+- **Priority**: MEDIUM (moved to V3 in IDEATIONS.md)
 - **Gap**: No way to measure which indicators actually contribute to winning trades. Flying blind.
 - **Fix**: Replay V2 scoring on historical 15-min data, simulate ATR-based entries/exits, compute win rate per indicator combination.
 - **Source**: Every professional quant desk backtests before going live.
@@ -284,7 +283,8 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Effort**: Medium | **Impact**: Medium
 
 ### 40. Claude Prompt Feedback Loop
-- **Versions**: V2
+- **Versions**: V2 (`--ai` mode)
+- **Priority**: LOW (only applies to --ai mode, which is no longer default)
 - **Gap**: Claude doesn't know its historical accuracy. No feedback on which of its past picks won/lost.
 - **Fix**: Prepend last 5-day win rate and common failure modes to Claude prompt: "Your last 5 days: 12W/8L (60%). Main failure: positions opened at already-extended prices."
 - **Effort**: Medium | **Impact**: High
@@ -295,11 +295,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Maintain a list of actual expiry dates (from NSE published calendar) alongside the holiday list. Fall back to Thursday check if list is empty.
 - **Effort**: Low | **Impact**: Low (edge case)
 
-### 42. Pre-Open Auction Data
+### 42. ✅ Pre-Open Auction Data
 - **Versions**: V2, NoAI
 - **Gap**: Scan happens after market open. The 9:00-9:08 pre-open auction gives indicative open price, volume, and order imbalance — valuable signal for gap analysis before first candle forms.
-- **Fix**: Fetch pre-open snapshot from Zerodha at 9:08 AM. Use indicative open vs prev close for early gap detection and bias.
-- **Effort**: Medium | **Impact**: Medium
+- **Fix**: Fetch quotes for full universe at startup (post 9:08 when equilibrium prices are set). Compute gap% from prev close for every stock. Log stocks with significant gaps (≥PREOPEN_GAP_SIGNIFICANT_PCT). Feed significant gap data into NIFTY context string so Claude/NoAI scans see which stocks have institutional pre-open interest.
+- **Files**: `config.py`, `manager.py`
 
 ### 43. ✅ Real-Time Trade Verification Script
 - **Versions**: All (infrastructure)
@@ -309,6 +309,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ### 44. WebSocket Tick Data for Faster SL/Target Execution
 - **Versions**: All
+- **Priority**: MEDIUM (implement when polling latency causes real slippage)
 - **Gap**: 10-second polling can miss rapid SL/target breaches. A stock can gap through SL in seconds during news events.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick instead of every poll.
 - **Effort**: High | **Impact**: High (faster execution, less slippage)
@@ -381,7 +382,7 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 
 ### 55. LIMIT Orders for Entry/Exit
 - **Versions**: All
-- **Priority**: CRITICAL
+- **Priority**: MEDIUM (implement when slippage data confirms need)
 - **Gap**: MARKET orders cause adverse fills (₹20-40/day slippage on ₹18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
 - **Fix**: Change `place_order()` calls from `order_type="MARKET"` to `order_type="LIMIT"` with `price=ltp`. Add a 5-10s fill check; if not filled, cancel and retry at updated LTP. Fall back to MARKET after 2 LIMIT failures.
 - **Files**: `order_engine.py`, `zerodha_client.py`
@@ -471,6 +472,12 @@ Bugs identified during expert code review. All fixed in commit that added this s
 - **Fix**: Count `enter_trade()` return values instead.
 - **Files**: `manager.py`
 
+### 78. ✅ FII/DII Flow Bias (Pre-Market Intelligence)
+- **Versions**: All
+- **Gap**: No institutional flow context. FII and DII net buy/sell data is a strong indicator of institutional sentiment — the biggest money movers in Indian markets.
+- **Fix**: Fetch previous day's FII/DII data from NSE at startup. Classify as BULLISH (both buying), BEARISH (both selling), or MIXED. Feed into NIFTY context string for Claude/NoAI scans. Graceful fallback if NSE blocks request — no impact on trading.
+- **Files**: `config.py`, `manager.py`
+
 ---
 
 ## Implementation Status
@@ -499,7 +506,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 20 | Consecutive SL pause | All | ✅ Done | `order_engine.py`, `manager_v2.py` |
 | 21 | Dynamic score after losses | NoAI | ✅ Done | `stock_scanner_v2.py`, `config.py` |
 | 22 | Regime-shift SL tightening | V2, NoAI | ✅ Done | `manager_v2.py` |
-| 23 | VIX-based sizing | All | ⬜ Pending | — |
+| 23 | VIX-based sizing | All | ✅ Done | `config.py`, `manager.py`, `manager_v2.py` |
 | 24 | Backtesting framework | All | ⬜ Pending | — |
 | 25 | Trade journaling + analytics | All | ✅ Done | `performance_tracker.py`, `view_performance.py` |
 | 26 | Sector cap at entry time | All | ✅ Done | `order_engine.py` |
@@ -518,7 +525,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 39 | ATR percentile ranking | V2, NoAI | ⬜ Pending | — |
 | 40 | Claude prompt feedback loop | V2 | ⬜ Pending | — |
 | 41 | Holiday-shifted expiry | All | ⬜ Pending | — |
-| 42 | Pre-open auction data | V2, NoAI | ⬜ Pending | — |
+| 42 | Pre-open auction data | V2, NoAI | ✅ Done | `config.py`, `manager.py` |
 | 43 | Real-time trade verification | All | ✅ Done | `scripts/verify_trades.py` |
 | 44 | WebSocket tick data | All | ⬜ Pending | — |
 | 45 | Multi-day score trend | V2, NoAI | ⬜ Pending | — |
@@ -530,7 +537,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
 | 53 | Direction diversification (score-aware) | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |
-| 55 | **LIMIT orders for entry/exit** | All | ⬜ **CRITICAL** | — |
+| 55 | LIMIT orders for entry/exit | All | ⬜ Pending | — |
 | 56 | Scan universe price filter | V2, NoAI | ⬜ Pending | — |
 | 57 | VWAP exclude incomplete candle | V2, NoAI | ⬜ Pending | — |
 | 58 | Dynamic position sizing by budget | All | ✅ Done | `config.py`, `order_engine.py` |
@@ -553,3 +560,4 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 75 | --max budget CLI flag | All | ✅ Done | `main.py` |
 | 76 | Smart direction diversification | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 77 | Entry count logging fix | All | ✅ Done | `manager.py` |
+| 78 | FII/DII flow bias | All | ✅ Done | `config.py`, `manager.py` |

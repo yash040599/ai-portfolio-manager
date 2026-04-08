@@ -20,7 +20,11 @@
 # DESIGN: inheritance means V2 automatically gets any future V1
 # improvements (new risk rules, better prompts, etc.) for free.
 #
-# Run with: python main.py --mode trade --v2
+# Default mode is NoAI (pure technical signals, zero Claude calls).
+# Use --ai for Claude-assisted selection and reviews.
+#
+# Run with: python main.py --mode trade          (NoAI, default)
+#           python main.py --mode trade --ai     (Claude-assisted)
 # ================================================================
 
 import time
@@ -90,7 +94,7 @@ class PortfolioManagerV2(PortfolioManager):
         print(f"  Price source   : {zrd['price_source'].upper()}")
         print()
         print(f"  \033[96m★ V2 Strategy\033[0m : Candle patterns + Technical indicators")
-        print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(10,3)")
+        print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(7,2.0)")
         print(f"    Patterns    : Hammer, Engulfing, Morning/Evening Star, etc.")
         print(f"    Dynamic poll: faster near SL/target zones")
         if self._noai:
@@ -553,6 +557,14 @@ class PortfolioManagerV2(PortfolioManager):
                         )
                         time.sleep(base_poll)
                         continue
+                    if self._check_vix_spike():
+                        self._clear_status_line()
+                        self.log.info(
+                            f"All positions closed but VIX spike active — "
+                            f"waiting for VIX to settle before re-scanning"
+                        )
+                        time.sleep(base_poll)
+                        continue
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
@@ -770,7 +782,7 @@ class PortfolioManagerV2(PortfolioManager):
                 nifty_elapsed = time.time() - self._last_nifty_check
                 if nifty_elapsed >= nifty_recheck_interval:
                     old_condition = self._market_condition
-                    self._build_nifty_context()  # updates self._market_condition
+                    self._build_nifty_context()  # updates self._market_condition + VIX
                     if self._market_condition and self._market_condition != old_condition:
                         self._clear_status_line()
                         self.log.info(
@@ -778,6 +790,14 @@ class PortfolioManagerV2(PortfolioManager):
                         )
                         # Tighten SLs on positions contradicted by new regime
                         self._regime_shift_protect(quotes)
+                    # VIX spike detection
+                    if self._check_vix_spike():
+                        self._clear_status_line()
+                        self.log.warning(
+                            f"⚠ VIX SPIKE detected: {self._india_vix:.1f} "
+                            f"(opened at {self._india_vix_open:.1f}) — "
+                            f"pausing new entries"
+                        )
                     self._last_nifty_check = time.time()
 
             # ── Periodic opportunity scan (fill free slots) ───────
@@ -792,6 +812,7 @@ class PortfolioManagerV2(PortfolioManager):
                     and not self.engine.is_order_api_broken()
                     and not self._circuit_broken
                     and not self.engine.is_sl_paused()
+                    and not self._check_vix_spike()
                 ):
                     sq_now = now_ist()
                     sq_off = sq_now.replace(
