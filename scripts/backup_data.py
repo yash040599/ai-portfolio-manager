@@ -177,7 +177,14 @@ def _merge_table(
     Merge rows from src into dst for one table.
     Returns the number of new rows inserted.
     """
-    cols = _get_columns(dst_conn, table)
+    dst_cols = _get_columns(dst_conn, table)
+    src_cols = _get_columns(src_conn, table)
+    if not dst_cols or not src_cols:
+        return 0
+
+    # Use only columns that exist in BOTH databases (handles schema drift
+    # when one side has new columns the other hasn't migrated yet).
+    cols = [c for c in dst_cols if c in src_cols]
     if not cols:
         return 0
 
