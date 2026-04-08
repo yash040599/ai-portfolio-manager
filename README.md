@@ -17,7 +17,7 @@ python main.py --mode analyze
 A fully automated intraday trading bot. The core loop:
 
 1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, and more), then sends the top candidates to Claude
-2. **Execution** — enters positions with ATR-based dynamic stop-losses, validates entry prices against live Zerodha quotes, and checks bid-ask spreads before ordering
+2. **Execution** — enters positions with ATR-based dynamic stop-losses, validates entry prices against live Zerodha quotes, checks bid-ask spreads, and tries fallback candidates if primary picks fail entry checks
 3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, and has Claude review positions periodically
 4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, crash recovery, and manual trade adoption
 5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API
@@ -39,6 +39,9 @@ python main.py --mode trade --test
 
 # NoAI — fully automated, zero Claude calls (pure technical)
 python main.py --mode trade --noai
+
+# Budget cap — limit today's capital to ₹30,000
+python main.py --mode trade --noai --max 30000
 
 # V1 legacy (retired — sends raw prices to Claude)
 python main.py --mode trade --v1

@@ -534,11 +534,17 @@ class StockScannerV2(StockScanner):
         self, quotes: dict, nifty_context: str = "",
         max_trades: int = 0, session_context: str = "",
         day_pnl: float = 0.0,
+        open_buys: int = 0, open_sells: int = 0,
     ) -> list[dict]:
         """
         Selects trades purely from technical scores — no Claude call.
         Uses the same candle pre-filter as V2, then auto-generates
         trade plans from the top candidates.
+
+        open_buys/open_sells: current open positions by direction.
+        Used to respect the direction diversification limit BEFORE
+        selecting candidates (avoids picking trades that enter_trade
+        would reject).
 
         Returns a list of trade dicts identical to what Claude would
         produce (same keys: symbol, side, entry_price, stop_loss,
@@ -575,8 +581,80 @@ class StockScannerV2(StockScanner):
             self.log.warning("NoAI scan: no candidates passed pre-filter")
             return []
 
-        # Step 2: Take the top N candidates by absolute score
-        top = candidates[:max_trades]
+        # ── Smart direction allocation (financial analyst logic) ──
+        # Instead of a hard "max N in same direction" rule, evaluate
+        # whether the available BUY and SELL candidates justify
+        # concentrating in one direction.
+        #
+        # Rationale: on a strongly trending day (e.g. broad market up 1.5%),
+        # ALL good setups may be BUY. Forcing a SELL just for "diversification"
+        # means taking a weak counter-trend trade that's likely to lose.
+        # A financial analyst would say: "go with the trend, don't fight it."
+        #
+        # Logic:
+        #   1. Separate candidates by direction
+        #   2. Compare best BUY score vs best SELL score
+        #   3. If gap >= 3 points → market is biased, allow all slots
+        #      in the dominant direction (don't waste capital on weak setups)
+        #   4. If gap < 3 → both directions have comparable setups,
+        #      apply the normal max_same_dir limit to stay diversified
+        buy_candidates = [c for c in candidates if c["combined_score"] > 0]
+        sell_candidates = [c for c in candidates if c["combined_score"] < 0]
+        best_buy_score = buy_candidates[0]["combined_score"] if buy_candidates else 0
+        best_sell_score = abs(sell_candidates[0]["combined_score"]) if sell_candidates else 0
+        score_gap = abs(best_buy_score - best_sell_score)
+
+        max_same_dir_hard = self.cfg.MAX_POSITIONS  # maximum possible
+        max_same_dir_normal = max(1, self.cfg.MAX_POSITIONS - 1)
+
+        # Determine effective direction limits
+        if score_gap >= 3:
+            # Strong directional bias — let the dominant side take all slots
+            dominant = "BUY" if best_buy_score > best_sell_score else "SELL"
+            buy_limit = max_same_dir_hard if dominant == "BUY" else max_same_dir_normal
+            sell_limit = max_same_dir_hard if dominant == "SELL" else max_same_dir_normal
+            self.log.info(
+                f"Direction analysis: BUY best {best_buy_score:+.1f} vs SELL best "
+                f"{best_sell_score:+.1f} (gap {score_gap:.1f}) — {dominant} dominant, "
+                f"allowing up to {max_same_dir_hard} {dominant} positions"
+            )
+        else:
+            buy_limit = max_same_dir_normal
+            sell_limit = max_same_dir_normal
+
+        buy_slots = max(0, buy_limit - open_buys)
+        sell_slots = max(0, sell_limit - open_sells)
+
+        # Pre-filter candidates by available direction slots
+        direction_filtered = []
+        _used_buy = 0
+        _used_sell = 0
+        for c in candidates:
+            side = "BUY" if c["combined_score"] > 0 else "SELL"
+            if side == "BUY":
+                if _used_buy >= buy_slots:
+                    continue
+                _used_buy += 1
+            else:
+                if _used_sell >= sell_slots:
+                    continue
+                _used_sell += 1
+            direction_filtered.append(c)
+
+        if not direction_filtered and candidates:
+            buy_cands = len(buy_candidates)
+            sell_cands = len(sell_candidates)
+            self.log.warning(
+                f"NoAI scan: {len(candidates)} candidates found but all blocked by "
+                f"direction limit (BUY slots: {buy_slots}, SELL slots: {sell_slots}, "
+                f"candidates: {buy_cands} BUY / {sell_cands} SELL)"
+            )
+
+        # Include fallback candidates beyond max_trades — if primary
+        # picks fail sanity checks in enter_trade (R:R, late-entry
+        # reduction, min profit, etc.) the entry loop tries these next.
+        fallback_buffer = min(5, max(0, len(direction_filtered) - max_trades))
+        top = direction_filtered[:max_trades + fallback_buffer]
 
         # Step 3: Build trade plans from technical data
         budget = self._budget
@@ -680,11 +758,27 @@ class StockScannerV2(StockScanner):
                 "_indicator_snapshot": self._build_indicator_snapshot(tech, c),
             })
 
-        # Validate budget (same logic as Claude path)
-        trades = self._validate_budget(trades)
-        trades = self._boost_underdeployed(trades)
-        self.log.success(f"NoAI scan: selected {len(trades)} trades from {len(candidates)} candidates")
-        return trades
+        # Split primary picks and fallback candidates.
+        # Budget validation + boost only on primary picks — fallback
+        # candidates keep per-slot sizing; enter_trade enforces budget
+        # dynamically at order time.
+        primary = trades[:max_trades]
+        fallback = trades[max_trades:]
+
+        primary = self._validate_budget(primary)
+        primary = self._boost_underdeployed(primary)
+
+        all_trades = primary + fallback
+        if fallback:
+            self.log.success(
+                f"NoAI scan: selected {len(primary)} trades + {len(fallback)} fallback "
+                f"from {len(candidates)} candidates"
+            )
+        else:
+            self.log.success(
+                f"NoAI scan: selected {len(primary)} trades from {len(candidates)} candidates"
+            )
+        return all_trades
 
     # ================================================================
     # MINIMUM CAPITAL DEPLOYMENT BOOST

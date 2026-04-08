@@ -706,9 +706,15 @@ class OrderEngine:
             return False
 
         # ── Direction diversification guard ───────────────────────
-        # Prevent all positions being in the same direction.
-        # With MAX_POSITIONS=3, allow max 2 in same direction.
-        max_same_dir = max(1, self.cfg.MAX_POSITIONS - 1)
+        # Dynamic direction limit based on signal strength:
+        #   - Normal: max MAX_POSITIONS-1 in same direction (diversified)
+        #   - Strong signal (|score| >= 5): allow ALL slots in same direction
+        #     (on a strongly trending day, forcing counter-trend trades loses money)
+        # The scanner already makes the smart direction decision upstream;
+        # this guard is the last safety net.
+        max_same_dir_normal = max(1, self.cfg.MAX_POSITIONS - 1)
+        entry_score = abs(trade.get("_entry_score") or 0)
+        max_same_dir = self.cfg.MAX_POSITIONS if entry_score >= 5 else max_same_dir_normal
         same_dir_count = sum(
             1 for p in self.positions
             if p["status"] == "OPEN" and p["side"] == side
@@ -717,7 +723,7 @@ class OrderEngine:
             self.log.warning(
                 f"Cannot enter {symbol} ({side}): already have {same_dir_count} "
                 f"{side} position(s) — max {max_same_dir} in same direction "
-                f"to maintain diversification"
+                f"(score {entry_score:.1f}, need ≥5.0 to override)"
             )
             return False
 

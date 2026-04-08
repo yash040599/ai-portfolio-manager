@@ -75,6 +75,7 @@ class PortfolioManager:
         self._last_partial_rescan: float = 0.0  # cooldown for partial re-scans
         self._prev_runs: dict | None = None     # cached previous-run totals for today
         self._status_lines_printed = False       # tracks 2-line status display
+        self._last_external_sync: float = 0.0    # periodic manual trade detection
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -374,6 +375,7 @@ class PortfolioManager:
         self.engine.sync_external_positions()
 
         plans = trades if trades is not None else self._trade_plans
+        entered = 0
         for trade in plans:
             if self._shutdown_requested:
                 break
@@ -382,11 +384,14 @@ class PortfolioManager:
                     "Zerodha order API is broken — aborting remaining entries"
                 )
                 break
-            self.engine.enter_trade(trade)
+            # Stop attempting once all position slots are filled
+            if len(self.engine.open_positions()) >= self.cfg.MAX_POSITIONS:
+                break
+            if self.engine.enter_trade(trade):
+                entered += 1
             time.sleep(0.5)  # small gap between order placements
 
-        open_count = len(self.engine.open_positions())
-        self.log.success(f"Entered {open_count} positions")
+        self.log.success(f"Entered {entered} position(s)")
 
     # ================================================================
     # OBSERVATION PERIOD + DELAYED ENTRY
@@ -608,6 +613,7 @@ class PortfolioManager:
         poll_interval    = self.cfg.PRICE_POLL_SECONDS
         review_interval  = self.cfg.CLAUDE_REVIEW_MINUTES * 60  # convert to seconds
         last_review_time = time.time()
+        self._last_external_sync = time.time()
 
         while not self._shutdown_requested:
             now = now_ist()
@@ -688,6 +694,17 @@ class PortfolioManager:
                     )
                     break
 
+            # ── Periodic external position sync (detect manual trades) ─
+            # Run FIRST before quote fetch so manual positions are included
+            # in quotes, SL/target checks, and slot counting.
+            external_sync_interval = self.cfg.V2_CANDLE_RESCAN_MINUTES * 60
+            if not self.cfg.DRY_RUN and time.time() - self._last_external_sync >= external_sync_interval:
+                new_ext = self.engine.sync_external_positions()
+                if new_ext > 0:
+                    self._clear_status_line()
+                    self.log.info(f"Detected {new_ext} manual trade(s) — now managed by bot")
+                self._last_external_sync = time.time()
+
             # ── Fetch live quotes ─────────────────────────────────
             open_symbols = [
                 {"symbol": p["symbol"], "exchange": p["exchange"]}
@@ -748,8 +765,6 @@ class PortfolioManager:
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
                         if self._trade_plans:
-                            # Limit to available slots
-                            self._trade_plans = self._trade_plans[:slots]
                             self._enter_positions()
                             last_review_time = time.time()
                         else:

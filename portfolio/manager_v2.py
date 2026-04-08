@@ -457,11 +457,17 @@ class PortfolioManagerV2(PortfolioManager):
         open_count = len(self.engine.open_positions())
         max_trades = self.cfg.MAX_POSITIONS - open_count
 
+        # Count open direction for direction-aware filtering
+        open_buys = sum(1 for p in self.engine.open_positions() if p["side"] == "BUY")
+        open_sells = sum(1 for p in self.engine.open_positions() if p["side"] == "SELL")
+
         self._trade_plans = self.scanner.scan_noai(
             quotes, nifty_context,
             max_trades=max_trades,
             session_context=session_context,
             day_pnl=self.engine.day_pnl(),
+            open_buys=open_buys,
+            open_sells=open_sells,
         )
 
         if self._trade_plans:
@@ -513,6 +519,7 @@ class PortfolioManagerV2(PortfolioManager):
         self._last_candle_scan = time.time()
         self._last_nifty_check = time.time()
         self._last_opportunity_scan = time.time()
+        self._last_external_sync = time.time()
 
         while not self._shutdown_requested:
             now = now_ist()
@@ -586,6 +593,16 @@ class PortfolioManagerV2(PortfolioManager):
                     )
                     break
 
+            # ── Periodic external position sync (detect manual trades) ─
+            # Run FIRST before quote fetch so manual positions are included
+            # in quotes, SL/target checks, and slot counting.
+            if not self.cfg.DRY_RUN and time.time() - self._last_external_sync >= candle_rescan_interval:
+                new_ext = self.engine.sync_external_positions()
+                if new_ext > 0:
+                    self._clear_status_line()
+                    self.log.info(f"Detected {new_ext} manual trade(s) — now managed by bot")
+                self._last_external_sync = time.time()
+
             # ── Fetch live quotes ─────────────────────────────────
             open_symbols = [
                 {"symbol": p["symbol"], "exchange": p["exchange"]}
@@ -647,7 +664,6 @@ class PortfolioManagerV2(PortfolioManager):
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
                         if self._trade_plans:
-                            self._trade_plans = self._trade_plans[:slots]
                             self._enter_positions()
                             last_review_time = time.time()
                             self._last_candle_scan = time.time()
@@ -809,7 +825,6 @@ class PortfolioManagerV2(PortfolioManager):
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
                         if self._trade_plans:
-                            self._trade_plans = self._trade_plans[:slots]
                             self._enter_positions()
                             last_review_time = time.time()
                             self._last_candle_scan = time.time()

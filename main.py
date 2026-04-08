@@ -60,6 +60,19 @@ def main():
     use_noai   = "--noai"   in sys.argv
     use_dryrun = "--dryrun" in sys.argv
 
+    # Parse --max budget override (e.g. --max 30000 or --max 30_000)
+    max_budget = None
+    if "--max" in sys.argv:
+        try:
+            raw = sys.argv[sys.argv.index("--max") + 1]
+            max_budget = int(raw.replace("_", "").replace(",", ""))
+            if max_budget <= 0:
+                print(f"\n  Error: --max must be a positive amount, got {raw}")
+                sys.exit(1)
+        except (IndexError, ValueError):
+            print("\n  Error: --max requires a numeric amount (e.g. --max 30000)")
+            sys.exit(1)
+
     if use_v1 and use_v2:
         print("\n  Error: --v1 and --v2 are mutually exclusive.")
         sys.exit(1)
@@ -75,6 +88,7 @@ def main():
         print("  trade --noai               — V2 fully automated, zero Claude calls")
         print("  trade --noai --dryrun      — NoAI dry run")
         print("  trade --noai --test        — show NoAI strategy analysis (no cost)")
+        print("  trade --max 30000          — limit today's budget to ₹30,000")
         print()
         print("  trade --v1                 — V1 legacy trading (retired)")
         print("  trade --v1 --dryrun        — V1 dry run")
@@ -90,6 +104,11 @@ def main():
         # Set DRY_RUN from CLI flag
         if use_dryrun:
             Config.DRY_RUN = True
+
+        # Set max budget override from --max flag
+        if max_budget is not None:
+            Config.MAX_BUDGET_INR = max_budget
+            print(f"\n  Budget cap set to ₹{max_budget:,} (via --max)\n")
 
         if use_v1:
             # V1 legacy mode (retired — kept for comparison)

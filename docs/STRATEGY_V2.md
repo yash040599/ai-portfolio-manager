@@ -13,7 +13,11 @@
   
   Last sync: 2026-04-08 — R:R 1.5:1, SL-M exchange orders, dynamic
   MAX_POSITIONS, pre-trade profit check, SuperTrend 7/2.0, Fibonacci
-  directional, ORB 2nd candle, short cutoff, trail step 50%.
+  directional, ORB 2nd candle, short cutoff, trail step 50%, smart
+  direction diversification (score-aware), --max budget CLI flag,
+  periodic manual trade detection, entry count logging fix, fallback
+  candidate pool (entry loop tries backup picks if primary fails
+  sanity checks).
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -73,7 +77,7 @@ Cost: ₹0 — pure computation on free Zerodha historical data.
 
 Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-**V2 NoAI:** Auto-generates trades from score sign. Budget allocated: `min(budget/max_trades, budget × MAX_POSITION_PCT/100)`. If day loss ≥ 1.5% of budget, MIN_SCORE rises by 1.5 points.
+**V2 NoAI:** Auto-generates trades from score sign. Budget allocated: `min(budget/max_trades, budget × MAX_POSITION_PCT/100)`. If day loss ≥ 1.5% of budget, MIN_SCORE rises by 1.5 points. Returns primary picks (top N) **plus up to 5 fallback candidates** — if a primary pick fails entry sanity checks (R:R too low after late-entry reduction, min profit, etc.), the entry loop tries the next candidate automatically.
 
 ### Phase 3 — Entry
 
@@ -81,15 +85,17 @@ Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **wider-of** ATR SL vs Claude SL
 4. Pre-trade checks pass (12 checks — see Risk Management section)
-5. Place entry order on Zerodha
-6. Fetch actual fill price — scale SL/target proportionally around fill
-7. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
+5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan (fallback candidates included). Loop stops when all position slots are filled or all candidates exhausted
+6. Place entry order on Zerodha
+7. Fetch actual fill price — scale SL/target proportionally around fill
+8. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
 ### Phase 4 — Monitor Loop (9:20 AM – 3:10 PM)
 
 | Interval | Action | Cost |
 |----------|--------|------|
 | Every 10s (5s near SL/target) | SL/target check, trailing stop, time-decay | Free |
+| Every 15 min | Sync with Zerodha to detect manual MIS positions. Adopted positions get ATR-based SL/targets and full bot management | Free |
 | Every 15 min | Re-run candle analysis on open positions. **Auto-protect:** contrary score ≥ ±4 → tighten SL (50% profit lock or breakeven) | Free |
 | Every 15 min | Nifty trend recheck (regime shift detection) | Free |
 | Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (V2) / Free (NoAI) |
@@ -120,7 +126,7 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
 | 8 | **Duplicate guard** | — | No two positions in same stock |
 | 9 | **Sector concentration** | Max 2 per sector | 12 sectors |
-| 10 | **Direction diversification** | Max `N−1` in same direction | Forces contrarian position when full |
+| 10 | **Direction diversification** | Dynamic (score-aware) | Score ≥5: all slots in same dir allowed. Score <5: max `N−1` in same direction. Prevents forcing weak counter-trend trades on trending days |
 | 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM |
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 
@@ -294,7 +300,7 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| `MAX_BUDGET_INR` | 20,000 | Daily capital cap |
+| `MAX_BUDGET_INR` | 20,000 | Daily capital cap (overridable via `--max` CLI flag) |
 | `MAX_POSITIONS` | 3 (auto-scaled) | See Dynamic MAX_POSITIONS |
 | `MAX_POSITIONS_OVERRIDE` | 0 | 0 = auto; >0 = fixed |
 | `MAX_POSITION_PCT` | 40% | Per-stock cap |

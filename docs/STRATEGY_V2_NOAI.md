@@ -4,7 +4,7 @@
 
 NoAI is a **Claude-free variant of V2** that uses the same candle pattern + technical indicator pipeline for everything — stock selection, monitoring, and re-scans. It replaces every Claude call with rule-based math logic.
 
-**Run with:** `python main.py --mode trade --noai`
+**Run with:** `python main.py --mode trade --noai` (or `--noai --max 30000` to cap budget)
 
 NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle re-scan auto-protect) and V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). The only difference: no Claude API calls anywhere in the pipeline.
 
@@ -69,7 +69,8 @@ This phase is identical to V2 — same indicators, same scoring, same filters.
 ### Phase 2 — Auto-Selection (replaces Claude) — FREE
 
 ```
-Take top N candidates (N = MAX_POSITIONS - open_positions):
+Take top N candidates (N = MAX_POSITIONS - open_positions)
+  + up to 5 fallback candidates (tried if primary picks fail entry checks):
   → For each candidate:
       • Side = BUY if score > 0, SELL if score < 0
       • SL = price × (1 ± DEFAULT_STOP_LOSS_PCT)
@@ -78,10 +79,11 @@ Take top N candidates (N = MAX_POSITIONS - open_positions):
       • Rationale = auto-generated from indicators:
           "Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | Patterns: HAMMER"
   → Skip symbols already traded today or currently held
-  → Validate total budget allocation
+  → Validate total budget allocation (primary picks only)
+  → Fallback candidates keep per-slot sizing; enter_trade enforces budget
 ```
 
-**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best trades with nuanced reasoning. NoAI simply takes the top N by score — no qualitative judgment.
+**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best trades with nuanced reasoning. NoAI takes the top N by score plus fallback candidates — if a primary pick fails entry sanity checks (R:R, late-entry reduction, min profit), the entry loop tries the next candidate. No more "selected 1, entered 0" when the only pick gets rejected.
 
 ### Phase 3 — Entry (same as V1/V2)
 
@@ -92,6 +94,12 @@ Observation period (ENTRY_DELAY_MINUTES from market open):
   → ATR-based SL/target override (15-min candles, capped at MAX_INTRADAY_SL_PCT)
   → Uses wider of ATR SL vs config SL (structural levels respected)
   → Smart position sizing (reduce qty if budget insufficient)
+
+Entry loop with fallback:
+  → Tries each candidate in score order (primary first, then fallback)
+  → Each candidate passes through 12 sanity checks in enter_trade
+  → Loop stops when position slots are full (MAX_POSITIONS reached)
+  → Any candidate that fails a check is skipped, next candidate tried
 ```
 
 ATR override, observation filter, and position sizing are all identical to V1/V2.
@@ -112,6 +120,9 @@ Every CLAUDE_REVIEW_MINUTES (default: 20 min) — FREE in NoAI:
   → Frees slots for stronger setups (replaces Claude's "momentum faded, exit" judgment)
 
 Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
+  → Sync with Zerodha to detect manually-opened MIS positions
+      • Adopted with ATR-based SL/target, managed by bot going forward
+      • Also detects when user manually closes a position on Zerodha
   → Re-run candle pattern analysis on all open positions
   → AUTO-PROTECT: contrary signal score ±4 → tighten SL
   → No Claude review call (skipped in NoAI mode)
@@ -190,7 +201,8 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Partial profit taking (33% at 1.5×risk, trail 50%) | Order engine | Yes |
 | Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
-| **Claude position reviews** | **V2 monitor (every 25 min)** | **No (replaced by stagnant exit)** |
+| **Direction diversification** | ~~Max N−1 in same direction~~ → Smart: score gap ≥3 between best BUY/SELL → dominant direction gets all slots. Prevents forcing weak counter-trend trades on trending days. Score ≥5 in enter_trade also bypasses the limit |
+| Manual trade adoption | Zerodha MIS positions opened outside the bot are detected every 15 min, adopted with ATR-based SL/targets, and managed (SL monitoring, trailing, square-off) identically to bot-entered trades |
 | **Claude re-scan stock selection** | **V1/V2 scanner** | **No** |
 
 ---
@@ -226,7 +238,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Day loss % that triggers higher MIN_SCORE |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Extra score points added after loss threshold |
 | `DEFAULT_STOP_LOSS_PCT` | 1.5% | Used as initial SL before ATR override |
-| `DEFAULT_TARGET_PCT` | 2.0% | Used as initial target before ATR override |
+| `DEFAULT_TARGET_PCT` | 1.5% | Used as initial target before ATR override |
 | `ATR_INTERVAL` | "15minute" | ATR candle interval (overrides default SL/target) |
 | `MAX_INTRADAY_SL_PCT` | 2.5% | Hard cap on ATR SL width |
 
@@ -243,7 +255,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 ### Disadvantages
 - **No qualitative reasoning** — can't consider sector rotation, news catalysts, or earnings proximity
 - **No position management** — relies entirely on rule-based SL/target/trailing/candle-protect. Claude sometimes spots momentum fading or suggests tightening SL before a reversal pattern fully forms
-- **Mechanical selection** — takes top N by score. Sector diversification filter (max 2 per sector) prevents correlated picks, but Claude adds nuanced qualitative reasoning that math can't replicate
+- **Mechanical selection** — takes top N by score (+ fallback candidates). Sector diversification filter (max 2 per sector) prevents correlated picks, and fallback candidates ensure capital deployment even when primaries fail entry checks — but Claude adds nuanced qualitative reasoning that math can't replicate
 - **No session awareness** — doesn't adjust risk appetite based on day's P&L or recent performance. Session context is limited to skip-symbols
 
 ### When to Use NoAI vs V2
@@ -254,6 +266,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 
 ## Fallback Behaviour
 
+- If primary candidates fail entry checks (R:R, late-entry reduction, min profit), the entry loop tries **fallback candidates** (up to 5 extra) automatically — no more "selected 1, entered 0"
 - If the pre-filter finds **no candidates** above V2_MIN_SCORE, no trades are taken (no V1 fallback — there's no Claude to fall back to)
 - If candle data fetch fails for a stock, that stock is skipped (non-blocking)
 - All V1/V2 risk management (SL, trailing, circuit breaker, crash recovery) runs identically
