@@ -2,6 +2,12 @@
 
 An AI-powered intraday trading bot for the Indian stock market (NSE) that uses **Claude AI** for stock selection and **Zerodha Kite** for market data and order execution.
 
+> **⚠️ V1 is DEPRECATED and FROZEN (April 2026).** Do not modify V1-specific
+> code (`portfolio/manager.py`'s `PortfolioManager` base class methods,
+> `services/stock_scanner.py`, `docs/STRATEGY_V1.md`). Shared components
+> (`order_engine.py`, `market_data.py`, etc.) may evolve for V2/NoAI — V1
+> inherits those changes passively. All new work targets V2 or V2 NoAI.
+
 ## What it does
 
 ### Phase 1 — Portfolio Analysis (read-only)
@@ -62,7 +68,7 @@ Previous days' candle data is cached in `data/candle_cache.db` (SQLite) to avoid
 |-----|---------------|
 | **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** | V2 strategy architecture — indicators, patterns, scoring system, risk layers |
 | **[docs/STRATEGY_V2_NOAI.md](docs/STRATEGY_V2_NOAI.md)** | NoAI strategy — fully automated, zero Claude calls |
-| **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** | V1 strategy architecture (retired) |
+| **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** | V1 strategy architecture (deprecated — frozen, no new changes) |
 | **[docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md)** | Strategy improvement roadmap with research-backed enhancements |
 | **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)** | Comprehensive intraday trading tax guide for India |
 

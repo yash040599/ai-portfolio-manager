@@ -1,9 +1,18 @@
-# V1 Trading Strategy — Claude AI Intraday Bot (RETIRED)
-<!-- Last sync: 2026-04-08 — all values verified against code -->
+# V1 Trading Strategy — Claude AI Intraday Bot (DEPRECATED)
+<!-- Last sync: 2026-04-08 — FINAL. No further changes will be made to V1. -->
 
-> **Status: RETIRED.** V2 is now the default trading strategy. V1 is kept for comparison only. Use `python main.py --mode trade --v1` to run it.
+> **Status: DEPRECATED.** V1 is frozen as of 2026-04-08. It will continue to work
+> with the current codebase but will **not receive any new features, indicators,
+> or strategy improvements**. All future development targets V2 and V2 NoAI.
 >
-> V1 shares the same `OrderEngine` as V2/NoAI, so it inherits all entry-time safety checks, trailing stop, circuit breaker, whipsaw guard, manual trade sync, and fallback candidate support.
+> Use `python main.py --mode trade --v1` to run it. Use V2 (default) or
+> `--noai` for the actively maintained strategies.
+>
+> V1 shares the same `OrderEngine` as V2/NoAI, so it inherits all entry-time
+> safety checks, trailing stop, circuit breaker, whipsaw guard, manual trade
+> sync, and fallback candidate support. These shared components may evolve
+> with V2 development — V1 benefits passively but is not tested against
+> new OrderEngine changes.
 
 ## Overview
 
@@ -155,3 +164,10 @@ V1 shares `OrderEngine` with V2/NoAI — all entry checks and position managemen
 - Fixed poll interval regardless of how close positions are to exits
 - No mathematical pre-filtering — Claude's fund of knowledge is the only filter
 - No candle re-scan auto-protect (V2/NoAI only)
+
+---
+
+> **This document is frozen.** Do not add new sections or update parameter
+> values for V1-specific changes. V1 inherits shared OrderEngine changes
+> passively. For the actively maintained strategy, see
+> [STRATEGY_V2.md](STRATEGY_V2.md) or [STRATEGY_V2_NOAI.md](STRATEGY_V2_NOAI.md).

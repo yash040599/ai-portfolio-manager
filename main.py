@@ -111,7 +111,8 @@ def main():
             print(f"\n  Budget cap set to ₹{max_budget:,} (via --max)\n")
 
         if use_v1:
-            # V1 legacy mode (retired — kept for comparison)
+            # V1 DEPRECATED — frozen as of 2026-04-08, no new features.
+            # Still functional but not actively maintained or tested.
             if use_noai or use_test:
                 print("\n  Error: --noai and --test are V2 features.")
                 print("  V1 has no pre-filter strategy to test or run without AI.")

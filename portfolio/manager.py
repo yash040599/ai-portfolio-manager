@@ -47,6 +47,8 @@ from services.performance_tracker  import PerformanceTracker
 class PortfolioManager:
     """
     Phase 2 intraday trading bot for the managed budget.
+    DEPRECATED: V1 is frozen as of 2026-04-08. Use V2 (default) or NoAI.
+    V1 still works but receives no new features or strategy improvements.
 
     Key constraint: Only ever touches the managed budget pool.
     Existing holdings in the demat account are READ-ONLY.
