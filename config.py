@@ -394,7 +394,8 @@ class Config:
     LOSS_SCORE_BUMP_PCT: float = 1.5
     LOSS_SCORE_BUMP_AMOUNT: float = 1.5
 
-    # ══════════════════════════════════════════════════════════════    # MARKET INTELLIGENCE — VIX, PRE-OPEN, FII/DII
+    # ══════════════════════════════════════════════════════════════
+    # MARKET INTELLIGENCE — VIX, PRE-OPEN, FII/DII
     # ══════════════════════════════════════════════════════════════
 
     # ── India VIX Thresholds ──────────────────────────────────
@@ -440,7 +441,8 @@ class Config:
     #   skipped — no impact on trading.
     FII_DII_ENABLED: bool = True
 
-    # ══════════════════════════════════════════════════════════════    # COST & TAX PARAMETERS (for P&L calculation)
+    # ══════════════════════════════════════════════════════════════
+    # COST & TAX PARAMETERS (for P&L calculation)
     # ══════════════════════════════════════════════════════════════
     # These are used to calculate the REAL net profit after all
     # charges. Update if Zerodha changes their fee structure.

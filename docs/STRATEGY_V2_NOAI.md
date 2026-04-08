@@ -57,7 +57,7 @@ For each stock in universe (50-200 stocks):
       • ADX(14) — trend strength filter (halves continuation signals in weak trends, bonus in strong)
       • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
       • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
-  → Calculate composite score (~-28 to +28)
+  → Calculate composite score (~-24 to +24)
   → RVol bonus/penalty
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
@@ -196,7 +196,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Direction validation (BUY=up, SELL=down) | Entry logic | Yes |
 | Anti-momentum (no shorting stocks already down >2%) | Pre-filter | Yes |
 | Nifty trend hard filter | Pre-filter (score ≥ 3 for against-trend) | Yes |
-| Late entry guard (60 min before close) | Monitor loop | Yes |
+| Late entry guard (45 min before close) | Monitor loop | Yes |
 | Max re-entry limit (2×/day per stock) | Order engine | Yes |
 | Order API failure circuit breaker | Order engine | Yes |
 | Partial profit taking (33% at 1.5×risk, trail 50%) | Order engine | Yes |

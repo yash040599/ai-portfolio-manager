@@ -77,7 +77,7 @@ SECTOR_MAP = {
     "TATACAP": "FINANCE",
     # IT / Tech
     "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
-    "TECHM": "IT", "LTIM": "IT", "NAUKRI": "IT", "OFSS": "IT",
+    "TECHM": "IT", "LTM": "IT", "NAUKRI": "IT", "OFSS": "IT",
     # Pharma / Healthcare
     "SUNPHARMA": "PHARMA", "DRREDDY": "PHARMA", "CIPLA": "PHARMA",
     "APOLLOHOSP": "PHARMA", "DIVISLAB": "PHARMA", "TORNTPHARM": "PHARMA",
@@ -88,6 +88,7 @@ SECTOR_MAP = {
     "M&M": "AUTO", "TVSMOTOR": "AUTO", "HYUNDAI": "AUTO",
     "HEROMOTOCO": "AUTO", "TATAMOTORS": "AUTO",
     "MOTHERSON": "AUTO", "ESCORTS": "AUTO",
+    "TMPV": "AUTO", "TMCV": "AUTO",
     # Oil & Gas / Energy
     "RELIANCE": "ENERGY", "ONGC": "ENERGY", "BPCL": "ENERGY",
     "IOC": "ENERGY", "GAIL": "ENERGY", "PETRONET": "ENERGY",
@@ -238,6 +239,8 @@ class StockScannerV2(StockScanner):
                     return live
 
             return cached + live
+
+        return []
 
     def _fetch_daily_candles(
         self,

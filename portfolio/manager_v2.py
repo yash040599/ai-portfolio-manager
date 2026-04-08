@@ -138,7 +138,7 @@ class PortfolioManagerV2(PortfolioManager):
         print("  ┌─────────────────────────────────────────────────┐")
         print("  │ 1. Fetch candle data (15-min + daily)           │")
         print("  │ 2. Run 14 candlestick pattern detectors         │")
-        print("  │ 3. Compute 12 technical indicators              │")
+        print("  │ 3. Compute 14 technical indicators              │")
         print("  │    EMA, RSI, VWAP, SuperTrend, MACD, ORB, Gap,  │")
         print("  │    Daily EMA, Prev-Day S&R, Hourly EMA, BB, ADX │")
         print("  │ 4. Score each stock (~-25 to +25)               │")
