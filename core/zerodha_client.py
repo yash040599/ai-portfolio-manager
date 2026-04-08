@@ -35,6 +35,7 @@ class ZerodhaClient:
         # Instrument token cache — loaded once, reused per session
         self._nse_tokens: dict | None = None
         self._bse_tokens: dict | None = None
+        self._tick_sizes: dict | None = None   # "NSE:SYMBOL" → tick_size
 
         # Rate-limit throttle for historical API (Zerodha ~3 req/sec)
         self._last_historical_call: float = 0.0
@@ -347,14 +348,21 @@ class ZerodhaClient:
 
         if self._nse_tokens is None:
             self.log.info("Loading instrument list (one-time)...")
+            nse_instruments = self._kite.instruments("NSE")
+            bse_instruments = self._kite.instruments("BSE")
             self._nse_tokens = {
                 i["tradingsymbol"]: i["instrument_token"]
-                for i in self._kite.instruments("NSE")
+                for i in nse_instruments
             }
             self._bse_tokens = {
                 i["tradingsymbol"]: i["instrument_token"]
-                for i in self._kite.instruments("BSE")
+                for i in bse_instruments
             }
+            self._tick_sizes = {}
+            for i in nse_instruments:
+                self._tick_sizes[f"NSE:{i['tradingsymbol']}"] = i.get("tick_size", 0.05)
+            for i in bse_instruments:
+                self._tick_sizes[f"BSE:{i['tradingsymbol']}"] = i.get("tick_size", 0.05)
 
         return self._nse_tokens, self._bse_tokens
 
@@ -363,6 +371,15 @@ class ZerodhaClient:
         nse, bse = self.load_instruments()
         tokens   = nse if exchange == "NSE" else bse
         return tokens.get(symbol)
+
+    def get_tick_size(self, symbol: str, exchange: str = "NSE") -> float:
+        """Returns the tick size for a symbol (defaults to 0.05 if unknown)."""
+        self.load_instruments()  # ensure cache is populated
+        return self._tick_sizes.get(f"{exchange}:{symbol}", 0.05)
+
+    def _round_to_tick(self, price: float, tick: float) -> float:
+        """Round price to the nearest multiple of tick size."""
+        return round(round(price / tick) * tick, 2)
 
     # ================================================================
     # ORDER METHODS — Phase 2
@@ -512,6 +529,10 @@ class ZerodhaClient:
             else self._kite.TRANSACTION_TYPE_SELL
         )
 
+        # Round trigger to instrument tick size (e.g. 0.05 or 0.10)
+        tick = self.get_tick_size(symbol, exchange)
+        trigger_price = self._round_to_tick(trigger_price, tick)
+
         try:
             order_id = self._kite.place_order(
                 variety=self._kite.VARIETY_REGULAR,
@@ -523,6 +544,7 @@ class ZerodhaClient:
                 order_type=getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
                 trigger_price=trigger_price,
                 validity=self._kite.VALIDITY_DAY,
+                market_protection=-1,
             )
             self.log.success(
                 f"SL-M order placed: {side} {qty}x {symbol} "
@@ -542,6 +564,8 @@ class ZerodhaClient:
         trigger_price: float | None = None,
         price:         float | None = None,
         quantity:      int | None = None,
+        symbol:        str | None = None,
+        exchange:      str | None = None,
     ) -> bool:
         """
         Modifies a pending order on Zerodha (e.g. update SL-M trigger).
@@ -552,7 +576,8 @@ class ZerodhaClient:
 
         kwargs = {}
         if trigger_price is not None:
-            kwargs["trigger_price"] = trigger_price
+            tick = self.get_tick_size(symbol, exchange) if symbol and exchange else 0.05
+            kwargs["trigger_price"] = self._round_to_tick(trigger_price, tick)
         if price is not None:
             kwargs["price"] = price
         if quantity is not None:

@@ -1352,7 +1352,10 @@ class OrderEngine:
             return
         if not hasattr(self.zerodha, 'modify_order'):
             return
-        ok = self.zerodha.modify_order(sl_order_id, trigger_price=new_trigger)
+        ok = self.zerodha.modify_order(
+            sl_order_id, trigger_price=new_trigger,
+            symbol=pos["symbol"], exchange=pos["exchange"],
+        )
         if not ok:
             self.log.warning(
                 f"Could not update exchange SL-M for {pos['symbol']} "
