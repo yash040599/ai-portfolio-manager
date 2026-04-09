@@ -44,7 +44,7 @@ SYNC_ITEMS = [
 # Skip these within synced folders
 SKIP_NAMES = {
     "__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini",
-    "access_token.json",
+    "access_token.json", "ZerodhaTaxPL",
 }
 
 
