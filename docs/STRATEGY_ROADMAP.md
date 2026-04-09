@@ -564,6 +564,13 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 79 | Per-trade charge calculation (tax ledger) | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
 | 80 | EXTERNAL position unique order_id | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
 | 81 | Sheet import updates charges on P&L match | Infrastructure | ✅ Done | `import_zerodha_taxpnl.py` |
+| 82 | Stagnant exit timeout 90→45 min | All | ✅ Done | `config.py` |
+| 83 | exit_position SL-M cancel error handling | All | ✅ Done | `order_engine.py` |
+| 84 | _replace_exchange_sl pending ID tracking | All | ✅ Done | `order_engine.py` |
+| 85 | _update_exchange_sl exception safety | All | ✅ Done | `order_engine.py` |
+| 86 | ADJUST_TARGET directional validation | V2 | ✅ Done | `order_engine.py` |
+| 87 | reconcile_with_zerodha API error handling | All | ✅ Done | `order_engine.py` |
+| 88 | market_data.py quote fetch error handling | All | ✅ Done | `market_data.py` |
 ---
 
 ## COMPLETED — Tax Infrastructure Fixes (April 2026)

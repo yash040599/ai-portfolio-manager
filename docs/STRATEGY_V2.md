@@ -11,13 +11,10 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-08 — R:R 1.5:1, SL-M exchange orders, dynamic
-  MAX_POSITIONS, pre-trade profit check, SuperTrend 7/2.0, Fibonacci
-  directional, ORB 2nd candle, short cutoff, trail step 50%, smart
-  direction diversification (score-aware), --max budget CLI flag,
-  periodic manual trade detection, entry count logging fix, fallback
-  candidate pool (entry loop tries backup picks if primary fails
-  sanity checks).
+  Last sync: 2026-04-09 — Stagnant exit 90→45 min (0.3→0.5% threshold),
+  exit_position cancel error handling, _replace_exchange_sl pending tracking,
+  _update_exchange_sl exception safety, ADJUST_TARGET directional validation,
+  reconcile_with_zerodha API error handling, refresh_trigger() method.
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -37,7 +34,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 |--------|-------------|---------|
 | Stock selection | Auto-picks by score sign + magnitude | Claude picks from top 15 pre-filtered |
 | Entry logic | Default SL/target from config + ATR overrides | Claude sets SL/target/rationale |
-| Position review | Stagnant exit after 90 min | Claude reviews every 20 min |
+| Position review | Stagnant exit after 45 min | Claude reviews every 20 min |
 | Score threshold raise | Yes — after day losses, V2_MIN_SCORE rises | No |
 | Claude API cost | ₹0 | ~₹20-40/day (5-15 calls) |
 | Mid-day re-scan | Yes (every 30 min, no Claude call) | Yes (every 30 min, 1 Claude call) |
@@ -368,25 +365,6 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
 | **Short cutoff 1 PM** | Short delivery penalties ₹500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
 | **Min profit ₹50** | Round-trip charges ~₹40-50. Trades below this threshold are guaranteed losers after costs. |
-
----
-
-## Profitability Roadmap (April 2026 Review)
-
-**Current Status:** -4.2% cumulative (6 days), breakeven on daily charges (₹259+).
-
-**Root Cause:** R:R floor 1.2:1 is too aggressive for intraday NSE volatility. Positions hit SL from normal retracements before target triggers.
-
-**Path to +₹300/day (+1.5% daily return):**
-1. **Raise R:R floor to 1.5:1** (from 1.2:1) — filters out tight targets that trade against micro-volatility
-2. **Reduce late-entry penalties** — from 20%/35% (@ 1pm/2pm) to 10%/15% — fewer false rejections of good setups
-3. **Extend position count to 3** (from 2, test first) — increases daily throughput without overexposure
-
-**Expected outcome:** 55%+ accuracy on 1.5:1 R:R should consistently hit +₹60-100/day gross P&L, covering ₹259 daily charges.
-
-**Validation:** 5 trading days post-change before re-assessment.
-
-See [docs/FINAL_ARCHITECTURE_REVIEW.md](FINAL_ARCHITECTURE_REVIEW.md) for detailed financial & SDE analysis, code quality audit, trigger order lifecycle, and implementation timeline.
 
 ---
 

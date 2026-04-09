@@ -22,7 +22,7 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | SL / Target | Config defaults, ATR overrides in `enter_trade` | Claude sets, ATR may override |
 | Position sizing | Auto-sized to fit budget and per-stock limits | Claude sets qty, budget-validated |
 | Rationale | Auto-generated from indicator values | Claude writes qualitative analysis |
-| Position reviews | Stagnant position exit after 90 min (rule-based) | Claude reviews every 20 min |
+| Position reviews | Stagnant position exit after 45 min (rule-based) | Claude reviews every 20 min |
 | Mid-day re-scan | Auto-select from new candidates (same as initial scan) | Claude picks from new candidates |
 | Candle re-scan | Every 15 min, auto-protect only (no Claude review) | Every 15 min, auto-protect + Claude can see patterns |
 | NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
@@ -30,7 +30,7 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | Min deployment | Code boost only (same _boost_underdeployed logic, disabled by default) | Claude prompted to deploy capital + code boost |
 | Loss-adjusted sizing | Yes — reduces budget after losses | Yes — same mechanism |
 | Circuit breaker cooldown | Yes — resumes after 30 min | Yes — same mechanism |
-| API cost | ₹0 | ~₹50-100/day (Claude) |
+| API cost | ₹0 | ~₹20-40/day (Claude) |
 | Latency | Instant | 10-30s per Claude call |
 
 ---
@@ -105,7 +105,7 @@ Entry loop with fallback:
 
 ATR override, observation filter, and position sizing are all identical to V1/V2.
 
-### Phase 4 — Monitor Loop (9:30 AM – 3:10 PM)
+### Phase 4 — Monitor Loop (9:20 AM – 3:10 PM)
 
 ```
 Every 10 seconds (or 5s when near SL/target):
@@ -116,7 +116,7 @@ Every 10 seconds (or 5s when near SL/target):
   → Dynamic poll: halve interval when any position within 0.5% of SL/target
 
 Every CLAUDE_REVIEW_MINUTES (default: 20 min) — FREE in NoAI:
-  → Stagnant position check: exit positions open > STAGNANT_EXIT_MINUTES (90 min)
+  → Stagnant position check: exit positions open > STAGNANT_EXIT_MINUTES (45 min)
     that haven't moved > STAGNANT_EXIT_MIN_MOVE_PCT (0.3%) toward target
   → Frees slots for stronger setups (replaces Claude's "momentum faded, exit" judgment)
 
@@ -157,7 +157,7 @@ Partial re-scan (when slots free up):
   → Session context includes already-traded symbols and current holdings
 ```
 
-**What NoAI adds vs pure rule-based:** Stagnant position exit (exits dead positions after 90 min), loss-adjusted sizing (reduces trade size after losses), and circuit breaker cooldown (resumes after 30 min instead of shutting down for the day).
+**What NoAI adds vs pure rule-based:** Stagnant position exit (exits dead positions after 45 min), loss-adjusted sizing (reduces trade size after losses), and circuit breaker cooldown (resumes after 30 min instead of shutting down for the day).
 
 ### Phase 5 — Square Off & Report (same as V1/V2)
 
@@ -185,7 +185,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Circuit breaker cooldown (resume after 30 min) | Monitor loop | Yes (new) |
 | Max CB trips per day (cap at 2) | Monitor loop | Yes (new) |
 | Loss-adjusted position sizing | Order engine | Yes (new) |
-| Stagnant position exit (90 min) | Monitor loop | Yes (new — replaces Claude reviews) |
+| Stagnant position exit (45 min) | Monitor loop | Yes (new — replaces Claude reviews) |
 | Consecutive SL pause (whipsaw guard, 30 min) | Monitor loop | Yes (new) |
 | Dynamic score threshold after losses | Scanner | Yes (new — NoAI only) |
 | Regime-shift SL tightening | Monitor loop | Yes (new) |
@@ -202,7 +202,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 | Partial profit taking (33% at 1.5×risk, trail 50%) | Order engine | Yes |
 | Sector diversification (max 2/sector) | Pre-filter | Yes |
 | Crash recovery (resume open positions) | Startup | Yes |
-| **Direction diversification** | ~~Max N−1 in same direction~~ → Smart: score gap ≥3 between best BUY/SELL → dominant direction gets all slots. Prevents forcing weak counter-trend trades on trending days. Score ≥5 in enter_trade also bypasses the limit |
+| **Direction diversification** | Smart: score gap ≥3 between best BUY/SELL → dominant direction gets all slots. Prevents forcing weak counter-trend trades on trending days. Score ≥5 in enter_trade also bypasses the limit |
 | Manual trade adoption | Zerodha MIS positions opened outside the bot are detected every 15 min, adopted with ATR-based SL/targets, and managed (SL monitoring, trailing, square-off) identically to bot-entered trades |
 | **Claude re-scan stock selection** | **V1/V2 scanner** | **No** |
 

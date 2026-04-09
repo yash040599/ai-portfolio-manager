@@ -355,8 +355,8 @@ class Config:
     #   hasn't moved toward target by at least STAGNANT_EXIT_MIN_MOVE_PCT,
     #   exit it to free the slot for a better trade. Only in NoAI mode
     #   (V2 has Claude reviews for this). Set to 0 to disable.
-    STAGNANT_EXIT_MINUTES:      int   = 90
-    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3
+    STAGNANT_EXIT_MINUTES:      int   = 45
+    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.5
 
     # ── Loss-Adjusted Position Sizing ─────────────────────────────
     # LOSS_SIZING_ENABLED: if True, reduce position sizes after

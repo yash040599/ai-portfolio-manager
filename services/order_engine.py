@@ -1073,7 +1073,13 @@ class OrderEngine:
                 self.log.info(
                     f"Cancelling SL-M {sl_order_id} before {reason} exit for {symbol}"
                 )
-                self.zerodha.cancel_order(sl_order_id)
+                try:
+                    self.zerodha.cancel_order(sl_order_id)
+                except Exception as e:
+                    self.log.warning(
+                        f"Failed to cancel SL-M {sl_order_id} for {symbol}: {e} — "
+                        f"proceeding with {reason} exit (exchange SL-M may still be active)"
+                    )
                 self._pending_order_ids.discard(sl_order_id)  # Remove from tracking
                 position["_sl_order_id"] = None
 
@@ -1449,14 +1455,20 @@ class OrderEngine:
             return
         if not hasattr(self.zerodha, 'modify_order'):
             return
-        ok = self.zerodha.modify_order(
-            sl_order_id, trigger_price=new_trigger,
-            symbol=pos["symbol"], exchange=pos["exchange"],
-        )
-        if not ok:
+        try:
+            ok = self.zerodha.modify_order(
+                sl_order_id, trigger_price=new_trigger,
+                symbol=pos["symbol"], exchange=pos["exchange"],
+            )
+            if not ok:
+                self.log.warning(
+                    f"Could not update exchange SL-M for {pos['symbol']} "
+                    f"(order {sl_order_id}) — software SL still active"
+                )
+        except Exception as e:
             self.log.warning(
-                f"Could not update exchange SL-M for {pos['symbol']} "
-                f"(order {sl_order_id}) — software SL still active"
+                f"Exception updating SL-M for {pos['symbol']}: {e} — "
+                f"software SL still active"
             )
 
     def _replace_exchange_sl(self, pos: dict, trigger_price: float):
@@ -1467,17 +1479,32 @@ class OrderEngine:
         if not hasattr(self.zerodha, 'place_sl_m_order'):
             return
         # Cancel old
-        self.zerodha.cancel_order(sl_order_id)
+        try:
+            self.zerodha.cancel_order(sl_order_id)
+        except Exception as e:
+            self.log.warning(
+                f"Failed to cancel old SL-M {sl_order_id} for {pos['symbol']}: {e} — "
+                f"skipping SL-M replacement (software SL still active)"
+            )
+            return
+        self._pending_order_ids.discard(sl_order_id)
         pos["_sl_order_id"] = None
         # Place new with reduced qty
         sl_side = "SELL" if pos["side"] == "BUY" else "BUY"
-        new_id = self.zerodha.place_sl_m_order(
-            symbol=pos["symbol"], exchange=pos["exchange"],
-            qty=pos["qty"], side=sl_side,
-            trigger_price=trigger_price,
-        )
-        if new_id:
-            pos["_sl_order_id"] = new_id
+        try:
+            new_id = self.zerodha.place_sl_m_order(
+                symbol=pos["symbol"], exchange=pos["exchange"],
+                qty=pos["qty"], side=sl_side,
+                trigger_price=trigger_price,
+            )
+            if new_id:
+                pos["_sl_order_id"] = new_id
+                self._pending_order_ids.add(new_id)
+        except Exception as e:
+            self.log.warning(
+                f"Failed to place replacement SL-M for {pos['symbol']}: {e} — "
+                f"software SL still active"
+            )
 
     # ================================================================
     # TIME-DECAY TARGET ADJUSTMENT
@@ -1772,13 +1799,31 @@ class OrderEngine:
             elif act == "ADJUST_TARGET" and action.get("new_target"):
                 pos = self._find_open_position(symbol)
                 if pos:
+                    new_target = action["new_target"]
+                    entry = pos["entry_price"]
+                    side = pos["side"]
                     old_tgt = pos["target_price"]
-                    pos["target_price"] = action["new_target"]
+
+                    # Validate target is on correct side of entry
+                    if side == "BUY" and new_target <= entry:
+                        self.log.warning(
+                            f"Rejected target adjustment for {symbol}: "
+                            f"target ₹{new_target:.2f} <= entry ₹{entry:.2f} (wrong side for BUY)"
+                        )
+                        continue
+                    if side == "SELL" and new_target >= entry:
+                        self.log.warning(
+                            f"Rejected target adjustment for {symbol}: "
+                            f"target ₹{new_target:.2f} >= entry ₹{entry:.2f} (wrong side for SELL)"
+                        )
+                        continue
+
+                    pos["target_price"] = new_target
                     self.log.info(
                         f"CLAUDE REVIEW → ADJUST TARGET {symbol}: "
-                        f"₹{old_tgt:.2f} → ₹{action['new_target']:.2f} | {reason}"
+                        f"₹{old_tgt:.2f} → ₹{new_target:.2f} | {reason}"
                     )
-                    self._log_action("ADJUST_TARGET", symbol, "", 0, action["new_target"],
+                    self._log_action("ADJUST_TARGET", symbol, "", 0, new_target,
                                      reason)
 
             elif act == "NEW":
@@ -2238,7 +2283,11 @@ class OrderEngine:
 
         self.log.section("RECONCILIATION — Verifying against Zerodha")
 
-        zerodha_positions = self.zerodha.get_todays_positions()
+        try:
+            zerodha_positions = self.zerodha.get_todays_positions()
+        except Exception as e:
+            self.log.warning(f"Zerodha position fetch failed: {e} — skipping reconciliation")
+            return 0
         if not zerodha_positions:
             self.log.warning("No position data from Zerodha — skipping reconciliation")
             return 0

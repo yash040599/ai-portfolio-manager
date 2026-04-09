@@ -69,7 +69,11 @@ class MarketData:
 
         # ── Step 1: Live quotes ────────────────────────────────────
         self.log.info("Fetching live quotes from Kite (single API call)...")
-        quotes = self.zerodha.get_quotes(portfolio)
+        try:
+            quotes = self.zerodha.get_quotes(portfolio)
+        except Exception as e:
+            self.log.warning(f"Kite quote fetch failed: {e} — using existing prices")
+            quotes = {}
 
         for stock in portfolio:
             key = f"{stock['exchange']}:{stock['symbol']}"

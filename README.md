@@ -79,7 +79,6 @@ Previous days' candle data is cached in `data/candle_cache.db` (SQLite) to avoid
 | **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** | V1 strategy architecture (deprecated — frozen, no new changes) |
 | **[docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md)** | Strategy improvement roadmap with research-backed enhancements |
 | **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)** | Comprehensive intraday trading tax guide for India |
-| **[docs/FINAL_ARCHITECTURE_REVIEW.md](docs/FINAL_ARCHITECTURE_REVIEW.md)** | Complete system review — financial viability, code quality, profit pathway (Apr 2026) |
 
 ---
 
