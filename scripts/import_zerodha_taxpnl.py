@@ -155,13 +155,55 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
 
             if (abs(db_total_pnl - z_total_pnl) < 0.10
                     and abs(db_total_qty - z_total_qty) < 0.01):
-                # Match — mark existing rows verified
-                for r in db_rows_g:
-                    conn.execute(
-                        "UPDATE intraday_tax_ledger SET verified='verified' WHERE id=?",
-                        (r["id"],),
-                    )
-                stats["verified"] += len(db_rows_g)
+                    # Match — update charges from Zerodha's actuals and mark verified.
+                    # Previously only marked verified without correcting charge amounts.
+                    # Zerodha's actual charges differ slightly from our estimates because
+                    # they apply per-lot rounding independently; this syncs the ground truth.
+                    z_total_buy  = sum(t["buy_value"]    for t in z_trades)
+                    z_total_sell = sum(t["sell_value"]   for t in z_trades)
+                    z_group_turnover = z_total_buy + z_total_sell
+                    z_agg = {
+                        "brokerage":    sum(t["brokerage"]    for t in z_trades),
+                        "stt":          sum(t["stt"]          for t in z_trades),
+                        "exchange_txn": sum(t["exchange_txn"] for t in z_trades),
+                        "gst":          sum(t["gst"]          for t in z_trades),
+                        "sebi_charges": sum(t["sebi_charges"] for t in z_trades),
+                        "stamp_duty":   sum(t["stamp_duty"]   for t in z_trades),
+                    }
+                    z_total_charges = round(sum(z_agg.values()), 4)
+                    verified_on = now_ist().isoformat()
+
+                    for r in db_rows_g:
+                        row_turnover = r["buy_value"] + r["sell_value"]
+                        share = (
+                            row_turnover / z_group_turnover
+                            if z_group_turnover > 0
+                            else 1.0 / len(db_rows_g)
+                        )
+                        new_total = round(z_total_charges * share, 4)
+                        conn.execute(
+                            """UPDATE intraday_tax_ledger
+                               SET brokerage=?, stt=?, exchange_txn=?, gst=?,
+                                   sebi_charges=?, stamp_duty=?, total_charges=?,
+                                   net_pnl=?,
+                                   verified='verified',
+                                   sheet_verified='verified',
+                                   sheet_verified_on=?
+                               WHERE id=?""",
+                            (
+                                round(z_agg["brokerage"]    * share, 4),
+                                round(z_agg["stt"]          * share, 4),
+                                round(z_agg["exchange_txn"] * share, 4),
+                                round(z_agg["gst"]          * share, 4),
+                                round(z_agg["sebi_charges"] * share, 6),
+                                round(z_agg["stamp_duty"]   * share, 4),
+                                new_total,
+                                round(r["gross_pnl"] - new_total, 2),
+                                verified_on,
+                                r["id"],
+                            ),
+                        )
+                    stats["verified"] += len(db_rows_g)
             else:
                 # Mismatch — replace with Zerodha data
                 for r in db_rows_g:
@@ -272,8 +314,8 @@ def _insert_zerodha_intraday(conn, t: dict, idx: int):
             buy_value, sell_value, turnover,
             brokerage, stt, exchange_txn, gst,
             sebi_charges, stamp_duty, total_charges,
-            net_pnl, order_id, verified)
-           VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?)""",
+            net_pnl, order_id, verified, sheet_verified, sheet_verified_on)
+           VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?,?,?)""",
         (
             date, t["symbol"], "NSE", side, qty,
             entry_price, exit_price, "", "",
@@ -285,7 +327,7 @@ def _insert_zerodha_intraday(conn, t: dict, idx: int):
             round(t["sebi_charges"], 4), round(t["stamp_duty"], 4),
             round(t["total_charges"], 4),
             round(t["profit"] - t["total_charges"], 2),
-            order_id, "verified",
+            order_id, "verified", "verified", now_ist().isoformat(),
         ),
     )
 

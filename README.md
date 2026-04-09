@@ -79,6 +79,7 @@ Previous days' candle data is cached in `data/candle_cache.db` (SQLite) to avoid
 | **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** | V1 strategy architecture (deprecated — frozen, no new changes) |
 | **[docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md)** | Strategy improvement roadmap with research-backed enhancements |
 | **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)** | Comprehensive intraday trading tax guide for India |
+| **[docs/FINAL_ARCHITECTURE_REVIEW.md](docs/FINAL_ARCHITECTURE_REVIEW.md)** | Complete system review — financial viability, code quality, profit pathway (Apr 2026) |
 
 ---
 
@@ -565,7 +566,7 @@ NoAI mode eliminates Claude API costs entirely.
 - **Circuit breaker** — stops trading on daily loss threshold, resumes after cooldown
 - **Whipsaw guard** — pauses entries after consecutive SL hits
 - **Budget cap & loss-adjusted sizing** — never exceeds budget; reduces size after losses
-- **ATR-based dynamic stop-losses** — data-driven SL/target, hard-capped, picks tighter of ATR vs Claude
+- **ATR-based dynamic stop-losses** — data-driven SL/target with structural-level protection and hard caps
 - **Crash recovery** — resumes monitoring orphaned positions after restart
 - **Order API failure protection** — stops Claude calls and shuts down gracefully on API failures
 - **Market protection on orders** — all orders include Zerodha's `market_protection` safeguard
@@ -575,6 +576,50 @@ NoAI mode eliminates Claude API costs entirely.
 - **Config hints** — log messages tell you which config to change when an action is skipped
 
 All thresholds are configurable in `config.py`. For the complete risk management architecture, see **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)**.
+
+---
+
+## Audit & Comprehensive Review (April 9, 2026)
+
+A comprehensive financial and engineering audit was conducted on the trading system:
+
+### Financial Analysis ✅
+- **Charge structure**: Industry-standard Zerodha fees (0.053% of turnover on Apr 9)
+- **Tax treatment**: Correct (ITR-3 Section 43(5) speculative income, 31.2% cess+rate)
+- **P&L calculation**: Mathematically sound and verified against Zerodha ground truth
+- **Profitability**: System not yet profitable (strategy tuning required, not bugs)
+- **Cumulative (6 days)**: -₹1,073 net loss after charges (-2.2% of capital)
+
+### Code Quality & Security ✅ with Fixes Applied
+Four critical edge-case bugs identified and **FIXED** in services/order_engine.py:
+
+**Fix #1** (Line 295): _bot_closed_positions now cleared at function START (not END)
+- Prevents stale entries affecting duplicate detection in rapid successive sync calls
+
+**Fix #2** (Line 335): External position detection now uses (symbol, side) tuple (not just symbol)
+- Prevents false duplicate when bot has SELL and user manually enters BUY of same stock
+
+**Fix #3** (Line 354-382): Exit price for external closes now has 3-level fallback
+- Level 1: Zerodha position data (sell_price for BUY, buy_price for SELL)
+- Level 2: Current market price via Zerodha quote API
+- Level 3: Entry price (with error logged)
+
+**Fix #4** (Line 927-953): SL-M order placement now has explicit error handling
+- Catches exceptions and sets _sl_order_id=None with clear logging
+- Software SL monitoring takes over on placement failure
+
+### Trigger Order Handling Policy ✅
+- **Stale triggers cleaned**: cancel_all_pending_orders() explicitly cancels at 3:10 PM
+- **Pending tracking**: _pending_order_ids tracks SL-M orders for cleanup
+- **Bot-closed detection**: _bot_closed_positions prevents duplicate misidentification
+- **Position counting**: Open positions counted separately from pending orders (correct design)
+- **Non-triggering risk**: Software SL monitoring handles cases where trigger never executes
+
+### Recommendations for Production
+1. ✅ **Applied**: Four critical code fixes
+2. ⚠️ **Planned**: Strategy enhancements (R:R floor 1.5:1, late-entry penalty reduce to 10-25%)
+3. ⚠️ **Planned**: Allow 3 positions (vs 2) for better diversification  
+4. ⚠️ **Planned**: Increase circuit breaker to 4% (from 3%) for recovery attempts
 
 ---
 

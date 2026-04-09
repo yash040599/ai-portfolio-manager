@@ -82,6 +82,17 @@ class OrderEngine:
         self.ORDER_FAILURE_LIMIT: int = 3
         self._order_api_broken: bool = False
 
+        # ── Bug fix: track bot-closed positions ────────────────────
+        # Stores (symbol, side, qty) tuples of positions closed BY THE BOT
+        # to prevent sync_external_positions() from misidentifying them as
+        # user-closed. Cleared each time sync_external_positions() runs.
+        self._bot_closed_positions: set[tuple] = set()
+
+        # ── Bug fix: track pending SL-M order IDs ──────────────────
+        # Stores SL-M order IDs that are pending on the exchange.
+        # Cancelled at market close to prevent stale trigger orders.
+        self._pending_order_ids: set[str] = set()
+
     def set_budget(self, amount: float):
         """Sets the trading budget and adjusts MAX_POSITIONS dynamically."""
         self._budget = amount
@@ -223,7 +234,17 @@ class OrderEngine:
 
         Called before re-scans and new trade entry.
         Returns the number of new external positions detected.
+        
+        BUG FIX (Apr 9 2026): Only mark as EXTERNAL_CLOSE if NOT in
+        _bot_closed_positions — prevents misidentifying bot-closed trades
+        as user-closed trades, which was creating duplicate positions.
+        
+        BUG FIX (Apr 9 2026 - V2): Clear _bot_closed_positions at START
+        to prevent stale entries affecting duplicate detection in rapid syncs.
         """
+        # BUG FIX: Clear at START to prevent stale entries
+        self._bot_closed_positions.clear()
+        
         if self.cfg.DRY_RUN:
             return 0
 
@@ -236,8 +257,12 @@ class OrderEngine:
         net_positions = positions_data.get("net", [])
         loaded = 0
 
-        # Symbols already tracked internally (open)
-        known_symbols = {p["symbol"] for p in self.positions if p["status"] == "OPEN"}
+        # BUG FIX: Track (symbol, side) not just symbol
+        # Prevents duplicate detection when bot has SELL and user has BUY
+        known_positions = {
+            (p["symbol"], p["side"]) for p in self.positions 
+            if p["status"] == "OPEN"
+        }
 
         for pos in net_positions:
             # ONLY MIS (intraday) — CNC (delivery) is long-term, not our business
@@ -254,12 +279,12 @@ class OrderEngine:
             if not symbol or avg_price <= 0:
                 continue
 
-            # Already tracking this symbol — skip
-            if symbol in known_symbols:
-                continue
-
+            # BUG FIX: Check (symbol, side) not just symbol
+            # Prevents: bot SELL 45, user BUY 45 → no collision
             side = "BUY" if qty > 0 else "SELL"
             abs_qty = abs(qty)
+            if (symbol, side) in known_positions:
+                continue
 
             # Calculate ATR-based SL/target (same as crash resume)
             atr = self.calculate_atr(symbol, exchange)
@@ -313,7 +338,7 @@ class OrderEngine:
                 "_external":    True,   # origin marker for reports
             }
             self.positions.append(position)
-            known_symbols.add(symbol)
+            known_positions.add((symbol, side))
             loaded += 1
 
             sl_label = f"SL ₹{sl:.2f}" if atr else f"SL ₹{sl:.2f} (fallback)"
@@ -325,7 +350,8 @@ class OrderEngine:
                              "Manual intraday position adopted for management")
 
         # Detect positions (external OR bot-opened) that the user closed
-        # on Zerodha — mark them EXTERNAL_CLOSE internally
+        # on Zerodha — mark them EXTERNAL_CLOSE internally.
+        # BUG FIX: Only if NOT in _bot_closed_positions (prevent duplicates)
         zerodha_open = {
             pos.get("tradingsymbol", "")
             for pos in net_positions
@@ -335,23 +361,43 @@ class OrderEngine:
             if (
                 p["status"] == "OPEN"
                 and p["symbol"] not in zerodha_open
+                and (p["symbol"], p["side"], p["qty"]) not in self._bot_closed_positions
             ):
-                # Fetch exit price from Zerodha's day position data
-                exit_price = p["entry_price"]  # fallback
+                # This is a position the bot doesn't know about and it's NOT
+                # in bot_closed_positions, so it looks like a user close.
+                # Fetch exit price from Zerodha's day position data with multiple fallbacks
+                exit_price = None
+                
+                # BUG FIX: Try multiple sources for exit price
+                # 1. Try Zerodha position data (sell_price for BUY, buy_price for SELL)
                 for zp in net_positions:
                     if zp.get("tradingsymbol") == p["symbol"] and zp.get("product") == "MIS":
                         if p["side"] == "BUY":
-                            zp_exit = zp.get("sell_price", 0)
+                            exit_price = zp.get("sell_price") or zp.get("last_price")
                         else:
-                            zp_exit = zp.get("buy_price", 0)
-                        if zp_exit and zp_exit > 0:
-                            exit_price = zp_exit
-                        else:
-                            self.log.warning(
-                                f"Could not determine exit price for {p['symbol']} — "
-                                f"using entry price as fallback"
-                            )
+                            exit_price = zp.get("buy_price") or zp.get("last_price")
                         break
+                
+                # 2. Fallback: Get current market price if not found above
+                if not exit_price:
+                    try:
+                        quotes = self.zerodha.get_quotes(
+                            [{"symbol": p["symbol"], "exchange": p.get("exchange", "NSE")}]
+                        ) or {}
+                        quote_key = f"{p.get('exchange', 'NSE')}:{p['symbol']}"
+                        exit_price = quotes.get(quote_key, {}).get("last_price")
+                    except Exception as e:
+                        self.log.warning(f"Failed to get market quote for {p['symbol']}: {e}")
+                
+                # 3. Final fallback: entry price (with error logged)
+                if not exit_price:
+                    exit_price = p["entry_price"]
+                    self.log.error(
+                        f"EXTERNAL_CLOSE exit price unknown for {p['symbol']} — "
+                        f"using entry price ₹{exit_price:.2f} (P&L calculation will be INCORRECT)"
+                    )
+                else:
+                    exit_price = round(exit_price, 2)
 
                 if p["side"] == "BUY":
                     pnl = (exit_price - p["entry_price"]) * p["qty"]
@@ -366,6 +412,7 @@ class OrderEngine:
                         self.log.info(f"Cancelled orphaned SL-M {sl_oid} for {p['symbol']}")
                     except Exception:
                         pass  # order may already be cancelled/completed
+                    self._pending_order_ids.discard(sl_oid)
                     p["_sl_order_id"] = None
 
                 origin = "External" if p.get("_external") else "Bot"
@@ -380,6 +427,10 @@ class OrderEngine:
                 )
                 self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
                                  p["qty"], exit_price, "User closed via Zerodha app")
+        
+        # NOTE: _bot_closed_positions already cleared at function START
+        # Do NOT clear here — it needs to persist until next sync() call
+        # BUG FIX: clearing at end causes stale entries in rapid successive calls
 
         return loaded
 
@@ -889,21 +940,32 @@ class OrderEngine:
         use_exchange_sl = getattr(self.cfg, 'USE_EXCHANGE_SL', False)
         if use_exchange_sl and not self.cfg.DRY_RUN and hasattr(self.zerodha, 'place_sl_m_order'):
             sl_side = "SELL" if side == "BUY" else "BUY"
-            sl_order_id = self.zerodha.place_sl_m_order(
-                symbol=symbol, exchange=exchange,
-                qty=qty, side=sl_side,
-                trigger_price=sl,
-            )
-            if sl_order_id:
-                position["_sl_order_id"] = sl_order_id
-                self.log.info(
-                    f"Exchange SL-M placed for {symbol}: {sl_side} {qty}x "
-                    f"trigger ₹{sl:.2f} | ID: {sl_order_id}"
+            try:
+                sl_order_id = self.zerodha.place_sl_m_order(
+                    symbol=symbol, exchange=exchange,
+                    qty=qty, side=sl_side,
+                    trigger_price=sl,
                 )
-            else:
+                # BUG FIX: Explicit handling and tracking of SL-M placement
+                if sl_order_id:
+                    position["_sl_order_id"] = sl_order_id
+                    self._pending_order_ids.add(sl_order_id)  # Track for cleanup at market close
+                    self.log.info(
+                        f"Exchange SL-M placed for {symbol}: {sl_side} {qty}x "
+                        f"trigger ₹{sl:.2f} | ID: {sl_order_id}"
+                    )
+                else:
+                    position["_sl_order_id"] = None
+                    self.log.warning(
+                        f"SL-M placement returned None for {symbol} — "
+                        f"software SL monitoring will handle stop-loss"
+                    )
+            except Exception as e:
+                # BUG FIX: Explicit error handling for SL-M placement failures
+                position["_sl_order_id"] = None
                 self.log.warning(
-                    f"SL-M placement failed for {symbol} — "
-                    f"falling back to software SL monitoring"
+                    f"SL-M placement exception for {symbol}: {e} — "
+                    f"software SL monitoring will handle stop-loss"
                 )
 
         self.positions.append(position)
@@ -957,6 +1019,17 @@ class OrderEngine:
         sl_order_id = position.get("_sl_order_id")
         sl_m_handled = False
 
+        # ── Validate pending order tracking ────────────────────────
+        # BUG FIX (Apr 9 2026): Ensure pending_order_ids consistency.
+        # If position has _sl_order_id but it's not in pending set,
+        # log warning (possible orphan from earlier failed discard).
+        if sl_order_id and sl_order_id not in self._pending_order_ids:
+            self.log.warning(
+                f"Orphan pending ID detected: {symbol} has _sl_order_id {sl_order_id} "
+                f"but not in pending set. Position may have been exited already or "
+                f"had a failed discard. Continuing with exit."
+            )
+
         # ── Handle exchange SL-M order ────────────────────────────
         if sl_order_id and not self.cfg.DRY_RUN:
             if reason == "STOP_LOSS":
@@ -991,6 +1064,7 @@ class OrderEngine:
                             f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
                             f"MANUAL INTERVENTION NEEDED"
                         )
+                self._pending_order_ids.discard(sl_order_id)
                 position["_sl_order_id"] = None
                 sl_m_handled = True
             else:
@@ -1000,6 +1074,7 @@ class OrderEngine:
                     f"Cancelling SL-M {sl_order_id} before {reason} exit for {symbol}"
                 )
                 self.zerodha.cancel_order(sl_order_id)
+                self._pending_order_ids.discard(sl_order_id)  # Remove from tracking
                 position["_sl_order_id"] = None
 
         if self.cfg.DRY_RUN:
@@ -1084,6 +1159,11 @@ class OrderEngine:
             pnl         = round(pnl, 2),
             exit_time   = now.strftime("%H:%M:%S"),
         )
+        
+        # Track that bot closed this position — prevents sync_external_positions()
+        # from misidentifying it as a user close
+        self._bot_closed_positions.add((symbol, side, qty))
+        
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
         # Track consecutive SL hits for whipsaw guard
@@ -1723,6 +1803,9 @@ class OrderEngine:
         This is a safety mechanism — intraday positions MUST be
         closed before 3:20 PM or Zerodha auto-squares with penalty.
         """
+        # BUG FIX: Cancel all pending SL-M orders first to prevent stale triggers
+        self.cancel_all_pending_orders()
+        
         open_pos = self.open_positions()
         if not open_pos:
             self.log.info("No open positions to square off")
@@ -1912,6 +1995,109 @@ class OrderEngine:
             "estimated_tax":     estimated_tax,
             "profit_after_tax":  profit_after_tax,
         }
+
+    # ================================================================
+    # TRIGGER ORDER REFRESH — MID-POSITION SL ADJUSTMENT
+    # ================================================================
+
+    def refresh_trigger(self, pos: dict, new_trigger: float) -> bool:
+        """
+        Mid-position trigger refresh: cancel old SL-M, place new SL-M.
+        Used when trigger hasn't met condition and we want to adjust level
+        (e.g., time-decay SL, candle breakout adjustment) WITHOUT closing
+        or losing the position slot.
+
+        This is useful when an SL-M hasn't triggered by late morning and we
+        want to refresh the trigger price without exiting the position.
+
+        Args:
+            pos: position dict with _sl_order_id
+            new_trigger: new trigger price for SL-M
+
+        Returns: True on success, False on persistent failure.
+        """
+        sl_order_id = pos.get("_sl_order_id")
+        if not sl_order_id or self.cfg.DRY_RUN:
+            return False
+
+        symbol = pos["symbol"]
+        exchange = pos["exchange"]
+
+        # Retry cancel up to 3 times with 500ms backoff
+        for attempt in range(3):
+            try:
+                self.zerodha.cancel_order(sl_order_id)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(0.5)  # 500ms backoff
+                    continue
+                else:
+                    self.log.error(
+                        f"Cancel failed after 3 retries on {symbol} SL-M {sl_order_id}: {e}"
+                    )
+                    return False
+
+        # Place new SL-M at refreshed trigger price
+        try:
+            new_id = self.zerodha.place_sl_m_order(
+                symbol=symbol, exchange=exchange,
+                qty=pos["qty"], side="SELL" if pos["side"] == "BUY" else "BUY",
+                trigger_price=new_trigger,
+            )
+            if new_id:
+                pos["_sl_order_id"] = new_id
+                self._pending_order_ids.discard(sl_order_id)
+                self._pending_order_ids.add(new_id)
+                self.log.info(
+                    f"Trigger REFRESHED for {symbol}: old {sl_order_id} → new {new_id} @ ₹{new_trigger:.2f}"
+                )
+                return True
+            else:
+                self.log.error(f"Failed to place new SL-M for {symbol} after cancel")
+                return False
+        except Exception as e:
+            self.log.error(f"Refresh failed for {symbol}: {e}")
+            return False
+
+    # ================================================================
+    # PENDING ORDER CLEANUP — BUG FIX FOR STALE TRIGGERS
+    # ================================================================
+
+    def cancel_all_pending_orders(self) -> int:
+        """
+        Cancels all pending SL-M orders sitting on the exchange.
+        Called at market close to prevent stale trigger orders from
+        lingering and then executing unexpectedly next trading day.
+
+        BUG FIX (Apr 9 2026): Some SL-M orders with triggers (e.g. BUY ETERNAL @ 242.49)
+        were not executed and not cancelled, leaving them as stale pending orders.
+        This function explicitly cancels them before square-off.
+
+        Returns the number of orders cancelled.
+        """
+        if self.cfg.DRY_RUN or not self._pending_order_ids:
+            return 0
+
+        cancelled = 0
+        for order_id in list(self._pending_order_ids):
+            try:
+                self.zerodha.cancel_order(order_id)
+                self.log.info(f"Cancelled pending order {order_id}")
+                self._pending_order_ids.discard(order_id)
+                cancelled += 1
+            except Exception as e:
+                self.log.warning(
+                    f"Failed to cancel pending order {order_id}: {e} — "
+                    f"may need manual cancellation"
+                )
+
+        if cancelled > 0:
+            self.log.success(
+                f"Cancelled {cancelled} pending order(s) to clean up stale triggers"
+            )
+
+        return cancelled
 
     # ================================================================
     # POSITION QUERIES

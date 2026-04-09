@@ -74,7 +74,7 @@ def _show_status():
 
 # ── Core verification ─────────────────────────────────────────────
 
-def verify_today(date_str: str | None = None) -> dict:
+def verify_today(date_str: str | None = None, force: bool = False) -> dict:
     """
     Verify trades for the given date (default: today) using Zerodha API.
     Returns stats dict: {verified, corrected, skipped, errors}.
@@ -91,7 +91,7 @@ def verify_today(date_str: str | None = None) -> dict:
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    if data.get("verified"):
+    if data.get("verified") and not force:
         print(f"\n  ✓ Already verified on {data.get('verified_on', '?')}")
         return {"verified": len([p for p in data.get("positions", []) if p.get("status") == "CLOSED"])}
 
@@ -279,7 +279,7 @@ def verify_today(date_str: str | None = None) -> dict:
 
     if total_buy > 0 or total_sell > 0:
         total_turnover = round(total_buy + total_sell, 2)
-        charges = _compute_charges(total_buy, total_sell, total_turnover, data)
+        charges = _compute_charges(total_buy, total_sell, total_turnover, data, z_trades)
         data["pnl"]["charges"] = charges
 
     # ── Recalculate P&L totals ────────────────────────────────
@@ -318,7 +318,7 @@ def verify_today(date_str: str | None = None) -> dict:
     _write_verified_txt(txt_path, data, now_str)
 
     # ── Update intraday tax ledger ────────────────────────────
-    _update_tax_ledger(data, target_str)
+    _update_tax_ledger(data, target_str, z_trades)
 
     # ── Update trades table (performance_tracker) ─────────────
     # The trades table stores entry/exit prices for Claude learning
@@ -334,56 +334,66 @@ def verify_today(date_str: str | None = None) -> dict:
 
 
 def _compute_charges(total_buy: float, total_sell: float,
-                     total_turnover: float, data: dict) -> dict:
+                     total_turnover: float, data: dict,
+                     z_trades: list[dict]) -> dict:
     """Compute Zerodha charges from actual turnover values."""
     old_charges = data.get("pnl", {}).get("charges", {})
-    num_orders = old_charges.get("num_orders", 0)
 
-    # Brokerage: min(₹20, 0.03% of per-order value) per order
-    per_order_turnover = total_turnover / num_orders if num_orders > 0 else total_turnover
-    brokerage_per_order = min(
-        Config.ZERODHA_BROKERAGE_FLAT,
-        per_order_turnover * Config.ZERODHA_BROKERAGE_PCT / 100
-    )
-    brokerage = round(brokerage_per_order * num_orders, 2)
+    api_order_ids = {
+        str(t.get("order_id"))
+        for t in z_trades
+        if t.get("product") == "MIS" and t.get("order_id")
+    }
+    num_orders = len(api_order_ids) or int(old_charges.get("num_orders", 0) or 0)
 
-    stt = round(total_sell * Config.STT_SELL_PCT / 100, 2)
-    exchange_txn = round(total_turnover * Config.EXCHANGE_TXN_PCT / 100, 2)
-    sebi_charges = round(total_turnover * Config.SEBI_CHARGE_PER_CR / 1e7, 4)
-    stamp_duty = round(total_buy * Config.STAMP_DUTY_BUY_PCT / 100, 2)
-    gst = round((brokerage + sebi_charges + exchange_txn) * Config.GST_PCT / 100, 2)
-
-    total_tax_and_charges = round(
-        brokerage + stt + exchange_txn + gst + sebi_charges + stamp_duty, 2
+    c = Config.calculate_charges(
+        total_buy_turnover=total_buy,
+        total_sell_turnover=total_sell,
+        num_orders=num_orders,
+        claude_calls=0,
     )
 
     claude_api_cost = old_charges.get("claude_api_cost", 0.0)
-    total_costs = round(total_tax_and_charges + claude_api_cost, 2)
+    total_costs = round(c["total_tax_and_charges"] + claude_api_cost, 2)
 
     return {
         "total_turnover":        total_turnover,
         "buy_turnover":          round(total_buy, 2),
         "sell_turnover":         round(total_sell, 2),
         "num_orders":            num_orders,
-        "brokerage":             brokerage,
-        "stt":                   stt,
-        "exchange_txn":          exchange_txn,
-        "gst":                   gst,
-        "sebi_charges":          sebi_charges,
-        "stamp_duty":            stamp_duty,
-        "total_tax_and_charges": total_tax_and_charges,
+        "brokerage":             c["brokerage"],
+        "stt":                   c["stt"],
+        "exchange_txn":          c["exchange_txn"],
+        "gst":                   c["gst"],
+        "sebi_charges":          c["sebi_charges"],
+        "stamp_duty":            c["stamp_duty"],
+        "total_tax_and_charges": c["total_tax_and_charges"],
         "claude_api_cost":       claude_api_cost,
         "total_costs":           total_costs,
         "zerodha_monthly_fyi":   old_charges.get("zerodha_monthly_fyi", 500.0),
     }
 
 
-def _update_tax_ledger(data: dict, date_str: str):
-    """Update intraday_tax_ledger DB rows with corrected data."""
+def _update_tax_ledger(data: dict, date_str: str, z_trades: list[dict]):
+    """Update intraday_tax_ledger rows with corrected prices + charges.
+
+    Matching order:
+    1) Exact (date, order_id)
+
+    We intentionally avoid fallback matching by symbol/qty because that can
+    overwrite manually reconciled rows that use synthetic IDs.
+    """
     conn = get_db()
 
     positions = data.get("positions", [])
-    charges   = data.get("pnl", {}).get("charges", {})
+    api_order_ids = {
+        str(t.get("order_id"))
+        for t in z_trades
+        if t.get("product") == "MIS" and t.get("order_id")
+    }
+    used_ids: set[int] = set()
+    updated = 0
+    missing = 0
 
     for pos in positions:
         if pos.get("status") != "CLOSED":
@@ -392,23 +402,78 @@ def _update_tax_ledger(data: dict, date_str: str):
         if not order_id or order_id.startswith("DRY_RUN"):
             continue
 
-        existing = conn.execute(
-            "SELECT id FROM intraday_tax_ledger WHERE date=? AND order_id=?",
-            (date_str, order_id),
-        ).fetchone()
+        # Runtime-adopted external rows are for live management and may not map
+        # 1:1 to independent tax-ledger trades.
+        if order_id == "EXTERNAL" or pos.get("_external"):
+            continue
+
+        # Do not overwrite ledger rows unless this order_id exists in Zerodha API
+        # trade fills for the day. This protects manually reconciled rows that
+        # intentionally use synthetic IDs (e.g., cleanup-corrected entries).
+        if order_id not in api_order_ids:
+            continue
+
+        remaining_qty = pos.get("qty", 0)
+        partial_qty   = pos.get("_partial_qty", 0)
+        qty = remaining_qty + partial_qty
+        if qty <= 0:
+            continue
+
+        entry = float(pos.get("entry_price", 0) or 0)
+        exit_p = float(pos.get("exit_price", 0) or 0)
+        partial_exit = float(pos.get("_partial_exit_price", entry) or entry)
+        side = pos.get("side", "BUY")
+
+        if side == "BUY":
+            buy_val  = entry * qty
+            sell_val = exit_p * remaining_qty + partial_exit * partial_qty
+        else:
+            sell_val = entry * qty
+            buy_val  = exit_p * remaining_qty + partial_exit * partial_qty
+
+        c = Config.calculate_charges(
+            total_buy_turnover=buy_val,
+            total_sell_turnover=sell_val,
+            num_orders=2,
+            claude_calls=0,
+        )
+        gross_pnl = round(pos.get("pnl", 0) + pos.get("_partial_pnl", 0), 2)
+        net_pnl = round(gross_pnl - c["total_tax_and_charges"], 2)
+
+        existing = None
+        if order_id != "EXTERNAL":
+            existing = conn.execute(
+                "SELECT id FROM intraday_tax_ledger WHERE date=? AND order_id=?",
+                (date_str, order_id),
+            ).fetchone()
 
         if existing:
+            row_id = existing["id"]
             conn.execute(
                 """UPDATE intraday_tax_ledger
                    SET entry_price=?, exit_price=?, gross_pnl=?,
-                       verified='verified'
+                       buy_value=?, sell_value=?, turnover=?,
+                       brokerage=?, stt=?, exchange_txn=?, gst=?,
+                       sebi_charges=?, stamp_duty=?, total_charges=?,
+                       net_pnl=?, verified='verified'
                    WHERE id=?""",
-                (pos["entry_price"], pos.get("exit_price", 0),
-                 pos.get("pnl", 0), existing["id"]),
+                (
+                    round(entry, 2), round(exit_p, 2), gross_pnl,
+                    round(buy_val, 2), round(sell_val, 2), round(buy_val + sell_val, 2),
+                    c["brokerage"], c["stt"], c["exchange_txn"], c["gst"],
+                    c["sebi_charges"], c["stamp_duty"], c["total_tax_and_charges"],
+                    net_pnl, row_id,
+                ),
             )
+            used_ids.add(row_id)
+            updated += 1
+        else:
+            # Exact row absent: leave ledger untouched to avoid accidental remapping.
+            missing += 1
 
     conn.commit()
     conn.close()
+    print(f"    ✓ Tax ledger sync: {updated} updated, {missing} missing")
 
 
 def _update_trades_table(data: dict, date_str: str):
@@ -422,6 +487,7 @@ def _update_trades_table(data: dict, date_str: str):
     conn = get_db()
     positions = data.get("positions", [])
     updated = 0
+    used_ids: set[int] = set()
 
     for pos in positions:
         if pos.get("status") != "CLOSED":
@@ -435,11 +501,17 @@ def _update_trades_table(data: dict, date_str: str):
         qty = pos.get("qty", 0) + pos.get("_partial_qty", 0)
         pnl = round(pos.get("pnl", 0) + pos.get("_partial_pnl", 0), 2)
 
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT id, entry_price, exit_price, pnl FROM trades "
-            "WHERE date=? AND symbol=? AND side=? AND qty=?",
-            (date_str, symbol, side, qty),
-        ).fetchone()
+            "WHERE date=? AND symbol=? AND side=? AND qty=? "
+            "ORDER BY ABS(entry_price - ?)",
+            (date_str, symbol, side, qty, pos.get("entry_price", 0)),
+        ).fetchall()
+        row = None
+        for cand in rows:
+            if cand["id"] not in used_ids:
+                row = cand
+                break
 
         if row:
             needs_update = (
@@ -453,6 +525,7 @@ def _update_trades_table(data: dict, date_str: str):
                     (pos["entry_price"], pos.get("exit_price", 0), pnl, row["id"]),
                 )
                 updated += 1
+            used_ids.add(row["id"])
 
     if updated:
         conn.commit()
@@ -630,6 +703,10 @@ def main():
         "--status", action="store_true",
         help="Show verification status for all trading dates.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Run verification even if the day is already marked verified.",
+    )
     args = parser.parse_args()
 
     if args.status:
@@ -639,7 +716,7 @@ def main():
     print(f"\n  🔍 Zerodha Trade Verification")
     print(f"  {'─' * 40}")
 
-    stats = verify_today(args.date)
+    stats = verify_today(args.date, force=args.force)
 
     if stats.get("errors"):
         print(f"\n  ❌ Verification failed: {stats['errors'][0]}")

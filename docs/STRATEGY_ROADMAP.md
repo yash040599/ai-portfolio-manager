@@ -561,3 +561,44 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 76 | Smart direction diversification | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 77 | Entry count logging fix | All | ✅ Done | `manager.py` |
 | 78 | FII/DII flow bias | All | ✅ Done | `config.py`, `manager.py` |
+| 79 | Per-trade charge calculation (tax ledger) | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
+| 80 | EXTERNAL position unique order_id | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
+| 81 | Sheet import updates charges on P&L match | Infrastructure | ✅ Done | `import_zerodha_taxpnl.py` |
+---
+
+## COMPLETED — Tax Infrastructure Fixes (April 2026)
+
+Bugs found during analysis of why April 9 showed ₹120 charges (charges were correct;
+bugs were in how they were computed and how sheet import reconciled them).
+
+### 79. ✅ Per-Trade Charge Calculation (Tax Ledger)
+- **Versions**: All (infrastructure)
+- **Gap**: `per_trade_charges()` in `fill_intraday_ledger.py` apportioned the day-level charge
+	total across all trades by turnover share. When EXTERNAL positions inflated the day-level
+	turnover, the apportionment silently gave wrong per-component breakdowns (brokerage, STT etc).
+- **Fix**: Replaced apportionment with a direct `Config.calculate_charges(buy_val, sell_val, num_orders=2)`
+	call per trade. Each trade now has its own mathematically correct charge breakdown.
+	Day-level `day_charges` variable removed from the loop.
+- **Files**: `fill_intraday_ledger.py`
+
+### 80. ✅ EXTERNAL Position Unique order_id
+- **Versions**: All (infrastructure)
+- **Gap**: Multiple external (user-entered) positions on the same day all got `order_id="EXTERNAL"`.
+	The dedup check `WHERE date=? AND order_id=?` only inserted the first one and silently skipped
+	the rest. Second (and further) external positions were never recorded in the tax ledger.
+- **Fix**: Generate a deterministic unique ID per external position:
+	`EXT_{date}_{symbol}_{side}_{counter}`. Counter resets per (date, symbol, side) group so
+	re-runs are idempotent (same IDs every time for the same JSON data).
+- **Files**: `fill_intraday_ledger.py`
+
+### 81. ✅ Sheet Import Updates Charges on P&L Match
+- **Versions**: All (infrastructure)
+- **Gap**: `_verify_intraday()` in `import_zerodha_taxpnl.py` only set `verified='verified'` when
+	P&L matched Zerodha's sheet. It did NOT update the charge breakdown (brokerage, STT, exchange_txn,
+	gst, sebi_charges, stamp_duty, total_charges, net_pnl). Our estimated charges remained in the DB
+	instead of being replaced with Zerodha's actuals.
+- **Fix**: On P&L match, aggregate Zerodha's per-trade charges for the (date, symbol) group, apportion
+	to each DB row by its (buy_value + sell_value) turnover share, and update all charge columns +
+	net_pnl + sheet_verified + sheet_verified_on. Ground truth from Zerodha now always wins.
+- **Files**: `import_zerodha_taxpnl.py`
+

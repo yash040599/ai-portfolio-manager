@@ -88,6 +88,8 @@ def _migrate(conn: sqlite3.Connection):
             net_pnl         REAL    NOT NULL,
             order_id        TEXT    NOT NULL,
             verified        TEXT    NOT NULL DEFAULT 'unverified',
+            sheet_verified  TEXT    DEFAULT 'pending',
+            sheet_verified_on TEXT,
             UNIQUE(date, order_id)
         )
     """)
@@ -101,6 +103,16 @@ def _migrate(conn: sqlite3.Connection):
             conn.execute(
                 "ALTER TABLE intraday_tax_ledger "
                 "ADD COLUMN verified TEXT NOT NULL DEFAULT 'unverified'"
+            )
+        if "sheet_verified" not in cols:
+            conn.execute(
+                "ALTER TABLE intraday_tax_ledger "
+                "ADD COLUMN sheet_verified TEXT DEFAULT 'pending'"
+            )
+        if "sheet_verified_on" not in cols:
+            conn.execute(
+                "ALTER TABLE intraday_tax_ledger "
+                "ADD COLUMN sheet_verified_on TEXT"
             )
 
     # ── Capital gains ledger ──────────────────────────────────

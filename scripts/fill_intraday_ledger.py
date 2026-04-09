@@ -45,7 +45,13 @@ def load_json(path: str) -> dict | None:
 
 
 def per_trade_charges(position: dict, day_charges: dict) -> dict:
-    """Apportion day-level charges to a single trade by turnover share."""
+    """Calculate charges for a single trade using its own buy/sell values.
+
+    Uses Config.calculate_charges() per-trade (num_orders=2 for the
+    entry + exit pair) rather than apportioning the day-level total.
+    This gives the correct per-component breakdown and remains accurate
+    even when EXTERNAL positions inflate or deflate the day-level total.
+    """
     remaining_qty = position.get("qty", 0)
     partial_qty   = position.get("_partial_qty", 0)
     total_qty     = remaining_qty + partial_qty
@@ -60,21 +66,22 @@ def per_trade_charges(position: dict, day_charges: dict) -> dict:
         sell_val = entry * total_qty
         buy_val  = exit_p * remaining_qty + partial_exit * partial_qty
 
-    trade_turnover = buy_val + sell_val
-    total_turnover = day_charges.get("total_turnover", 0)
-    share = trade_turnover / total_turnover if total_turnover > 0 else 0
-
+    c = Config.calculate_charges(
+        total_buy_turnover=buy_val,
+        total_sell_turnover=sell_val,
+        num_orders=2,
+    )
     return {
         "buy_value":     round(buy_val, 2),
         "sell_value":    round(sell_val, 2),
-        "turnover":      round(trade_turnover, 2),
-        "brokerage":     round(day_charges.get("brokerage", 0) * share, 2),
-        "stt":           round(day_charges.get("stt", 0) * share, 2),
-        "exchange_txn":  round(day_charges.get("exchange_txn", 0) * share, 2),
-        "gst":           round(day_charges.get("gst", 0) * share, 2),
-        "sebi_charges":  round(day_charges.get("sebi_charges", 0) * share, 4),
-        "stamp_duty":    round(day_charges.get("stamp_duty", 0) * share, 2),
-        "total_charges": round(day_charges.get("total_tax_and_charges", 0) * share, 2),
+        "turnover":      round(buy_val + sell_val, 2),
+        "brokerage":     c["brokerage"],
+        "stt":           c["stt"],
+        "exchange_txn":  c["exchange_txn"],
+        "gst":           c["gst"],
+        "sebi_charges":  c["sebi_charges"],
+        "stamp_duty":    c["stamp_duty"],
+        "total_charges": c["total_tax_and_charges"],
     }
 
 
@@ -101,7 +108,7 @@ def fill_fy(fy_start: int) -> int:
             continue
 
         positions   = data.get("positions", [])
-        day_charges = data.get("pnl", {}).get("charges", {})
+        external_counter: dict[str, int] = {}
 
         for pos in positions:
             if pos.get("status") != "CLOSED":
@@ -110,13 +117,24 @@ def fill_fy(fy_start: int) -> int:
             if not order_id or order_id.startswith("DRY_RUN"):
                 continue
 
+            # EXTERNAL positions all share order_id="EXTERNAL".  Generating a
+            # deterministic unique ID per (date, symbol, side, entry_price)
+            # makes the dedup check reliable across multiple runs.
+            if order_id == "EXTERNAL":
+                key = f"{date_str}_{pos.get('symbol')}_{pos.get('side')}"
+                external_counter[key] = external_counter.get(key, 0) + 1
+                order_id = (
+                    f"EXT_{date_str}_{pos.get('symbol')}"
+                    f"_{pos.get('side')}_{external_counter[key]}"
+                )
+
             if conn.execute(
                 "SELECT 1 FROM intraday_tax_ledger WHERE date=? AND order_id=?",
                 (date_str, order_id),
             ).fetchone():
                 continue
 
-            tc = per_trade_charges(pos, day_charges)
+            tc = per_trade_charges(pos)
             gross_pnl = round(pos.get("pnl", 0) + pos.get("_partial_pnl", 0), 2)
             net_pnl   = round(gross_pnl - tc["total_charges"], 2)
             total_qty = pos.get("qty", 0) + pos.get("_partial_qty", 0)

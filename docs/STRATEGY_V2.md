@@ -350,7 +350,7 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 | Script | Purpose |
 |--------|---------|
-| `python scripts/verify_trades.py` | Same-day API verification — corrects prices in reports + intraday_tax_ledger + trades table |
+| `python scripts/verify_trades.py` | Same-day API verification — corrects prices, recomputes charges, and syncs reports + intraday_tax_ledger + trades table |
 | `python scripts/import_zerodha_taxpnl.py` | Quarterly xlsx verification — imports intraday + capital gains |
 | `python scripts/backup_data.py --ssh` | Two-way sync with private Git repo (row-level SQLite merge) |
 
@@ -368,6 +368,25 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
 | **Short cutoff 1 PM** | Short delivery penalties ₹500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
 | **Min profit ₹50** | Round-trip charges ~₹40-50. Trades below this threshold are guaranteed losers after costs. |
+
+---
+
+## Profitability Roadmap (April 2026 Review)
+
+**Current Status:** -4.2% cumulative (6 days), breakeven on daily charges (₹259+).
+
+**Root Cause:** R:R floor 1.2:1 is too aggressive for intraday NSE volatility. Positions hit SL from normal retracements before target triggers.
+
+**Path to +₹300/day (+1.5% daily return):**
+1. **Raise R:R floor to 1.5:1** (from 1.2:1) — filters out tight targets that trade against micro-volatility
+2. **Reduce late-entry penalties** — from 20%/35% (@ 1pm/2pm) to 10%/15% — fewer false rejections of good setups
+3. **Extend position count to 3** (from 2, test first) — increases daily throughput without overexposure
+
+**Expected outcome:** 55%+ accuracy on 1.5:1 R:R should consistently hit +₹60-100/day gross P&L, covering ₹259 daily charges.
+
+**Validation:** 5 trading days post-change before re-assessment.
+
+See [docs/FINAL_ARCHITECTURE_REVIEW.md](FINAL_ARCHITECTURE_REVIEW.md) for detailed financial & SDE analysis, code quality audit, trigger order lifecycle, and implementation timeline.
 
 ---
 
