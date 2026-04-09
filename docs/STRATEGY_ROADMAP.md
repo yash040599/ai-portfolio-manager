@@ -332,12 +332,6 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Track 5-day rolling win rate. >65% → allow budget ×1.2 (max 120% of MAX_BUDGET_INR). <40% → cap at 80%. Resets weekly.
 - **Effort**: Medium | **Impact**: Medium
 
-### 48. Zerodha API Calls Real-Time Verification
-- **Versions**: All (infrastructure)
-- **Gap**: No same-day verification using Zerodha API — relies on next-day xlsx download.
-- **Note**: Merged with #43 (duplicate). See #43 for implementation plan.
-- **Status**: Duplicate → #43
-
 ---
 
 ## COMPLETED — Profitability Deep Review Fixes (Loss Analysis)
@@ -480,133 +474,118 @@ Bugs identified during expert code review. All fixed in commit that added this s
 
 ---
 
-## Implementation Status
-
-| # | Improvement | Versions | Status | Implemented In |
-|---|------------|----------|--------|----------------|
-| 1 | Volume confirmation | V2, NoAI | ✅ Done | `candle_patterns.py` |
-| 2 | Relative Volume (RVol) | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
-| 3 | Pattern freshness decay | V2, NoAI | ✅ Done | `candle_patterns.py` |
-| 4 | Previous day H/L/C S&R | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 5 | Nifty trend hard filter | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
-| 6 | Opening Range Breakout | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
-| 7 | MACD histogram | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 8 | Sector diversification | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
-| 9 | Pre-market gap analysis | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 10 | Partial profit taking | V1, V2, NoAI | ✅ Done | `order_engine.py` |
-| 11 | Periodic opportunity scan | V2, NoAI | ✅ Done | `manager_v2.py`, `config.py` |
-| 12 | Continuous market regime | V2, NoAI | ✅ Done | `manager_v2.py` |
-| 13 | Min capital deployment | V2 | ✅ Done | `stock_scanner_v2.py`, `order_engine.py` |
-| 14 | Stagnant position exit | NoAI | ✅ Done | `order_engine.py`, `manager_v2.py` |
-| 15 | Loss-adjusted sizing | All | ✅ Done | `order_engine.py`, `config.py` |
-| 16 | Circuit breaker cooldown | All | ✅ Done | `manager.py`, `manager_v2.py`, `config.py` |
-| 17 | Multi-timeframe (hourly) | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 18 | BB squeeze | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 19 | Max CB trips per day | All | ✅ Done | `order_engine.py`, `config.py` |
-| 20 | Consecutive SL pause | All | ✅ Done | `order_engine.py`, `manager_v2.py` |
-| 21 | Dynamic score after losses | NoAI | ✅ Done | `stock_scanner_v2.py`, `config.py` |
-| 22 | Regime-shift SL tightening | V2, NoAI | ✅ Done | `manager_v2.py` |
-| 23 | VIX-based sizing | All | ✅ Done | `config.py`, `manager.py`, `manager_v2.py` |
-| 24 | Backtesting framework | All | ⬜ Pending | — |
-| 25 | Trade journaling + analytics | All | ✅ Done | `performance_tracker.py`, `view_performance.py` |
-| 26 | Sector cap at entry time | All | ✅ Done | `order_engine.py` |
-| 27 | EOD accelerated exit | NoAI, V2 | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
-| 28 | ADX trend strength | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 29 | Thursday expiry handling | All | ✅ Done | `manager.py`, `config.py` |
-| 30 | 3-day candle lookback | V2, NoAI | ✅ Done | `stock_scanner_v2.py` |
-| 31 | Today-candle-count guard | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 32 | Late-entry target reduction | All | ✅ Done | `order_engine.py`, `config.py` |
-| 33 | Fibonacci retracement levels | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
-| 34 | VWAP SD bands | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
-| 35 | Bid-ask spread check | All | ✅ Done | `order_engine.py`, `config.py` |
-| 36 | Intraday momentum (RoC) | V2, NoAI | ⬜ Pending | — |
-| 37 | Correlation-based sizing | All | ⬜ Pending | — |
-| 38 | Improved slippage model | Dry Run | ✅ Done | `order_engine.py` |
-| 39 | ATR percentile ranking | V2, NoAI | ⬜ Pending | — |
-| 40 | Claude prompt feedback loop | V2 | ⬜ Pending | — |
-| 41 | Holiday-shifted expiry | All | ⬜ Pending | — |
-| 42 | Pre-open auction data | V2, NoAI | ✅ Done | `config.py`, `manager.py` |
-| 43 | Real-time trade verification | All | ✅ Done | `scripts/verify_trades.py` |
-| 44 | WebSocket tick data | All | ⬜ Pending | — |
-| 45 | Multi-day score trend | V2, NoAI | ⬜ Pending | — |
-| 46 | Smart square-off timing | All | ⬜ Pending | — |
-| 47 | Budget auto-scaling | All | ⬜ Pending | — |
-| 49 | Wider SL logic | All | ✅ Done | `order_engine.py` |
-| 50 | Late-entry + time-decay exclusion | All | ✅ Done | `order_engine.py` |
-| 51 | Extended move penalty | V2, NoAI | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
-| 52 | RSI extreme hard cap | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 53 | Direction diversification (score-aware) | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
-| 54 | Fewer trades, bigger size | All | ✅ Done | `config.py` |
-| 55 | LIMIT orders for entry/exit | All | ⬜ Pending | — |
-| 56 | Scan universe price filter | V2, NoAI | ⬜ Pending | — |
-| 57 | VWAP exclude incomplete candle | V2, NoAI | ⬜ Pending | — |
-| 58 | Dynamic position sizing by budget | All | ✅ Done | `config.py`, `order_engine.py` |
-| 59 | R:R 1.5:1 + configurable multiplier | All | ✅ Done | `config.py`, `order_engine.py` |
-| 60 | Exchange SL-M orders | All | ✅ Done | `zerodha_client.py`, `order_engine.py`, `config.py` |
-| 61 | SuperTrend params configurable | V2, NoAI | ✅ Done | `config.py`, `technical_indicators.py` |
-| 62 | Fibonacci directional score | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 63 | ORB use 2nd candle (9:30-9:45) | V2, NoAI | ✅ Done | `technical_indicators.py` |
-| 64 | Short position time cap | All | ✅ Done | `order_engine.py`, `config.py` |
-| 65 | Pre-trade minimum profit check | All | ✅ Done | `order_engine.py`, `config.py` |
-| 66 | Entry delay 15→5 min | All | ✅ Done | `config.py` |
-| 67 | Trail step 65→50% | All | ✅ Done | `config.py` |
-| 68 | Time-decay 40→25% | All | ✅ Done | `config.py` |
-| 69 | SL sanity check after entry override | All | ✅ Done | `order_engine.py` |
-| 70 | SL-M partial fill verification | All | ✅ Done | `order_engine.py`, `zerodha_client.py` |
-| 71 | Fill price SL cap re-validation | All | ✅ Done | `order_engine.py` |
-| 72 | Store initial_sl at entry | All | ✅ Done | `order_engine.py` |
-| 73 | Fallback candidate pool | All | ✅ Done | `stock_scanner_v2.py`, `manager.py`, `manager_v2.py` |
-| 74 | Periodic manual trade sync | All | ✅ Done | `manager.py`, `manager_v2.py` |
-| 75 | --max budget CLI flag | All | ✅ Done | `main.py` |
-| 76 | Smart direction diversification | All | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
-| 77 | Entry count logging fix | All | ✅ Done | `manager.py` |
-| 78 | FII/DII flow bias | All | ✅ Done | `config.py`, `manager.py` |
-| 79 | Per-trade charge calculation (tax ledger) | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
-| 80 | EXTERNAL position unique order_id | Infrastructure | ✅ Done | `fill_intraday_ledger.py` |
-| 81 | Sheet import updates charges on P&L match | Infrastructure | ✅ Done | `import_zerodha_taxpnl.py` |
-| 82 | Stagnant exit timeout 90→45 min | All | ✅ Done | `config.py` |
-| 83 | exit_position SL-M cancel error handling | All | ✅ Done | `order_engine.py` |
-| 84 | _replace_exchange_sl pending ID tracking | All | ✅ Done | `order_engine.py` |
-| 85 | _update_exchange_sl exception safety | All | ✅ Done | `order_engine.py` |
-| 86 | ADJUST_TARGET directional validation | V2 | ✅ Done | `order_engine.py` |
-| 87 | reconcile_with_zerodha API error handling | All | ✅ Done | `order_engine.py` |
-| 88 | market_data.py quote fetch error handling | All | ✅ Done | `market_data.py` |
-| 89 | Increase circuit breaker to 4% | All | ⬜ Pending | `config.py` |
----
-
 ## COMPLETED — Tax Infrastructure Fixes (April 2026)
-
-Bugs found during analysis of why April 9 showed Rs.120 charges (charges were correct;
-bugs were in how they were computed and how sheet import reconciled them).
 
 ### 79. ✅ Per-Trade Charge Calculation (Tax Ledger)
 - **Versions**: All (infrastructure)
-- **Gap**: `per_trade_charges()` in `fill_intraday_ledger.py` apportioned the day-level charge
-	total across all trades by turnover share. When EXTERNAL positions inflated the day-level
-	turnover, the apportionment silently gave wrong per-component breakdowns (brokerage, STT etc).
-- **Fix**: Replaced apportionment with a direct `Config.calculate_charges(buy_val, sell_val, num_orders=2)`
-	call per trade. Each trade now has its own mathematically correct charge breakdown.
-	Day-level `day_charges` variable removed from the loop.
+- **Gap**: `per_trade_charges()` in `fill_intraday_ledger.py` apportioned the day-level charge total across all trades by turnover share. When EXTERNAL positions inflated the day-level turnover, the apportionment silently gave wrong per-component breakdowns (brokerage, STT etc).
+- **Fix**: Replaced apportionment with a direct `Config.calculate_charges(buy_val, sell_val, num_orders=2)` call per trade. Each trade now has its own mathematically correct charge breakdown.
 - **Files**: `fill_intraday_ledger.py`
 
 ### 80. ✅ EXTERNAL Position Unique order_id
 - **Versions**: All (infrastructure)
-- **Gap**: Multiple external (user-entered) positions on the same day all got `order_id="EXTERNAL"`.
-	The dedup check `WHERE date=? AND order_id=?` only inserted the first one and silently skipped
-	the rest. Second (and further) external positions were never recorded in the tax ledger.
-- **Fix**: Generate a deterministic unique ID per external position:
-	`EXT_{date}_{symbol}_{side}_{counter}`. Counter resets per (date, symbol, side) group so
-	re-runs are idempotent (same IDs every time for the same JSON data).
+- **Gap**: Multiple external (user-entered) positions on the same day all got `order_id="EXTERNAL"`. The dedup check `WHERE date=? AND order_id=?` only inserted the first one and silently skipped the rest.
+- **Fix**: Generate a deterministic unique ID per external position: `EXT_{date}_{symbol}_{side}_{counter}`. Counter resets per (date, symbol, side) group so re-runs are idempotent.
 - **Files**: `fill_intraday_ledger.py`
 
 ### 81. ✅ Sheet Import Updates Charges on P&L Match
 - **Versions**: All (infrastructure)
-- **Gap**: `_verify_intraday()` in `import_zerodha_taxpnl.py` only set `verified='verified'` when
-	P&L matched Zerodha's sheet. It did NOT update the charge breakdown (brokerage, STT, exchange_txn,
-	gst, sebi_charges, stamp_duty, total_charges, net_pnl). Our estimated charges remained in the DB
-	instead of being replaced with Zerodha's actuals.
-- **Fix**: On P&L match, aggregate Zerodha's per-trade charges for the (date, symbol) group, apportion
-	to each DB row by its (buy_value + sell_value) turnover share, and update all charge columns +
-	net_pnl + sheet_verified + sheet_verified_on. Ground truth from Zerodha now always wins.
+- **Gap**: `_verify_intraday()` only set `verified='verified'` when P&L matched. It did NOT update the charge breakdown. Our estimated charges remained in the DB instead of Zerodha's actuals.
+- **Fix**: On P&L match, aggregate Zerodha's per-trade charges for the (date, symbol) group, apportion to each DB row by turnover share, and update all charge columns + net_pnl + sheet_verified.
 - **Files**: `import_zerodha_taxpnl.py`
+
+---
+
+## Implementation Status
+
+| # | Improvement | Versions | Priority | Status | Implemented In |
+|---|------------|----------|----------|--------|----------------|
+| 1 | Volume confirmation | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
+| 2 | Relative Volume (RVol) | V2, NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 3 | Pattern freshness decay | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
+| 4 | Previous day H/L/C S&R | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
+| 5 | Nifty trend hard filter | V2, NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 6 | Opening Range Breakout | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 7 | MACD histogram | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
+| 8 | Sector diversification | V2, NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 9 | Pre-market gap analysis | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
+| 10 | Partial profit taking | All | HIGH | ✅ Done | `order_engine.py` |
+| 11 | Periodic opportunity scan | V2, NoAI | HIGH | ✅ Done | `manager_v2.py`, `config.py` |
+| 12 | Continuous market regime | V2, NoAI | HIGH | ✅ Done | `manager_v2.py` |
+| 13 | Min capital deployment | V2 | HIGH | ✅ Done | `stock_scanner_v2.py`, `order_engine.py` |
+| 14 | Stagnant position exit | NoAI | HIGH | ✅ Done | `order_engine.py`, `manager_v2.py` |
+| 15 | Loss-adjusted sizing | All | HIGH | ✅ Done | `order_engine.py`, `config.py` |
+| 16 | Circuit breaker cooldown | All | HIGH | ✅ Done | `manager.py`, `manager_v2.py`, `config.py` |
+| 17 | Multi-timeframe (hourly) | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 18 | BB squeeze | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 19 | Max CB trips per day | All | HIGH | ✅ Done | `order_engine.py`, `config.py` |
+| 20 | Consecutive SL pause | All | HIGH | ✅ Done | `order_engine.py`, `manager_v2.py` |
+| 21 | Dynamic score after losses | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py`, `config.py` |
+| 22 | Regime-shift SL tightening | V2, NoAI | HIGH | ✅ Done | `manager_v2.py` |
+| 23 | VIX-based sizing | All | MEDIUM | ✅ Done | `config.py`, `manager.py`, `manager_v2.py` |
+| 24 | Backtesting framework | All | MEDIUM | ⬜ Pending | — |
+| 25 | Trade journaling + analytics | All | MEDIUM | ✅ Done | `performance_tracker.py`, `view_performance.py` |
+| 26 | Sector cap at entry time | All | HIGH | ✅ Done | `order_engine.py` |
+| 27 | EOD accelerated exit | NoAI, V2 | HIGH | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
+| 28 | ADX trend strength | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 29 | Thursday expiry handling | All | MEDIUM | ✅ Done | `manager.py`, `config.py` |
+| 30 | 3-day candle lookback | V2, NoAI | MEDIUM | ✅ Done | `stock_scanner_v2.py` |
+| 31 | Today-candle-count guard | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 32 | Late-entry target reduction | All | HIGH | ✅ Done | `order_engine.py`, `config.py` |
+| 33 | Fibonacci retracement levels | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 34 | VWAP SD bands | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 35 | Bid-ask spread check | All | MEDIUM | ✅ Done | `order_engine.py`, `config.py` |
+| 36 | Intraday momentum (RoC) | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 37 | Correlation-based sizing | All | LOW | ⬜ Pending | — |
+| 38 | Improved slippage model | Dry Run | LOW | ✅ Done | `order_engine.py` |
+| 39 | ATR percentile ranking | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 40 | Claude prompt feedback loop | V2 | LOW | ⬜ Pending | — |
+| 41 | Holiday-shifted expiry | All | LOW | ⬜ Pending | — |
+| 42 | Pre-open auction data | V2, NoAI | MEDIUM | ✅ Done | `config.py`, `manager.py` |
+| 43 | Real-time trade verification | All | HIGH | ✅ Done | `scripts/verify_trades.py` |
+| 44 | WebSocket tick data | All | MEDIUM | ⬜ Pending | — |
+| 45 | Multi-day score trend | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 46 | Smart square-off timing | All | LOW | ⬜ Pending | — |
+| 47 | Budget auto-scaling | All | LOW | ⬜ Pending | — |
+| 49 | Wider SL logic | All | HIGH | ✅ Done | `order_engine.py` |
+| 50 | Late-entry + time-decay exclusion | All | HIGH | ✅ Done | `order_engine.py` |
+| 51 | Extended move penalty | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 52 | RSI extreme hard cap | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
+| 53 | Direction diversification (score-aware) | All | HIGH | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
+| 54 | Fewer trades, bigger size | All | HIGH | ✅ Done | `config.py` |
+| 55 | LIMIT orders for entry/exit | All | MEDIUM | ⬜ Pending | — |
+| 56 | Scan universe price filter | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 57 | VWAP exclude incomplete candle | V2, NoAI | LOW | ⬜ Pending | — |
+| 58 | Dynamic position sizing by budget | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
+| 59 | R:R 1.5:1 + configurable multiplier | All | HIGH | ✅ Done | `config.py`, `order_engine.py` |
+| 60 | Exchange SL-M orders | All | HIGH | ✅ Done | `zerodha_client.py`, `order_engine.py`, `config.py` |
+| 61 | SuperTrend params configurable | V2, NoAI | LOW | ✅ Done | `config.py`, `technical_indicators.py` |
+| 62 | Fibonacci directional score | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 63 | ORB use 2nd candle (9:30-9:45) | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
+| 64 | Short position time cap | All | MEDIUM | ✅ Done | `order_engine.py`, `config.py` |
+| 65 | Pre-trade minimum profit check | All | HIGH | ✅ Done | `order_engine.py`, `config.py` |
+| 66 | Entry delay 15->5 min | All | MEDIUM | ✅ Done | `config.py` |
+| 67 | Trail step 65->50% | All | MEDIUM | ✅ Done | `config.py` |
+| 68 | Time-decay 40->25% | All | MEDIUM | ✅ Done | `config.py` |
+| 69 | SL sanity check after entry override | All | HIGH | ✅ Done | `order_engine.py` |
+| 70 | SL-M partial fill verification | All | HIGH | ✅ Done | `order_engine.py`, `zerodha_client.py` |
+| 71 | Fill price SL cap re-validation | All | HIGH | ✅ Done | `order_engine.py` |
+| 72 | Store initial_sl at entry | All | MEDIUM | ✅ Done | `order_engine.py` |
+| 73 | Fallback candidate pool | All | MEDIUM | ✅ Done | `stock_scanner_v2.py`, `manager.py`, `manager_v2.py` |
+| 74 | Periodic manual trade sync | All | MEDIUM | ✅ Done | `manager.py`, `manager_v2.py` |
+| 75 | --max budget CLI flag | All | MEDIUM | ✅ Done | `main.py` |
+| 76 | Smart direction diversification | All | HIGH | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
+| 77 | Entry count logging fix | All | LOW | ✅ Done | `manager.py` |
+| 78 | FII/DII flow bias | All | MEDIUM | ✅ Done | `config.py`, `manager.py` |
+| 79 | Per-trade charge calculation (tax ledger) | Infrastructure | MEDIUM | ✅ Done | `fill_intraday_ledger.py` |
+| 80 | EXTERNAL position unique order_id | Infrastructure | MEDIUM | ✅ Done | `fill_intraday_ledger.py` |
+| 81 | Sheet import updates charges on P&L match | Infrastructure | MEDIUM | ✅ Done | `import_zerodha_taxpnl.py` |
+| 82 | Stagnant exit timeout 90->45 min | All | HIGH | ✅ Done | `config.py` |
+| 83 | exit_position SL-M cancel error handling | All | HIGH | ✅ Done | `order_engine.py` |
+| 84 | _replace_exchange_sl pending ID tracking | All | HIGH | ✅ Done | `order_engine.py` |
+| 85 | _update_exchange_sl exception safety | All | HIGH | ✅ Done | `order_engine.py` |
+| 86 | ADJUST_TARGET directional validation | V2 | HIGH | ✅ Done | `order_engine.py` |
+| 87 | reconcile_with_zerodha API error handling | All | HIGH | ✅ Done | `order_engine.py` |
+| 88 | market_data.py quote fetch error handling | All | HIGH | ✅ Done | `market_data.py` |
+| 89 | Increase circuit breaker to 4% | All | MEDIUM | ⬜ Pending | `config.py` |
 
