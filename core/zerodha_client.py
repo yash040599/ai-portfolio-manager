@@ -548,13 +548,13 @@ class ZerodhaClient:
             )
             self.log.success(
                 f"SL-M order placed: {side} {qty}x {symbol} "
-                f"trigger ₹{trigger_price:.2f} | ID: {order_id}"
+                f"trigger Rs.{trigger_price:.2f} | ID: {order_id}"
             )
             return str(order_id)
         except Exception as e:
             self.log.error(
                 f"SL-M order FAILED: {side} {qty}x {symbol} "
-                f"trigger ₹{trigger_price:.2f} — {e}"
+                f"trigger Rs.{trigger_price:.2f} — {e}"
             )
             return None
 

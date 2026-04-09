@@ -65,7 +65,7 @@ def _show_status():
             positions = data.get("positions", [])
             closed = [p for p in positions if p.get("status") == "CLOSED"]
             net = data.get("pnl", {}).get("net_profit", 0)
-            print(f"  {date_str:<14} {mode:<10} {verified:<12} {len(closed):<8} ₹{net:>+9.2f}")
+            print(f"  {date_str:<14} {mode:<10} {verified:<12} {len(closed):<8} Rs.{net:>+9.2f}")
         except Exception:
             pass
 
@@ -160,7 +160,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
                            for f in fills) / total_qty
                 wavg = round(wavg, 2)
                 if abs(wavg - pos["entry_price"]) > 0.01:
-                    print(f"    ✎ {pos['symbol']}: entry ₹{pos['entry_price']:.2f}→₹{wavg:.2f}")
+                    print(f"    ✎ {pos['symbol']}: entry Rs.{pos['entry_price']:.2f}→Rs.{wavg:.2f}")
                     pos["entry_price"] = wavg
 
     # ── Phase 2: correct exit prices using Zerodha aggregate P&L ─
@@ -193,7 +193,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
             changes = []
             if z_exit > 0 and abs(z_exit - old_exit) > 0.01:
                 if not pos.get("_partial_qty", 0):
-                    changes.append(f"exit ₹{old_exit:.2f}→₹{z_exit:.2f}")
+                    changes.append(f"exit Rs.{old_exit:.2f}→Rs.{z_exit:.2f}")
                     pos["exit_price"] = round(z_exit, 2)
 
             # Recalculate P&L
@@ -204,7 +204,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
                 new_pnl = round((pos["entry_price"] - pos["exit_price"]) * qty, 2)
 
             if abs(new_pnl - pos.get("pnl", 0)) > 0.01:
-                changes.append(f"P&L ₹{pos['pnl']:+,.2f}→₹{new_pnl:+,.2f}")
+                changes.append(f"P&L Rs.{pos['pnl']:+,.2f}→Rs.{new_pnl:+,.2f}")
                 pos["pnl"] = new_pnl
 
             if changes:
@@ -261,8 +261,8 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
 
                 stats["corrected"] += 1
                 print(f"    ✎ {symbol} ({last_pos.get('entry_time','?')}): "
-                      f"exit ₹{old_exit:.2f}→₹{last_pos['exit_price']:.2f} | "
-                      f"P&L ₹{old_pnl:+,.2f}→₹{last_pos['pnl']:+,.2f} "
+                      f"exit Rs.{old_exit:.2f}→Rs.{last_pos['exit_price']:.2f} | "
+                      f"P&L Rs.{old_pnl:+,.2f}→Rs.{last_pos['pnl']:+,.2f} "
                       f"(from Zerodha aggregate {z_pnl:+.2f})")
 
     # ── Recalculate charges from Zerodha positions ────────────
@@ -288,10 +288,10 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
     # Cross-check: aggregate Zerodha P&L vs our corrected total
     z_total_pnl = round(sum(zp.get("pnl", 0) for zp in z_pos_by_sym.values()), 2)
     if abs(gross_pnl - z_total_pnl) > 0.50:
-        print(f"\n    ⚠ P&L mismatch: internal ₹{gross_pnl:+.2f} vs Zerodha ₹{z_total_pnl:+.2f} "
-              f"(diff ₹{gross_pnl - z_total_pnl:+.2f})")
+        print(f"\n    ⚠ P&L mismatch: internal Rs.{gross_pnl:+.2f} vs Zerodha Rs.{z_total_pnl:+.2f} "
+              f"(diff Rs.{gross_pnl - z_total_pnl:+.2f})")
     else:
-        print(f"\n    ✓ Gross P&L confirmed: ₹{gross_pnl:+.2f} (Zerodha: ₹{z_total_pnl:+.2f})")
+        print(f"\n    ✓ Gross P&L confirmed: Rs.{gross_pnl:+.2f} (Zerodha: Rs.{z_total_pnl:+.2f})")
 
     total_costs = data["pnl"]["charges"]["total_costs"]
     net_profit = round(gross_pnl - total_costs, 2)
@@ -571,7 +571,7 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write("CONFIGURATION\n")
         f.write(f"{SEP_MINOR}\n")
         f.write(f"Claude plan     : {config.get('claude_plan', 'PRO').upper()}\n")
-        f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
+        f.write(f"Budget          : Rs.{budget:,.2f} (from Zerodha funds)\n")
         f.write(f"Universe        : {config.get('universe', 'NIFTY100')}\n")
         if market_condition:
             f.write(f"Market condition: {market_condition}\n")
@@ -601,11 +601,11 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write(f"{SEP_TABLE}\n")
 
         for p in positions:
-            exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
-            pnl_val = f"₹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
+            exit_p  = f"Rs.{p['exit_price']:.2f}" if p.get("exit_price") else "—"
+            pnl_val = f"Rs.{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
             f.write(
                 f"{p['symbol']:<12} {p['side']:<6} {p['qty']:>5} "
-                f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
+                f"Rs.{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                 f"{(p.get('exit_reason') or 'OPEN'):<14} "
                 f"{(p.get('entry_time') or '—'):<10} "
                 f"{(p.get('exit_time') or '—'):<10}\n"
@@ -622,32 +622,32 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write("P&L BREAKDOWN\n")
         f.write(f"{SEP_MAJOR}\n\n")
 
-        f.write(f"Gross P&L               : ₹{pnl['gross_pnl']:+,.2f}\n\n")
+        f.write(f"Gross P&L               : Rs.{pnl['gross_pnl']:+,.2f}\n\n")
 
         f.write("CHARGES & TAXES:\n")
-        f.write(f"  Brokerage             : ₹{charges['brokerage']:,.2f}\n")
-        f.write(f"  STT (sell side)       : ₹{charges['stt']:,.2f}\n")
-        f.write(f"  Exchange transaction  : ₹{charges['exchange_txn']:,.2f}\n")
-        f.write(f"  GST (18%)             : ₹{charges['gst']:,.2f}\n")
-        f.write(f"  SEBI charges          : ₹{charges['sebi_charges']:,.4f}\n")
-        f.write(f"  Stamp duty (buy side) : ₹{charges['stamp_duty']:,.2f}\n")
+        f.write(f"  Brokerage             : Rs.{charges['brokerage']:,.2f}\n")
+        f.write(f"  STT (sell side)       : Rs.{charges['stt']:,.2f}\n")
+        f.write(f"  Exchange transaction  : Rs.{charges['exchange_txn']:,.2f}\n")
+        f.write(f"  GST (18%)             : Rs.{charges['gst']:,.2f}\n")
+        f.write(f"  SEBI charges          : Rs.{charges['sebi_charges']:,.4f}\n")
+        f.write(f"  Stamp duty (buy side) : Rs.{charges['stamp_duty']:,.2f}\n")
         f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total tax & charges   : ₹{charges['total_tax_and_charges']:,.2f}\n\n")
+        f.write(f"  Total tax & charges   : Rs.{charges['total_tax_and_charges']:,.2f}\n\n")
 
         f.write("CLAUDE API COST:\n")
-        f.write(f"  Claude API usage      : ₹{charges['claude_api_cost']:,.2f}  "
-                f"(est. ₹{Config.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
+        f.write(f"  Claude API usage      : Rs.{charges['claude_api_cost']:,.2f}  "
+                f"(est. Rs.{Config.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
         f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total all costs       : ₹{charges['total_costs']:,.2f}\n\n")
+        f.write(f"  Total all costs       : Rs.{charges['total_costs']:,.2f}\n\n")
 
         f.write(f"{'=' * 42}\n")
-        f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
+        f.write(f"  NET PROFIT AFTER ALL  : Rs.{pnl['net_profit']:+,.2f}\n")
         f.write(f"{'=' * 42}\n")
         profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
         f.write(f"  Profitable?           : {profitable}\n")
         if budget > 0:
             returns_pct = pnl["net_profit"] / budget * 100
-            f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
+            f.write(f"  Day returns           : {returns_pct:+.2f}% on Rs.{budget:,.0f} budget\n")
         f.write("\n")
 
         tax_rate_pct = pnl.get("tax_rate_pct", 0)
@@ -657,23 +657,23 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
         f.write(f"  Tax slab rate         : {Config.TAX_RATE_PCT}% + "
                 f"{Config.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
         if pnl["net_profit"] > 0:
-            f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
-            f.write(f"  Profit after tax      : ₹{pnl['profit_after_tax']:+,.2f}\n")
+            f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
+            f.write(f"  Profit after tax      : Rs.{pnl['profit_after_tax']:+,.2f}\n")
         else:
-            f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
+            f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
             f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
         f.write("\n")
 
         f.write(f"  FYI: Zerodha Kite Connect subscription is "
-                f"₹{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
+                f"Rs.{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
         f.write(f"  Track cumulative daily profits to ensure they cover "
                 f"this monthly cost.\n\n")
 
         f.write("TURNOVER DETAILS\n")
         f.write(f"{SEP_MINOR}\n")
-        f.write(f"  Buy turnover          : ₹{charges['buy_turnover']:,.2f}\n")
-        f.write(f"  Sell turnover         : ₹{charges['sell_turnover']:,.2f}\n")
-        f.write(f"  Total turnover        : ₹{charges['total_turnover']:,.2f}\n")
+        f.write(f"  Buy turnover          : Rs.{charges['buy_turnover']:,.2f}\n")
+        f.write(f"  Sell turnover         : Rs.{charges['sell_turnover']:,.2f}\n")
+        f.write(f"  Total turnover        : Rs.{charges['total_turnover']:,.2f}\n")
         f.write(f"  Total orders          : {charges['num_orders']}\n\n")
 
         if trade_log:
@@ -683,7 +683,7 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
                 f.write(
                     f"  [{entry['time']}] {entry['action']:<14} "
                     f"{entry['symbol']:<12} {entry['side']:<5} "
-                    f"{entry['qty']:>5}  ₹{entry['price']:>10}  "
+                    f"{entry['qty']:>5}  Rs.{entry['price']:>10}  "
                     f"{entry['detail']}\n"
                 )
             f.write("\n")

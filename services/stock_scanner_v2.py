@@ -807,7 +807,7 @@ class StockScannerV2(StockScanner):
             return trades  # already meeting minimum
 
         self.log.info(
-            f"Capital under-deployed: ₹{total_cost:,.0f} / ₹{budget:,.0f} "
+            f"Capital under-deployed: Rs.{total_cost:,.0f} / Rs.{budget:,.0f} "
             f"({total_cost / budget * 100:.0f}%) — minimum is {min_util_pct:.0f}%"
         )
 
@@ -826,7 +826,7 @@ class StockScannerV2(StockScanner):
             if new_qty > t["qty"]:
                 self.log.info(
                     f"  {t['symbol']}: qty {t['qty']} → {new_qty} "
-                    f"(₹{t['qty'] * entry:,.0f} → ₹{new_qty * entry:,.0f})"
+                    f"(Rs.{t['qty'] * entry:,.0f} → Rs.{new_qty * entry:,.0f})"
                 )
                 t["qty"] = new_qty
             new_total += t["entry_price"] * t["qty"]
@@ -848,7 +848,7 @@ class StockScannerV2(StockScanner):
 
         final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
         self.log.info(
-            f"After boost: ₹{final_cost:,.0f} / ₹{budget:,.0f} "
+            f"After boost: Rs.{final_cost:,.0f} / Rs.{budget:,.0f} "
             f"({final_cost / budget * 100:.0f}%)"
         )
         return trades
@@ -933,7 +933,7 @@ class StockScannerV2(StockScanner):
             if sr_signal in ("AT_RESISTANCE", "AT_SUPPORT", "ABOVE_PIVOT", "BELOW_PIVOT"):
                 sr_str = f"  PrevDay: {sr_signal}"
             if sr.get("pivot", 0) > 0:
-                sr_str += f"  Pivot: ₹{sr['pivot']:.2f}"
+                sr_str += f"  Pivot: Rs.{sr['pivot']:.2f}"
 
             # Relative volume
             rvol_str = ""
@@ -996,9 +996,9 @@ class StockScannerV2(StockScanner):
 
             lines.append(
                 f"{symbol:<14} "
-                f"₹{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
+                f"Rs.{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
                 f"Vol: {volume:>12,}{rvol_str}  "
-                f"VWAP: ₹{c['vwap']:.2f}  "
+                f"VWAP: Rs.{c['vwap']:.2f}  "
                 f"RSI: {rsi_val:.0f}  "
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
@@ -1043,10 +1043,10 @@ You have 15 years of experience with deep knowledge of Indian market microstruct
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
 CURRENT TIME PHASE: {time_phase}
 
-BUDGET: ₹{budget:,} total capital.
-MAX POSITIONS: {max_positions} stocks simultaneously (₹{budget // max_positions:,} per slot).
-MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
-MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= ₹{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty — NOT by adding mediocre trades. Idle capital earns nothing intraday.
+BUDGET: Rs.{budget:,} total capital.
+MAX POSITIONS: {max_positions} stocks simultaneously (Rs.{budget // max_positions:,} per slot).
+MAX PER STOCK: {max_pct}% of budget (= Rs.{budget * max_pct // 100:,} max per stock).
+MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= Rs.{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty — NOT by adding mediocre trades. Idle capital earns nothing intraday.
 {nifty_context}{perf_context}{session_context}
 The stocks below are PRE-FILTERED by mathematical technical analysis.
 Each stock shows real-time indicators — use them for precise, evidence-based decisions.
@@ -1149,7 +1149,7 @@ HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ✗ REJECT if RVol < 0.5 — no institutional participation, random noise.
 ✗ REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
 ✗ REJECT if MACD momentum = SHRINKING in the trade's direction — momentum is fading.
-✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
+✗ REJECT if total position cost across ALL trades would exceed Rs.{budget:,}.
 ✗ REJECT if adding this trade would put more than {max(1, self.cfg.MAX_POSITIONS - 1)} positions in the SAME direction — the system enforces direction diversification to avoid one-sided exposure.
 
 ══════════════════════════════════════════════════════════
@@ -1207,7 +1207,7 @@ COMMON MISTAKES TO AVOID (from actual loss patterns):
 ✗ Taking 4-5 trades all SHORT in a bearish market — if market reverses (common after 1 PM), ALL trades lose together. Mix directions or keep 1-2 slots empty.
 ✗ Ignoring volume — breakouts without volume (RVol <1.0) fail 70% of the time.
 ✗ Chasing gap-ups: A >1.5% gap usually partially fills. Don't buy AT the gap, buy the PULLBACK.
-✗ Over-trading: With ₹{budget:,} capital, every trade costs ~₹15-25 in charges. Pick 1-3 HIGH-CONVICTION trades only. Idle capital is better than forced trades. Do NOT add filler trades to deploy more capital.
+✗ Over-trading: With Rs.{budget:,} capital, every trade costs ~Rs.15-25 in charges. Pick 1-3 HIGH-CONVICTION trades only. Idle capital is better than forced trades. Do NOT add filler trades to deploy more capital.
 
 PRE-FILTERED CANDIDATES (ranked by technical score):
 {snapshot}
@@ -1272,7 +1272,7 @@ TRADE 2:
                     f"  5min patterns: [{pattern_str}]  "
                     f"RSI(14): {rsi_val:.0f}  "
                     f"EMA(9/21): {ema_data['signal']}  "
-                    f"VWAP: ₹{current_vwap:.2f}"
+                    f"VWAP: Rs.{current_vwap:.2f}"
                 )
 
             position_context.append((pos, tech_ctx))
@@ -1339,9 +1339,9 @@ TRADE 2:
             entry_time = pos.get('entry_time', '')
             entry_time_str = f"  Entered: {entry_time}" if entry_time else ""
             pos_text += (
-                f"  {pos['symbol']}: {pos['side']} {pos['qty']} shares @ ₹{entry:.2f}  "
-                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
-                f"SL: ₹{pos.get('stop_loss', 'N/A')}  Target: ₹{pos.get('target_price', 'N/A')}"
+                f"  {pos['symbol']}: {pos['side']} {pos['qty']} shares @ Rs.{entry:.2f}  "
+                f"Current: Rs.{current_price:.2f}  P&L: Rs.{pnl:.2f} ({r_multiple:+.1f}R)  "
+                f"SL: Rs.{pos.get('stop_loss', 'N/A')}  Target: Rs.{pos.get('target_price', 'N/A')}"
                 f"{entry_time_str}\n"
             )
             if tech_ctx:
@@ -1354,8 +1354,8 @@ TRADE 2:
             sym = cp.get("symbol", "")
             reentry_counts[sym] = reentry_counts.get(sym, 0) + 1
             closed_text += (
-                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ ₹{cp.get('entry_price', 0):.2f}  "
-                f"Exit: ₹{cp.get('exit_price', 0):.2f}  P&L: ₹{cp.get('pnl', 0):.2f}  "
+                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ Rs.{cp.get('entry_price', 0):.2f}  "
+                f"Exit: Rs.{cp.get('exit_price', 0):.2f}  P&L: Rs.{cp.get('pnl', 0):.2f}  "
                 f"Reason: {cp.get('exit_reason', '?')}\n"
             )
 
@@ -1379,10 +1379,10 @@ CURRENT OPEN POSITIONS (with live 5-min technical indicators):
 CLOSED TRADES TODAY:
 {closed_text if closed_text else "  (none)"}
 
-DAY P&L SO FAR: ₹{day_pnl:,.2f}
-REMAINING BUDGET: ₹{budget_remaining:,.2f}
+DAY P&L SO FAR: Rs.{day_pnl:,.2f}
+REMAINING BUDGET: Rs.{budget_remaining:,.2f}
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
+MAX PER STOCK: {max_pct}% of Rs.{budget:,} = Rs.{max_per:,} max per stock.
 {blocked_text}
 
 ══════════════════════════════════════════════════════════
@@ -1455,7 +1455,7 @@ SIDE: [BUY or SELL]
 ENTRY_PRICE: [price]
 STOP_LOSS: [price based on structural level]
 TARGET: [price — reduced target given time remaining]
-QTY: [must satisfy: QTY × ENTRY ≤ ₹{min(budget_remaining, max_per):,.0f}]
+QTY: [must satisfy: QTY × ENTRY ≤ Rs.{min(budget_remaining, max_per):,.0f}]
 RATIONALE: [1-2 sentences — confluence count, which indicators align, and why this is worth the late-day risk]
 ---
 ===END===

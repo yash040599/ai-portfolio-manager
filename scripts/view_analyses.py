@@ -28,7 +28,7 @@ for r in rows:
 
     pnl = r["stock_pnl"] or 0
     pnl_pct = r["stock_pnl_pct"] or 0
-    pnl_str = f"₹{pnl:+.0f}"
+    pnl_str = f"Rs.{pnl:+.0f}"
     pnl_pct_str = f"{pnl_pct:+.1f}%"
 
     print(f"  {r['symbol']:<15} {(r['action'] or 'HOLD'):<15} {(r['conviction'] or ''):<12} {(r['action_taken'] or ''):<12} {(r['current_price'] or 0):>10.2f} {(r['invested_value'] or 0):>12.2f} {(r['current_value'] or 0):>12.2f} {pnl_str:>10} {pnl_pct_str:>8} {(r['horizon'] or ''):<12} {(r['target_price'] or ''):<12}")
@@ -51,7 +51,7 @@ for d in dates:
             SUM(stock_pnl) as total_pnl
         FROM portfolio_analyses WHERE date = ?
     """, (date,)).fetchone()
-    print(f"  {date}:  {stats['total']} stocks | DONE: {stats['done']}  NOT ACTED: {stats['not_acted']}  PENDING: {stats['pending']}  N/A: {stats['na']}  | Portfolio P&L: ₹{(stats['total_pnl'] or 0):+,.0f}")
+    print(f"  {date}:  {stats['total']} stocks | DONE: {stats['done']}  NOT ACTED: {stats['not_acted']}  PENDING: {stats['pending']}  N/A: {stats['na']}  | Portfolio P&L: Rs.{(stats['total_pnl'] or 0):+,.0f}")
 
 print(f"{'='*140}\n")
 

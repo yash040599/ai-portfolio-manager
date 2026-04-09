@@ -44,7 +44,7 @@ class Config:
     # DYNAMIC BUDGET: The bot fetches your actual Zerodha account
     # balance at startup and displays it. The trading budget is:
     #   min(available_funds, MAX_BUDGET_INR)
-    # So even if you have ₹50K in Zerodha, the bot only risks MAX_BUDGET_INR.
+    # So even if you have Rs.50K in Zerodha, the bot only risks MAX_BUDGET_INR.
     # Increase this when you're confident in the bot's performance.
     #
     # MAX_BUDGET_INR: absolute cap on how much capital the bot can
@@ -111,9 +111,9 @@ class Config:
     #
     # CLAUDE_REVIEW_MINUTES: how often Claude re-evaluates open positions.
     #   Lower = more adaptive, but costs more in Claude API credits.
-    #   Each review call ≈ ₹2-4 on Pro plan.
-    #   30 min = ~12 calls/day ≈ ₹25-50/day in Claude costs.
-    #   15 min = ~24 calls/day ≈ ₹50-100/day. Only if budget is large.
+    #   Each review call ≈ Rs.2-4 on Pro plan.
+    #   30 min = ~12 calls/day ≈ Rs.25-50/day in Claude costs.
+    #   15 min = ~24 calls/day ≈ Rs.50-100/day. Only if budget is large.
     PRICE_POLL_SECONDS:     int = 10
     CLAUDE_REVIEW_MINUTES:  int = 20
 
@@ -126,7 +126,7 @@ class Config:
     # NIFTY200 → widest pool, some less liquid mid-caps
     # CUSTOM   → uses CUSTOM_WATCHLIST below (your hand-picked list)
     #
-    # For ₹10K budget, NIFTY50 is recommended — most liquid, lowest
+    # For Rs.10K budget, NIFTY50 is recommended — most liquid, lowest
     # impact cost, tightest bid-ask spreads for intraday.
     SCAN_UNIVERSE: str = "NIFTY100"
 
@@ -163,7 +163,7 @@ class Config:
     #
     # MAX_LOSS_PER_DAY_PCT: circuit breaker — stops all trading if total
     #   daily loss exceeds this % of budget.
-    #   3.0 on ₹10K = stops trading after ₹300 total loss.
+    #   3.0 on Rs.10K = stops trading after Rs.300 total loss.
     #   Set to 0 to disable the circuit breaker (not recommended).
     DEFAULT_STOP_LOSS_PCT: float = 1.5
     DEFAULT_TARGET_PCT:    float = 1.5
@@ -187,12 +187,12 @@ class Config:
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
     #   the position must profit before trailing starts.
-    #   1.5 = trail starts at 1.5× risk (e.g. risk ₹2 → trail at ₹3 profit).
+    #   1.5 = trail starts at 1.5× risk (e.g. risk Rs.2 → trail at Rs.3 profit).
     #   At trigger: exits 1/3 qty (partial profit) + moves SL.
     #
     # TRAIL_STEP_PCT: % of unrealised profit locked in by the trailing SL.
     #   50 = SL sits halfway between entry and current price.
-    #   e.g. entry ₹100, current ₹106 → SL at ₹103 (50% of ₹6 gain).
+    #   e.g. entry Rs.100, current Rs.106 → SL at Rs.103 (50% of Rs.6 gain).
     #
     #   DECISION HISTORY (do NOT change without backtesting evidence):
     #     65% (commit 4444248, 2026-03-16): Set to 65% after observing
@@ -222,14 +222,14 @@ class Config:
     # SLIPPAGE_PCT: simulated slippage added to entries and exits
     #   in dry-run mode. Makes simulated P&L more realistic.
     #   0.15 = 0.15% adverse fill on each trade.
-    #   For a ₹1,000 stock: ₹1.50 worse per share per trade.
+    #   For a Rs.1,000 stock: Rs.1.50 worse per share per trade.
     #   Real-world slippage on NSE is typically 0.1-0.3%.
     SLIPPAGE_PCT: float = 0.15
 
     # ── Time-Decay Targets ────────────────────────────────────────
     # After TARGET_DECAY_AFTER_HOUR (24h format), reduce open position
     # targets by TARGET_DECAY_PCT% to account for less time remaining.
-    # e.g. After 2:00 PM, a ₹100 → ₹106 target becomes ₹100 → ₹103.60
+    # e.g. After 2:00 PM, a Rs.100 → Rs.106 target becomes Rs.100 → Rs.103.60
     TARGET_DECAY_AFTER_HOUR: int   = 14     # 2:00 PM IST
     TARGET_DECAY_PCT:        float = 25.0   # reduce target by this %
 
@@ -262,7 +262,7 @@ class Config:
     # ── Short Position Safety ─────────────────────────────────────
     # SHORT_ENTRY_CUTOFF_HOUR: don't open new SHORT positions after
     #   this hour. Short delivery if cover fails is very expensive
-    #   (₹500-5000+ penalties). Earlier cutoff gives more time to
+    #   (Rs.500-5000+ penalties). Earlier cutoff gives more time to
     #   handle order failures before Zerodha's 3:25 PM auto-square.
     SHORT_ENTRY_CUTOFF_HOUR: int = 13   # 1:00 PM — no new shorts after 1 PM
 
@@ -312,9 +312,9 @@ class Config:
     USE_EXCHANGE_SL: bool = True
 
     # MIN_EXPECTED_PROFIT: skip trades where expected profit (target
-    # distance × qty) is less than this amount in ₹. Prevents
+    # distance × qty) is less than this amount in Rs.. Prevents
     # entering trades where brokerage + STT eats all the profit.
-    # Round-trip charges for small intraday trades ~₹40-50.
+    # Round-trip charges for small intraday trades ~Rs.40-50.
     MIN_EXPECTED_PROFIT: float = 50.0
 
     # V2_MIN_SCORE: minimum absolute technical score for a stock to
@@ -451,8 +451,8 @@ class Config:
     # All values are as of March 2026. Verify before live trading.
     #
     # ZERODHA_BROKERAGE_PER_ORDER:
-    #   ₹20 flat per executed order (buy or sell), or 0.03% of
-    #   turnover — whichever is LOWER. For small orders (<₹66,667),
+    #   Rs.20 flat per executed order (buy or sell), or 0.03% of
+    #   turnover — whichever is LOWER. For small orders (<Rs.66,667),
     #   0.03% is lower. The code calculates both and uses the min.
     #
     # STT_SELL_PCT: Securities Transaction Tax — 0.025% on SELL side
@@ -463,7 +463,7 @@ class Config:
     #
     # GST_PCT: 18% GST on (brokerage + SEBI charges + exchange transaction charges).
     #
-    # SEBI_CHARGE_PER_CR: ₹10 per crore of turnover. Negligible for
+    # SEBI_CHARGE_PER_CR: Rs.10 per crore of turnover. Negligible for
     #   small trades but included for accuracy.
     #
     # STAMP_DUTY_BUY_PCT: 0.003% on BUY side only. State-level charge.
@@ -478,14 +478,14 @@ class Config:
     STAMP_DUTY_BUY_PCT:        float = 0.003
 
     # Monthly fixed costs — shown as FYI in reports.
-    # ZERODHA_MONTHLY_COST: Kite Connect subscription (₹500/month).
+    # ZERODHA_MONTHLY_COST: Kite Connect subscription (Rs.500/month).
     #   This is a MONTHLY cost, NOT deducted from daily P&L.
     #   It's shown as an informational line in the report so you can
     #   gauge whether the bot is covering subscription costs over time.
-    # CLAUDE_COST_PER_CALL: estimated ₹ per Claude API call on Pro plan.
+    # CLAUDE_COST_PER_CALL: estimated Rs. per Claude API call on Pro plan.
     #   This IS deducted from daily P&L because it's a per-use cost.
     ZERODHA_MONTHLY_COST:  float = 500.0
-    CLAUDE_COST_PER_CALL:  float = 3.0   # avg ₹3 per Claude API call on Pro
+    CLAUDE_COST_PER_CALL:  float = 3.0   # avg Rs.3 per Claude API call on Pro
 
     # ══════════════════════════════════════════════════════════════
     # INCOME TAX SETTINGS
@@ -495,8 +495,8 @@ class Config:
     #
     # TAX_RATE_PCT: Your marginal tax slab rate (%).
     #   Set this to the slab you fall in based on your total income.
-    #   30 = 30% (income above ₹24L in new regime from FY 2025-26)
-    #   25 = 25% (₹20-24L new regime)
+    #   30 = 30% (income above Rs.24L in new regime from FY 2025-26)
+    #   25 = 25% (Rs.20-24L new regime)
     #   The bot uses this to show estimated tax liability on each
     #   day's net profit in the trading report. This helps you track
     #   how much you need to set aside for advance tax payments.
@@ -509,10 +509,10 @@ class Config:
 
     # ── Capital-gains tax (statutory flat rates, not slab-based) ──
     # STCG on listed equity (held ≤ 12 months):  20%  (w.e.f. 23-Jul-2024)
-    # LTCG on listed equity (held > 12 months):  12.5% above ₹1.25 lakh exemption
+    # LTCG on listed equity (held > 12 months):  12.5% above Rs.1.25 lakh exemption
     STCG_TAX_RATE_PCT:     float = 20.0
     LTCG_TAX_RATE_PCT:     float = 12.5
-    LTCG_EXEMPTION_LIMIT:  float = 125000.0   # annual LTCG exemption (₹1.25L)
+    LTCG_EXEMPTION_LIMIT:  float = 125000.0   # annual LTCG exemption (Rs.1.25L)
 
     # ══════════════════════════════════════════════════════════════
     # NSE MARKET HOLIDAY CALENDAR — 2026
@@ -555,21 +555,21 @@ class Config:
             "include_pe_ratios": False,
             "model":             "claude-haiku-4-5-20251001",
             "max_tokens":        1200,
-            "note":              "Haiku model · basic analysis · ~₹1/run",
+            "note":              "Haiku model · basic analysis · ~Rs.1/run",
         },
         "pro": {
             "analysis_depth":    "detailed",
             "include_pe_ratios": True,
             "model":             "claude-sonnet-4-6",
             "max_tokens":        2000,
-            "note":              "Sonnet model · detailed analysis · ~₹5/run",
+            "note":              "Sonnet model · detailed analysis · ~Rs.5/run",
         },
         "max": {
             "analysis_depth":    "full",
             "include_pe_ratios": True,
             "model":             "claude-sonnet-4-6",
             "max_tokens":        3000,
-            "note":              "Sonnet model · full analysis · ~₹8/run",
+            "note":              "Sonnet model · full analysis · ~Rs.8/run",
         },
     }
 
@@ -586,7 +586,7 @@ class Config:
             "historical_data":  True,
             "can_place_orders": True,
             "price_source":     "kite_live",
-            "note":             "Live Kite prices + full history · ₹500/month",
+            "note":             "Live Kite prices + full history · Rs.500/month",
         },
     }
 
@@ -609,14 +609,14 @@ class Config:
         Returns the effective max positions count. If MAX_POSITIONS_OVERRIDE
         is set (non-zero), that value is used unconditionally.
 
-        Goal: each position should be ≥₹8K so that round-trip charges
-        (₹40-50) stay below 0.5% of position value.
+        Goal: each position should be ≥Rs.8K so that round-trip charges
+        (Rs.40-50) stay below 0.5% of position value.
 
-        Thresholds (₹):
-          < 25K  → 2 positions  (₹10-12K each)
-           25-60K → 3 positions  (₹8-20K each)
-           60-1L  → 4 positions  (₹15-25K each)
-          > 1L   → 5 positions  (₹20K+ each)
+        Thresholds (Rs.):
+          < 25K  → 2 positions  (Rs.10-12K each)
+           25-60K → 3 positions  (Rs.8-20K each)
+           60-1L  → 4 positions  (Rs.15-25K each)
+          > 1L   → 5 positions  (Rs.20K+ each)
         """
         if cls.MAX_POSITIONS_OVERRIDE > 0:
             return cls.MAX_POSITIONS_OVERRIDE

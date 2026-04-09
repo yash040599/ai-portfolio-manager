@@ -94,7 +94,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 13. ✅ Minimum Capital Deployment Guidance
 - **Versions**: V2 (Claude path)
 - **Gap**: Claude prompt tells the budget but doesn't enforce minimum deployment. Claude can pick 2 tiny positions using 30% of capital, leaving 70% idle all day.
-- **Fix**: Add prompt guidance: "Deploy at least 60% of budget across your trades. If you pick 2 trades, each should use ~₹X. Unused capital earns nothing intraday." Also add a code-level fallback that increases qty if Claude under-sizes.
+- **Fix**: Add prompt guidance: "Deploy at least 60% of budget across your trades. If you pick 2 trades, each should use ~Rs.X. Unused capital earns nothing intraday." Also add a code-level fallback that increases qty if Claude under-sizes.
 - **Source**: Capital efficiency — idle capital is a drag on returns. Even 0% return is a cost when capital is locked in the trading account.
 
 ---
@@ -104,12 +104,12 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 14. ✅ Stagnant Position Exit (NoAI)
 - **Versions**: V2 NoAI
 - **Gap**: In NoAI mode, no Claude reviews exist. Positions that don't hit SL or target sit idle until square-off, burning slots that could hold better trades. Claude would notice "momentum faded, exit" but NoAI has no equivalent.
-- **Fix**: After `STAGNANT_EXIT_MINUTES` (default 90) minutes, if price hasn't moved at least `STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%) toward target, auto-exit and free the slot. Checked every review interval (25 min).
+- **Fix**: After `STAGNANT_EXIT_MINUTES` (default 45) minutes, if price hasn't moved at least `STAGNANT_EXIT_MIN_MOVE_PCT` (0.5%) toward target, auto-exit and free the slot. Checked every review interval (25 min).
 - **Source**: Professional day traders cut dead-weight positions. Time is a resource — idle capital earning 0% is an opportunity cost.
 
 ### 15. ✅ Loss-Adjusted Position Sizing
 - **Versions**: V1, V2, NoAI
-- **Gap**: After SL hits, `_budget` stays at the initial day's budget (₹20K). The bot re-scans and enters new trades at full size, not accounting for realised losses. In live mode, `refresh_budget()` catches this via Zerodha API, but in dry-run mode the budget never adjusts.
+- **Gap**: After SL hits, `_budget` stays at the initial day's budget (Rs.20K). The bot re-scans and enters new trades at full size, not accounting for realised losses. In live mode, `refresh_budget()` catches this via Zerodha API, but in dry-run mode the budget never adjusts.
 - **Fix**: `loss_adjusted_budget()` reduces effective budget by realised losses (floor at 20% of original). `budget_remaining()` now uses this. New trades are automatically smaller after losses. Enabled by `LOSS_SIZING_ENABLED` config (default: True).
 - **Source**: Universal risk management — don't bet the same size after losing. Professional prop desks reduce size after drawdowns.
 
@@ -342,7 +342,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 ## COMPLETED — Profitability Deep Review Fixes (Loss Analysis)
 
-These fixes were identified by analyzing 8 days of actual trade data showing -₹897 cumulative losses. Root causes: late entries chasing extended moves, SL too tight, targets unreachable, winners cut too early, too many small trades eating charges.
+These fixes were identified by analyzing 8 days of actual trade data showing -Rs.897 cumulative losses. Root causes: late entries chasing extended moves, SL too tight, targets unreachable, winners cut too early, too many small trades eating charges.
 
 ### 49. ✅ Wider SL Logic (Structural Level Priority)
 - **Versions**: All
@@ -376,22 +376,22 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 
 ### 54. ✅ Fewer Trades, Bigger Size Config
 - **Versions**: All
-- **Gap**: MAX_POSITIONS=5 with ₹18K budget = ₹3.6K per trade. Transaction costs (brokerage, STT, GST) are ~₹25-30 per trade, eating 0.7-0.8% per round trip on small positions.
+- **Gap**: MAX_POSITIONS=5 with Rs.18K budget = Rs.3.6K per trade. Transaction costs (brokerage, STT, GST) are ~Rs.25-30 per trade, eating 0.7-0.8% per round trip on small positions.
 - **Fix**: MAX_POSITIONS 5→3. MIN_BUDGET_UTILISATION_PCT 60→0 (disabled — idle capital is better than forced trades). Concentrates capital into fewer, higher-conviction trades.
 - **Files**: `config.py`
 
 ### 55. LIMIT Orders for Entry/Exit
 - **Versions**: All
 - **Priority**: MEDIUM (implement when slippage data confirms need)
-- **Gap**: MARKET orders cause adverse fills (₹20-40/day slippage on ₹18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
+- **Gap**: MARKET orders cause adverse fills (Rs.20-40/day slippage on Rs.18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
 - **Fix**: Change `place_order()` calls from `order_type="MARKET"` to `order_type="LIMIT"` with `price=ltp`. Add a 5-10s fill check; if not filled, cancel and retry at updated LTP. Fall back to MARKET after 2 LIMIT failures.
 - **Files**: `order_engine.py`, `zerodha_client.py`
 
 ### 56. Scan Universe Price Filter
 - **Versions**: V2, NoAI
 - **Priority**: MEDIUM
-- **Gap**: No guard against very low-price (₹10-50) or very high-price (₹3000+) stocks. Low-price stocks have high % spreads. High-price stocks need too much capital for proper sizing.
-- **Fix**: Add MIN_STOCK_PRICE (default ₹100) and MAX_STOCK_PRICE (default ₹800) config. Filter during scan phase — skip stocks outside range.
+- **Gap**: No guard against very low-price (Rs.10-50) or very high-price (Rs.3000+) stocks. Low-price stocks have high % spreads. High-price stocks need too much capital for proper sizing.
+- **Fix**: Add MIN_STOCK_PRICE (default Rs.100) and MAX_STOCK_PRICE (default Rs.800) config. Filter during scan phase — skip stocks outside range.
 - **Files**: `config.py`, `stock_scanner_v2.py`
 
 ### 57. VWAP Exclude Incomplete Candle
@@ -404,8 +404,8 @@ These fixes were identified by analyzing 8 days of actual trade data showing -�
 ### 58. ✅ Dynamic Position Sizing by Budget
 - **Versions**: All
 - **Priority**: Done
-- **Gap**: With ₹18-20K budget, even 3 positions = ₹6K each. Transaction costs still eat 0.4-0.5% per round trip.
-- **Fix**: `dynamic_max_positions()` classmethod auto-scales with budget: <₹25K→2, 25-60K→3, 60-1L→4, >1L→5. Called from `set_budget()` at startup. `MAX_POSITIONS_OVERRIDE` for manual lock.
+- **Gap**: With Rs.18-20K budget, even 3 positions = Rs.6K each. Transaction costs still eat 0.4-0.5% per round trip.
+- **Fix**: `dynamic_max_positions()` classmethod auto-scales with budget: <Rs.25K→2, 25-60K→3, 60-1L→4, >1L→5. Called from `set_budget()` at startup. `MAX_POSITIONS_OVERRIDE` for manual lock.
 - **Files**: `config.py`, `order_engine.py`
 
 ---
@@ -575,7 +575,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 
 ## COMPLETED — Tax Infrastructure Fixes (April 2026)
 
-Bugs found during analysis of why April 9 showed ₹120 charges (charges were correct;
+Bugs found during analysis of why April 9 showed Rs.120 charges (charges were correct;
 bugs were in how they were computed and how sheet import reconciled them).
 
 ### 79. ✅ Per-Trade Charge Calculation (Tax Ledger)

@@ -9,7 +9,7 @@ NoAI is the **default V2 mode** that uses the candle pattern + technical indicat
 
 NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle re-scan auto-protect) and V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery, etc.). The only difference from `--ai` mode: no Claude API calls anywhere in the pipeline.
 
-**Cost:** ₹0 per trading day (only Zerodha data API charges apply).
+**Cost:** Rs.0 per trading day (only Zerodha data API charges apply).
 
 ---
 
@@ -30,7 +30,7 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | Min deployment | Code boost only (same _boost_underdeployed logic, disabled by default) | Claude prompted to deploy capital + code boost |
 | Loss-adjusted sizing | Yes — reduces budget after losses | Yes — same mechanism |
 | Circuit breaker cooldown | Yes — resumes after 30 min | Yes — same mechanism |
-| API cost | ₹0 | ~₹20-40/day (Claude) |
+| API cost | Rs.0 | ~Rs.20-40/day (Claude) |
 | Latency | Instant | 10-30s per Claude call |
 
 ---
@@ -248,7 +248,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 ## Trade-Offs vs V2
 
 ### Advantages
-- **Zero cost** — no Claude API charges (~₹50-100/day saved)
+- **Zero cost** — no Claude API charges (~Rs.50-100/day saved)
 - **Faster execution** — no 10-30s wait per Claude call. Scan completes in seconds
 - **Deterministic** — same inputs always produce the same trades. No Claude variability
 - **Simpler failure modes** — no API timeouts, rate limits, or Claude hallucinations

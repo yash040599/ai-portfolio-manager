@@ -441,7 +441,7 @@ class PortfolioManagerV2(PortfolioManager):
             self.log.section("MARKET SCAN (NoAI — joined late)")
 
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
-        self.log.info(f"Budget: ₹{self._budget:,.2f}")
+        self.log.info(f"Budget: Rs.{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
         self.log.info("Selection: pure technical signals (no Claude calls)")
 
@@ -479,9 +479,9 @@ class PortfolioManagerV2(PortfolioManager):
             for i, t in enumerate(self._trade_plans, 1):
                 self.log.info(
                     f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
-                    f"@ ₹{t['entry_price']:.2f} | "
-                    f"SL: ₹{t['stop_loss']:.2f} | "
-                    f"Target: ₹{t['target_price']:.2f}"
+                    f"@ Rs.{t['entry_price']:.2f} | "
+                    f"SL: Rs.{t['stop_loss']:.2f} | "
+                    f"Target: Rs.{t['target_price']:.2f}"
                 )
                 self.log.info(f"           {t.get('rationale', '')}")
 
@@ -579,7 +579,7 @@ class PortfolioManagerV2(PortfolioManager):
                     session_ctx = (
                         f"\nSESSION CONTEXT (V2 mid-day re-scan):\n"
                         f"  Market condition: {self._market_condition}.\n"
-                        f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                        f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                         f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                         f"  DO NOT pick any stock already traded today unless opposite direction.\n"
                         f"  {'If P&L is negative, only pick high-conviction candle setups with tight stops.' if day_pnl < 0 else f'All capital is free — deploy at least {self.cfg.MIN_BUDGET_UTILISATION_PCT:.0f}% on high-conviction setups.'}\n"
@@ -666,7 +666,7 @@ class PortfolioManagerV2(PortfolioManager):
                         session_ctx = (
                             f"\nSESSION CONTEXT (V2 partial re-scan — {slots} slot(s) available):\n"
                             f"  Market condition: {self._market_condition}.\n"
-                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                             f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                             f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
                             f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
@@ -721,7 +721,7 @@ class PortfolioManagerV2(PortfolioManager):
                         self.engine.refresh_budget()
                         self.log.info(
                             f"Circuit breaker cooldown complete — resuming with "
-                            f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
+                            f"loss-adjusted budget Rs.{self.engine.loss_adjusted_budget():,.2f}"
                         )
                         self._last_opportunity_scan = time.time()
                         continue
@@ -836,7 +836,7 @@ class PortfolioManagerV2(PortfolioManager):
                         session_ctx = (
                             f"\nSESSION CONTEXT (periodic opportunity scan — {slots} slot(s) available):\n"
                             f"  Market condition: {self._market_condition}.\n"
-                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                             f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                             f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
                             f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
@@ -987,7 +987,7 @@ class PortfolioManagerV2(PortfolioManager):
         patterns = ", ".join(analysis["pattern_summary"]["patterns"][:3])
         self.log.warning(
             f"⚠ CANDLE PROTECT {symbol}: contrary signal (score {score:+.1f}, "
-            f"[{patterns}]) → SL tightened ₹{old_sl:.2f} → ₹{new_sl:.2f}"
+            f"[{patterns}]) → SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"
         )
 
     # ================================================================
@@ -1044,5 +1044,5 @@ class PortfolioManagerV2(PortfolioManager):
             pos["stop_loss"] = new_sl
             self.log.warning(
                 f"⚠ REGIME PROTECT {symbol} {side}: market turned {regime} "
-                f"→ SL tightened ₹{old_sl:.2f} → ₹{new_sl:.2f}"
+                f"→ SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"
             )

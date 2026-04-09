@@ -110,7 +110,7 @@ def main():
         print(f"  {'-'*15} {'-'*12} {'-'*8} {'-'*22} {'-'*22} {'-'*22}")
 
         for r in rows:
-            close_range = f"₹{r['min_close']:,.2f} — ₹{r['max_close']:,.2f}"
+            close_range = f"Rs.{r['min_close']:,.2f} — Rs.{r['max_close']:,.2f}"
             print(
                 f"  {r['symbol']:<15} {r['interval']:<12} {r['candles']:>8} "
                 f"{r['first_date']:<22} {r['last_date']:<22} {close_range:>22}"

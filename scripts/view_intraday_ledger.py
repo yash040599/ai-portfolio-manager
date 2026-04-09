@@ -56,15 +56,15 @@ def view_fy(fy_start: int):
         print(f"\n  No trades for {label}.")
         return
 
-    w = 130
+    w = 145
     print(f"\n{'=' * w}")
     print(f"  {label} — INTRADAY TAX LEDGER  (live trades only)")
     print(f"{'=' * w}")
 
     hdr = (
         f"  {'#':>3}  {'Date':<10}  {'Symbol':<12}  {'Side':<4}  {'Qty':>4}"
-        f"  {'Entry':>10}  {'Exit':>10}  {'Gross P&L':>10}"
-        f"  {'Charges':>8}  {'Net P&L':>10}  {'Exit Reason':<12}  {'Verified':<10}"
+        f"  {'Entry':>13}  {'Exit':>13}  {'Gross P&L':>13}"
+        f"  {'Charges':>11}  {'Net P&L':>13}  {'Exit Reason':<12}  {'API':^5}  {'Sheet':^5}"
     )
     print(f"\n{hdr}")
     print(f"  {'─' * (w - 4)}")
@@ -79,19 +79,23 @@ def view_fy(fy_start: int):
 
         g, c, n = r["gross_pnl"], r["total_charges"], r["net_pnl"]
         total_gross += g; total_charges += c; total_net += n
-        v = "✓" if r["verified"] == "verified" else "—"
+        v_api   = "ok" if r["verified"] == "verified" else "--"
+        try:
+            v_sheet = "ok" if r["sheet_verified"] == "verified" else "--"
+        except (IndexError, KeyError):
+            v_sheet = "--"
 
         print(
             f"  {i:>3}  {r['date']:<10}  {r['symbol']:<12}  {r['side']:<4}  {r['qty']:>4}"
-            f"  ₹{r['entry_price']:>9,.2f}  ₹{r['exit_price']:>9,.2f}  ₹{g:>+9,.2f}"
-            f"  ₹{c:>7,.2f}  ₹{n:>+9,.2f}  {r['exit_reason'] or '':<12}  {v:<10}"
+            f"  Rs.{r['entry_price']:>9,.2f}  Rs.{r['exit_price']:>9,.2f}  Rs.{g:>+9,.2f}"
+            f"  Rs.{c:>7,.2f}  Rs.{n:>+9,.2f}  {r['exit_reason'] or '':<12}  {v_api:^5}  {v_sheet:^5}"
         )
 
     print(f"  {'─' * (w - 4)}")
     print(
         f"  {'':>3}  {'TOTAL':<10}  {'':12}  {'':4}  {'':4}"
-        f"  {'':10}  {'':10}  ₹{total_gross:>+9,.2f}"
-        f"  ₹{total_charges:>7,.2f}  ₹{total_net:>+9,.2f}"
+        f"  {'':13}  {'':13}  Rs.{total_gross:>+9,.2f}"
+        f"  Rs.{total_charges:>7,.2f}  Rs.{total_net:>+9,.2f}"
     )
     print(f"\n  {len(rows)} trade(s)  |  {len({r['date'] for r in rows})} day(s)")
     verified_count = sum(1 for r in rows if r["verified"] == "verified")

@@ -54,7 +54,7 @@ python main.py --mode trade --ai --test
 # NoAI — explicitly request no-AI mode (same as default)
 python main.py --mode trade --noai
 
-# Budget cap — limit today's capital to ₹30,000
+# Budget cap — limit today's capital to Rs.30,000
 python main.py --mode trade --max 30000
 
 # V1 legacy (retired — sends raw prices to Claude)
@@ -130,7 +130,7 @@ You need: `ZERODHA_API_KEY` and `ZERODHA_API_SECRET`
 2. **Subscribe to Kite Connect**
    - Go to [https://developers.kite.trade](https://developers.kite.trade)
    - Log in with your Zerodha credentials
-   - Subscribe to the **Kite Connect** plan (₹500/month)
+   - Subscribe to the **Kite Connect** plan (Rs.500/month)
    - This gives you API access for live prices, historical data, and order placement
 
 3. **Create an app**
@@ -171,7 +171,7 @@ You need: `CLAUDE_API_KEY`
 2. **Add billing**
    - Go to **Settings → Billing** in the console
    - Add a payment method (credit/debit card)
-   - Add credits (₹500–1000 is enough to start — the bot uses ~₹50-100/day on the Pro plan)
+   - Add credits (Rs.500–1000 is enough to start — the bot uses ~Rs.50-100/day on the Pro plan)
 
 3. **Generate an API key**
    - Go to **Settings → API Keys**
@@ -180,7 +180,7 @@ You need: `CLAUDE_API_KEY`
    - Copy the key immediately — it's shown only once
    - This is your `CLAUDE_API_KEY`
 
-> **Pricing reference:** The bot uses Claude Sonnet (Pro plan). Each API call costs roughly ₹2-4. A typical trading day makes ~15 calls = ~₹50-100/day.
+> **Pricing reference:** The bot uses Claude Sonnet (Pro plan). Each API call costs roughly Rs.2-4. A typical trading day makes ~15 calls = ~Rs.50-100/day.
 
 ---
 
@@ -507,6 +507,8 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
    python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs with SSH keys)
    python scripts/backup_data.py --dry-run    # preview changes
    python scripts/backup_data.py --overwrite-db  # overwrite remote DB with local (skip merge)
+   python scripts/backup_data.py --all-local  # push ALL local data to remote (full overwrite)
+   python scripts/backup_data.py --all-remote # pull ALL remote data to local (full overwrite)
    ```
    If the data repo isn't cloned yet, the script auto-clones it into the parent folder on first run.
 
@@ -527,6 +529,8 @@ The `data/`, `reports/`, and `logs/` folders are excluded from Git (they contain
 | File in both, identical | Skipped |
 | SQLite database (`.db`) in both, different | **Merged row-by-row** — new rows from each side are added to the other. Nothing is deleted. Both DBs end up identical with the union of all rows |
 | SQLite database with `--overwrite-db` | **One-direction overwrite** — asks which side to keep (local/remote) with a confirmation prompt, then copies that DB to the other side. Use when one side has corrected data (e.g. fixed P&L values) |
+| `--all-local` | **Full push** — copies ALL local files and DBs to remote, removing remote-only files. No merge, no prompts |
+| `--all-remote` | **Full pull** — copies ALL remote files and DBs to local, removing local-only files. Use to set up a new machine |
 | Other file in both, different | Asks: keep **(l)**ocal or **(r)**emote? |
 
 This means you can trade on a VM, trade on your laptop, and sync — all trades from both machines end up in both databases. The merge uses each table's unique key (`date + order_id` for tax ledger, `date + symbol + side + price` for trades, etc.) to avoid duplicates.
@@ -551,8 +555,8 @@ After syncing, all changes are committed and pushed to the backup repo.
 
 | Cost | Amount | Frequency |
 |------|--------|-----------|
-| Zerodha Kite Connect | ₹500 | Monthly |
-| Claude API (Pro plan) | ~₹50-100 | Per trading day |
+| Zerodha Kite Connect | Rs.500 | Monthly |
+| Claude API (Pro plan) | ~Rs.50-100 | Per trading day |
 | Zerodha brokerage + charges | ~0.05-0.15% of turnover | Per trade |
 
 NoAI mode eliminates Claude API costs entirely.
@@ -587,7 +591,7 @@ A comprehensive financial and engineering audit was conducted on the trading sys
 - **Tax treatment**: Correct (ITR-3 Section 43(5) speculative income, 31.2% cess+rate)
 - **P&L calculation**: Mathematically sound and verified against Zerodha ground truth
 - **Profitability**: System not yet profitable (strategy tuning required, not bugs)
-- **Cumulative (6 days)**: -₹1,073 net loss after charges (-2.2% of capital)
+- **Cumulative (9 days, Mar 25 - Apr 9)**: -Rs.1,077 net loss after charges (~2.2% of capital)
 
 ### Code Quality & Security ✅ with Fixes Applied
 Four critical edge-case bugs identified and **FIXED** in services/order_engine.py:

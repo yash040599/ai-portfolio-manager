@@ -273,12 +273,12 @@ class StockScanner:
 
             lines.append(
                 f"{symbol:<16} "
-                f"₹{price:>10.2f}  "
+                f"Rs.{price:>10.2f}  "
                 f"Chg: {change_pct:>+6.2f}%  "
-                f"O: ₹{ohlc.get('open', 0):.2f}  "
-                f"H: ₹{ohlc.get('high', 0):.2f}  "
-                f"L: ₹{ohlc.get('low', 0):.2f}  "
-                f"PrevClose: ₹{ohlc.get('close', 0):.2f}  "
+                f"O: Rs.{ohlc.get('open', 0):.2f}  "
+                f"H: Rs.{ohlc.get('high', 0):.2f}  "
+                f"L: Rs.{ohlc.get('low', 0):.2f}  "
+                f"PrevClose: Rs.{ohlc.get('close', 0):.2f}  "
                 f"Vol: {volume:>12,}"
             )
 
@@ -315,9 +315,9 @@ class StockScanner:
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
 CURRENT TIME PHASE: {time_phase}
 
-BUDGET: ₹{budget:,} total capital (₹{budget // max_positions:,} per slot).
+BUDGET: Rs.{budget:,} total capital (Rs.{budget // max_positions:,} per slot).
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of budget (= ₹{budget * max_pct // 100:,} max per stock).
+MAX PER STOCK: {max_pct}% of budget (= Rs.{budget * max_pct // 100:,} max per stock).
 {nifty_context}{perf_context}{session_context}
 ══════════════════════════════════════════════════════════
 HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
@@ -327,7 +327,7 @@ HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ✗ REJECT if Risk:Reward < 1:1.5 — insufficient edge after costs.
 ✗ REJECT if no clear structural level for stop-loss — no random % stops.
 ✗ REJECT if stock gapped up/down >1.5% AND is still near the extreme — do NOT chase gaps. If it pulled back toward the gap edge, a pullback entry is acceptable.
-✗ REJECT if total position cost across ALL trades would exceed ₹{budget:,}.
+✗ REJECT if total position cost across ALL trades would exceed Rs.{budget:,}.
 
 NOTE: The system automatically takes partial profit (50% of qty) at 1× risk profit and trails SL on the remainder. Prefer qty >= 2 so partial exits can work.
 
@@ -368,7 +368,7 @@ COMMON MISTAKES (from actual loss patterns):
 ✗ Buying a stock already up 3-5% hoping it goes higher — it REVERSES.
 ✗ Shorting a stock that is UP while the market is DOWN — it has relative strength and will snap back.
 ✗ All trades in same direction on same sector — if sector reverses, ALL lose together.
-✗ Over-trading: With ₹{budget:,} capital, fewer high-conviction trades always beat many mediocre ones. 2-3 good trades > 5 weak ones.
+✗ Over-trading: With Rs.{budget:,} capital, fewer high-conviction trades always beat many mediocre ones. 2-3 good trades > 5 weak ones.
 ✗ Chasing gaps: wait for the pullback to the gap edge, don't buy/sell at the extremes.
 
 CURRENT MARKET DATA (live prices):
@@ -384,9 +384,9 @@ Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
 TRADE 1:
 SYMBOL: [NSE stock symbol e.g. RELIANCE]
 SIDE: [BUY or SELL]
-ENTRY_PRICE: [realistic entry price in ₹, near current price]
-STOP_LOSS: [stop-loss price in ₹ — state which structural level: today's L/H, Open, or PrevClose]
-TARGET: [target price in ₹ — must be at least 1.5× the SL distance from entry]
+ENTRY_PRICE: [realistic entry price in Rs., near current price]
+STOP_LOSS: [stop-loss price in Rs. — state which structural level: today's L/H, Open, or PrevClose]
+TARGET: [target price in Rs. — must be at least 1.5× the SL distance from entry]
 QTY: [number of shares — must fit within budget constraints]
 RATIONALE: [2-3 sentences: (1) what setup (ORB/mean-reversion/relative strength), (2) structural SL level, (3) R:R ratio. If Chg >2%, explain why it's NOT an extended-move violation.]
 ---
@@ -442,9 +442,9 @@ TRADE 2:
             r_multiple = (pnl / (risk_per_share * p.get("qty", 1))) if risk_per_share > 0 else 0
 
             pos_text += (
-                f"  {p['symbol']}: {p['side']} {p['qty']} shares @ ₹{entry:.2f}  "
-                f"Current: ₹{current_price:.2f}  P&L: ₹{pnl:.2f} ({r_multiple:+.1f}R)  "
-                f"SL: ₹{p.get('stop_loss', 'N/A')}  Target: ₹{p.get('target_price', 'N/A')}\n"
+                f"  {p['symbol']}: {p['side']} {p['qty']} shares @ Rs.{entry:.2f}  "
+                f"Current: Rs.{current_price:.2f}  P&L: Rs.{pnl:.2f} ({r_multiple:+.1f}R)  "
+                f"SL: Rs.{p.get('stop_loss', 'N/A')}  Target: Rs.{p.get('target_price', 'N/A')}\n"
             )
 
         # Build closed/failed trade history so Claude doesn't re-enter losers
@@ -454,8 +454,8 @@ TRADE 2:
             sym = cp.get("symbol", "")
             reentry_counts[sym] = reentry_counts.get(sym, 0) + 1
             closed_text += (
-                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ ₹{cp.get('entry_price', 0):.2f}  "
-                f"Exit: ₹{cp.get('exit_price', 0):.2f}  P&L: ₹{cp.get('pnl', 0):.2f}  "
+                f"  {sym}: {cp.get('side', '?')} {cp.get('qty', 0)} shares @ Rs.{cp.get('entry_price', 0):.2f}  "
+                f"Exit: Rs.{cp.get('exit_price', 0):.2f}  P&L: Rs.{cp.get('pnl', 0):.2f}  "
                 f"Reason: {cp.get('exit_reason', '?')}\n"
             )
 
@@ -480,10 +480,10 @@ CURRENT OPEN POSITIONS:
 CLOSED TRADES TODAY:
 {closed_text if closed_text else "  (none)"}
 
-DAY P&L SO FAR: ₹{day_pnl:,.2f}
-REMAINING BUDGET: ₹{budget_remaining:,.2f}
+DAY P&L SO FAR: Rs.{day_pnl:,.2f}
+REMAINING BUDGET: Rs.{budget_remaining:,.2f}
 MAX POSITIONS: {max_positions} stocks simultaneously.
-MAX PER STOCK: {max_pct}% of ₹{budget:,} = ₹{max_per:,} max per stock.
+MAX PER STOCK: {max_pct}% of Rs.{budget:,} = Rs.{max_per:,} max per stock.
 {blocked_text}
 
 ══════════════════════════════════════════════════════════
@@ -529,7 +529,7 @@ REVIEW RULES — MUST FOLLOW:
    • Only if 60+ minutes remain
    • Stock must NOT already be extended (within ±2% of previous close)
    • Budget must be available
-   • QTY × ENTRY_PRICE ≤ min(REMAINING BUDGET ₹{budget_remaining:,.0f}, MAX PER STOCK ₹{max_per:,})
+   • QTY × ENTRY_PRICE ≤ min(REMAINING BUDGET Rs.{budget_remaining:,.0f}, MAX PER STOCK Rs.{max_per:,})
    • Prefer FEWER new trades — 1 good trade > 2 mediocre trades
 
 Review each position. For each, respond with EXACTLY this format:
@@ -689,15 +689,15 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 new_qty = int(max_per / entry)
                 if new_qty >= 1:
                     self.log.warning(
-                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
-                        f"per-stock limit ₹{max_per:,.0f}. Reducing qty to {new_qty}"
+                        f"{t['symbol']}: {t['qty']}x @ Rs.{entry:.2f} = Rs.{cost:,.0f} exceeds "
+                        f"per-stock limit Rs.{max_per:,.0f}. Reducing qty to {new_qty}"
                     )
                     t["qty"] = new_qty
                     cost = entry * new_qty
                 else:
                     self.log.warning(
-                        f"Dropping {t['symbol']}: ₹{cost:,.0f} exceeds "
-                        f"per-stock limit of ₹{max_per:,.0f} and min qty is 1"
+                        f"Dropping {t['symbol']}: Rs.{cost:,.0f} exceeds "
+                        f"per-stock limit of Rs.{max_per:,.0f} and min qty is 1"
                     )
                     continue
 
@@ -707,15 +707,15 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 new_qty = int(remaining / entry)
                 if new_qty >= 1:
                     self.log.warning(
-                        f"{t['symbol']}: {t['qty']}x @ ₹{entry:.2f} = ₹{cost:,.0f} exceeds "
-                        f"remaining budget ₹{remaining:,.0f}. Reducing qty to {new_qty}"
+                        f"{t['symbol']}: {t['qty']}x @ Rs.{entry:.2f} = Rs.{cost:,.0f} exceeds "
+                        f"remaining budget Rs.{remaining:,.0f}. Reducing qty to {new_qty}"
                     )
                     t["qty"] = new_qty
                     cost = entry * new_qty
                 else:
                     self.log.warning(
-                        f"Dropping {t['symbol']}: ₹{cost:,.0f} would exceed "
-                        f"total budget of ₹{budget:,} (only ₹{remaining:,.0f} left)"
+                        f"Dropping {t['symbol']}: Rs.{cost:,.0f} would exceed "
+                        f"total budget of Rs.{budget:,} (only Rs.{remaining:,.0f} left)"
                     )
                     continue
 
@@ -724,7 +724,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
         if valid:
             self.log.info(
-                f"Total allocated: ₹{allocated:,.0f} / ₹{budget:,} "
+                f"Total allocated: Rs.{allocated:,.0f} / Rs.{budget:,} "
                 f"({allocated / budget * 100:.1f}%)"
             )
 

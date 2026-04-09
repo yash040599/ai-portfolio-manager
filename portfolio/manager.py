@@ -330,7 +330,7 @@ class PortfolioManager:
             self.log.info(f"Started at {now.strftime('%I:%M %p')} — picking stocks at current prices")
 
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
-        self.log.info(f"Budget: ₹{self._budget:,.2f}")
+        self.log.info(f"Budget: Rs.{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
 
         universe = self.scanner.get_universe()
@@ -364,9 +364,9 @@ class PortfolioManager:
             for i, t in enumerate(self._trade_plans, 1):
                 self.log.info(
                     f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
-                    f"@ ₹{t['entry_price']:.2f} | "
-                    f"SL: ₹{t['stop_loss']:.2f} | "
-                    f"Target: ₹{t['target_price']:.2f}"
+                    f"@ Rs.{t['entry_price']:.2f} | "
+                    f"SL: Rs.{t['stop_loss']:.2f} | "
+                    f"Target: Rs.{t['target_price']:.2f}"
                 )
                 self.log.info(f"           {t.get('rationale', '')}")
 
@@ -557,7 +557,7 @@ class PortfolioManager:
                 direction = "↑" if current_price > day_open_price else "↓"
                 self.log.info(
                     f"  ✓ {symbol}: {direction} {move_pct:.2f}% from open "
-                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — CONFIRMED"
+                    f"(Rs.{day_open_price:.2f} → Rs.{current_price:.2f}) — CONFIRMED"
                 )
             elif move_pct >= min_move and not direction_ok:
                 skipped.append(trade)
@@ -570,7 +570,7 @@ class PortfolioManager:
                 skipped.append(trade)
                 self.log.info(
                     f"  ✗ {symbol}: only {move_pct:.2f}% move from open "
-                    f"(₹{day_open_price:.2f} → ₹{current_price:.2f}) — SKIPPED"
+                    f"(Rs.{day_open_price:.2f} → Rs.{current_price:.2f}) — SKIPPED"
                 )
 
         if skipped:
@@ -684,7 +684,7 @@ class PortfolioManager:
                     day_pnl = self.engine.day_pnl()
                     session_ctx = (
                         f"\nSESSION CONTEXT (mid-day re-scan):\n"
-                        f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                        f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                         f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                         f"  DO NOT pick any stock already traded today unless you have a "
                         f"fundamentally different setup (opposite direction or new catalyst).\n"
@@ -770,7 +770,7 @@ class PortfolioManager:
                         day_pnl = self.engine.day_pnl()
                         session_ctx = (
                             f"\nSESSION CONTEXT (partial re-scan — {slots} slot(s) available):\n"
-                            f"  Day P&L so far: ₹{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
+                            f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                             f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                             f"  Currently holding: {', '.join(p['symbol'] for p in self.engine.open_positions())}.\n"
                             f"  You have {slots} slot(s) available. Pick at most {slots} new trade(s).\n"
@@ -829,7 +829,7 @@ class PortfolioManager:
                         self.engine.refresh_budget()
                         self.log.info(
                             f"Circuit breaker cooldown complete — resuming with "
-                            f"loss-adjusted budget ₹{self.engine.loss_adjusted_budget():,.2f}"
+                            f"loss-adjusted budget Rs.{self.engine.loss_adjusted_budget():,.2f}"
                         )
                         continue
                 self.log.warning(
@@ -1166,9 +1166,9 @@ class PortfolioManager:
 
             return (
                 f"\nMARKET TREND (NIFTY 50 INDEX):\n"
-                f"  NIFTY 50: ₹{price:,.2f}  Change: {change_pct:+.2f}%  "
-                f"Open: ₹{day_open:,.2f}  High: ₹{day_high:,.2f}  Low: ₹{day_low:,.2f}  "
-                f"PrevClose: ₹{prev_close:,.2f}\n"
+                f"  NIFTY 50: Rs.{price:,.2f}  Change: {change_pct:+.2f}%  "
+                f"Open: Rs.{day_open:,.2f}  High: Rs.{day_high:,.2f}  Low: Rs.{day_low:,.2f}  "
+                f"PrevClose: Rs.{prev_close:,.2f}\n"
                 f"  Market bias: {bias}"
                 f"{sector_advice}"
                 f"{volatility_text}"
@@ -1307,7 +1307,7 @@ class PortfolioManager:
                 arrow = "↑" if d["gap_pct"] > 0 else "↓"
                 self.log.info(
                     f"  {sym}: {arrow}{abs(d['gap_pct']):.1f}% gap from prev close "
-                    f"(₹{d['prev_close']:.2f} → ₹{d['open_price']:.2f})"
+                    f"(Rs.{d['prev_close']:.2f} → Rs.{d['open_price']:.2f})"
                 )
 
         except Exception as e:
@@ -1377,8 +1377,8 @@ class PortfolioManager:
             else:
                 self._fii_dii_bias = "NEUTRAL"
 
-            fii_label = f"+₹{fii_net/1e7:,.0f}Cr" if fii_net >= 0 else f"-₹{abs(fii_net)/1e7:,.0f}Cr"
-            dii_label = f"+₹{dii_net/1e7:,.0f}Cr" if dii_net >= 0 else f"-₹{abs(dii_net)/1e7:,.0f}Cr"
+            fii_label = f"+Rs.{fii_net/1e7:,.0f}Cr" if fii_net >= 0 else f"-Rs.{abs(fii_net)/1e7:,.0f}Cr"
+            dii_label = f"+Rs.{dii_net/1e7:,.0f}Cr" if dii_net >= 0 else f"-Rs.{abs(dii_net)/1e7:,.0f}Cr"
             self.log.info(
                 f"FII/DII (prev day): FII {fii_label}, DII {dii_label} → {self._fii_dii_bias}"
             )
@@ -1395,7 +1395,7 @@ class PortfolioManager:
         Fetches available cash from Zerodha and sets the trading budget.
 
         Budget = min(available_funds, MAX_BUDGET_INR).
-        So even if account has ₹50K, the bot only uses up to ₹10K.
+        So even if account has Rs.50K, the bot only uses up to Rs.10K.
 
         Live mode:
           - Fetches real balance, checks against MIN_BALANCE_TO_TRADE.
@@ -1413,14 +1413,14 @@ class PortfolioManager:
         try:
             self._available_funds = self.zerodha.get_available_funds()
             self.log.success(
-                f"Available funds in Zerodha: ₹{self._available_funds:,.2f}"
+                f"Available funds in Zerodha: Rs.{self._available_funds:,.2f}"
             )
         except Exception as e:
             self.log.warning(f"Could not fetch Zerodha funds: {e}")
             if self.cfg.DRY_RUN:
                 self._available_funds = float(max_budget)
                 self.log.info(
-                    f"DRY RUN — using max budget as fallback: ₹{max_budget:,}"
+                    f"DRY RUN — using max budget as fallback: Rs.{max_budget:,}"
                 )
             else:
                 self.log.error(
@@ -1434,13 +1434,13 @@ class PortfolioManager:
         if self._available_funds < min_balance:
             if self.cfg.DRY_RUN:
                 self.log.warning(
-                    f"Funds ₹{self._available_funds:,.2f} below minimum "
-                    f"₹{min_balance:,} — ignored in DRY RUN mode"
+                    f"Funds Rs.{self._available_funds:,.2f} below minimum "
+                    f"Rs.{min_balance:,} — ignored in DRY RUN mode"
                 )
             else:
                 self.log.error(
-                    f"Funds ₹{self._available_funds:,.2f} below minimum "
-                    f"₹{min_balance:,}. Add funds to Zerodha and retry. "
+                    f"Funds Rs.{self._available_funds:,.2f} below minimum "
+                    f"Rs.{min_balance:,}. Add funds to Zerodha and retry. "
                     f"(change MIN_BALANCE_TO_TRADE in config.py to lower the threshold)"
                 )
                 self._budget = 0
@@ -1449,18 +1449,18 @@ class PortfolioManager:
         if self.cfg.DRY_RUN:
             # Dry run always uses MAX_BUDGET_INR regardless of account balance
             self._budget = float(max_budget)
-            self.log.info(f"DRY RUN — using max budget: ₹{max_budget:,}")
+            self.log.info(f"DRY RUN — using max budget: Rs.{max_budget:,}")
         else:
             # Live mode: cap at MAX_BUDGET_INR
             self._budget = min(self._available_funds, float(max_budget))
 
             if self._available_funds > max_budget:
                 self.log.info(
-                    f"Using maximum budget: ₹{max_budget:,}"
+                    f"Using maximum budget: Rs.{max_budget:,}"
                 )
             else:
                 self.log.info(
-                    f"Using ₹{self._budget:,.2f} to trade"
+                    f"Using Rs.{self._budget:,.2f} to trade"
                 )
 
         # Set budget on engine and scanner so they use the live value
@@ -1683,7 +1683,7 @@ class PortfolioManager:
         print(f"{'='*58}")
         print(f"  Mode           : {mode}")
         print(f"  Max budget     : \u20b9{self.cfg.MAX_BUDGET_INR:,}")
-        print(f"  Min balance    : ₹{self.cfg.MIN_BALANCE_TO_TRADE:,}")
+        print(f"  Min balance    : Rs.{self.cfg.MIN_BALANCE_TO_TRADE:,}")
         print(f"  Max positions  : {self.cfg.MAX_POSITIONS}")
         print(f"  Universe       : {self.cfg.SCAN_UNIVERSE}")
         print(f"  Claude model   : {plan['model']}")
@@ -1714,8 +1714,8 @@ class PortfolioManager:
             f"  [{now}]  "
             f"Open: {len(open_pos)}  "
             f"Closed: {len(closed_pos)}  "
-            f"Unrealised: {u_color}₹{unrealised:+,.2f}\033[0m  "
-            f"Realised: {r_color}₹{realised:+,.2f}\033[0m"
+            f"Unrealised: {u_color}Rs.{unrealised:+,.2f}\033[0m  "
+            f"Realised: {r_color}Rs.{realised:+,.2f}\033[0m"
         )
 
         # Cumulative daily totals (previous runs from DB + current run)
@@ -1732,8 +1732,8 @@ class PortfolioManager:
         net_line = (
             f"  "
             f"Net today: {total_closed} trades  "
-            f"Realised: {tr_color}₹{total_realised:+,.2f}\033[0m  "
-            f"Net: {t_color}₹{total_combined:+,.2f}\033[0m"
+            f"Realised: {tr_color}Rs.{total_realised:+,.2f}\033[0m  "
+            f"Net: {t_color}Rs.{total_combined:+,.2f}\033[0m"
         )
 
         # Use ANSI cursor-up to overwrite both lines on each poll
@@ -1764,30 +1764,30 @@ class PortfolioManager:
         print("  FINAL P&L SUMMARY")
         print(f"{'='*58}")
         print(f"  Total trades     : {len(self.engine.closed_positions())}")
-        print(f"  Gross P&L        : ₹{pnl['gross_pnl']:+,.2f}")
+        print(f"  Gross P&L        : Rs.{pnl['gross_pnl']:+,.2f}")
         print(f"{'─'*58}")
         print(f"  CHARGES & TAXES:")
-        print(f"    Brokerage      : ₹{charges['brokerage']:,.2f}")
-        print(f"    STT            : ₹{charges['stt']:,.2f}")
-        print(f"    Exchange txn   : ₹{charges['exchange_txn']:,.2f}")
-        print(f"    GST            : ₹{charges['gst']:,.2f}")
-        print(f"    SEBI charges   : ₹{charges['sebi_charges']:,.4f}")
-        print(f"    Stamp duty     : ₹{charges['stamp_duty']:,.2f}")
+        print(f"    Brokerage      : Rs.{charges['brokerage']:,.2f}")
+        print(f"    STT            : Rs.{charges['stt']:,.2f}")
+        print(f"    Exchange txn   : Rs.{charges['exchange_txn']:,.2f}")
+        print(f"    GST            : Rs.{charges['gst']:,.2f}")
+        print(f"    SEBI charges   : Rs.{charges['sebi_charges']:,.4f}")
+        print(f"    Stamp duty     : Rs.{charges['stamp_duty']:,.2f}")
         print(f"    ────────────────────────────")
-        print(f"    Total tax+chrg : ₹{charges['total_tax_and_charges']:,.2f}")
+        print(f"    Total tax+chrg : Rs.{charges['total_tax_and_charges']:,.2f}")
         print(f"{'─'*58}")
         print(f"  CLAUDE API COST:")
-        print(f"    Claude API     : ₹{charges['claude_api_cost']:,.2f} ({self.engine.claude_calls} calls)")
+        print(f"    Claude API     : Rs.{charges['claude_api_cost']:,.2f} ({self.engine.claude_calls} calls)")
         print(f"{'─'*58}")
-        print(f"  Total all costs  : ₹{charges['total_costs']:,.2f}")
+        print(f"  Total all costs  : Rs.{charges['total_costs']:,.2f}")
         print(f"{'='*58}")
-        print(f"  {color}NET PROFIT       : ₹{pnl['net_profit']:+,.2f}{reset}")
+        print(f"  {color}NET PROFIT       : Rs.{pnl['net_profit']:+,.2f}{reset}")
         print(f"{'='*58}")
         if self._budget > 0:
             returns_pct = pnl["net_profit"] / self._budget * 100
             color2 = "\033[92m" if returns_pct >= 0 else "\033[91m"
-            print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on ₹{self._budget:,.0f} budget")
-        print(f"  FYI: Zerodha Kite Connect: ₹{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
+            print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on Rs.{self._budget:,.0f} budget")
+        print(f"  FYI: Zerodha Kite Connect: Rs.{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
         print()
 
     # ================================================================

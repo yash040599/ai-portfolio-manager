@@ -147,8 +147,9 @@ def fill_fy(fy_start: int) -> int:
                     buy_value, sell_value, turnover,
                     brokerage, stt, exchange_txn, gst,
                     sebi_charges, stamp_duty, total_charges,
-                    net_pnl, order_id, verified)
-                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?)""",
+                    net_pnl, order_id, verified,
+                    sheet_verified, sheet_verified_on)
+                   VALUES (?,?,?,?,?, ?,?,?,?, ?,?, ?,?,?, ?,?,?,?, ?,?,?, ?,?,?, ?,?)""",
                 (
                     date_str, pos.get("symbol", ""), pos.get("exchange", "NSE"),
                     pos.get("side", ""), total_qty,
@@ -159,6 +160,7 @@ def fill_fy(fy_start: int) -> int:
                     tc["brokerage"], tc["stt"], tc["exchange_txn"], tc["gst"],
                     tc["sebi_charges"], tc["stamp_duty"], tc["total_charges"],
                     net_pnl, order_id, "unverified",
+                    "pending", None,
                 ),
             )
             inserted += 1

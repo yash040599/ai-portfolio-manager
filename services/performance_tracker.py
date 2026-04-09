@@ -285,7 +285,7 @@ class PerformanceTracker:
 
                 lines.append(
                     f"  {date}: {total} trades, {win_rate:.0f}% win rate, "
-                    f"Net P&L: ₹{net_pnl:+,.2f}, SL exits: {sl_count}"
+                    f"Net P&L: Rs.{net_pnl:+,.2f}, SL exits: {sl_count}"
                 )
 
                 # Flag consistently losing stocks

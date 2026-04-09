@@ -25,7 +25,7 @@ total income** (salary + other sources) and taxed per your applicable slab.
 
 **Updated per Union Budget 2025 (effective FY 2025-26 onwards):**
 
-| Taxable Income (₹)    | Tax Rate |
+| Taxable Income (Rs.)    | Tax Rate |
 |------------------------|----------|
 | Up to 4,00,000         | Nil      |
 | 4,00,001 – 8,00,000   | 5%       |
@@ -37,12 +37,12 @@ total income** (salary + other sources) and taxed per your applicable slab.
 
 Plus **4% Health & Education Cess** on total tax.
 
-**Tax rebate under Section 87A:** No tax payable if total income ≤ ₹12,00,000
-(effectively zero tax up to ₹12L under new regime).
+**Tax rebate under Section 87A:** No tax payable if total income ≤ Rs.12,00,000
+(effectively zero tax up to Rs.12L under new regime).
 
-**Standard deduction for salaried:** ₹75,000 (raised from ₹50,000 in Budget 2024).
+**Standard deduction for salaried:** Rs.75,000 (raised from Rs.50,000 in Budget 2024).
 
-> **Tip:** If your salary already puts you in the 30% bracket (above ₹24L),
+> **Tip:** If your salary already puts you in the 30% bracket (above Rs.24L),
 > every rupee of intraday profit is taxed at ~31.2% (30% + 4% cess).
 
 ---
@@ -64,7 +64,7 @@ ITR-3 also supports Schedule FA for foreign assets, so everything fits.
 
 **ITR-3 additionally requires:**
 - Schedule BP (Business/Profession income — your speculative income goes here)
-- Schedule P&L (Profit & Loss statement — can use "No Account Case" if turnover < ₹3 Cr)
+- Schedule P&L (Profit & Loss statement — can use "No Account Case" if turnover < Rs.3 Cr)
 - Schedule BS (Balance Sheet — simplified for "No Account Case")
 
 ---
@@ -102,15 +102,15 @@ business expenses from your gross profit:
 
 | Expense | Deductible? | Notes |
 |---------|-------------|-------|
-| **Brokerage** | ✅ Yes | Zerodha's ₹20/order or 0.03% |
+| **Brokerage** | ✅ Yes | Zerodha's Rs.20/order or 0.03% |
 | **STT (Securities Transaction Tax)** | ✅ Yes | 0.025% on sell side |
 | **Exchange transaction charges** | ✅ Yes | NSE 0.00307% |
 | **GST on brokerage** | ✅ Yes | 18% on brokerage + SEBI + exchange |
-| **SEBI charges** | ✅ Yes | ₹10 per crore |
+| **SEBI charges** | ✅ Yes | Rs.10 per crore |
 | **Stamp duty** | ✅ Yes | 0.003% on buy side |
 | **Internet bill** (proportion for trading) | ✅ Yes | Keep bills as proof |
 | **Computer/laptop depreciation** | ✅ Yes | Proportion used for trading |
-| **Trading software/subscriptions** | ✅ Yes | Zerodha Connect ₹500/mo, data feeds |
+| **Trading software/subscriptions** | ✅ Yes | Zerodha Connect Rs.500/mo, data feeds |
 | **Claude AI API costs** | ✅ Yes | Directly used for trade decisions |
 | **Advisory/research subscriptions** | ✅ Yes | If used for trading |
 | **Electricity** (proportion) | ⚠️ Arguable | Keep records if claiming |
@@ -145,18 +145,18 @@ To carry forward losses, you **must file ITR before the due date** (July 31).
 
 | Condition | Audit Required? |
 |-----------|-----------------|
-| Turnover > ₹10 Cr (digital transactions) | **Yes** — mandatory CA audit |
-| Turnover < ₹10 Cr AND profit ≥ 6% of turnover | No |
-| Turnover < ₹10 Cr AND profit < 6% AND total income > basic exemption (₹4L new regime) | **Yes** |
-| Turnover < ₹10 Cr AND total income < basic exemption | No |
+| Turnover > Rs.10 Cr (digital transactions) | **Yes** — mandatory CA audit |
+| Turnover < Rs.10 Cr AND profit ≥ 6% of turnover | No |
+| Turnover < Rs.10 Cr AND profit < 6% AND total income > basic exemption (Rs.4L new regime) | **Yes** |
+| Turnover < Rs.10 Cr AND total income < basic exemption | No |
 
 **Turnover for intraday** = Absolute sum of settlement profits and losses
-(NOT buy+sell value). For small accounts like ours (₹10K budget), turnover
-will be well under ₹10 Cr — audit is almost certainly NOT required.
+(NOT buy+sell value). For small accounts like ours (Rs.10K budget), turnover
+will be well under Rs.10 Cr — audit is almost certainly NOT required.
 
 ### Presumptive taxation (Section 44AD)
 
-If turnover < ₹3 Cr (digital), you can opt for **presumptive taxation**
+If turnover < Rs.3 Cr (digital), you can opt for **presumptive taxation**
 and declare 6% of turnover as income. However:
 - This only makes sense if your actual profit is higher than 6%
 - You pay more tax than necessary if you had losses
@@ -167,7 +167,7 @@ and declare 6% of turnover as income. However:
 ## 8. Advance Tax
 
 Since trading income is business income, you must pay **advance tax** quarterly
-if your total tax liability exceeds ₹10,000 for the year:
+if your total tax liability exceeds Rs.10,000 for the year:
 
 | Due Date | Cumulative % of Tax |
 |----------|---------------------|
@@ -191,7 +191,7 @@ Interest under Section 234C applies if you miss these deadlines.
 3. **Check AIS** on income tax portal — verify transactions match
 4. **File ITR-3** — declare intraday under Schedule BP → Speculative Business Income
 5. **Declare expenses** — brokerage, STT, exchange charges, Claude API costs, etc.
-6. **Pay advance tax** quarterly if tax liability > ₹10,000/year
+6. **Pay advance tax** quarterly if tax liability > Rs.10,000/year
 7. **Consult a CA** — ITR-3 with balance sheet/P&L is more complex than ITR-1/2
 
 ---

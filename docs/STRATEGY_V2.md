@@ -36,7 +36,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 | Entry logic | Default SL/target from config + ATR overrides | Claude sets SL/target/rationale |
 | Position review | Stagnant exit after 45 min | Claude reviews every 20 min |
 | Score threshold raise | Yes — after day losses, V2_MIN_SCORE rises | No |
-| Claude API cost | ₹0 | ~₹20-40/day (5-15 calls) |
+| Claude API cost | Rs.0 | ~Rs.20-40/day (5-15 calls) |
 | Mid-day re-scan | Yes (every 30 min, no Claude call) | Yes (every 30 min, 1 Claude call) |
 
 Both modes share: pre-filter, risk management, SL-M orders, trailing stop, circuit breaker, time-decay, EOD exit, direction diversification.
@@ -62,7 +62,7 @@ For each stock in NIFTY100 (~100 stocks):
   → Take top 15 by |score|
 ```
 
-Cost: ₹0 — pure computation on free Zerodha historical data.
+Cost: Rs.0 — pure computation on free Zerodha historical data.
 
 ### Phase 2 — Stock Selection — PAID (V2) / FREE (NoAI)
 
@@ -119,7 +119,7 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | SL = wider-of(ATR, Claude). Target uses 1.5:1 R:R. SL capped at 2.5% |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
-| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = ₹50` | Skip if `|target − entry| × qty < ₹50` |
+| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
 | 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
 | 8 | **Duplicate guard** | — | No two positions in same stock |
@@ -203,12 +203,12 @@ MAX_POSITIONS auto-scales with budget to keep per-position size viable:
 
 | Budget | MAX_POSITIONS | Per-Position Size | Cost Drag |
 |--------|---------------|-------------------|-----------|
-| < ₹25K | 2 | ₹10-12K | ~0.4% |
-| ₹25-60K | 3 | ₹8-20K | ~0.3% |
-| ₹60K-1L | 4 | ₹15-25K | ~0.2% |
-| > ₹1L | 5 | ₹20K+ | ~0.2% |
+| < Rs.25K | 2 | Rs.10-12K | ~0.4% |
+| Rs.25-60K | 3 | Rs.8-20K | ~0.3% |
+| Rs.60K-1L | 4 | Rs.15-25K | ~0.2% |
+| > Rs.1L | 5 | Rs.20K+ | ~0.2% |
 
-Goal: round-trip charges (₹40-50) stay < 0.5% of each position. Set `MAX_POSITIONS_OVERRIDE > 0` to lock manually.
+Goal: round-trip charges (Rs.40-50) stay < 0.5% of each position. Set `MAX_POSITIONS_OVERRIDE > 0` to lock manually.
 
 ---
 
@@ -309,7 +309,7 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | `MAX_INTRADAY_SL_PCT` | 2.5% | SL hard cap |
 | `TRAIL_AFTER_RISK_MULTIPLE` | 1.5 | Trail trigger |
 | `TRAIL_STEP_PCT` | 50% | Trail lock % |
-| `MIN_EXPECTED_PROFIT` | ₹50 | Min viable profit |
+| `MIN_EXPECTED_PROFIT` | Rs.50 | Min viable profit |
 | `USE_EXCHANGE_SL` | True | SL-M on NSE |
 | `ENTRY_DELAY_MINUTES` | 5 | Post-open observe |
 | `SHORT_ENTRY_CUTOFF_HOUR` | 13 | No shorts after 1 PM |
@@ -363,8 +363,8 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | **Trail step 50%** | 65% too tight — NSE pullbacks of 0.5-0.7% triggered trail exits, converting 1.5% winners to 0.3%. |
 | **ORB 2nd candle** | 1st candle (9:15-9:30) includes auction noise. 2nd candle (9:30-9:45) is first market-driven range. |
 | **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
-| **Short cutoff 1 PM** | Short delivery penalties ₹500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
-| **Min profit ₹50** | Round-trip charges ~₹40-50. Trades below this threshold are guaranteed losers after costs. |
+| **Short cutoff 1 PM** | Short delivery penalties Rs.500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
+| **Min profit Rs.50** | Round-trip charges ~Rs.40-50. Trades below this threshold are guaranteed losers after costs. |
 
 ---
 
@@ -374,7 +374,7 @@ See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list. All remaining item
 
 | # | Gap | Priority | Est. Impact |
 |---|-----|----------|-------------|
-| 55 | MARKET → LIMIT orders | MEDIUM | ₹20-40/day slippage |
+| 55 | MARKET → LIMIT orders | MEDIUM | Rs.20-40/day slippage |
 | 24 | Backtesting framework | MEDIUM | Enables measured optimization (V3 infra) |
 | 44 | WebSocket tick data | MEDIUM | Faster SL/target execution |
 | 40 | Claude prompt feedback loop | LOW | Only applies to `--ai` mode |

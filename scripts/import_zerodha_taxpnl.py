@@ -561,7 +561,7 @@ def _write_verified_txt(
         f.write("CONFIGURATION\n")
         f.write(f"{SEP_MINOR}\n")
         f.write(f"Claude plan     : {config.get('claude_plan', 'PRO').upper()}\n")
-        f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
+        f.write(f"Budget          : Rs.{budget:,.2f} (from Zerodha funds)\n")
         f.write(f"Universe        : {config.get('universe', 'NIFTY100')}\n")
         if market_condition:
             f.write(f"Market condition: {market_condition}\n")
@@ -593,11 +593,11 @@ def _write_verified_txt(
         f.write(f"{SEP_TABLE}\n")
 
         for p in positions:
-            exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
-            pnl_val = f"₹{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
+            exit_p  = f"Rs.{p['exit_price']:.2f}" if p.get("exit_price") else "—"
+            pnl_val = f"Rs.{p.get('pnl', 0):+,.2f}" if p.get("exit_price") else "—"
             f.write(
                 f"{p['symbol']:<12} {p['side']:<6} {p['qty']:>5} "
-                f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
+                f"Rs.{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                 f"{(p.get('exit_reason') or 'OPEN'):<14} "
                 f"{(p.get('entry_time') or '—'):<10} "
                 f"{(p.get('exit_time') or '—'):<10}\n"
@@ -617,31 +617,31 @@ def _write_verified_txt(
         f.write("P&L BREAKDOWN\n")
         f.write(f"{SEP_MAJOR}\n\n")
 
-        f.write(f"Gross P&L               : ₹{pnl['gross_pnl']:+,.2f}\n\n")
+        f.write(f"Gross P&L               : Rs.{pnl['gross_pnl']:+,.2f}\n\n")
 
         f.write("CHARGES & TAXES:\n")
-        f.write(f"  Brokerage             : ₹{charges['brokerage']:,.2f}\n")
-        f.write(f"  STT (sell side)       : ₹{charges['stt']:,.2f}\n")
-        f.write(f"  Exchange transaction  : ₹{charges['exchange_txn']:,.2f}\n")
-        f.write(f"  GST (18%)             : ₹{charges['gst']:,.2f}\n")
-        f.write(f"  SEBI charges          : ₹{charges['sebi_charges']:,.4f}\n")
-        f.write(f"  Stamp duty (buy side) : ₹{charges['stamp_duty']:,.2f}\n")
+        f.write(f"  Brokerage             : Rs.{charges['brokerage']:,.2f}\n")
+        f.write(f"  STT (sell side)       : Rs.{charges['stt']:,.2f}\n")
+        f.write(f"  Exchange transaction  : Rs.{charges['exchange_txn']:,.2f}\n")
+        f.write(f"  GST (18%)             : Rs.{charges['gst']:,.2f}\n")
+        f.write(f"  SEBI charges          : Rs.{charges['sebi_charges']:,.4f}\n")
+        f.write(f"  Stamp duty (buy side) : Rs.{charges['stamp_duty']:,.2f}\n")
         f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total tax & charges   : ₹{charges['total_tax_and_charges']:,.2f}\n\n")
+        f.write(f"  Total tax & charges   : Rs.{charges['total_tax_and_charges']:,.2f}\n\n")
 
         f.write("CLAUDE API COST:\n")
-        f.write(f"  Claude API usage      : ₹{charges['claude_api_cost']:,.2f}  (est. ₹{Config.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
+        f.write(f"  Claude API usage      : Rs.{charges['claude_api_cost']:,.2f}  (est. Rs.{Config.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
         f.write(f"  {'─' * 40}\n")
-        f.write(f"  Total all costs       : ₹{charges['total_costs']:,.2f}\n\n")
+        f.write(f"  Total all costs       : Rs.{charges['total_costs']:,.2f}\n\n")
 
         f.write(f"{'=' * 42}\n")
-        f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
+        f.write(f"  NET PROFIT AFTER ALL  : Rs.{pnl['net_profit']:+,.2f}\n")
         f.write(f"{'=' * 42}\n")
         profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
         f.write(f"  Profitable?           : {profitable}\n")
         if budget > 0:
             returns_pct = pnl["net_profit"] / budget * 100
-            f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
+            f.write(f"  Day returns           : {returns_pct:+.2f}% on Rs.{budget:,.0f} budget\n")
         f.write("\n")
 
         # ── Estimated Income Tax ──────────────────────────────
@@ -651,22 +651,22 @@ def _write_verified_txt(
         f.write(f"{SEP_MINOR}\n")
         f.write(f"  Tax slab rate         : {Config.TAX_RATE_PCT}% + {Config.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
         if pnl["net_profit"] > 0:
-            f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
-            f.write(f"  Profit after tax      : ₹{pnl['profit_after_tax']:+,.2f}\n")
+            f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
+            f.write(f"  Profit after tax      : Rs.{pnl['profit_after_tax']:+,.2f}\n")
         else:
-            f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
+            f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
             f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
         f.write("\n")
 
-        f.write(f"  FYI: Zerodha Kite Connect subscription is ₹{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
+        f.write(f"  FYI: Zerodha Kite Connect subscription is Rs.{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
         f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
         # ── Turnover Details ──────────────────────────────────
         f.write("TURNOVER DETAILS\n")
         f.write(f"{SEP_MINOR}\n")
-        f.write(f"  Buy turnover          : ₹{charges['buy_turnover']:,.2f}\n")
-        f.write(f"  Sell turnover         : ₹{charges['sell_turnover']:,.2f}\n")
-        f.write(f"  Total turnover        : ₹{charges['total_turnover']:,.2f}\n")
+        f.write(f"  Buy turnover          : Rs.{charges['buy_turnover']:,.2f}\n")
+        f.write(f"  Sell turnover         : Rs.{charges['sell_turnover']:,.2f}\n")
+        f.write(f"  Total turnover        : Rs.{charges['total_turnover']:,.2f}\n")
         f.write(f"  Total orders          : {charges['num_orders']}\n\n")
 
         # ── Chronological Trade Log ───────────────────────────
@@ -677,7 +677,7 @@ def _write_verified_txt(
                 f.write(
                     f"  [{entry['time']}] {entry['action']:<14} "
                     f"{entry['symbol']:<12} {entry['side']:<5} "
-                    f"{entry['qty']:>5}  ₹{entry['price']:>10}  "
+                    f"{entry['qty']:>5}  Rs.{entry['price']:>10}  "
                     f"{entry['detail']}\n"
                 )
             f.write("\n")

@@ -28,7 +28,7 @@ load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 
 def parse_target_range(target_str: str) -> tuple[str, str]:
-    cleaned = target_str.replace("₹", "").replace(",", "")
+    cleaned = target_str.replace("Rs.", "").replace(",", "")
     numbers = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
     if len(numbers) >= 2:
         return numbers[0], numbers[1]
@@ -42,7 +42,7 @@ def build_claude_prompt(analyses: list[dict]) -> str:
     lines = [
         "Extract structured trading action data from each stock analysis below.",
         "For EACH stock, return a JSON object with these fields:",
-        "  action_detail: short description (e.g. 'Sell 25 shares (50%)', 'Buy 10 shares at ₹840', 'No action')",
+        "  action_detail: short description (e.g. 'Sell 25 shares (50%)', 'Buy 10 shares at Rs.840', 'No action')",
         "  num_stocks: integer — shares to buy/sell NOW (0 if HOLD or waiting)",
         "  trigger_price: single price number to watch for next action (0 if none)",
         "  trigger_action: BUY or SELL at trigger, or NONE",
@@ -260,7 +260,7 @@ def main():
             "Extract all specific stock recommendations from this portfolio review text.\n"
             "For each recommended stock, return a JSON object with:\n"
             '  {"symbol": "NSE_TICKER", "sector": "Sector", "action": "BUY", '
-            '"horizon": "Short/Medium/Long-term", "target_price": "₹XXX-₹YYY", '
+            '"horizon": "Short/Medium/Long-term", "target_price": "Rs.XXX-Rs.YYY", '
             '"rationale": "One-line reason"}\n\n'
             "Return ONLY a JSON array. No markdown, no explanation. "
             "If no specific stocks are recommended, return [].\n\n"

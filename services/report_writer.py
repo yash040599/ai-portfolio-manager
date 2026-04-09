@@ -211,9 +211,9 @@ class ReportWriter:
         f.write(f"Total stocks   : {len(portfolio)}\n")
         f.write(f"Analysed       : {len(analyses)}\n")
         f.write(f"Skipped        : {len(skipped)}\n")
-        f.write(f"Total invested : ₹{invested:,.2f}\n")
-        f.write(f"Current value  : ₹{current:,.2f}\n")
-        f.write(f"Overall P&L    : ₹{pnl:,.2f}  ({pnl_pct:.1f}%)\n\n")
+        f.write(f"Total invested : Rs.{invested:,.2f}\n")
+        f.write(f"Current value  : Rs.{current:,.2f}\n")
+        f.write(f"Overall P&L    : Rs.{pnl:,.2f}  ({pnl_pct:.1f}%)\n\n")
 
     def _write_quick_reference(self, f, analyses: list[dict], skipped: list[str]):
         """
@@ -309,12 +309,12 @@ class ReportWriter:
         lines.append(f"  STOCK      : {symbol} ({stock.get('exchange','NSE')})")
         lines.append(
             f"  HELD       : {stock['quantity']} shares  "
-            f"Avg ₹{stock['avg_buy_price']}  "
-            f"Current ₹{stock['current_price']}"
+            f"Avg Rs.{stock['avg_buy_price']}  "
+            f"Current Rs.{stock['current_price']}"
         )
-        lines.append(f"  P&L        : ₹{stock['pnl']}  ({stock['pnl_percent']}%)")
+        lines.append(f"  P&L        : Rs.{stock['pnl']}  ({stock['pnl_percent']}%)")
         lines.append(
-            f"  52-WEEK    : ₹{stock.get('52w_low','N/A')} – ₹{stock.get('52w_high','N/A')}  "
+            f"  52-WEEK    : Rs.{stock.get('52w_low','N/A')} – Rs.{stock.get('52w_high','N/A')}  "
             f"Trend: {stock.get('price_trend','N/A')}  "
             f"Momentum: {stock.get('momentum','N/A')}"
         )
@@ -359,9 +359,9 @@ class ReportWriter:
 
     @staticmethod
     def _parse_target_range(target_str: str) -> tuple[str, str]:
-        """Extract low and high from target price string like '₹450-500' or '₹1,320–₹1,380'."""
-        # Remove ₹ and commas, find all numbers
-        cleaned = target_str.replace("₹", "").replace(",", "")
+        """Extract low and high from target price string like 'Rs.450-500' or 'Rs.1,320–Rs.1,380'."""
+        # Remove Rs. and commas, find all numbers
+        cleaned = target_str.replace("Rs.", "").replace(",", "")
         numbers = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
         if len(numbers) >= 2:
             return numbers[0], numbers[1]
@@ -377,8 +377,8 @@ class ReportWriter:
 
     @staticmethod
     def _parse_price_field(value: str) -> str:
-        """Extract the first number from a price field like '₹840' or '1200'."""
-        cleaned = value.replace("₹", "").replace(",", "")
+        """Extract the first number from a price field like 'Rs.840' or '1200'."""
+        cleaned = value.replace("Rs.", "").replace(",", "")
         nums = re.findall(r"[\d]+(?:\.[\d]+)?", cleaned)
         return nums[0] if nums else "0"
 
@@ -599,7 +599,7 @@ class ReportWriter:
             f.write("CONFIGURATION\n")
             f.write(f"{self.SEP_MINOR}\n")
             f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
-            f.write(f"Budget          : ₹{budget:,.2f} (from Zerodha funds)\n")
+            f.write(f"Budget          : Rs.{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
             if market_condition:
                 f.write(f"Market condition: {market_condition}\n")
@@ -636,14 +636,14 @@ class ReportWriter:
             f.write(f"{self.SEP_TABLE}\n")
 
             for p in positions:
-                exit_p  = f"₹{p['exit_price']:.2f}" if p.get("exit_price") else "—"
+                exit_p  = f"Rs.{p['exit_price']:.2f}" if p.get("exit_price") else "—"
                 total_pnl = p.get('pnl', 0) + p.get('_partial_pnl', 0)
-                pnl_val = f"₹{total_pnl:+,.2f}" if p.get("exit_price") else "—"
+                pnl_val = f"Rs.{total_pnl:+,.2f}" if p.get("exit_price") else "—"
                 origin  = "[M] " if p.get("_external") else ""
                 display_qty = p['qty'] + p.get('_partial_qty', 0)
                 f.write(
                     f"{origin}{p['symbol']:<{16 - len(origin)}} {p['side']:<6} {display_qty:>5} "
-                    f"₹{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
+                    f"Rs.{p['entry_price']:>9.2f} {exit_p:>10} {pnl_val:>12} "
                     f"{(p.get('exit_reason') or 'OPEN'):<14} "
                     f"{(p.get('entry_time') or '—'):<10} "
                     f"{(p.get('exit_time') or '—'):<10}\n"
@@ -663,31 +663,31 @@ class ReportWriter:
             f.write("P&L BREAKDOWN\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
-            f.write(f"Gross P&L               : ₹{pnl['gross_pnl']:+,.2f}\n\n")
+            f.write(f"Gross P&L               : Rs.{pnl['gross_pnl']:+,.2f}\n\n")
 
             f.write("CHARGES & TAXES:\n")
-            f.write(f"  Brokerage             : ₹{charges['brokerage']:,.2f}\n")
-            f.write(f"  STT (sell side)       : ₹{charges['stt']:,.2f}\n")
-            f.write(f"  Exchange transaction  : ₹{charges['exchange_txn']:,.2f}\n")
-            f.write(f"  GST (18%)             : ₹{charges['gst']:,.2f}\n")
-            f.write(f"  SEBI charges          : ₹{charges['sebi_charges']:,.4f}\n")
-            f.write(f"  Stamp duty (buy side) : ₹{charges['stamp_duty']:,.2f}\n")
+            f.write(f"  Brokerage             : Rs.{charges['brokerage']:,.2f}\n")
+            f.write(f"  STT (sell side)       : Rs.{charges['stt']:,.2f}\n")
+            f.write(f"  Exchange transaction  : Rs.{charges['exchange_txn']:,.2f}\n")
+            f.write(f"  GST (18%)             : Rs.{charges['gst']:,.2f}\n")
+            f.write(f"  SEBI charges          : Rs.{charges['sebi_charges']:,.4f}\n")
+            f.write(f"  Stamp duty (buy side) : Rs.{charges['stamp_duty']:,.2f}\n")
             f.write(f"  {'─' * 40}\n")
-            f.write(f"  Total tax & charges   : ₹{charges['total_tax_and_charges']:,.2f}\n\n")
+            f.write(f"  Total tax & charges   : Rs.{charges['total_tax_and_charges']:,.2f}\n\n")
 
             f.write("CLAUDE API COST:\n")
-            f.write(f"  Claude API usage      : ₹{charges['claude_api_cost']:,.2f}  (est. ₹{self.cfg.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
+            f.write(f"  Claude API usage      : Rs.{charges['claude_api_cost']:,.2f}  (est. Rs.{self.cfg.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
             f.write(f"  {'─' * 40}\n")
-            f.write(f"  Total all costs       : ₹{charges['total_costs']:,.2f}\n\n")
+            f.write(f"  Total all costs       : Rs.{charges['total_costs']:,.2f}\n\n")
 
             f.write(f"{'=' * 42}\n")
-            f.write(f"  NET PROFIT AFTER ALL  : ₹{pnl['net_profit']:+,.2f}\n")
+            f.write(f"  NET PROFIT AFTER ALL  : Rs.{pnl['net_profit']:+,.2f}\n")
             f.write(f"{'=' * 42}\n")
             profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
             f.write(f"  Profitable?           : {profitable}\n")
             if budget > 0:
                 returns_pct = pnl["net_profit"] / budget * 100
-                f.write(f"  Day returns           : {returns_pct:+.2f}% on ₹{budget:,.0f} budget\n")
+                f.write(f"  Day returns           : {returns_pct:+.2f}% on Rs.{budget:,.0f} budget\n")
             f.write("\n")
 
             # ── Estimated Income Tax ──────────────────────────────
@@ -698,22 +698,22 @@ class ReportWriter:
             f.write(f"{self.SEP_MINOR}\n")
             f.write(f"  Tax slab rate         : {self.cfg.TAX_RATE_PCT}% + {self.cfg.TAX_CESS_PCT}% cess = {tax_rate_pct}% effective\n")
             if pnl["net_profit"] > 0:
-                f.write(f"  Estimated tax         : ₹{estimated_tax:,.2f}\n")
-                f.write(f"  Profit after tax      : ₹{profit_after_tax:+,.2f}\n")
+                f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
+                f.write(f"  Profit after tax      : Rs.{profit_after_tax:+,.2f}\n")
             else:
-                f.write(f"  Estimated tax         : ₹0.00 (no tax on losses)\n")
+                f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
                 f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
             f.write("\n")
 
-            f.write(f"  FYI: Zerodha Kite Connect subscription is ₹{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
+            f.write(f"  FYI: Zerodha Kite Connect subscription is Rs.{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
             f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
             # ── Turnover Details ──────────────────────────────────
             f.write("TURNOVER DETAILS\n")
             f.write(f"{self.SEP_MINOR}\n")
-            f.write(f"  Buy turnover          : ₹{charges['buy_turnover']:,.2f}\n")
-            f.write(f"  Sell turnover         : ₹{charges['sell_turnover']:,.2f}\n")
-            f.write(f"  Total turnover        : ₹{charges['total_turnover']:,.2f}\n")
+            f.write(f"  Buy turnover          : Rs.{charges['buy_turnover']:,.2f}\n")
+            f.write(f"  Sell turnover         : Rs.{charges['sell_turnover']:,.2f}\n")
+            f.write(f"  Total turnover        : Rs.{charges['total_turnover']:,.2f}\n")
             f.write(f"  Total orders          : {charges['num_orders']}\n\n")
 
             # ── Chronological Trade Log ───────────────────────────
@@ -723,7 +723,7 @@ class ReportWriter:
                 f.write(
                     f"  [{entry['time']}] {entry['action']:<14} "
                     f"{entry['symbol']:<12} {entry['side']:<5} "
-                    f"{entry['qty']:>5}  ₹{entry['price']:>10}  "
+                    f"{entry['qty']:>5}  Rs.{entry['price']:>10}  "
                     f"{entry['detail']}\n"
                 )
             f.write("\n")

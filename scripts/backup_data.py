@@ -2,20 +2,22 @@
 Two-way sync between local project data and a private Git backup repo.
 
 Pulls the latest backup repo, then syncs in both directions:
-  - Files only in local  → copied to backup repo
-  - Files only in remote → copied to local project
-  - Files in both but different → asks which to keep (l/r)
-  - SQLite databases (.db) → MERGED row-by-row (new rows from each
+  - Files only in local  -> copied to backup repo
+  - Files only in remote -> copied to local project
+  - Files in both but different -> asks which to keep (l/r)
+  - SQLite databases (.db) -> MERGED row-by-row (new rows from each
     side are added to the other, nothing is deleted)
 
 After syncing, commits and pushes changes to the backup repo.
 
 Usage
-─────
+-----
     python scripts/backup_data.py              # full two-way sync (HTTPS)
     python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/backup_data.py --dry-run    # show what would change (no writes)
     python scripts/backup_data.py --overwrite-db  # overwrite DB in one direction (asks l/r)
+    python scripts/backup_data.py --all-local  # push ALL local data to remote (full overwrite)
+    python scripts/backup_data.py --all-remote # pull ALL remote data to local (full overwrite)
 """
 
 import argparse
@@ -90,7 +92,7 @@ def git_pull():
            "no such ref" in result.stderr.lower():
             print("  Backup repo is empty (first sync).")
             return True
-        print(f"  ⚠ git pull failed: {result.stderr.strip()}")
+        print(f"  ! git pull failed: {result.stderr.strip()}")
         return False
     msg = result.stdout.strip()
     if "Already up to date" in msg:
@@ -125,7 +127,7 @@ def ask_conflict(rel_path: str) -> str:
     """Ask user which version to keep for a conflicting file."""
     while True:
         choice = input(
-            f"    ≠ {rel_path}\n"
+            f"    != {rel_path}\n"
             f"      Keep (l)ocal or (r)emote? [l/r]: "
         ).strip().lower()
         if choice in ("l", "r"):
@@ -272,7 +274,7 @@ def merge_log_files(local_path: str, remote_path: str, dry_run: bool) -> bool:
         with open(remote_path, "r", encoding="utf-8", errors="replace") as f:
             remote_entries = _parse_log_entries(f.readlines())
     except OSError as e:
-        print(f"    ⚠ Could not read log file for merge: {rel} ({e})")
+        print(f"    ! Could not read log file for merge: {rel} ({e})")
         return False
 
     local_set = set(local_entries)
@@ -286,14 +288,14 @@ def merge_log_files(local_path: str, remote_path: str, dry_run: bool) -> bool:
         return False
 
     if dry_run:
-        print(f"    ↔ merge:   {rel} "
-              f"({new_in_local} entry(s) ← remote, {new_in_remote} entry(s) → remote)")
+        print(f"    <-> merge:   {rel} "
+              f"({new_in_local} entry(s) <- remote, {new_in_remote} entry(s) -> remote)")
         return True
 
     if new_in_local:
-        print(f"    ← {new_in_local} entry(s) from remote: {rel}")
+        print(f"    <- {new_in_local} entry(s) from remote: {rel}")
     if new_in_remote:
-        print(f"    → {new_in_remote} entry(s) to remote:  {rel}")
+        print(f"    -> {new_in_remote} entry(s) to remote:  {rel}")
 
     try:
         merged_text = "".join(merged)
@@ -302,7 +304,7 @@ def merge_log_files(local_path: str, remote_path: str, dry_run: bool) -> bool:
         with open(remote_path, "w", encoding="utf-8") as f:
             f.write(merged_text)
     except OSError as e:
-        print(f"    ⚠ Failed to write merged log: {rel} ({e})")
+        print(f"    ! Failed to write merged log: {rel} ({e})")
         return False
 
     return True
@@ -317,15 +319,15 @@ MERGE_LOG_FILES = {
 def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
     """
     Merge two SQLite databases bidirectionally:
-      1. New rows from remote → local
-      2. Copy merged local → remote (so remote gets all rows too)
+      1. New rows from remote -> local
+      2. Copy merged local -> remote (so remote gets all rows too)
     Returns True if any rows were merged.
     """
     if not os.path.isfile(local_db) or not os.path.isfile(remote_db):
         return False
 
     if dry_run:
-        print(f"    ↔ merge:   data/trades.db (would merge rows from both sides)")
+        print(f"    <-> merge:   data/trades.db (would merge rows from both sides)")
         return True
 
     total_inserted = 0
@@ -355,9 +357,9 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
                     local_tables.add(table)
 
             if table in local_tables:
-                n = _merge_table(local_conn, remote_conn, table, "remote→local")
+                n = _merge_table(local_conn, remote_conn, table, "remote->local")
                 if n > 0:
-                    print(f"    ← {n} new row(s) from remote: {table}")
+                    print(f"    <- {n} new row(s) from remote: {table}")
                     total_inserted += n
 
         local_conn.commit()
@@ -366,9 +368,9 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
         local_conn.close()
 
     if total_inserted > 0:
-        print(f"    ↔ merged {total_inserted} total new row(s) into local DB")
+        print(f"    <-> merged {total_inserted} total new row(s) into local DB")
 
-    # Copy merged local → remote so both sides are identical
+    # Copy merged local -> remote so both sides are identical
     shutil.copy2(local_db, remote_db)
 
     return total_inserted > 0 or not filecmp.cmp(local_db, remote_db, shallow=False)
@@ -383,7 +385,17 @@ def main():
     parser.add_argument("--overwrite-db", action="store_true",
                         help="Overwrite DB in one direction instead of merging. "
                              "Asks which side to keep (l/r) with confirmation.")
+    parser.add_argument("--all-local", action="store_true",
+                        help="Push ALL local data to remote (full overwrite). "
+                             "Replaces every file and DB in the backup repo with local copies.")
+    parser.add_argument("--all-remote", action="store_true",
+                        help="Pull ALL remote data to local (full overwrite). "
+                             "Replaces every local file and DB with backup repo copies.")
     args = parser.parse_args()
+
+    if args.all_local and args.all_remote:
+        print("  \u2717 Cannot use --all-local and --all-remote together.")
+        sys.exit(1)
 
     if not os.path.isdir(BACKUP_ROOT):
         clone_url = GITHUB_REPO_URL_SSH if args.ssh else GITHUB_REPO_URL
@@ -402,20 +414,55 @@ def main():
                 print(f"  Make sure you're authenticated with GitHub (run: gh auth login)")
                 print(f"  On Linux VMs with SSH keys, use: python scripts/backup_data.py --ssh")
             sys.exit(1)
-        print(f"  ✓ Cloned successfully.")
+        print(f"  ok Cloned successfully.")
 
     if not os.path.isdir(os.path.join(BACKUP_ROOT, ".git")):
         print(f"\n  {BACKUP_ROOT} exists but is not a git repo.")
         sys.exit(1)
 
     mode = "DRY RUN" if args.dry_run else "SYNC"
-    print(f"\n  [{mode}] Two-way sync: local ↔ {os.path.basename(BACKUP_ROOT)}/")
+    print(f"\n  [{mode}] Two-way sync: local <-> {os.path.basename(BACKUP_ROOT)}/")
 
     # Step 1: Pull latest remote data
     if not args.dry_run:
         if not git_pull():
             sys.exit(1)
     print()
+
+    # -- Full one-directional sync ---------------------------------
+    if args.all_local or args.all_remote:
+        direction = "local -> remote" if args.all_local else "remote -> local"
+        src_root  = PROJECT_ROOT if args.all_local else BACKUP_ROOT
+        dst_root  = BACKUP_ROOT  if args.all_local else PROJECT_ROOT
+        print(f"  [{direction}] Full overwrite of {'remote' if args.all_local else 'local'} data\n")
+
+        copied = 0
+        for item in SYNC_ITEMS:
+            src_files = collect_files(src_root, item)
+            dst_files = collect_files(dst_root, item)
+            # Copy all source files to destination
+            for rel, abs_src in src_files.items():
+                abs_dst = os.path.join(dst_root, rel)
+                if not args.dry_run:
+                    os.makedirs(os.path.dirname(abs_dst), exist_ok=True)
+                    shutil.copy2(abs_src, abs_dst)
+                print(f"    {'->' if args.all_local else '<-'} {rel}")
+                copied += 1
+            # Remove destination files that don't exist in source
+            for rel in dst_files:
+                if rel not in src_files:
+                    abs_dst = os.path.join(dst_root, rel)
+                    if not args.dry_run:
+                        os.remove(abs_dst)
+                    print(f"    X removed: {rel}")
+
+        print(f"\n  Summary: {copied} file(s) copied {direction}")
+        if not args.dry_run and args.all_local:
+            if git_push(f"sync: full overwrite from local"):
+                print("  ok Pushed to remote.\n")
+            else:
+                print()
+        return
 
     # Step 2: Collect all files from both sides
     local_files  = {}
@@ -438,14 +485,14 @@ def main():
         in_remote = rel in remote_files
 
         if in_local and not in_remote:
-            # Only in local → copy to backup repo
-            print(f"    → remote:  {rel}")
+            # Only in local -> copy to backup repo
+            print(f"    -> remote:  {rel}")
             copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), args.dry_run)
             copied_to_remote += 1
 
         elif in_remote and not in_local:
-            # Only in remote → copy to local project
-            print(f"    ← local:   {rel}")
+            # Only in remote -> copy to local project
+            print(f"    <- local:   {rel}")
             copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), args.dry_run)
             copied_to_local += 1
 
@@ -460,13 +507,13 @@ def main():
             if rel.endswith(".db"):
                 if args.overwrite_db:
                     if args.dry_run:
-                        print(f"    ≠ overwrite-db: {rel} (will ask l/r)")
+                        print(f"    != overwrite-db: {rel} (will ask l/r)")
                         copied_to_remote += 1
                     else:
                         # Ask which side to keep
                         while True:
                             choice = input(
-                                f"    ≠ {rel}\n"
+                                f"    != {rel}\n"
                                 f"      Keep (l)ocal or (r)emote? [l/r]: "
                             ).strip().lower()
                             if choice in ("l", "r"):
@@ -477,7 +524,7 @@ def main():
                         dst = "remote" if choice == "l" else "local"
                         while True:
                             confirm = input(
-                                f"      ⚠ This will OVERWRITE the {dst} DB with {src}. "
+                                f"      ! This will OVERWRITE the {dst} DB with {src}. "
                                 f"Are you sure? [y/n]: "
                             ).strip().lower()
                             if confirm in ("y", "n"):
@@ -486,14 +533,14 @@ def main():
                         if confirm == "y":
                             if choice == "l":
                                 copy_file(local_files[rel], remote_files[rel], False)
-                                print(f"      → overwrote remote with local")
+                                print(f"      -> overwrote remote with local")
                                 copied_to_remote += 1
                             else:
                                 copy_file(remote_files[rel], local_files[rel], False)
-                                print(f"      ← overwrote local with remote")
+                                print(f"      <- overwrote local with remote")
                                 copied_to_local += 1
                         else:
-                            print(f"      ✗ skipped (no overwrite)")
+                            print(f"      X skipped (no overwrite)")
                             unchanged += 1
                 else:
                     db_merged = merge_databases(
@@ -519,20 +566,20 @@ def main():
             # Content differs — ask user
             conflicts += 1
             if args.dry_run:
-                print(f"    ≠ conflict: {rel}")
+                print(f"    != conflict: {rel}")
             else:
                 choice = ask_conflict(rel)
                 if choice == "l":
                     copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), False)
-                    print(f"      → kept local")
+                    print(f"      -> kept local")
                     copied_to_remote += 1
                 else:
                     copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), False)
-                    print(f"      ← kept remote")
+                    print(f"      <- kept remote")
                     copied_to_local += 1
 
     # Summary
-    print(f"\n  Summary: {copied_to_remote} → remote, {copied_to_local} ← local, "
+    print(f"\n  Summary: {copied_to_remote} -> remote, {copied_to_local} <- local, "
           f"{conflicts} conflict(s), {unchanged} unchanged")
 
     if args.dry_run:
@@ -540,7 +587,7 @@ def main():
 
     # Step 4: Push changes to backup repo
     if git_push("sync: two-way data sync"):
-        print("  ✓ Pushed to remote.\n")
+        print("  ok Pushed to remote.\n")
     else:
         print()
 

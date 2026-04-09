@@ -54,7 +54,7 @@ For each confirmed stock (primary picks + up to 5 fallback candidates):
   → Uses wider-of ATR SL vs Claude SL (structural levels respected)
   → Late-entry target reduction: 13:00+ → −20%, 14:00+ → −35%
   → R:R floor: skip trade if R:R < 1.2:1 after late-entry reduction
-  → Min profit check: skip if expected profit < ₹50 (charges would eat it)
+  → Min profit check: skip if expected profit < Rs.50 (charges would eat it)
   → Cross-check Claude's entry price vs live quote (reject if >5% off)
   → Place MARKET order on Zerodha (or simulate in DRY_RUN)
   → Use actual fill price from Zerodha (not the estimate)
@@ -110,7 +110,7 @@ V1 shares `OrderEngine` with V2/NoAI — all entry checks and position managemen
 | Trailing stop-loss | Rule-based | At 1.5× initial risk profit, exits 33% of qty and trails SL at 50% of unrealised profit |
 | Time-decay target | Rule-based | After 2 PM, reduce open targets by 25% to avoid holding into close with shrinking upside |
 | Late-entry reduction | Rule-based | 13:00+ → −20% target, 14:00+ → −35% target. Skip if R:R < 1.2:1 after reduction |
-| Min profit check | Rule-based | Skip trade if expected profit < ₹50 (charges would eat it) |
+| Min profit check | Rule-based | Skip trade if expected profit < Rs.50 (charges would eat it) |
 | Circuit breaker | Rule-based | Day loss > 3% of budget → pause 30 min. Resumes with loss-adjusted budget. Max 2 trips/day |
 | Whipsaw guard | Rule-based | 3 consecutive SL hits → pause new entries for 30 min |
 | Direction diversification | Rule-based | Max N−1 in same direction. Score ≥ 5 bypasses the limit (all slots in dominant direction) |

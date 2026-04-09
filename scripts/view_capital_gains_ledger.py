@@ -101,15 +101,15 @@ def view_fy(fy_start: int, trade_type: str | None = None):
 
         print(
             f"  {i:>3}  {tt:<6}  {r['symbol']:<12}  {r['entry_date']:<10}  {r['exit_date']:<10}"
-            f"  {r['qty']:>6.0f}  ₹{r['buy_value']:>11,.2f}  ₹{r['sell_value']:>11,.2f}"
-            f"  ₹{p:>+11,.2f}  {r['period_of_holding']:>5}d  ₹{c:>7,.2f}  ₹{tp:>+11,.2f}"
+            f"  {r['qty']:>6.0f}  Rs.{r['buy_value']:>11,.2f}  Rs.{r['sell_value']:>11,.2f}"
+            f"  Rs.{p:>+11,.2f}  {r['period_of_holding']:>5}d  Rs.{c:>7,.2f}  Rs.{tp:>+11,.2f}"
         )
 
     print(f"  {'─' * (w - 4)}")
     st_count = sum(1 for r in rows if r["trade_type"] == "short_term")
     lt_count = sum(1 for r in rows if r["trade_type"] == "long_term")
     print(f"\n  {len(rows)} trade(s)  |  {st_count} short-term, {lt_count} long-term")
-    print(f"  Total profit : ₹{total_profit:+,.2f}  |  Total charges: ₹{total_charges:,.2f}")
+    print(f"  Total profit : Rs.{total_profit:+,.2f}  |  Total charges: Rs.{total_charges:,.2f}")
     print(f"{'=' * w}\n")
 
 

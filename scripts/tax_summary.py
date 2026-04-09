@@ -85,37 +85,37 @@ def _intraday_summary(fy_start: int) -> bool:
           f"({verified} verified, {len(rows) - verified} unverified)")
 
     _section("PROFIT & LOSS")
-    print(f"  Gross P&L                 : ₹{total_gross:>+12,.2f}")
-    print(f"  Regulatory charges        : ₹{total_charges:>12,.2f}")
-    print(f"  Claude API costs          : ₹{total_claude:>12,.2f}")
-    print(f"  Net Profit (before tax)   : ₹{net_after_claude:>+12,.2f}")
+    print(f"  Gross P&L                 : Rs.{total_gross:>+12,.2f}")
+    print(f"  Regulatory charges        : Rs.{total_charges:>12,.2f}")
+    print(f"  Claude API costs          : Rs.{total_claude:>12,.2f}")
+    print(f"  Net Profit (before tax)   : Rs.{net_after_claude:>+12,.2f}")
 
     _section("SPECULATIVE TURNOVER")
-    print(f"  Turnover (for ITR)        : ₹{spec_turnover:>12,.2f}")
+    print(f"  Turnover (for ITR)        : Rs.{spec_turnover:>12,.2f}")
     print(f"    (absolute sum of per-trade P&L)")
 
     _section("ESTIMATED TAX")
     print(f"  Rate: {Config.TAX_RATE_PCT}% + {Config.TAX_CESS_PCT}% cess = {eff:.2f}%")
     if net_after_claude > 0:
-        print(f"  Estimated tax             : ₹{tax:>12,.2f}")
+        print(f"  Estimated tax             : Rs.{tax:>12,.2f}")
         _divider()
-        print(f"  PROFIT AFTER TAX          : ₹{pat:>+12,.2f}")
+        print(f"  PROFIT AFTER TAX          : Rs.{pat:>+12,.2f}")
     else:
-        print(f"  Estimated tax             : ₹        0.00  (loss)")
-        print(f"  Carry-forward loss        : ₹{abs(net_after_claude):>12,.2f}  (4 yr, speculative only)")
+        print(f"  Estimated tax             : Rs.        0.00  (loss)")
+        print(f"  Carry-forward loss        : Rs.{abs(net_after_claude):>12,.2f}  (4 yr, speculative only)")
         _divider()
-        print(f"  NET LOSS                  : ₹{net_after_claude:>+12,.2f}")
+        print(f"  NET LOSS                  : Rs.{net_after_claude:>+12,.2f}")
 
     _section("DEDUCTIBLE EXPENSES")
-    print(f"  Brokerage                 : ₹{total_brokerage:>12,.2f}")
-    print(f"  STT                       : ₹{total_stt:>12,.2f}")
-    print(f"  Exchange txn              : ₹{total_exch:>12,.2f}")
-    print(f"  GST                       : ₹{total_gst:>12,.2f}")
-    print(f"  SEBI charges              : ₹{total_sebi:>12,.4f}")
-    print(f"  Stamp duty                : ₹{total_stamp:>12,.2f}")
-    print(f"  Claude AI costs           : ₹{total_claude:>12,.2f}")
-    print(f"  Zerodha subscription      : ₹{zerodha_sub:>12,.2f}  ({months} mo × ₹{Config.ZERODHA_MONTHLY_COST:,.0f})")
-    print(f"  Total deductible          : ₹{total_charges + total_claude + zerodha_sub:>12,.2f}")
+    print(f"  Brokerage                 : Rs.{total_brokerage:>12,.2f}")
+    print(f"  STT                       : Rs.{total_stt:>12,.2f}")
+    print(f"  Exchange txn              : Rs.{total_exch:>12,.2f}")
+    print(f"  GST                       : Rs.{total_gst:>12,.2f}")
+    print(f"  SEBI charges              : Rs.{total_sebi:>12,.4f}")
+    print(f"  Stamp duty                : Rs.{total_stamp:>12,.2f}")
+    print(f"  Claude AI costs           : Rs.{total_claude:>12,.2f}")
+    print(f"  Zerodha subscription      : Rs.{zerodha_sub:>12,.2f}  ({months} mo × Rs.{Config.ZERODHA_MONTHLY_COST:,.0f})")
+    print(f"  Total deductible          : Rs.{total_charges + total_claude + zerodha_sub:>12,.2f}")
 
     _section("DAY-WISE BREAKDOWN")
     print(f"  {'Date':<12} {'Trades':>6} {'Gross P&L':>12} {'Charges':>10} {'Net P&L':>12}")
@@ -123,7 +123,7 @@ def _intraday_summary(fy_start: int) -> bool:
         d = day_map[date]
         print(
             f"  {date:<12} {d['trades']:>6} "
-            f"₹{d['gross']:>+10,.2f} ₹{d['charges']:>8,.2f} ₹{d['net']:>+10,.2f}"
+            f"Rs.{d['gross']:>+10,.2f} Rs.{d['charges']:>8,.2f} Rs.{d['net']:>+10,.2f}"
         )
 
     return True
@@ -171,43 +171,43 @@ def _capital_gains_summary(fy_start: int) -> bool:
     if st:
         _section("SHORT-TERM CAPITAL GAINS (STCG)")
         print(f"  Trades                    : {len(st)}")
-        print(f"  Total profit              : ₹{st_profit:>+12,.2f}")
-        print(f"  Total charges             : ₹{st_charges:>12,.2f}")
+        print(f"  Total profit              : Rs.{st_profit:>+12,.2f}")
+        print(f"  Total charges             : Rs.{st_charges:>12,.2f}")
         print(f"  Tax rate                  : {Config.STCG_TAX_RATE_PCT}% + {Config.TAX_CESS_PCT}% cess = {stcg_rate:.2f}%")
         if st_profit > 0:
-            print(f"  Estimated STCG tax        : ₹{stcg_tax:>12,.2f}")
+            print(f"  Estimated STCG tax        : Rs.{stcg_tax:>12,.2f}")
         else:
-            print(f"  Estimated STCG tax        : ₹        0.00  (loss)")
+            print(f"  Estimated STCG tax        : Rs.        0.00  (loss)")
         # Per-symbol breakdown
         _section("STCG BY SYMBOL")
         syms: dict[str, float] = {}
         for r in st:
             syms[r["symbol"]] = syms.get(r["symbol"], 0) + r["taxable_profit"]
         for s in sorted(syms, key=lambda x: syms[x]):
-            print(f"    {s:<16} ₹{syms[s]:>+12,.2f}")
+            print(f"    {s:<16} Rs.{syms[s]:>+12,.2f}")
 
     if lt:
         _section("LONG-TERM CAPITAL GAINS (LTCG)")
         print(f"  Trades                    : {len(lt)}")
-        print(f"  Total profit              : ₹{lt_profit:>+12,.2f}")
-        print(f"  Total charges             : ₹{lt_charges:>12,.2f}")
-        print(f"  Exemption (sec 112A)      : ₹{ltcg_exempt:>12,.2f}")
-        print(f"  Taxable LTCG              : ₹{ltcg_taxable:>12,.2f}")
+        print(f"  Total profit              : Rs.{lt_profit:>+12,.2f}")
+        print(f"  Total charges             : Rs.{lt_charges:>12,.2f}")
+        print(f"  Exemption (sec 112A)      : Rs.{ltcg_exempt:>12,.2f}")
+        print(f"  Taxable LTCG              : Rs.{ltcg_taxable:>12,.2f}")
         print(f"  Tax rate                  : {Config.LTCG_TAX_RATE_PCT}% + {Config.TAX_CESS_PCT}% cess = {ltcg_rate:.2f}%")
-        print(f"  Estimated LTCG tax        : ₹{ltcg_tax:>12,.2f}")
+        print(f"  Estimated LTCG tax        : Rs.{ltcg_tax:>12,.2f}")
         _section("LTCG BY SYMBOL")
         syms2: dict[str, float] = {}
         for r in lt:
             syms2[r["symbol"]] = syms2.get(r["symbol"], 0) + r["taxable_profit"]
         for s in sorted(syms2, key=lambda x: syms2[x]):
-            print(f"    {s:<16} ₹{syms2[s]:>+12,.2f}")
+            print(f"    {s:<16} Rs.{syms2[s]:>+12,.2f}")
 
     _section("CAPITAL GAINS TAX TOTAL")
     total_cg_tax = stcg_tax + ltcg_tax
-    print(f"  STCG tax                  : ₹{stcg_tax:>12,.2f}")
-    print(f"  LTCG tax                  : ₹{ltcg_tax:>12,.2f}")
+    print(f"  STCG tax                  : Rs.{stcg_tax:>12,.2f}")
+    print(f"  LTCG tax                  : Rs.{ltcg_tax:>12,.2f}")
     _divider()
-    print(f"  Total CG tax              : ₹{total_cg_tax:>12,.2f}")
+    print(f"  Total CG tax              : Rs.{total_cg_tax:>12,.2f}")
 
     return True
 
@@ -265,11 +265,11 @@ def combined_summary(fy_start: int, show_intraday: bool, show_cg: bool):
 
         total_tax = intra_tax + stcg_tax + ltcg_tax
 
-        print(f"\n  Speculative (intraday)    : ₹{intra_final:>+12,.2f}  →  tax ₹{intra_tax:>10,.2f}")
-        print(f"  Short-term CG             : ₹{st_profit:>+12,.2f}  →  tax ₹{stcg_tax:>10,.2f}")
-        print(f"  Long-term CG              : ₹{lt_profit:>+12,.2f}  →  tax ₹{ltcg_tax:>10,.2f}")
+        print(f"\n  Speculative (intraday)    : Rs.{intra_final:>+12,.2f}  →  tax Rs.{intra_tax:>10,.2f}")
+        print(f"  Short-term CG             : Rs.{st_profit:>+12,.2f}  →  tax Rs.{stcg_tax:>10,.2f}")
+        print(f"  Long-term CG              : Rs.{lt_profit:>+12,.2f}  →  tax Rs.{ltcg_tax:>10,.2f}")
         _divider()
-        print(f"  TOTAL ESTIMATED TAX       : ₹{total_tax:>12,.2f}")
+        print(f"  TOTAL ESTIMATED TAX       : Rs.{total_tax:>12,.2f}")
         print()
 
     if not has_intraday and not has_cg:

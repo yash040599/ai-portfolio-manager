@@ -1,4 +1,4 @@
-"""
+﻿"""
 View performance analytics from the trades database.
 
 Shows trade-level data plus aggregated statistics: daily P&L,
@@ -87,7 +87,7 @@ def print_trades(rows: list):
 
         print(f"  {r['date']:<12} {r['symbol']:<12} {r['side']:<5} {r['qty']:>4} "
               f"{r['entry_price']:>8.2f} {(r['exit_price'] or 0):>8.2f} "
-              f"{color}₹{pnl:>+8.2f}{reset} {(r['exit_reason'] or ''):<15} "
+              f"{color}Rs.{pnl:>+8.2f}{reset} {(r['exit_reason'] or ''):<15} "
               f"{time_range:>11} {score:>6} {rsi:>5} {(r['market_condition'] or ''):<20}")
 
     print()
@@ -137,9 +137,9 @@ def print_daily_summary(rows: list):
         reset = "\033[0m" if color else ""
 
         print(f"  {date:<12} {len(trades):>6} {len(wins):>5} {len(losses):>6} "
-              f"{win_rate:>5.0f}% {color}₹{day_pnl:>+9.2f}{reset} "
-              f"₹{avg_win:>+8.2f} ₹{avg_loss:>+8.2f} "
-              f"₹{best:>+8.2f} ₹{worst:>+8.2f}")
+              f"{win_rate:>5.0f}% {color}Rs.{day_pnl:>+9.2f}{reset} "
+              f"Rs.{avg_win:>+8.2f} Rs.{avg_loss:>+8.2f} "
+              f"Rs.{best:>+8.2f} Rs.{worst:>+8.2f}")
 
     # Totals
     overall_win_rate = total_wins / total_trades * 100 if total_trades else 0
@@ -148,7 +148,7 @@ def print_daily_summary(rows: list):
     print(f"  {'-' * 88}")
     print(f"  {'TOTAL':<12} {total_trades:>6} {total_wins:>5} "
           f"{total_trades - total_wins:>6} {overall_win_rate:>5.0f}% "
-          f"{color}₹{total_pnl:>+9.2f}{reset}")
+          f"{color}Rs.{total_pnl:>+9.2f}{reset}")
     print()
 
 
@@ -173,7 +173,7 @@ def print_exit_reason_stats(rows: list):
         avg = total / len(pnls) if pnls else 0
         wins = sum(1 for p in pnls if p > 0)
         wr = wins / len(pnls) * 100 if pnls else 0
-        print(f"  {reason:<20} {len(pnls):>6} ₹{total:>+9.2f} ₹{avg:>+8.2f} {wr:>5.0f}%")
+        print(f"  {reason:<20} {len(pnls):>6} Rs.{total:>+9.2f} Rs.{avg:>+8.2f} {wr:>5.0f}%")
     print()
 
 
@@ -197,7 +197,7 @@ def print_side_stats(rows: list):
         avg = total / len(pnls) if pnls else 0
         wins = sum(1 for p in pnls if p > 0)
         wr = wins / len(pnls) * 100 if pnls else 0
-        print(f"  {side:<6} {len(pnls):>6} ₹{total:>+9.2f} ₹{avg:>+8.2f} {wr:>5.0f}%")
+        print(f"  {side:<6} {len(pnls):>6} Rs.{total:>+9.2f} Rs.{avg:>+8.2f} {wr:>5.0f}%")
     print()
 
 
@@ -230,7 +230,7 @@ def print_indicator_correlation(rows: list):
         wins = sum(1 for p in pnls if p > 0)
         wr = wins / len(pnls) * 100
         avg = sum(pnls) / len(pnls)
-        print(f"  {label:<25} {len(matching):>6} {wr:>5.0f}% ₹{avg:>+8.2f}")
+        print(f"  {label:<25} {len(matching):>6} {wr:>5.0f}% Rs.{avg:>+8.2f}")
 
     # RSI ranges
     rsi_scored = [r for r in rows if r["entry_rsi"] is not None]
@@ -252,7 +252,7 @@ def print_indicator_correlation(rows: list):
             wins = sum(1 for p in pnls if p > 0)
             wr = wins / len(pnls) * 100
             avg = sum(pnls) / len(pnls)
-            print(f"  {label:<25} {len(matching):>6} {wr:>5.0f}% ₹{avg:>+8.2f}")
+            print(f"  {label:<25} {len(matching):>6} {wr:>5.0f}% Rs.{avg:>+8.2f}")
 
     print()
 
@@ -290,9 +290,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Handle Windows terminal encoding for ₹ symbol
-    if sys.platform == "win32":
-        import io
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-
     main()

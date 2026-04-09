@@ -42,15 +42,15 @@ ACTION: [HOLD | AVERAGE DOWN | PARTIAL EXIT | FULL EXIT | ADD MORE]
 CONVICTION: [Low | Medium | High]
 REASONING: [2-4 sentences, plain English, no jargon]
 HORIZON: [Short (<6 months) | Medium (6-18 months) | Long (2-3 years)]
-TARGET_PRICE: [specific ₹ value or range e.g. ₹450-500]
+TARGET_PRICE: [specific Rs. value or range e.g. Rs.450-500]
 RISKS:
 1. [first risk]
 2. [second risk]
 3. [third risk]
 WATCH: [one specific trigger or event to monitor]
 NEXT_STEPS:
-1. [first concrete actionable step e.g. "Average down if price drops below ₹X"]
-2. [second step e.g. "Set stop-loss at ₹Y" or "Book partial profits above ₹Z"]
+1. [first concrete actionable step e.g. "Average down if price drops below Rs.X"]
+2. [second step e.g. "Set stop-loss at Rs.Y" or "Book partial profits above Rs.Z"]
 ACTION_DETAIL: [short description e.g. "Sell 50% of position" or "Buy 10 shares" or "Exit all" or "No action"]
 NUM_STOCKS: [number of shares to buy/sell NOW, or 0 if no immediate action]
 TRIGGER_PRICE: [price level to watch for next action, or 0 if none]
@@ -359,9 +359,9 @@ class AnalysisQueue:
         pnl_pct        = (total_pnl / total_invested * 100) if total_invested > 0 else 0
 
         holdings_section = f"PORTFOLIO OVERVIEW (as of {today}):\n"
-        holdings_section += f"  Total invested : ₹{total_invested:,.2f}\n"
-        holdings_section += f"  Current value  : ₹{total_current:,.2f}\n"
-        holdings_section += f"  Overall P&L    : ₹{total_pnl:,.2f} ({pnl_pct:.1f}%)\n"
+        holdings_section += f"  Total invested : Rs.{total_invested:,.2f}\n"
+        holdings_section += f"  Current value  : Rs.{total_current:,.2f}\n"
+        holdings_section += f"  Overall P&L    : Rs.{total_pnl:,.2f} ({pnl_pct:.1f}%)\n"
         holdings_section += f"  Total stocks   : {len(portfolio)}\n\n"
 
         # Group by sector
@@ -377,7 +377,7 @@ class AnalysisQueue:
             sector_value = sum(s.get("current_value", 0) for s in stocks)
             sector_pct = (sector_value / total_current * 100) if total_current > 0 else 0
             stock_names = ", ".join(s["symbol"] for s in stocks)
-            holdings_section += f"  {sector:<25} : ₹{sector_value:>10,.2f}  ({sector_pct:>5.1f}%)  [{stock_names}]\n"
+            holdings_section += f"  {sector:<25} : Rs.{sector_value:>10,.2f}  ({sector_pct:>5.1f}%)  [{stock_names}]\n"
 
         # Include individual analysis summaries
         analysis_section = "\nINDIVIDUAL STOCK RECOMMENDATIONS (just completed):\n"
@@ -416,7 +416,7 @@ class AnalysisQueue:
             f"containing exactly '---RECOMMENDATIONS_JSON---' followed by a JSON array of your "
             f"recommended new stocks. Each object must have these fields:\n"
             f'  {{"symbol": "TICKER", "sector": "Sector Name", "action": "BUY", '
-            f'"horizon": "Short/Medium/Long-term", "target_price": "₹XXX-₹YYY", '
+            f'"horizon": "Short/Medium/Long-term", "target_price": "Rs.XXX-Rs.YYY", '
             f'"rationale": "One-line reason"}}\n'
             f"Return ONLY the JSON array after the marker line. No markdown fences.\n"
         )
@@ -472,10 +472,10 @@ class AnalysisQueue:
         data  = f"Analysis date  : {today} (use this as today — ignore training memory for prices)\n\n"
         data += f"Stock          : {stock['symbol']} ({stock.get('exchange','NSE')})\n"
         data += f"Qty held       : {stock['quantity']} shares\n"
-        data += f"Avg buy price  : ₹{stock['avg_buy_price']}\n"
-        data += f"Current price  : ₹{stock['current_price']}  [source: {stock.get('price_source','')}]\n"
-        data += f"P&L            : ₹{stock['pnl']} ({stock['pnl_percent']}%)\n"
-        data += f"52-week range  : ₹{stock.get('52w_low','N/A')} – ₹{stock.get('52w_high','N/A')}\n"
+        data += f"Avg buy price  : Rs.{stock['avg_buy_price']}\n"
+        data += f"Current price  : Rs.{stock['current_price']}  [source: {stock.get('price_source','')}]\n"
+        data += f"P&L            : Rs.{stock['pnl']} ({stock['pnl_percent']}%)\n"
+        data += f"52-week range  : Rs.{stock.get('52w_low','N/A')} – Rs.{stock.get('52w_high','N/A')}\n"
         data += f"1-year trend   : {stock.get('price_trend','Unknown')}\n"
         data += f"30-day momentum: {stock.get('momentum','Unknown')}\n"
         data += f"Sector         : {stock.get('sector','Unknown')}\n"
@@ -483,7 +483,7 @@ class AnalysisQueue:
         if plan["include_pe_ratios"]:
             data += f"P/E ratio      : {stock.get('pe_ratio','N/A')}\n"
             data += f"P/B ratio      : {stock.get('pb_ratio','N/A')}\n"
-            data += f"Market cap     : ₹{stock.get('market_cap_cr','N/A')} Cr\n"
+            data += f"Market cap     : Rs.{stock.get('market_cap_cr','N/A')} Cr\n"
 
         # Previous analysis context (if available)
         prev_block = ""
@@ -510,7 +510,7 @@ class AnalysisQueue:
                 f"  Qty then       : {prev_qty} shares\n"
                 f"  Qty now        : {curr_qty} shares\n"
                 f"{qty_changed}"
-                f"  Price then     : ₹{prev_stock.get('current_price', 'N/A')}\n"
+                f"  Price then     : Rs.{prev_stock.get('current_price', 'N/A')}\n"
                 f"  Action         : {p.get('ACTION', 'N/A')}\n"
                 f"  Conviction     : {p.get('CONVICTION', 'N/A')}\n"
                 f"  Target price   : {p.get('TARGET_PRICE', 'N/A')}\n"
@@ -533,7 +533,7 @@ class AnalysisQueue:
                 taken_label = f" [USER ACTION: {taken}]" if taken not in ("N/A", None) else ""
                 history_block += (
                     f"  {h['date']}: {h.get('action','?')} ({h.get('conviction','?')}) | "
-                    f"Price: ₹{h.get('price', 0):.2f} | Target: {h.get('target_price','?')}"
+                    f"Price: Rs.{h.get('price', 0):.2f} | Target: {h.get('target_price','?')}"
                     f"{taken_label}\n"
                 )
             history_block += (
@@ -549,7 +549,7 @@ class AnalysisQueue:
                 f"\nPENDING RECOMMENDATION (from {pending['date']}, NOT yet acted on):\n"
                 f"  Previous action  : {pending['action']}\n"
                 f"  Action detail    : {pending.get('action_detail', 'N/A')}\n"
-                f"  Price at time    : ₹{pending.get('price_then', 0):.2f}\n"
+                f"  Price at time    : Rs.{pending.get('price_then', 0):.2f}\n"
                 f"  Target then      : {pending.get('target_price', 'N/A')}\n"
                 f"  Reasoning then   : {pending.get('reasoning', 'N/A')[:200]}\n"
                 f"\nThe user did NOT act on this recommendation. Evaluate whether it is still valid "
@@ -577,7 +577,7 @@ class AnalysisQueue:
             "SIP amounts, rebalance triggers, or upcoming events to wait for before acting.\n\n"
             "SPREADSHEET FIELDS (fill these precisely for tracking):\n"
             "  ACTION_DETAIL  : Short description of immediate action, e.g. \"Sell 25 shares (50%)\", "
-            "\"Buy 10 shares at ₹840-850\", \"Exit all 17 shares\", or \"No action\" for HOLD.\n"
+            "\"Buy 10 shares at Rs.840-850\", \"Exit all 17 shares\", or \"No action\" for HOLD.\n"
             f"  NUM_STOCKS     : Number of shares to buy/sell NOW (integer). 0 if HOLD or waiting for trigger. "
             f"The investor holds {stock['quantity']} shares.\n"
             "  TRIGGER_PRICE  : Specific price level to watch for the NEXT action (e.g. stop-loss, "
