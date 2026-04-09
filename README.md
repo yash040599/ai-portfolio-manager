@@ -484,10 +484,16 @@ For the comprehensive tax guide (slab rates, ITR forms, advance tax deadlines, l
 |---|---|
 | `python scripts/fill_intraday_ledger.py` | Fill intraday tax ledger from live trading JSONs (auto-runs after each trade day) |
 | `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices in reports, tax ledger, and trades table |
-| `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx — verify intraday + import capital gains |
-| `python scripts/tax_summary.py` | Combined tax summary — speculative income, STCG, LTCG, estimated tax |
+| `python scripts/import_zerodha_taxpnl.py` | Import Zerodha Tax P&L xlsx -- verify intraday + import capital gains |
+| `python scripts/import_zerodha_taxpnl.py --fy 2025` | Verify FY 2025-26 sheet only |
+| `python scripts/import_zerodha_taxpnl.py --fy 2026` | Verify FY 2026-27 sheet only |
+| `python scripts/tax_summary.py` | Combined tax summary -- speculative income, STCG, LTCG, estimated tax |
+| `python scripts/tax_summary.py --intraday --fy 2025` | Intraday tax summary for FY 2025-26 |
 | `python scripts/view_intraday_ledger.py` | View intraday trades with verified/unverified status |
+| `python scripts/view_intraday_ledger.py --fy 2026` | View intraday ledger for FY 2026-27 |
+| `python scripts/view_intraday_ledger.py --list` | List all FYs with intraday data |
 | `python scripts/view_capital_gains_ledger.py` | View capital gains trades (short-term / long-term) |
+| `python scripts/view_capital_gains_ledger.py --list` | List all FYs with capital gains data |
 
 Tax rates are configurable in `config.py` (`TAX_RATE_PCT`, `STCG_TAX_RATE_PCT`, `LTCG_TAX_RATE_PCT`, etc.).
 
@@ -579,50 +585,6 @@ NoAI mode eliminates Claude API costs entirely.
 - **Config hints** — log messages tell you which config to change when an action is skipped
 
 All thresholds are configurable in `config.py`. For the complete risk management architecture, see **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)**.
-
----
-
-## Audit & Comprehensive Review (April 9, 2026)
-
-A comprehensive financial and engineering audit was conducted on the trading system:
-
-### Financial Analysis ✅
-- **Charge structure**: Industry-standard Zerodha fees (0.053% of turnover on Apr 9)
-- **Tax treatment**: Correct (ITR-3 Section 43(5) speculative income, 31.2% cess+rate)
-- **P&L calculation**: Mathematically sound and verified against Zerodha ground truth
-- **Profitability**: System not yet profitable (strategy tuning required, not bugs)
-- **Cumulative (9 days, Mar 25 - Apr 9)**: -Rs.1,077 net loss after charges (~2.2% of capital)
-
-### Code Quality & Security ✅ with Fixes Applied
-Four critical edge-case bugs identified and **FIXED** in services/order_engine.py:
-
-**Fix #1** (Line 295): _bot_closed_positions now cleared at function START (not END)
-- Prevents stale entries affecting duplicate detection in rapid successive sync calls
-
-**Fix #2** (Line 335): External position detection now uses (symbol, side) tuple (not just symbol)
-- Prevents false duplicate when bot has SELL and user manually enters BUY of same stock
-
-**Fix #3** (Line 354-382): Exit price for external closes now has 3-level fallback
-- Level 1: Zerodha position data (sell_price for BUY, buy_price for SELL)
-- Level 2: Current market price via Zerodha quote API
-- Level 3: Entry price (with error logged)
-
-**Fix #4** (Line 927-953): SL-M order placement now has explicit error handling
-- Catches exceptions and sets _sl_order_id=None with clear logging
-- Software SL monitoring takes over on placement failure
-
-### Trigger Order Handling Policy ✅
-- **Stale triggers cleaned**: cancel_all_pending_orders() explicitly cancels at 3:10 PM
-- **Pending tracking**: _pending_order_ids tracks SL-M orders for cleanup
-- **Bot-closed detection**: _bot_closed_positions prevents duplicate misidentification
-- **Position counting**: Open positions counted separately from pending orders (correct design)
-- **Non-triggering risk**: Software SL monitoring handles cases where trigger never executes
-
-### Recommendations for Production
-1. ✅ **Applied**: Four critical code fixes
-2. ⚠️ **Planned**: Strategy enhancements (R:R floor 1.5:1, late-entry penalty reduce to 10-25%)
-3. ⚠️ **Planned**: Allow 3 positions (vs 2) for better diversification  
-4. ⚠️ **Planned**: Increase circuit breaker to 4% (from 3%) for recovery attempts
 
 ---
 

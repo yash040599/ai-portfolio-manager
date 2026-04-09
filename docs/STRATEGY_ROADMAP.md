@@ -571,6 +571,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 86 | ADJUST_TARGET directional validation | V2 | ✅ Done | `order_engine.py` |
 | 87 | reconcile_with_zerodha API error handling | All | ✅ Done | `order_engine.py` |
 | 88 | market_data.py quote fetch error handling | All | ✅ Done | `market_data.py` |
+| 89 | Increase circuit breaker to 4% | All | ⬜ Pending | `config.py` |
 ---
 
 ## COMPLETED — Tax Infrastructure Fixes (April 2026)

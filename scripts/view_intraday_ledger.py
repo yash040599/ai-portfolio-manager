@@ -56,15 +56,15 @@ def view_fy(fy_start: int):
         print(f"\n  No trades for {label}.")
         return
 
-    w = 145
+    w = 140
     print(f"\n{'=' * w}")
-    print(f"  {label} — INTRADAY TAX LEDGER  (live trades only)")
+    print(f"  {label} -- INTRADAY TAX LEDGER  (live trades only)")
     print(f"{'=' * w}")
 
     hdr = (
         f"  {'#':>3}  {'Date':<10}  {'Symbol':<12}  {'Side':<4}  {'Qty':>4}"
-        f"  {'Entry':>13}  {'Exit':>13}  {'Gross P&L':>13}"
-        f"  {'Charges':>11}  {'Net P&L':>13}  {'Exit Reason':<12}  {'API':^5}  {'Sheet':^5}"
+        f"  {'Entry':>12}  {'Exit':>12}  {'Gross P&L':>12}"
+        f"  {'Charges':>10}  {'Net P&L':>12}  {'Exit Reason':<12}  {'API':^5}  {'Sheet':^5}"
     )
     print(f"\n{hdr}")
     print(f"  {'─' * (w - 4)}")
@@ -94,7 +94,7 @@ def view_fy(fy_start: int):
     print(f"  {'─' * (w - 4)}")
     print(
         f"  {'':>3}  {'TOTAL':<10}  {'':12}  {'':4}  {'':4}"
-        f"  {'':13}  {'':13}  Rs.{total_gross:>+9,.2f}"
+        f"  {'':12}  {'':12}  Rs.{total_gross:>+9,.2f}"
         f"  Rs.{total_charges:>7,.2f}  Rs.{total_net:>+9,.2f}"
     )
     print(f"\n  {len(rows)} trade(s)  |  {len({r['date'] for r in rows})} day(s)")

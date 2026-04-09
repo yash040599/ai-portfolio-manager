@@ -5,12 +5,14 @@ Import and verify trade data from a Zerodha Tax P&L xlsx report.
                       inserts missing trades, marks everything as 'verified'.
 • Short-term / Long-term sections → inserts into capital_gains_ledger.
 • Also updates trading_data_*.json and trading_report_*.txt with corrected
-  values, adds a ✓ VERIFIED header and an "Updated on …" remark.
+  values, adds a verified header and an "Updated on ..." remark.
 
 Usage
-─────
-    python scripts/import_zerodha_taxpnl.py                              # latest xlsx in data/ZerodhaTaxPL/
+-----
+    python scripts/import_zerodha_taxpnl.py                              # all xlsx sheets in data/ZerodhaTaxPL/
     python scripts/import_zerodha_taxpnl.py data/ZerodhaTaxPL/file.xlsx  # specific file
+    python scripts/import_zerodha_taxpnl.py --fy 2025                    # FY 2025-26 sheet only
+    python scripts/import_zerodha_taxpnl.py --fy 2026                    # FY 2026-27 sheet only
 """
 
 import argparse
@@ -124,11 +126,20 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
     Verify / correct intraday_tax_ledger against Zerodha data.
     Groups by (date, symbol) and compares aggregate P&L.
 
-    Returns {"verified": n, "corrected": n, "inserted": n}.
+    Skips today's date — Zerodha Tax P&L is only finalized T+1,
+    so same-day data may be incomplete/partial.
+
+    Returns {"verified": n, "corrected": n, "inserted": n, "skipped_today": n}.
     """
+    today_str = now_ist().strftime("%Y-%m-%d")
+
     # Group Zerodha by (exit_date, symbol)
     z_groups: dict[tuple, list] = {}
+    skipped_today = 0
     for t in zerodha_trades:
+        if t["exit_date"] == today_str:
+            skipped_today += 1
+            continue
         key = (t["exit_date"], t["symbol"])
         z_groups.setdefault(key, []).append(t)
 
@@ -141,7 +152,7 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
         key = (r["date"], r["symbol"])
         db_groups.setdefault(key, []).append(r)
 
-    stats = {"verified": 0, "corrected": 0, "inserted": 0}
+    stats = {"verified": 0, "corrected": 0, "inserted": 0, "skipped_today": skipped_today}
 
     for key, z_trades in z_groups.items():
         date, symbol = key
@@ -214,8 +225,8 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
                 for i, t in enumerate(z_trades):
                     _insert_zerodha_intraday(conn, t, i)
                 stats["corrected"] += len(z_trades)
-                print(f"    ✎ Corrected {symbol} on {date}: "
-                      f"P&L {db_total_pnl:+.2f} → {z_total_pnl:+.2f}")
+                print(f"    * Corrected {symbol} on {date}: "
+                      f"P&L {db_total_pnl:+.2f} -> {z_total_pnl:+.2f}")
         else:
             # Only in Zerodha — insert
             for i, t in enumerate(z_trades):
@@ -409,12 +420,17 @@ def _update_trading_reports(zerodha_trades: list[dict], conn) -> dict:
     - Position values (entry/exit/pnl) come from the trades DB
       (already reconciled with Zerodha live data).
     - Charges come from Zerodha Tax P&L actuals.
+    - Skips today's date (sheet data not finalized until T+1).
 
     Returns {"updated": [dates], "skipped": [dates]}.
     """
-    # Group Zerodha trades by exit_date
+    today_str = now_ist().strftime("%Y-%m-%d")
+
+    # Group Zerodha trades by exit_date, excluding today
     by_date: dict[str, list] = {}
     for t in zerodha_trades:
+        if t["exit_date"] == today_str:
+            continue
         by_date.setdefault(t["exit_date"], []).append(t)
 
     stats: dict[str, list] = {"updated": [], "skipped": []}
@@ -509,7 +525,7 @@ def _update_trading_reports(zerodha_trades: list[dict], conn) -> dict:
         )
 
         stats["updated"].append(date_str)
-        print(f"    ✓ Updated reports for {date_str}")
+        print(f"    ok Updated reports for {date_str}")
 
     return stats
 
@@ -545,7 +561,7 @@ def _write_verified_txt(
     with open(txt_path, "w", encoding="utf-8") as f:
         # ── Verified header ───────────────────────────────────
         f.write(f"{'=' * 58}\n")
-        f.write(f"  ✓ VERIFIED — Data corrected from Zerodha Tax P&L\n")
+        f.write(f"  VERIFIED -- Data corrected from Zerodha Tax P&L\n")
         f.write(f"  Updated on: {verified_on}\n")
         f.write(f"{'=' * 58}\n\n")
 
@@ -637,7 +653,7 @@ def _write_verified_txt(
         f.write(f"{'=' * 42}\n")
         f.write(f"  NET PROFIT AFTER ALL  : Rs.{pnl['net_profit']:+,.2f}\n")
         f.write(f"{'=' * 42}\n")
-        profitable = "YES ✓" if pnl["is_profitable"] else "NO ✗"
+        profitable = "YES" if pnl["is_profitable"] else "NO"
         f.write(f"  Profitable?           : {profitable}\n")
         if budget > 0:
             returns_pct = pnl["net_profit"] / budget * 100
@@ -722,27 +738,20 @@ def _import_capital_gains(conn, trades: list[dict], trade_type: str) -> int:
 
 # ── CLI ───────────────────────────────────────────────────────────
 
-def _find_latest_xlsx() -> str | None:
+def _find_sheets_for_fy(fy_start: int) -> list[str]:
+    """Find xlsx files matching a specific FY (e.g. fy_start=2025 → *-2025_2026-*.xlsx)."""
+    pattern = os.path.join(ZERODHA_DIR, f"taxpnl-*-{fy_start}_{fy_start + 1}-*.xlsx")
+    return sorted(glob.glob(pattern))
+
+
+def _find_all_sheets() -> list[str]:
+    """Find all taxpnl xlsx files in ZerodhaTaxPL directory."""
     pattern = os.path.join(ZERODHA_DIR, "taxpnl-*.xlsx")
-    files = sorted(glob.glob(pattern))
-    return files[-1] if files else None
+    return sorted(glob.glob(pattern))
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Import Zerodha Tax P&L xlsx — verify intraday & import capital gains.",
-    )
-    parser.add_argument(
-        "xlsx", nargs="?", default=None,
-        help="Path to Zerodha xlsx. Default: latest file in data/ZerodhaTaxPL/.",
-    )
-    args = parser.parse_args()
-
-    xlsx_path = args.xlsx or _find_latest_xlsx()
-    if not xlsx_path or not os.path.exists(xlsx_path):
-        print(f"\n  No Zerodha xlsx found. Place it in data/ZerodhaTaxPL/")
-        return
-
+def _process_xlsx(xlsx_path: str):
+    """Process a single xlsx file: verify intraday + import capital gains."""
     print(f"\n  Reading: {os.path.basename(xlsx_path)}")
     intraday, short_term, long_term = parse_xlsx(xlsx_path)
     print(f"  Parsed: {len(intraday)} intraday, "
@@ -752,32 +761,86 @@ def main():
 
     # ── Intraday verification ─────────────────────────────────
     if intraday:
-        print(f"\n  Verifying intraday trades …")
+        print(f"\n  Verifying intraday trades ...")
         stats = _verify_intraday(conn, intraday)
-        print(f"  ✓ Verified: {stats['verified']}  |  "
+        print(f"  ok Verified: {stats['verified']}  |  "
               f"Corrected: {stats['corrected']}  |  "
               f"Inserted: {stats['inserted']}"
               + (f"  |  Sides fixed: {stats['sides_fixed']}"
-                 if stats.get('sides_fixed') else ""))
+                 if stats.get('sides_fixed') else "")
+              + (f"  |  Skipped today: {stats['skipped_today']}"
+                 if stats.get('skipped_today') else ""))
 
         # ── Update JSON / TXT trading reports ─────────────────
-        print(f"\n  Updating trading reports …")
+        print(f"\n  Updating trading reports ...")
         report_stats = _update_trading_reports(intraday, conn)
         if report_stats["updated"]:
-            print(f"  ✓ Reports updated for: {', '.join(report_stats['updated'])}")
+            print(f"  ok Reports updated for: {', '.join(report_stats['updated'])}")
         if report_stats["skipped"]:
-            print(f"  ⊘ No report files for: {', '.join(report_stats['skipped'])}")
+            print(f"  -- No report files for: {', '.join(report_stats['skipped'])}")
 
     # ── Capital gains import ──────────────────────────────────
     if short_term:
         n = _import_capital_gains(conn, short_term, "short_term")
-        print(f"  ✓ Short-term: {n} trade(s) imported ({len(short_term) - n} already existed)")
+        print(f"  ok Short-term: {n} trade(s) imported ({len(short_term) - n} already existed)")
     if long_term:
         n = _import_capital_gains(conn, long_term, "long_term")
-        print(f"  ✓ Long-term:  {n} trade(s) imported ({len(long_term) - n} already existed)")
+        print(f"  ok Long-term:  {n} trade(s) imported ({len(long_term) - n} already existed)")
 
     conn.close()
     print(f"\n  Done.\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Import Zerodha Tax P&L xlsx -- verify intraday & import capital gains.",
+    )
+    parser.add_argument(
+        "xlsx", nargs="?", default=None,
+        help="Path to Zerodha xlsx. Default: all files in data/ZerodhaTaxPL/.",
+    )
+    parser.add_argument(
+        "--fy", type=int, default=None,
+        help="Financial year start (e.g. 2025 for FY 2025-26). Picks the matching sheet automatically.",
+    )
+    args = parser.parse_args()
+
+    if args.xlsx and args.fy:
+        print("\n  Error: specify either a file path or --fy, not both.")
+        return
+
+    # ── Specific file ─────────────────────────────────────────
+    if args.xlsx:
+        if not os.path.exists(args.xlsx):
+            print(f"\n  File not found: {args.xlsx}")
+            return
+        _process_xlsx(args.xlsx)
+        return
+
+    # ── Filter by FY ──────────────────────────────────────────
+    if args.fy:
+        sheets = _find_sheets_for_fy(args.fy)
+        if not sheets:
+            fy_label_str = f"FY {args.fy}-{str(args.fy + 1)[2:]}"
+            print(f"\n  No {fy_label_str} sheet found in data/ZerodhaTaxPL/.")
+            print(f"  Please download the {fy_label_str} Tax P&L xlsx from Zerodha Console")
+            print(f"  (https://console.zerodha.com/reports/taxpnl) and place it in:")
+            print(f"    {ZERODHA_DIR}/")
+            print(f"  Expected filename pattern: taxpnl-*-{args.fy}_{args.fy + 1}-*.xlsx")
+            return
+        for sheet in sheets:
+            _process_xlsx(sheet)
+        return
+
+    # ── No args: process all sheets ───────────────────────────
+    sheets = _find_all_sheets()
+    if not sheets:
+        print(f"\n  No Zerodha xlsx files found in data/ZerodhaTaxPL/.")
+        print(f"  Download from https://console.zerodha.com/reports/taxpnl")
+        return
+    print(f"\n  Found {len(sheets)} sheet(s) in data/ZerodhaTaxPL/")
+    for sheet in sheets:
+        _process_xlsx(sheet)
 
 
 if __name__ == "__main__":
