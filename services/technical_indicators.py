@@ -178,6 +178,90 @@ def rsi_signal(candles: list[dict], period: int = 14) -> dict:
 
 
 # ================================================================
+# STOCHASTIC RSI — ENTRY TIMING CONFIRMATION
+# ================================================================
+
+def stoch_rsi(candles: list[dict], rsi_period: int = 14,
+              stoch_period: int = 14, k_smooth: int = 3,
+              d_smooth: int = 3) -> dict:
+    """
+    Stochastic RSI = Stochastic oscillator applied to RSI values.
+    More responsive than RSI for intraday entry timing.
+
+    Returns:
+      {
+        "k": float (0-100),  %K line (fast)
+        "d": float (0-100),  %D line (slow, SMA of %K)
+        "signal": "BULLISH_CROSS" | "BEARISH_CROSS" | "OVERBOUGHT" | "OVERSOLD" | "NEUTRAL",
+      }
+    """
+    min_candles = rsi_period + stoch_period + d_smooth + 5
+    if len(candles) < min_candles:
+        return {"k": 50, "d": 50, "signal": "NEUTRAL"}
+
+    # Compute RSI series
+    closes = [c["close"] for c in candles]
+    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+
+    rsi_values = []
+    gains = [max(0, c) for c in changes[:rsi_period]]
+    losses = [max(0, -c) for c in changes[:rsi_period]]
+    avg_gain = sum(gains) / rsi_period
+    avg_loss = sum(losses) / rsi_period
+
+    for c in changes[rsi_period:]:
+        avg_gain = (avg_gain * (rsi_period - 1) + max(0, c)) / rsi_period
+        avg_loss = (avg_loss * (rsi_period - 1) + max(0, -c)) / rsi_period
+        if avg_loss == 0:
+            rsi_values.append(100.0)
+        else:
+            rsi_values.append(100 - (100 / (1 + avg_gain / avg_loss)))
+
+    if len(rsi_values) < stoch_period:
+        return {"k": 50, "d": 50, "signal": "NEUTRAL"}
+
+    # Stochastic of RSI: %K = (RSI - min) / (max - min) * 100
+    raw_k = []
+    for i in range(stoch_period - 1, len(rsi_values)):
+        window = rsi_values[i - stoch_period + 1:i + 1]
+        lo, hi = min(window), max(window)
+        raw_k.append(((rsi_values[i] - lo) / (hi - lo) * 100) if hi > lo else 50)
+
+    # Smooth %K with SMA
+    if len(raw_k) < k_smooth:
+        return {"k": 50, "d": 50, "signal": "NEUTRAL"}
+    k_line = []
+    for i in range(k_smooth - 1, len(raw_k)):
+        k_line.append(sum(raw_k[i - k_smooth + 1:i + 1]) / k_smooth)
+
+    # %D = SMA of smoothed %K
+    if len(k_line) < d_smooth:
+        return {"k": 50, "d": 50, "signal": "NEUTRAL"}
+    d_line = []
+    for i in range(d_smooth - 1, len(k_line)):
+        d_line.append(sum(k_line[i - d_smooth + 1:i + 1]) / d_smooth)
+
+    k = round(k_line[-1], 1)
+    d = round(d_line[-1], 1)
+
+    # Signal detection
+    signal = "NEUTRAL"
+    if len(k_line) >= 2 and len(d_line) >= 2:
+        prev_k = k_line[-2]
+        prev_d = d_line[-2] if len(d_line) >= 2 else d
+        if prev_k <= prev_d and k > d:
+            signal = "BULLISH_CROSS"
+        elif prev_k >= prev_d and k < d:
+            signal = "BEARISH_CROSS"
+        elif k > 80:
+            signal = "OVERBOUGHT"
+        elif k < 20:
+            signal = "OVERSOLD"
+
+    return {"k": k, "d": d, "signal": signal}
+
+
+# ================================================================
 # VWAP — VOLUME WEIGHTED AVERAGE PRICE
 # ================================================================
 
@@ -1233,19 +1317,24 @@ def compute_technical_score(
     # Extended move penalty — penalize stocks that have already moved
     # significantly from today's open. These are chasing opportunities
     # with high mean-reversion risk.
+    # Only penalize when score direction matches move direction (chasing).
+    # E.g. stock up 2.5% with bullish score → dampen toward 0 (don't chase).
+    # Stock down 2.5% with bullish score → no penalty (contrarian, not chasing).
     extended_move_pct = 0.0
     if today_candles and price > 0:
         today_open = today_candles[0]["open"]
         if today_open > 0:
             extended_move_pct = (price - today_open) / today_open * 100
             abs_move = abs(extended_move_pct)
-            if abs_move > 2.0:
+            chasing = (extended_move_pct > 0 and score > 0) or \
+                      (extended_move_pct < 0 and score < 0)
+            if chasing and abs_move > 2.0:
                 # Heavy penalty: >2% move from open = very extended
-                penalty = -3.0 if extended_move_pct > 0 else 3.0
+                penalty = -3.0 if score > 0 else 3.0
                 score += penalty
-            elif abs_move > 1.5:
+            elif chasing and abs_move > 1.5:
                 # Moderate penalty: 1.5-2% move
-                penalty = -1.5 if extended_move_pct > 0 else 1.5
+                penalty = -1.5 if score > 0 else 1.5
                 score += penalty
 
     # Map score to signal
@@ -1257,6 +1346,11 @@ def compute_technical_score(
         score = 3.0
     elif 0 < rsi_val <= 25 and score < -3:
         score = -3.0
+
+    # StochRSI — entry timing confirmation (not a score contributor).
+    # StochRSI is more responsive than RSI on 15-min candles.
+    # BULLISH_CROSS when RSI is neutral (40-60) = entry confirmation.
+    stoch_rsi_data = stoch_rsi(candles_15m, rsi_period=14, stoch_period=14)
 
     if score >= 5:
         signal = "STRONG_BUY"
@@ -1286,4 +1380,5 @@ def compute_technical_score(
         "fibonacci": fib_data,
         "vwap_bands": vwap_band_data,
         "extended_move_pct": round(extended_move_pct, 2),
+        "stoch_rsi": stoch_rsi_data,
     }

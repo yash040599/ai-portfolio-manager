@@ -264,11 +264,8 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Cache previous scan scores in memory. Compute delta_score. Penalize entries where score is falling fast.
 - **Effort**: Medium | **Impact**: Medium
 
-### 37. Correlation-Based Position Sizing
-- **Versions**: All
-- **Gap**: Sector cap prevents 3+ stocks in one sector, but 2 highly-correlated stocks (e.g. HDFCBANK + ICICIBANK) still act as a single position during sector drops.
-- **Fix**: Track intraday correlation between open positions. If new entry has >0.7 correlation with an existing position, reduce qty by 50%.
-- **Effort**: High | **Impact**: Medium
+### 37. ~~Correlation-Based Position Sizing~~ *(Removed)*
+- **Reason**: Redundant — sector cap (#8, #26) + direction diversification (#53, #76) + max 3 positions (#54) already prevent correlated drawdowns. Adding intraday correlation tracking adds complexity for negligible benefit at this position count.
 
 ### 38. ✅ Improved Slippage Model for Dry Run
 - **Versions**: Dry Run
@@ -320,17 +317,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Cache daily scanner scores in DB. Compare today's pre-market score with yesterday's closing score. Sustained-trend bonus +0.5, fresh-reversal no adjustment.
 - **Effort**: Medium | **Impact**: Medium
 
-### 46. Smart Square-Off Timing
-- **Versions**: All
-- **Gap**: Fixed 3:10 PM square-off regardless of market conditions. On trending days, holding 5 more minutes captures more profit. On choppy days, earlier exit avoids EOD chop.
-- **Fix**: Adaptive square-off: if portfolio is profitable and trend is intact (ADX>25, positions in-profit), delay to 3:15. If losing and trend fading, advance to 3:05.
-- **Effort**: Medium | **Impact**: Medium
+### 46. ~~Smart Square-Off Timing~~ *(Removed)*
+- **Reason**: Marginal ±5 min difference. EOD accelerated exit (#27) already exits losers early. Risk of holding past close outweighs benefit of 5 extra minutes.
 
-### 47. Budget Auto-Scaling Based on Win Rate
-- **Versions**: All
-- **Gap**: Budget is fixed at MAX_BUDGET_INR. After a winning streak, the bot should deploy more; after losses, less.
-- **Fix**: Track 5-day rolling win rate. >65% → allow budget ×1.2 (max 120% of MAX_BUDGET_INR). <40% → cap at 80%. Resets weekly.
-- **Effort**: Medium | **Impact**: Medium
+### 47. ~~Budget Auto-Scaling Based on Win Rate~~ *(Removed)*
+- **Reason**: Over-engineering — loss-adjusted sizing (#15) already reduces budget after losses. Dynamic position sizing (#58) scales with available capital. Adding win-rate scaling on top adds complexity for minimal incremental benefit.
 
 ---
 
@@ -388,12 +379,8 @@ These fixes were identified by analyzing 8 days of actual trade data showing -Rs
 - **Fix**: Add MIN_STOCK_PRICE (default Rs.100) and MAX_STOCK_PRICE (default Rs.800) config. Filter during scan phase — skip stocks outside range.
 - **Files**: `config.py`, `stock_scanner_v2.py`
 
-### 57. VWAP Exclude Incomplete Candle
-- **Versions**: V2, NoAI
-- **Priority**: LOW
-- **Gap**: The current 15-min candle hasn't closed yet, so including it in VWAP computation skews the volume-weighted average. Early in the candle, volume is partial.
-- **Fix**: In `vwap_score()`, exclude the last candle if its timestamp is within the current 15-min window (i.e., hasn't closed). Only use fully-closed candles for VWAP computation.
-- **Files**: `technical_indicators.py`
+### 57. ~~VWAP Exclude Incomplete Candle~~ *(Removed)*
+- **Reason**: Negligible impact. The last incomplete candle contributes a tiny fraction of the cumulative VWAP calculation. VWAP SD bands (#34) already smooth out noise.
 
 ### 58. ✅ Dynamic Position Sizing by Budget
 - **Versions**: All
@@ -496,6 +483,86 @@ Bugs identified during expert code review. All fixed in commit that added this s
 
 ---
 
+## COMPLETED — V2 Review Cycle (Performance Tuning, April 2026)
+
+Identified by deep code review against industry standards for candle-based intraday trading. Analyzed 63 trades over 9 days (Rs.-585 total P&L, 48% win rate, 1.05:1 win:loss ratio). Root causes: targets too ambitious (1.5%), Claude exits too early, winners not filtering strong enough, missing confirmation indicators.
+
+### 90. ✅ Reduce Default Target to 1.2%
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: DEFAULT_TARGET_PCT was 1.5%. Only 33% of trades hit target in time (26/63 hit SQUARE_OFF). 1.2% is more achievable for intraday NSE moves.
+- **Fix**: DEFAULT_TARGET_PCT 1.5 → 1.2. Decision history comment added.
+- **Files**: `config.py`
+
+### 91. ✅ Increase Claude Review Time to 30 Minutes
+- **Versions**: V2 AI only
+- **Gap**: CLAUDE_REVIEW_MINUTES was 20 min. Claude exits like "flat since entry, exit" came too early — the trade needed 25-30 min to develop. 19 REVIEW_EXIT trades had 32% win rate.
+- **Fix**: CLAUDE_REVIEW_MINUTES 20 → 30. Gives trades more room to develop before first Claude review.
+- **Files**: `config.py`
+
+### 92. ✅ Post-Merge R:R Check (1.3:1 Minimum)
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: After ATR SL merge (using wider of ATR and structural SL), the R:R ratio was not rechecked. Could enter trades with poor risk:reward after merge widened the SL.
+- **Fix**: After ATR merge, recalculate R:R. If < 1.3:1, skip the trade. Logged as "Post-merge R:R too low".
+- **Files**: `order_engine.py`
+
+### 93. ✅ Volume Confirmation at Entry (RVol Gate)
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: RVol was only used as a score bonus during scanning. At actual entry time, volume could have dried up (stock going quiet), making fills unreliable and breakouts unlikely.
+- **Fix**: At entry time, if live RVol < 0.7× average, skip entry. Only in live mode (dry-run skips this check since no real-time volume).
+- **Files**: `order_engine.py`
+
+### 94. ✅ StochRSI Indicator for Entry Timing
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: RSI alone doesn't capture momentum shifts at extremes. StochRSI (Stochastic of RSI) gives earlier crossover signals — bullish cross in oversold zone or bearish cross in overbought zone.
+- **Fix**: Added `stoch_rsi()` function with %K/%D lines, signal detection (BULLISH_CROSS, BEARISH_CROSS, OVERBOUGHT, OVERSOLD). Integrated into `compute_technical_score()` return dict. Added to stock scanner enriched snapshot, NoAI rationale, and Claude prompt.
+- **Files**: `technical_indicators.py`, `stock_scanner_v2.py`
+
+### 95. ✅ Sector Momentum Filter (Score Boost)
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: Stocks are scored individually. When 3+ stocks in the same sector agree on direction, the sector has institutional flow — individual picks within it deserve higher conviction.
+- **Fix**: In `_prefilter_universe()`, compute per-sector score agreement. When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. Applied before Nifty trend hard filter.
+- **Files**: `stock_scanner_v2.py`
+
+### 96. ✅ Claude Scan Prompt: Rank/Veto Role + StochRSI Confluence
+- **Versions**: V2 AI only
+- **Gap**: Claude prompt didn't clearly define its role (rank vs generate). Missing StochRSI interpretation guide. Confluence checklist had 13 items but missed StochRSI.
+- **Fix**: Added role description ("YOUR ROLE: RANK and VETO from pre-filtered candidates"). Added StochRSI interpretation section. Updated confluence checklist to 14 items ("7/14 confluence").
+- **Files**: `stock_scanner_v2.py`
+
+### 97. ✅ Feed 15-Min Re-Scan Data to Claude Review Prompt
+- **Versions**: V2 AI only
+- **Gap**: Claude review prompt included 5-min RSI/EMA/VWAP/patterns but NOT the 15-min composite score. Claude couldn't see whether the broader technical picture had shifted.
+- **Fix**: In `review_positions_v2()`, also compute 15-min composite score and StochRSI signal for each open position. Appended to tech_ctx: "15min Score: +X.X  StochRSI: SIGNAL".
+- **Files**: `stock_scanner_v2.py`
+
+### Bug Fixes (V2 Review Cycle)
+
+### 98. ✅ Extended Move Penalty Direction Fix
+- **Versions**: V2 NoAI
+- **Gap**: Extended move penalty was applied regardless of score direction. A stock down -2.5% with a SELL score (contrarian = correct direction) still got penalized. The penalty should only apply when chasing an already-extended move, not when trading against it.
+- **Fix**: Penalty only when `chasing = (extended_move_pct > 0 and score > 0) or (extended_move_pct < 0 and score < 0)`. Contrarian setups are not penalized.
+- **Files**: `technical_indicators.py`
+
+### 99. ✅ Morning/Evening Star Gap Validation
+- **Versions**: V2 NoAI
+- **Gap**: Morning Star and Evening Star patterns detected without gap check. A small-bodied candle in the middle of the range isn't a star — it needs to be near an extreme (lower 40% for Morning Star, upper 60% for Evening Star).
+- **Fix**: Morning Star: `c2["close"] < c1["close"] + candle_range(c1) * 0.4`. Evening Star: `c2["close"] > c1["close"] - candle_range(c1) * 0.4`.
+- **Files**: `candle_patterns.py`
+
+### 100. ✅ Three White Soldiers / Three Black Crows Body Check
+- **Versions**: V2 NoAI
+- **Gap**: Three White Soldiers checked `c2["open"] > c1["open"]` but should check that each candle opens within the prior candle's body (per Nison's canonical definition).
+- **Fix**: Changed to `c1["open"] <= c2["open"] <= c1["close"]` (Soldiers) and `c1["close"] <= c2["open"] <= c1["open"]` (Crows).
+- **Files**: `candle_patterns.py`
+
+### 101. ✅ Observation Filter Bypass Log Level
+- **Versions**: All
+- **Gap**: When quote fetch fails for a stock, the observation period filter is bypassed and logged at INFO level. This silent bypass could cause premature entries.
+- **Fix**: Changed from `self.log.info()` to `self.log.warning()` for both quote failure paths.
+- **Files**: `manager.py`
+
+---
+
 ## Implementation Status
 
 | # | Improvement | Versions | Priority | Status | Implemented In |
@@ -536,7 +603,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 34 | VWAP SD bands | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 35 | Bid-ask spread check | All | MEDIUM | ✅ Done | `order_engine.py`, `config.py` |
 | 36 | Intraday momentum (RoC) | V2, NoAI | MEDIUM | ⬜ Pending | — |
-| 37 | Correlation-based sizing | All | LOW | ⬜ Pending | — |
+| 37 | ~~Correlation-based sizing~~ | — | — | ❌ Removed | Redundant w/ sector cap + direction diversification |
 | 38 | Improved slippage model | Dry Run | LOW | ✅ Done | `order_engine.py` |
 | 39 | ATR percentile ranking | V2, NoAI | MEDIUM | ⬜ Pending | — |
 | 40 | Claude prompt feedback loop | V2 | LOW | ⬜ Pending | — |
@@ -545,8 +612,8 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 43 | Real-time trade verification | All | HIGH | ✅ Done | `scripts/verify_trades.py` |
 | 44 | WebSocket tick data | All | MEDIUM | ⬜ Pending | — |
 | 45 | Multi-day score trend | V2, NoAI | MEDIUM | ⬜ Pending | — |
-| 46 | Smart square-off timing | All | LOW | ⬜ Pending | — |
-| 47 | Budget auto-scaling | All | LOW | ⬜ Pending | — |
+| 46 | ~~Smart square-off timing~~ | — | — | ❌ Removed | EOD accelerated exit (#27) covers this |
+| 47 | ~~Budget auto-scaling~~ | — | — | ❌ Removed | Loss-adjusted sizing (#15) + dynamic sizing (#58) cover this |
 | 49 | Wider SL logic | All | HIGH | ✅ Done | `order_engine.py` |
 | 50 | Late-entry + time-decay exclusion | All | HIGH | ✅ Done | `order_engine.py` |
 | 51 | Extended move penalty | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
@@ -555,7 +622,7 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 54 | Fewer trades, bigger size | All | HIGH | ✅ Done | `config.py` |
 | 55 | LIMIT orders for entry/exit | All | MEDIUM | ⬜ Pending | — |
 | 56 | Scan universe price filter | V2, NoAI | MEDIUM | ⬜ Pending | — |
-| 57 | VWAP exclude incomplete candle | V2, NoAI | LOW | ⬜ Pending | — |
+| 57 | ~~VWAP exclude incomplete candle~~ | — | — | ❌ Removed | Negligible impact on cumulative VWAP |
 | 58 | Dynamic position sizing by budget | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
 | 59 | R:R 1.5:1 + configurable multiplier | All | HIGH | ✅ Done | `config.py`, `order_engine.py` |
 | 60 | Exchange SL-M orders | All | HIGH | ✅ Done | `zerodha_client.py`, `order_engine.py`, `config.py` |
@@ -588,4 +655,16 @@ Bugs identified during expert code review. All fixed in commit that added this s
 | 87 | reconcile_with_zerodha API error handling | All | HIGH | ✅ Done | `order_engine.py` |
 | 88 | market_data.py quote fetch error handling | All | HIGH | ✅ Done | `market_data.py` |
 | 89 | Increase circuit breaker to 4% | All | MEDIUM | ⬜ Pending | `config.py` |
+| 90 | Reduce default target to 1.2% | All | HIGH | ✅ Done | `config.py` |
+| 91 | Increase Claude review time to 30 min | V2 AI | HIGH | ✅ Done | `config.py` |
+| 92 | Post-merge R:R check (1.3:1) | All | MEDIUM | ✅ Done | `order_engine.py` |
+| 93 | Volume confirmation at entry (RVol gate) | All | LOW | ✅ Done | `order_engine.py` |
+| 94 | StochRSI indicator for entry timing | All | LOW | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
+| 95 | Sector momentum filter (score boost) | All | LOW | ✅ Done | `stock_scanner_v2.py` |
+| 96 | Claude scan prompt: rank/veto + StochRSI | V2 AI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 97 | Feed 15-min re-scan data to Claude review | V2 AI | MEDIUM | ✅ Done | `stock_scanner_v2.py` |
+| 98 | Extended move penalty direction fix (bug) | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
+| 99 | Morning/Evening Star gap fix (bug) | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
+| 100 | Three White Soldiers/Crows body fix (bug) | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
+| 101 | Observation filter log level fix (bug) | All | MEDIUM | ✅ Done | `manager.py` |
 

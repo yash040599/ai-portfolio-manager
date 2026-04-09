@@ -11,10 +11,11 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-09 — Stagnant exit 90→45 min (0.3→0.5% threshold),
-  exit_position cancel error handling, _replace_exchange_sl pending tracking,
-  _update_exchange_sl exception safety, ADJUST_TARGET directional validation,
-  reconcile_with_zerodha API error handling, refresh_trigger() method.
+  Last sync: 2026-04-09 — V2 Review Cycle: target 1.5→1.2%, Claude review
+  20→30 min, post-merge R:R check, RVol entry gate, StochRSI indicator,
+  sector momentum filter, Claude rank/veto prompt, 15-min re-scan in review,
+  4 bug fixes (extended move penalty, Morning/Evening Star gap, 3WS/3BC body,
+  observation filter log level).
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -34,7 +35,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 |--------|-------------|---------|
 | Stock selection | Auto-picks by score sign + magnitude | Claude picks from top 15 pre-filtered |
 | Entry logic | Default SL/target from config + ATR overrides | Claude sets SL/target/rationale |
-| Position review | Stagnant exit after 45 min | Claude reviews every 20 min |
+| Position review | Stagnant exit after 45 min | Claude reviews every 30 min |
 | Score threshold raise | Yes — after day losses, V2_MIN_SCORE rises | No |
 | Claude API cost | Rs.0 | ~Rs.20-40/day (5-15 calls) |
 | Mid-day re-scan | Yes (every 30 min, no Claude call) | Yes (every 30 min, 1 Claude call) |
@@ -56,6 +57,7 @@ For each stock in NIFTY100 (~100 stocks):
       • Freshness decay: current = 1.0×, 1-ago = 0.7×, 2-ago = 0.4×
   → Compute 14 technical indicators → composite score (-24 to +24)
   → Add RVol bonus/penalty (-1 to +1)
+  → Apply sector momentum filter: when ≥3 stocks in a sector agree on direction, boost each ±0.5
   → Apply Nifty trend hard filter (against-trend needs |score| ≥ 3)
   → Sector diversification: max 2 per sector (12 sectors in SECTOR_MAP)
   → Filter: |score| ≥ V2_MIN_SCORE (default 2.0)
@@ -66,9 +68,10 @@ Cost: Rs.0 — pure computation on free Zerodha historical data.
 
 ### Phase 2 — Stock Selection — PAID (V2) / FREE (NoAI)
 
-**V2 (Claude):** Sends enriched snapshot per candidate — price, RSI, EMA signal, VWAP, SuperTrend direction, detected patterns, prev-day S&R, RVol, composite score. The prompt includes:
+**V2 (Claude):** Sends enriched snapshot per candidate — price, RSI, EMA signal, VWAP, SuperTrend direction, StochRSI signal, detected patterns, prev-day S&R, RVol, composite score. The prompt includes:
 - Time-phase context (Opening / Morning Trend / Midday Lull / Afternoon / Late Session)
-- 14-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, VWAP Bands, MACD, ORB, Gap, RVol, Hourly EMA, BB Squeeze, ADX, Fib, Prev-Day S&R, Daily EMA Bias)
+- 14-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, VWAP Bands, MACD, ORB, Gap, RVol, Hourly EMA, BB Squeeze, ADX, Fib, StochRSI, Prev-Day S&R, Daily EMA Bias)
+- Rank/veto role: Claude must rank and filter from pre-filtered candidates, not generate new ones
 - Hard rejection filters (extended move >2%, RSI extremes, R:R <1:1.5, against-SuperTrend without reversal)
 - Indian market awareness (NIFTY regime, F&O expiry, sector clustering)
 - Common mistakes to avoid (chasing extended moves, all-same-direction)
@@ -97,7 +100,7 @@ Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 | Every 15 min | Re-run candle analysis on open positions. **Auto-protect:** contrary score ≥ ±4 → tighten SL (50% profit lock or breakeven) | Free |
 | Every 15 min | Nifty trend recheck (regime shift detection) | Free |
 | Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (V2) / Free (NoAI) |
-| Every 20 min (V2 only) | Claude reviews open positions with fresh 5-min candle data + pattern analysis | 1 Claude call |
+| Every 30 min (V2 only) | Claude reviews open positions with fresh 5-min candle data + StochRSI + 15-min composite score | 1 Claude call |
 
 ### Phase 5 — Square Off & Report
 
@@ -117,7 +120,9 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 |---|-------|--------|-----------|
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
+| 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | SL = wider-of(ATR, Claude). Target uses 1.5:1 R:R. SL capped at 2.5% |
+| 3b | **Post-merge R:R check** | R:R ≥ 1.3:1 | After ATR merge, if R:R < 1.3:1 → skip trade |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
@@ -235,6 +240,7 @@ All indicators on 15-min candles. Total score range: **-24 to +24**.
 | **Gap Analysis** | ±1 | >1% gap + high volume = continuation. Low volume = fill risk. |
 | **Hourly EMA Alignment** | ±1 | Synthetic hourly candles. Both timeframes aligned = confluence bonus. |
 | **Bollinger Squeeze** | ±0.5 | BB width < 20-period average = squeeze. Breakout from squeeze adds ±0.5 directionally. |
+| **StochRSI(14,14)** | info only | Stochastic of RSI: %K/%D crossover. Signals: BULLISH_CROSS, BEARISH_CROSS, OVERBOUGHT, OVERSOLD. Fed to Claude prompt and NoAI snapshot for entry timing. Not scored directly. |
 | **Daily EMA(9/21) Bias** | ±1 | Higher timeframe trend (only if spread > 1%). |
 
 ### Modifier Indicators
@@ -249,7 +255,7 @@ All indicators on 15-min candles. Total score range: **-24 to +24**.
 
 | Indicator | Effect | Description |
 |-----------|--------|-------------|
-| **Extended Move Penalty** | ±1.5 to ±3 | >2% from open → -3 penalty opposing direction. Prevents chasing. |
+| **Extended Move Penalty** | ±1.5 to ±3 | >2% from open → -3 penalty. **Only penalises chasing** (score direction matches move direction). Contrarian setups (score opposes extended move) are not penalised. |
 | **RSI Extreme Hard Cap** | caps at ±3 | RSI ≥ 75 → max +3. RSI ≤ 25 → min -3. |
 
 ### Score Interpretation
@@ -303,7 +309,7 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | `MAX_POSITIONS_OVERRIDE` | 0 | 0 = auto; >0 = fixed |
 | `MAX_POSITION_PCT` | 40% | Per-stock cap |
 | `DEFAULT_STOP_LOSS_PCT` | 1.5% | Fallback SL |
-| `DEFAULT_TARGET_PCT` | 1.5% | Fallback target |
+| `DEFAULT_TARGET_PCT` | 1.2% | Fallback target (was 1.5%, reduced after 63-trade review) |
 | `ATR_MULTIPLIER` | 1.5 | SL = 1.5×ATR |
 | `TARGET_RR_MULTIPLIER` | 1.5 | 1.5:1 R:R |
 | `MAX_INTRADAY_SL_PCT` | 2.5% | SL hard cap |
@@ -368,6 +374,34 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 
 ---
 
+## V2 Review Cycle Changes (April 2026)
+
+Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win rate, 1.05:1 win:loss ratio). Changes are tagged by which mode they affect.
+
+### Shared (V2 NoAI + V2 AI)
+
+| Change | Detail | File |
+|--------|--------|------|
+| **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
+| **Post-merge R:R check (1.3:1)** | After ATR SL merge (wider-of ATR vs structural), recalculate R:R. Skip trade if < 1.3:1. | `order_engine.py` |
+| **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
+| **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Fed to snapshot, rationale, and Claude prompt. | `technical_indicators.py`, `stock_scanner_v2.py` |
+| **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. | `stock_scanner_v2.py` |
+| **Extended move penalty fix** | Penalty now only applies when chasing (score matches move direction). Contrarian setups no longer penalised. | `technical_indicators.py` |
+| **Morning/Evening Star gap check** | Star candle must be in lower 40% (Morning) or upper 60% (Evening) of first candle's range. Eliminates false positives. | `candle_patterns.py` |
+| **Three White Soldiers/Crows body fix** | Each candle must open within the prior candle's body (per Nison's definition). | `candle_patterns.py` |
+
+### V2 AI Only
+
+| Change | Detail | File |
+|--------|--------|------|
+| **CLAUDE_REVIEW_MINUTES 20→30** | Claude exits were too early ("flat since entry, exit"). 30 min gives trades room to develop. | `config.py` |
+| **Claude scan prompt: rank/veto role** | Prompt now explicitly defines Claude's role: rank and veto from pre-filtered candidates, not generate new ones. | `stock_scanner_v2.py` |
+| **StochRSI in Claude prompt** | Added interpretation guide and confluence checklist item (now 14 items, "7/14 confluence" threshold). | `stock_scanner_v2.py` |
+| **15-min re-scan data in review prompt** | Claude review now sees both 5-min granular data AND 15-min composite score + StochRSI for each position. | `stock_scanner_v2.py` |
+
+---
+
 ## Known Limitations
 
 See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list. All remaining items are LOW or MEDIUM priority.
@@ -379,5 +413,4 @@ See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for full list. All remaining item
 | 44 | WebSocket tick data | MEDIUM | Faster SL/target execution |
 | 40 | Claude prompt feedback loop | LOW | Only applies to `--ai` mode |
 | 56 | Stock price range filter | MEDIUM | Filters out poor-spread stocks |
-| 57 | VWAP incomplete candle | LOW | Slight VWAP skew |
 | 41 | Holiday-shifted expiry detection | LOW | ~2-3 days/year edge case |

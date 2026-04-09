@@ -43,7 +43,7 @@ from services.stock_scanner          import StockScanner, _parse_price, _parse_i
 from services.candle_patterns        import detect_all, detect_all_with_freshness, summarise_signals
 from services.technical_indicators   import (
     compute_technical_score, prev_day_sr_score,
-    vwap, rsi, ema_crossover, supertrend,
+    vwap, rsi, ema_crossover, supertrend, stoch_rsi,
 )
 from services.candle_cache           import CandleCache
 
@@ -423,6 +423,37 @@ class StockScannerV2(StockScanner):
         if dropped_score:
             self.log.info(f"  Score filter: dropped {dropped_score} stocks below |score| {min_score}")
 
+        # Sector momentum: compute average score per sector.
+        # Stocks from sectors where 3+ stocks agree on direction get
+        # a small score boost (sector is trending). This is applied
+        # BEFORE the Nifty trend hard filter so the boost helps marginal
+        # candidates survive the filter.
+        sector_scores: dict[str, list[float]] = {}
+        for s in passed_score:
+            sector = SECTOR_MAP.get(s["symbol"], "OTHER")
+            sector_scores.setdefault(sector, []).append(s["combined_score"])
+
+        sector_momentum_applied = 0
+        for s in passed_score:
+            sector = SECTOR_MAP.get(s["symbol"], "OTHER")
+            scores_in_sector = sector_scores.get(sector, [])
+            if len(scores_in_sector) >= 3:
+                same_dir = sum(
+                    1 for sc in scores_in_sector
+                    if (sc > 0) == (s["combined_score"] > 0)
+                )
+                if same_dir >= 3:
+                    # Sector is trending in this direction — small boost
+                    boost = 0.5 if s["combined_score"] > 0 else -0.5
+                    s["combined_score"] = round(s["combined_score"] + boost, 1)
+                    sector_momentum_applied += 1
+
+        if sector_momentum_applied:
+            self.log.info(
+                f"  Sector momentum: boosted {sector_momentum_applied} stocks "
+                f"in trending sectors (+/-0.5)"
+            )
+
         # Nifty trend hard filter: against-trend trades need stronger signals
         filtered = []
         dropped_trend = 0
@@ -741,6 +772,9 @@ class StockScannerV2(StockScanner):
             vwap_b_info = tech.get("vwap_bands", {})
             if vwap_b_info.get("signal", "INSIDE") != "INSIDE":
                 parts.append(f"VWAP-Band {vwap_b_info['signal']}")
+            stoch_info = tech.get("stoch_rsi", {})
+            if stoch_info.get("signal", "NEUTRAL") != "NEUTRAL":
+                parts.append(f"StochRSI {stoch_info['signal']}")
             if ps["patterns"]:
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
@@ -988,6 +1022,12 @@ class StockScannerV2(StockScanner):
             if vwap_b.get("signal", "INSIDE") != "INSIDE":
                 vwap_b_str = f"  VWAP-Band: {vwap_b['signal']}"
 
+            # StochRSI entry timing
+            stoch = tech.get("stoch_rsi", {})
+            stoch_str = ""
+            if stoch.get("signal", "NEUTRAL") != "NEUTRAL":
+                stoch_str = f"  StochRSI: {stoch['signal']}(K:{stoch['k']:.0f}/D:{stoch['d']:.0f})"
+
             # Extended move from open
             ext_move = tech.get("extended_move_pct", 0)
             ext_str = ""
@@ -1003,7 +1043,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}{ext_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}{stoch_str}{ext_str}"
             )
 
         return "\n".join(lines)
@@ -1050,6 +1090,14 @@ MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= Rs.{budget * mi
 {nifty_context}{perf_context}{session_context}
 The stocks below are PRE-FILTERED by mathematical technical analysis.
 Each stock shows real-time indicators — use them for precise, evidence-based decisions.
+
+YOUR ROLE: RANK and VETO from these pre-filtered candidates.
+The system has already computed technical scores, ATR-based SL/targets, and indicators.
+Focus on what you are BEST at:
+  1. SELECTING the 2-3 highest-conviction setups from the indicator data
+  2. VETOING stocks that look technically valid but have narrative risk (sector events, extended moves, concentration)
+  3. Setting SL at STRUCTURAL levels visible in the data (VWAP, SuperTrend, PrevDay S&R, Fib levels) — NOT arbitrary percentages
+Do NOT fabricate price targets from nothing. Use the indicator levels shown (VWAP, pivot, Fib) as anchors.
 
 ══════════════════════════════════════════════════════════
 INDICATOR INTERPRETATION:
@@ -1133,6 +1181,13 @@ VWAP Bands:
   AT_UPPER_2SD = price at VWAP +2σ → strong mean-reversion SELL signal (deeply overbought vs avg)
   *** VWAP SD bands measure how far price has deviated from institutional consensus ***
 
+StochRSI (entry timing):
+  BULLISH_CROSS = StochRSI %K crossed above %D → BUY entry timing confirmation (most useful when RSI 40-60)
+  BEARISH_CROSS = StochRSI %K crossed below %D → SELL entry timing confirmation
+  OVERBOUGHT = StochRSI >80 → momentum exhaustion, avoid new BUY entries
+  OVERSOLD = StochRSI <20 → momentum exhaustion, avoid new SELL entries
+  *** More responsive than RSI for precise intraday entry timing ***
+
 Score:
   |score| >= 5 = high conviction (3+ aligned indicators)
   |score| 3-5 = moderate (needs confirming indicators)
@@ -1169,13 +1224,14 @@ For BUY, count TRUE items:
   □ ADX > 20 (trend is developing or strong — not range-bound)
   □ Fib = AT_FIB_LEVEL (price near Fibonacci retracement level)
   □ VWAP-Band = AT_LOWER_1SD or AT_LOWER_2SD (mean-reversion support)
+  □ StochRSI = BULLISH_CROSS (entry timing confirmation)
 
 For SELL, mirror with bearish signals.
 → 2 or fewer = DO NOT TRADE (insufficient evidence)
 → 3-4 = acceptable trade (moderate conviction)
 → 5+ = strong trade (high conviction — use full position size)
 
-Explicitly state the confluence count in your RATIONALE (e.g. "6/13 confluence").
+Explicitly state the confluence count in your RATIONALE (e.g. "7/14 confluence").
 
 ══════════════════════════════════════════════════════════
 INDIAN MARKET AWARENESS:
@@ -1266,16 +1322,28 @@ TRADE 2:
                 ema_data = ema_crossover(candles_5m, fast=9, slow=21)
                 today_candles = self._filter_today_candles(candles_5m)
                 current_vwap = vwap(today_candles) if today_candles else 0
+                stoch_data = stoch_rsi(candles_5m, rsi_period=14, stoch_period=14)
 
                 pattern_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
+                stoch_str = ""
+                if stoch_data.get("signal", "NEUTRAL") != "NEUTRAL":
+                    stoch_str = f"  StochRSI: {stoch_data['signal']}(K:{stoch_data['k']:.0f})"
                 tech_ctx = (
                     f"  5min patterns: [{pattern_str}]  "
                     f"RSI(14): {rsi_val:.0f}  "
                     f"EMA(9/21): {ema_data['signal']}  "
                     f"VWAP: Rs.{current_vwap:.2f}"
+                    f"{stoch_str}"
                 )
 
-            position_context.append((pos, tech_ctx))
+            # Also include 15-min re-scan score if available
+            rescan_ctx = ""
+            result_15m = self._analyse_stock(symbol)
+            if result_15m:
+                rescan_score = result_15m["combined_score"]
+                rescan_ctx = f"  15min Score: {rescan_score:+.1f}"
+
+            position_context.append((pos, tech_ctx + rescan_ctx))
 
         # Build enhanced prompt and delegate to parent's review
         # with extra technical data injected

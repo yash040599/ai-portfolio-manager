@@ -477,7 +477,7 @@ class PortfolioManager:
             open_quotes = self.zerodha.get_quotes(plan_symbols)
         except Exception as e:
             self.log.warning(f"Quote fetch failed during observation: {e}")
-            self.log.info("Entering all trades without observation filter")
+            self.log.warning("Skipping observation — will enter with pre-trade checks only")
             self._enter_positions()
             return
 
@@ -521,7 +521,10 @@ class PortfolioManager:
                     time.sleep(2 * attempt)
 
         if current_quotes is None:
-            self.log.info("All retries failed — entering all trades without observation filter")
+            self.log.warning(
+                "All retries failed — skipping observation filter. "
+                "Trades will enter with pre-trade checks only"
+            )
             self._enter_positions()
             return
 

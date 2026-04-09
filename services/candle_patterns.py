@@ -248,9 +248,12 @@ def detect_morning_star(candles: list[dict]) -> dict | None:
     if r1 <= 0:
         return None
 
-    # c1: big bearish, c2: small body, c3: big bullish
+    # c1: big bearish, c2: small body (star gaps away from c1), c3: big bullish
+    # Intraday adaptation: instead of a classic gap, require the star's
+    # close to be below the lower 40% of c1's range (meaningful separation).
     if (is_bearish(c1) and body_pct(c1) > 50
             and body_pct(c2) < 30
+            and c2["close"] < c1["close"] + candle_range(c1) * 0.4
             and is_bullish(c3) and body_pct(c3) > 50
             and c3["close"] > midpoint(c1)):
         return {"pattern": "MORNING_STAR", "signal": "BULLISH", "strength": 3}
@@ -272,8 +275,11 @@ def detect_evening_star(candles: list[dict]) -> dict | None:
     if r1 <= 0:
         return None
 
+    # Intraday adaptation: require the star's close to be above the
+    # upper 60% of c1's range (meaningful separation from bullish c1).
     if (is_bullish(c1) and body_pct(c1) > 50
             and body_pct(c2) < 30
+            and c2["close"] > c1["close"] - candle_range(c1) * 0.4
             and is_bearish(c3) and body_pct(c3) > 50
             and c3["close"] < midpoint(c1)):
         return {"pattern": "EVENING_STAR", "signal": "BEARISH", "strength": 3}
@@ -290,9 +296,12 @@ def detect_three_white_soldiers(candles: list[dict]) -> dict | None:
         return None
     c1, c2, c3 = candles[-3], candles[-2], candles[-1]
 
+    # Each candle must open within or near the prior candle's body
+    # and close higher. Nison: open within prior body, not just higher.
     if (is_bullish(c1) and is_bullish(c2) and is_bullish(c3)
             and c2["close"] > c1["close"] and c3["close"] > c2["close"]
-            and c2["open"] > c1["open"] and c3["open"] > c2["open"]
+            and c1["open"] <= c2["open"] <= c1["close"]
+            and c2["open"] <= c3["open"] <= c2["close"]
             and body_pct(c1) > 40 and body_pct(c2) > 40 and body_pct(c3) > 40):
         return {"pattern": "THREE_WHITE_SOLDIERS", "signal": "BULLISH", "strength": 3}
     return None
@@ -308,9 +317,12 @@ def detect_three_black_crows(candles: list[dict]) -> dict | None:
         return None
     c1, c2, c3 = candles[-3], candles[-2], candles[-1]
 
+    # Each candle must open within or near the prior candle's body
+    # and close lower. Nison: open within prior body, not just lower.
     if (is_bearish(c1) and is_bearish(c2) and is_bearish(c3)
             and c2["close"] < c1["close"] and c3["close"] < c2["close"]
-            and c2["open"] < c1["open"] and c3["open"] < c2["open"]
+            and c1["close"] <= c2["open"] <= c1["open"]
+            and c2["close"] <= c3["open"] <= c2["open"]
             and body_pct(c1) > 40 and body_pct(c2) > 40 and body_pct(c3) > 40):
         return {"pattern": "THREE_BLACK_CROWS", "signal": "BEARISH", "strength": 3}
     return None

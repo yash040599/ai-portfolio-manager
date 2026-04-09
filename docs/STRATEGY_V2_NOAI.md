@@ -22,7 +22,7 @@ NoAI inherits **everything** from V2 (candle pre-filter, dynamic polling, candle
 | SL / Target | Config defaults, ATR overrides in `enter_trade` | Claude sets, ATR may override |
 | Position sizing | Auto-sized to fit budget and per-stock limits | Claude sets qty, budget-validated |
 | Rationale | Auto-generated from indicator values | Claude writes qualitative analysis |
-| Position reviews | Stagnant position exit after 45 min (rule-based) | Claude reviews every 20 min |
+| Position reviews | Stagnant position exit after 45 min (rule-based) | Claude reviews every 30 min |
 | Mid-day re-scan | Auto-select from new candidates (same as initial scan) | Claude picks from new candidates |
 | Candle re-scan | Every 15 min, auto-protect only (no Claude review) | Every 15 min, auto-protect + Claude can see patterns |
 | NIFTY re-check | Every 15 min, updates market condition for re-scans | Every 15 min, same NIFTY monitoring |
@@ -57,8 +57,10 @@ For each stock in universe (50-200 stocks):
       • ADX(14) — trend strength filter (halves continuation signals in weak trends, bonus in strong)
       • Fibonacci retracement (38.2/50/61.8%) — prev day range S&R levels
       • VWAP SD bands (±1σ, ±2σ) — mean-reversion signals at price extremes
+      • StochRSI(14,14) — Stochastic of RSI with %K/%D crossover (BULLISH_CROSS, BEARISH_CROSS, OVERBOUGHT, OVERSOLD)
   → Calculate composite score (~-24 to +24)
   → RVol bonus/penalty
+  → Sector momentum filter: when ≥3 stocks in a sector agree on direction, each gets ±0.5 boost
   → Nifty trend hard filter: against-trend signals need |score| >= 3
   → Sector diversification: max 2 stocks per sector (SECTOR_MAP)
   → Filter: only stocks with |score| >= V2_MIN_SCORE (default: 2.0)
@@ -92,13 +94,16 @@ Take top N candidates (N = MAX_POSITIONS - open_positions)
 Observation period (ENTRY_DELAY_MINUTES from market open):
   → Wait for price direction to confirm
   → Validate: BUY only if price > day open, SELL only if price < day open
+  → Bid-ask spread check (skip if > 0.3%)
+  → Volume confirmation: skip if live RVol < 0.7× average (live mode only)
   → ATR-based SL/target override (15-min candles, capped at MAX_INTRADAY_SL_PCT)
   → Uses wider of ATR SL vs config SL (structural levels respected)
+  → Post-merge R:R check: if R:R < 1.3:1 after ATR merge → skip trade
   → Smart position sizing (reduce qty if budget insufficient)
 
 Entry loop with fallback:
   → Tries each candidate in score order (primary first, then fallback)
-  → Each candidate passes through 12 sanity checks in enter_trade
+  → Each candidate passes through 14 sanity checks in enter_trade
   → Loop stops when position slots are full (MAX_POSITIONS reached)
   → Any candidate that fails a check is skipped, next candidate tried
 ```
@@ -115,9 +120,9 @@ Every 10 seconds (or 5s when near SL/target):
   → Circuit breaker check (MAX_LOSS_PER_DAY_PCT)
   → Dynamic poll: halve interval when any position within 0.5% of SL/target
 
-Every CLAUDE_REVIEW_MINUTES (default: 20 min) — FREE in NoAI:
+Every CLAUDE_REVIEW_MINUTES (default: 30 min) — FREE in NoAI:
   → Stagnant position check: exit positions open > STAGNANT_EXIT_MINUTES (45 min)
-    that haven't moved > STAGNANT_EXIT_MIN_MOVE_PCT (0.3%) toward target
+    that haven't moved > STAGNANT_EXIT_MIN_MOVE_PCT (0.5%) toward target
   → Frees slots for stronger setups (replaces Claude's "momentum faded, exit" judgment)
 
 Every V2_CANDLE_RESCAN_MINUTES (default: 15 min) — FREE:
@@ -213,7 +218,7 @@ All V1/V2 risk management is preserved. Claude position reviews are replaced by 
 Since Claude isn't producing qualitative analysis, NoAI builds a machine-readable rationale string from the indicator values:
 
 ```
-Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | MACD BULLISH/GROWING | ORB BREAKOUT_UP | Gap GAP_UP_STRONG | Patterns: HAMMER, BULLISH_ENGULFING | RVol 2.3x
+Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | MACD BULLISH/GROWING | ORB BREAKOUT_UP | Gap GAP_UP_STRONG | StochRSI BULLISH_CROSS(K:22) | Patterns: HAMMER, BULLISH_ENGULFING | RVol 2.3x
 ```
 
 This rationale is logged in the trade report and trading data JSON, so you can review what signals drove each trade.
@@ -229,8 +234,8 @@ NoAI uses the same config settings as V2. No additional configuration required.
 | `V2_MIN_SCORE` | 2.0 | Minimum score to pass pre-filter (same as V2) |
 | `V2_CANDLE_INTERVAL` | "15minute" | Candle interval for pattern detection (same as V2) |
 | `V2_CANDLE_RESCAN_MINUTES` | 15 | Candle re-scan frequency — auto-protect for open positions |
-| `STAGNANT_EXIT_MINUTES` | 90 | Exit positions stagnating longer than this (NoAI only) |
-| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | Minimum move toward target to avoid stagnant exit |
+| `STAGNANT_EXIT_MINUTES` | 45 | Exit positions stagnating longer than this (NoAI only) |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.5% | Minimum move toward target to avoid stagnant exit |
 | `LOSS_SIZING_ENABLED` | True | Reduce position sizes after realised losses |
 | `CIRCUIT_BREAKER_COOLDOWN_MINUTES` | 30 | Resume after circuit breaker with reduced budget |
 | `MAX_CIRCUIT_BREAKER_TRIPS` | 2 | Max CB trips per day before stopping |
@@ -239,7 +244,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Day loss % that triggers higher MIN_SCORE |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Extra score points added after loss threshold |
 | `DEFAULT_STOP_LOSS_PCT` | 1.5% | Used as initial SL before ATR override |
-| `DEFAULT_TARGET_PCT` | 1.5% | Used as initial target before ATR override |
+| `DEFAULT_TARGET_PCT` | 1.2% | Used as initial target before ATR override (was 1.5%, reduced after 63-trade review) |
 | `ATR_INTERVAL` | "15minute" | ATR candle interval (overrides default SL/target) |
 | `MAX_INTRADAY_SL_PCT` | 2.5% | Hard cap on ATR SL width |
 
@@ -262,6 +267,36 @@ NoAI uses the same config settings as V2. No additional configuration required.
 ### When to Use NoAI vs V2
 - **Use NoAI** when: testing the technical pipeline, running on days with low conviction, minimising costs, or when Claude API is down
 - **Use V2** when: trading live with real capital and wanting the best risk-adjusted returns. Claude's qualitative layer adds meaningful value for position management
+
+---
+
+## V2 Review Cycle Changes (April 2026)
+
+Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win rate, 1.05:1 win:loss ratio). These changes apply to **NoAI mode** — see [STRATEGY_V2.md](STRATEGY_V2.md) for AI-only changes.
+
+### Changes Affecting NoAI
+
+| Change | Detail | File |
+|--------|--------|------|
+| **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
+| **Post-merge R:R check (1.3:1)** | After ATR SL merge (wider-of ATR vs structural), recalculate R:R. Skip trade if < 1.3:1. | `order_engine.py` |
+| **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
+| **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Added to technical snapshot and auto-generated rationale. | `technical_indicators.py`, `stock_scanner_v2.py` |
+| **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost in pre-filter. | `stock_scanner_v2.py` |
+| **Extended move penalty fix** | Penalty now only applies when chasing (score matches move direction). Contrarian setups no longer penalised. | `technical_indicators.py` |
+| **Morning/Evening Star gap check** | Star candle must be in lower 40% (Morning) or upper 60% (Evening) of first candle's range. | `candle_patterns.py` |
+| **Three White Soldiers/Crows body fix** | Each candle must open within the prior candle's body (per Nison's definition). | `candle_patterns.py` |
+
+### AI-Only Changes (not applicable to NoAI)
+
+These changes only affect `--ai` mode and have **no impact** on NoAI:
+
+| Change | Why NoAI is unaffected |
+|--------|----------------------|
+| CLAUDE_REVIEW_MINUTES 20→30 | NoAI uses stagnant exit (45 min), not Claude reviews |
+| Claude scan prompt: rank/veto role | NoAI doesn't use Claude for selection |
+| StochRSI in Claude prompt + confluence | NoAI already gets StochRSI in snapshot; Claude prompt changes don't apply |
+| 15-min re-scan data in review prompt | NoAI doesn't have Claude review prompts |
 
 ---
 

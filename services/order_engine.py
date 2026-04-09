@@ -583,6 +583,21 @@ class OrderEngine:
                     )
                     return False
 
+        # ── Volume confirmation at entry ──────────────────────────
+        # Skip stocks with below-average recent volume — low conviction.
+        if not self.cfg.DRY_RUN:
+            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
+            live_volume = quote_data.get("volume", 0)
+            avg_volume = quote_data.get("average_volume", 0)
+            if avg_volume > 0 and live_volume > 0:
+                rvol = live_volume / avg_volume
+                if rvol < 0.7:
+                    self.log.warning(
+                        f"{symbol}: RVol {rvol:.1f}x (< 0.7x avg) — "
+                        f"low volume, skipping entry"
+                    )
+                    return False
+
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
         if atr and atr > 0:
@@ -688,6 +703,18 @@ class OrderEngine:
                     f"reduction — below 1.2:1 minimum, skipping"
                 )
                 return False
+
+        # ── Post-merge R:R floor (all entries) ────────────────────
+        # After ATR merge, the SL/target may have shifted to create
+        # an unfavourable R:R. Check even non-late entries.
+        sl_dist = abs(entry - sl)
+        tgt_dist = abs(target - entry)
+        if sl_dist > 0 and tgt_dist / sl_dist < 1.3:
+            self.log.warning(
+                f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 after ATR merge — "
+                f"below 1.3:1 minimum, skipping"
+            )
+            return False
 
         # ── Pre-trade minimum profit check ────────────────────────
         # Skip trades where expected profit doesn't cover charges.

@@ -114,8 +114,14 @@ class Config:
     #   Each review call ≈ Rs.2-4 on Pro plan.
     #   30 min = ~12 calls/day ≈ Rs.25-50/day in Claude costs.
     #   15 min = ~24 calls/day ≈ Rs.50-100/day. Only if budget is large.
+    #
+    #   DECISION HISTORY:
+    #     20 min (original): Claude cut winners short (32% win rate on
+    #       REVIEW_EXIT). Over-reviewing causes premature exits.
+    #     30 min (2026-04-09): Increased to give trades more room.
+    #       Trades need time to play out before re-evaluation.
     PRICE_POLL_SECONDS:     int = 10
-    CLAUDE_REVIEW_MINUTES:  int = 20
+    CLAUDE_REVIEW_MINUTES:  int = 30
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
@@ -158,7 +164,9 @@ class Config:
     #   Higher = more room for volatility, but bigger losses when wrong.
     #
     # DEFAULT_TARGET_PCT: fallback profit target if Claude doesn't set one.
-    #   2.0 = book profits when stock rises 2% from entry.
+    #   1.2 = book profits when stock rises 1.2% from entry.
+    #   Most NIFTY100 stocks move 1-1.5% net per day; 1.2% is achievable
+    #   while 1.5% often results in SQUARE_OFF exits.
     #   Higher = bigger wins but fewer trades hit target.
     #
     # MAX_LOSS_PER_DAY_PCT: circuit breaker — stops all trading if total
@@ -166,7 +174,7 @@ class Config:
     #   3.0 on Rs.10K = stops trading after Rs.300 total loss.
     #   Set to 0 to disable the circuit breaker (not recommended).
     DEFAULT_STOP_LOSS_PCT: float = 1.5
-    DEFAULT_TARGET_PCT:    float = 1.5
+    DEFAULT_TARGET_PCT:    float = 1.2
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
 
     # ATR_MULTIPLIER: multiplier for ATR to compute dynamic stop-loss.
