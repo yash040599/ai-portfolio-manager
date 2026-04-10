@@ -44,13 +44,17 @@ def load_json(path: str) -> dict | None:
         return None
 
 
-def per_trade_charges(position: dict, day_charges: dict) -> dict:
+def per_trade_charges(position: dict, day_charges: dict | None = None) -> dict:
     """Calculate charges for a single trade using its own buy/sell values.
 
     Uses Config.calculate_charges() per-trade (num_orders=2 for the
     entry + exit pair) rather than apportioning the day-level total.
     This gives the correct per-component breakdown and remains accurate
     even when EXTERNAL positions inflate or deflate the day-level total.
+
+    If day_charges (the day-level charge totals from the JSON report) is
+    provided, it is not used for computation but is available for
+    cross-checking at the caller level.
     """
     remaining_qty = position.get("qty", 0)
     partial_qty   = position.get("_partial_qty", 0)
@@ -85,6 +89,43 @@ def per_trade_charges(position: dict, day_charges: dict) -> dict:
     }
 
 
+# ── Cross-check ───────────────────────────────────────────────────
+
+CHARGE_TOLERANCE_RS = 5.0  # Rs – allow small rounding/cap differences
+
+
+def _cross_check_day_charges(date_str: str, positions: list[dict],
+                             day_charges: dict) -> None:
+    """Compare sum of per-trade charges against day-level total.
+
+    Day-level charges are computed from aggregated turnover, while
+    per-trade charges are computed independently per position.  They
+    won't match exactly (brokerage cap, rounding) but a large gap
+    flags data issues or missing positions.
+    """
+    if not day_charges:
+        return
+    day_total = day_charges.get("total_tax_and_charges", 0)
+    if not day_total:
+        return
+
+    per_trade_sum = 0.0
+    for pos in positions:
+        if pos.get("status") != "CLOSED":
+            continue
+        oid = pos.get("order_id", "")
+        if not oid or oid.startswith("DRY_RUN"):
+            continue
+        tc = per_trade_charges(pos)
+        per_trade_sum += tc["total_charges"]
+
+    diff = abs(per_trade_sum - day_total)
+    if diff > CHARGE_TOLERANCE_RS:
+        print(f"  ⚠ {date_str}: charge cross-check mismatch — "
+              f"per-trade sum Rs {per_trade_sum:.2f} vs "
+              f"day-level Rs {day_total:.2f} (diff Rs {diff:.2f})")
+
+
 # ── Fill ──────────────────────────────────────────────────────────
 
 def fill_fy(fy_start: int) -> int:
@@ -108,6 +149,8 @@ def fill_fy(fy_start: int) -> int:
             continue
 
         positions   = data.get("positions", [])
+        day_charges = data.get("pnl", {}).get("charges", {})
+        _cross_check_day_charges(date_str, positions, day_charges)
         external_counter: dict[str, int] = {}
 
         for pos in positions:
