@@ -196,16 +196,17 @@ class Config:
     # Catches edge cases: ATR unavailable (config fallback has 0.8:1 R:R),
     # SL capped at MAX_INTRADAY_SL_PCT, or late-entry target squeeze.
     # Starts strict, relaxes after repeated scan failures.
-    #   POST_MERGE_RR_INITIAL: starting R:R floor (first 3 scan attempts)
+    #   POST_MERGE_RR_INITIAL: starting R:R floor (first N scan attempts)
     #   POST_MERGE_RR_RELAXED: relaxed floor after RR_RELAX_AFTER_SCANS failures
-    #   POST_MERGE_RR_FLOOR:   absolute minimum — never go below this
+    #   POST_MERGE_RR_FLOOR:   hard minimum clamp — neither INITIAL nor RELAXED
+    #                          can go below this (safety net against misconfiguration)
     #   RR_RELAX_AFTER_SCANS:  how many 0-entry scans before relaxing
-    #   RR_GIVEUP_AFTER_SCANS: stop trading for the day after this many 0-entry scans at floor
+    #   RR_GIVEUP_AFTER_SCANS: stop trading for the day after this many 0-entry scans at relaxed floor
     POST_MERGE_RR_INITIAL:    float = 1.3  # strict: reward ≥ 1.3× risk
     POST_MERGE_RR_RELAXED:    float = 1.1  # relaxed: reward ≥ 1.1× risk
     POST_MERGE_RR_FLOOR:      float = 1.0  # absolute minimum (never below 1:1)
-    RR_RELAX_AFTER_SCANS:     int   = 3    # relax after 3 failed scans
-    RR_GIVEUP_AFTER_SCANS:    int   = 5    # stop trading after 5 failed scans at floor
+    RR_RELAX_AFTER_SCANS:     int   = 6    # relax after 6 failed scans
+    RR_GIVEUP_AFTER_SCANS:    int   = 10    # stop trading after 10 failed scans at floor
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
