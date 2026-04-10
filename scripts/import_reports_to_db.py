@@ -20,6 +20,10 @@ import re
 import json
 import glob
 import sqlite3
+import argparse
+
+parser = argparse.ArgumentParser(description="Import existing JSON report files into the SQLite database (one-time).")
+parser.parse_args()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")

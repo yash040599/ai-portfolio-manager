@@ -73,7 +73,7 @@ This phase is identical to V2 — same indicators, same scoring, same filters.
 
 ```
 Take top N candidates (N = MAX_POSITIONS - open_positions)
-  + up to 5 fallback candidates (tried if primary picks fail entry checks):
+  + all remaining pre-filtered candidates as fallback (tried if primary picks fail entry checks):
   → For each candidate:
       • Side = BUY if score > 0, SELL if score < 0
       • SL = price × (1 ± DEFAULT_STOP_LOSS_PCT)
@@ -83,10 +83,12 @@ Take top N candidates (N = MAX_POSITIONS - open_positions)
           "Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | Patterns: HAMMER"
   → Skip symbols already traded today or currently held
   → Validate total budget allocation (primary picks only)
+  → Promote fallbacks when _validate_budget drops primary stocks (e.g. price too high)
+  → Score-weighted sizing: higher conviction = more capital (capped at MAX_POSITION_PCT)
   → Fallback candidates keep per-slot sizing; enter_trade enforces budget
 ```
 
-**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best trades with nuanced reasoning. NoAI takes the top N by score plus fallback candidates — if a primary pick fails entry sanity checks (R:R, late-entry reduction, min profit), the entry loop tries the next candidate. No more "selected 1, entered 0" when the only pick gets rejected.
+**Key difference:** V2 sends 15 candidates to Claude and lets it pick the best trades with nuanced reasoning. NoAI takes the top N by score plus all remaining pre-filtered candidates as fallback — if a primary pick fails entry sanity checks (R:R, late-entry reduction, min profit), the entry loop tries the next candidate. When `_validate_budget` drops an expensive primary stock, the next fallback is promoted into its slot. Budget is allocated via score-weighted sizing (conviction-proportional, simplified Kelly criterion). No more "selected 1, entered 0" when the only pick gets rejected.
 
 ### Phase 3 — Entry (same as V1/V2)
 
@@ -98,7 +100,7 @@ Observation period (ENTRY_DELAY_MINUTES from market open):
   → Volume confirmation: skip if live RVol < 0.7× average (live mode only)
   → ATR-based SL/target (pure ATR when available, config defaults as fallback only)
   → SL capped at MAX_INTRADAY_SL_PCT (2.5%)
-  → R:R safety floor: adaptive (1.2:1 → 1.0:1 after 3 failed scans, stops after 5)
+  → R:R safety floor: adaptive (1.3:1 → 1.1:1 after 6 failed scans, floor 1.0:1, stops after 10)
   → Smart position sizing (reduce qty if budget insufficient)
 
 Entry loop with fallback:
@@ -261,7 +263,7 @@ NoAI uses the same config settings as V2. No additional configuration required.
 ### Disadvantages
 - **No qualitative reasoning** — can't consider sector rotation, news catalysts, or earnings proximity
 - **No position management** — relies entirely on rule-based SL/target/trailing/candle-protect. Claude sometimes spots momentum fading or suggests tightening SL before a reversal pattern fully forms
-- **Mechanical selection** — takes top N by score (+ fallback candidates). Sector diversification filter (max 2 per sector) prevents correlated picks, and fallback candidates ensure capital deployment even when primaries fail entry checks — but Claude adds nuanced qualitative reasoning that math can't replicate
+- **Mechanical selection** — takes top N by score (+ all remaining as fallback, with promotion on budget drop). Score-weighted sizing allocates more capital to higher-conviction stocks. Sector diversification filter (max 2 per sector) prevents correlated picks, and fallback candidates ensure capital deployment even when primaries fail entry checks — but Claude adds nuanced qualitative reasoning that math can't replicate
 - **No session awareness** — doesn't adjust risk appetite based on day's P&L or recent performance. Session context is limited to skip-symbols
 
 ### When to Use NoAI vs V2
@@ -279,7 +281,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **R:R safety floor (adaptive)** | R:R floor starts at 1.2:1, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| **R:R safety floor (adaptive)** | R:R floor starts at 1.3:1, relaxes to 1.1:1 after 6 failed scans, stops trading after 10 failures at floor. Hard minimum 1.0:1 (POST_MERGE_RR_FLOOR). Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Added to technical snapshot and auto-generated rationale. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost in pre-filter. | `stock_scanner_v2.py` |
@@ -302,7 +304,7 @@ These changes only affect `--ai` mode and have **no impact** on NoAI:
 
 ## Fallback Behaviour
 
-- If primary candidates fail entry checks (R:R, late-entry reduction, min profit), the entry loop tries **fallback candidates** (up to 5 extra) automatically — no more "selected 1, entered 0"
+- If primary candidates fail entry checks (R:R, late-entry reduction, min profit), the entry loop tries **all remaining fallback candidates** automatically — no more "selected 1, entered 0"
 - If the pre-filter finds **no candidates** above V2_MIN_SCORE, no trades are taken (no V1 fallback — there's no Claude to fall back to)
 - If candle data fetch fails for a stock, that stock is skipped (non-blocking)
 - All V1/V2 risk management (SL, trailing, circuit breaker, crash recovery) runs identically

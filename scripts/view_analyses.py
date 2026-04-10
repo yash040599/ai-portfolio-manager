@@ -1,6 +1,10 @@
 """Print all portfolio analysis data from the database."""
+import argparse
 import sqlite3
 import os
+
+parser = argparse.ArgumentParser(description="View all portfolio analysis records from the database.")
+parser.parse_args()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")

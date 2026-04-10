@@ -748,19 +748,22 @@ class OrderEngine:
             trade["_late_entry_reduced"] = True
 
         # ── Minimum R:R floor for late entries ────────────────────
-        # If target is too close after late-entry reduction, skip the trade
+        # If target is too close after late-entry reduction, skip.
+        # Uses POST_MERGE_RR_FLOOR (absolute min R:R) as safety-net;
+        # the stricter adaptive R:R in Stage 5 is the primary gate.
+        late_rr_floor = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
         if late_reduction > 0:
             sl_distance = abs(entry - sl)
             tgt_distance = abs(target - entry)
-            if sl_distance > 0 and tgt_distance / sl_distance < 1.2:
+            if sl_distance > 0 and tgt_distance / sl_distance < late_rr_floor:
                 self.log.warning(
                     f"{symbol}: R:R {tgt_distance/sl_distance:.1f}:1 after late-entry "
-                    f"reduction — below 1.2:1 minimum, skipping"
+                    f"reduction — below {late_rr_floor:.1f}:1 minimum, skipping"
                 )
                 return False
             elif sl_distance > 0:
                 self.log.info(
-                    f"  ✓ {symbol}: late-entry R:R {tgt_distance/sl_distance:.1f}:1 OK (≥1.2:1)"
+                    f"  ✓ {symbol}: late-entry R:R {tgt_distance/sl_distance:.1f}:1 OK (≥{late_rr_floor:.1f}:1)"
                 )
 
         # ── R:R safety floor (all entries, adaptive) ─────────────────

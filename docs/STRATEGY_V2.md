@@ -11,9 +11,8 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-10 — ATR pure mode (removed ATR/config merge that
-  created 0.6-0.8:1 R:R), expanded candidate pool to all pre-filtered,
-  R:R safety floor renamed (no longer "post-merge").
+  Last sync: 2026-04-11 — Fallback promotion, score-weighted sizing,
+  late-entry tier 2 reduction 35→25%, R:R values synced with code.
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -76,7 +75,7 @@ Cost: Rs.0 — pure computation on free Zerodha historical data.
 
 Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-**V2 NoAI:** Auto-generates trades from score sign. Budget allocated: `min(budget/max_trades, budget × MAX_POSITION_PCT/100)`. If day loss ≥ 1.5% of budget, MIN_SCORE rises by 1.5 points. Returns primary picks (top N) **plus up to 5 fallback candidates** — if a primary pick fails entry sanity checks (R:R too low after late-entry reduction, min profit, etc.), the entry loop tries the next candidate automatically.
+**V2 NoAI:** Auto-generates trades from score sign. Budget allocated via **score-weighted sizing** (higher conviction = more capital, capped at MAX_POSITION_PCT per stock). If day loss ≥ 1.5% of budget, MIN_SCORE rises by 1.5 points. Returns primary picks (top N) **plus all remaining pre-filtered candidates as fallback** — if a primary pick fails entry sanity checks (R:R too low after late-entry reduction, min profit, etc.), the entry loop tries the next candidate automatically. **Fallback promotion:** when `_validate_budget` drops a primary stock (e.g. price too high for min qty 1), the next fallback is promoted into the freed slot.
 
 ### Phase 3 — Entry
 
@@ -120,8 +119,8 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
-| 3b | **R:R safety floor** | Adaptive: 1.2:1 → 1.0:1 | Starts strict (1.2:1), relaxes to 1.0:1 after 3 failed scans, stops trading after 5. Late entries: 1.2:1 |
-| 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
+| 3b | **R:R safety floor** | Adaptive: 1.3:1 → 1.1:1 (floor 1.0:1) | Starts strict (1.3:1), relaxes to 1.1:1 after 6 failed scans, stops trading after 10. Late entries: 1.0:1 (POST_MERGE_RR_FLOOR) |
+| 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | If R:R drops below 1.0:1 (POST_MERGE_RR_FLOOR) → skip |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
 | 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
@@ -381,7 +380,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **R:R safety floor (adaptive)** | R:R must pass floor: 1.2:1 initially, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| **R:R safety floor (adaptive)** | R:R must pass floor: 1.3:1 initially, relaxes to 1.1:1 after 6 failed scans, stops trading after 10 failures at floor. Hard minimum 1.0:1 (POST_MERGE_RR_FLOOR). Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Fed to snapshot, rationale, and Claude prompt. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. | `stock_scanner_v2.py` |

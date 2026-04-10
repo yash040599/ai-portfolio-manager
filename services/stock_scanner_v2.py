@@ -803,7 +803,22 @@ class StockScannerV2(StockScanner):
         primary = trades[:max_trades]
         fallback = trades[max_trades:]
 
+        # Promote fallbacks into primary when stocks are dropped (e.g.
+        # BOSCHLTD @ Rs.37k exceeds per-stock cap with min qty 1).
+        # Without this, dropped slots leave budget idle.
         primary = self._validate_budget(primary)
+        while len(primary) < max_trades and fallback:
+            promoted = fallback.pop(0)
+            candidate = self._validate_budget([promoted])
+            if candidate:
+                primary.extend(candidate)
+                self.log.info(
+                    f"Promoted {promoted['symbol']} from fallback to fill "
+                    f"dropped primary slot ({len(primary)}/{max_trades})"
+                )
+            # else: this fallback also failed budget validation, try next
+
+        primary = self._score_weight_sizing(primary)
         primary = self._boost_underdeployed(primary)
 
         all_trades = primary + fallback
@@ -817,6 +832,97 @@ class StockScannerV2(StockScanner):
                 f"NoAI scan: selected {len(primary)} trades from {len(candidates)} candidates"
             )
         return all_trades
+
+    # ================================================================
+    # SCORE-WEIGHTED POSITION SIZING
+    # ================================================================
+
+    def _score_weight_sizing(self, trades: list[dict]) -> list[dict]:
+        """
+        Redistributes budget across primary trades proportional to
+        their technical conviction scores. Higher-score stocks get
+        larger positions (more capital where confidence is highest).
+
+        Industry standard: conviction-weighted sizing (simplified
+        Kelly criterion). A score-10 stock with 5+ indicator
+        confluences deserves more capital than a score-4 with 2.
+
+        Formula: weight_i = |score_i| / Σ|scores|
+                 budget_i = weight_i × total_budget
+                 qty_i    = floor(budget_i / price_i)
+        Capped at MAX_POSITION_PCT per stock. Excess redistributed
+        to lower-scored stocks to maximize deployment.
+        """
+        if len(trades) <= 1:
+            return trades
+
+        budget = self._budget
+        max_pct = self.cfg.MAX_POSITION_PCT / 100
+        max_per = budget * max_pct
+
+        total_score = sum(abs(t.get("_entry_score", 0)) for t in trades)
+        if total_score <= 0:
+            return trades
+
+        # First pass: allocate proportionally, cap at max_per
+        excess = 0.0
+        uncapped_score = 0.0
+        allocations = []
+        for t in trades:
+            score = abs(t.get("_entry_score", 0))
+            weight = score / total_score
+            target_budget = weight * budget
+            if target_budget > max_per:
+                excess += target_budget - max_per
+                target_budget = max_per
+            else:
+                uncapped_score += score
+            allocations.append(target_budget)
+
+        # Second pass: redistribute excess to uncapped stocks
+        if excess > 0 and uncapped_score > 0:
+            for i, t in enumerate(trades):
+                if allocations[i] < max_per:
+                    score = abs(t.get("_entry_score", 0))
+                    bonus = excess * (score / uncapped_score)
+                    allocations[i] = min(allocations[i] + bonus, max_per)
+
+        # Apply new quantities
+        for i, t in enumerate(trades):
+            entry = t["entry_price"]
+            if entry <= 0:
+                continue
+            new_qty = max(1, int(allocations[i] / entry))
+            if new_qty != t["qty"]:
+                score = abs(t.get("_entry_score", 0))
+                self.log.info(
+                    f"  Score-weight: {t['symbol']} |score| {score:.1f} → "
+                    f"qty {t['qty']} → {new_qty} "
+                    f"(Rs.{t['qty'] * entry:,.0f} → Rs.{new_qty * entry:,.0f})"
+                )
+                t["qty"] = new_qty
+
+        # Final safety: ensure total doesn't exceed budget
+        total_cost = sum(t["entry_price"] * t["qty"] for t in trades)
+        if total_cost > budget:
+            excess_cost = total_cost - budget
+            for t in sorted(trades, key=lambda x: abs(x.get("_entry_score", 0))):
+                entry = t["entry_price"]
+                if entry <= 0 or t["qty"] <= 1:
+                    continue
+                reduce = min(t["qty"] - 1, int(excess_cost / entry) + 1)
+                if reduce > 0:
+                    t["qty"] -= reduce
+                    excess_cost -= reduce * entry
+                if excess_cost <= 0:
+                    break
+
+        final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
+        self.log.info(
+            f"Score-weighted sizing: Rs.{final_cost:,.0f} / Rs.{budget:,.0f} "
+            f"({final_cost / budget * 100:.0f}%)"
+        )
+        return trades
 
     # ================================================================
     # MINIMUM CAPITAL DEPLOYMENT BOOST

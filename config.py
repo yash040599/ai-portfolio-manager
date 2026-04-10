@@ -277,11 +277,14 @@ class Config:
     # ── Late Entry Target Reduction ───────────────────────────────
     # Trades entered after 1 PM get reduced targets (less time to hit).
     # LATE_ENTRY_HOUR_1 / REDUCTION_1: after 1 PM, reduce by 20%.
-    # LATE_ENTRY_HOUR_2 / REDUCTION_2: after 2 PM, reduce by 35%.
+    # LATE_ENTRY_HOUR_2 / REDUCTION_2: after 2 PM, reduce by 25%.
+    # After reduction, POST_MERGE_RR_FLOOR (absolute minimum R:R)
+    # is used as a safety-net. The stricter adaptive R:R in Stage 5
+    # is the primary gate.
     LATE_ENTRY_HOUR_1:       int   = 13
     LATE_ENTRY_REDUCTION_1:  float = 20.0
     LATE_ENTRY_HOUR_2:       int   = 14
-    LATE_ENTRY_REDUCTION_2:  float = 35.0
+    LATE_ENTRY_REDUCTION_2:  float = 25.0
 
     # ── Short Position Safety ─────────────────────────────────────
     # SHORT_ENTRY_CUTOFF_HOUR: don't open new SHORT positions after

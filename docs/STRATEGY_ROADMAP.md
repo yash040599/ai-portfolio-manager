@@ -233,7 +233,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 32. ✅ Late-Entry Target Reduction
 - **Versions**: All
 - **Gap**: A trade at 2 PM gets the same ATR target as one at 9:30 AM, but has only 70 min for target to hit vs 340 min. Probability of hitting target is dramatically lower.
-- **Fix**: Apply target reduction at entry time (not just existing time-decay on open positions). After 1 PM: reduce target by 20%. After 2 PM: reduce by 35%.
+- **Fix**: Apply target reduction at entry time (not just existing time-decay on open positions). After 1 PM: reduce target by 20%. After 2 PM: reduce by 25%. POST_MERGE_RR_FLOOR (absolute min R:R, default 1.0:1) acts as safety-net while adaptive R:R (Stage 5) is the primary gate.
 - **Source**: Time-value decay in intraday positions — targets must be realistic for remaining time.
 
 ---
@@ -683,4 +683,8 @@ Identified by deep code review against industry standards for candle-based intra
 | 101 | Observation filter log level fix (bug) | All | MEDIUM | ✅ Done | `manager.py` |
 | 102 | ATR pure mode (remove merge) | All | CRITICAL | ✅ Done | `order_engine.py`, `config.py` |
 | 103 | Candidate pool: all pre-filtered | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 104 | Fallback promotion on budget drop | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 105 | Late-entry R:R uses POST_MERGE_RR_FLOOR | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
+| 106 | Late-entry tier 2 reduction 35→25% | All | MEDIUM | ✅ Done | `config.py` |
+| 107 | Score-weighted position sizing | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 
