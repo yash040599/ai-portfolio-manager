@@ -1358,6 +1358,7 @@ class PortfolioManager:
 
             # Parse FII/DII net values
             # NSE response is a list of dicts with category, buyValue, sellValue
+            # Values are strings and already in crores (Rs.Cr)
             fii_net = 0.0
             dii_net = 0.0
             for entry in data:
@@ -1383,8 +1384,9 @@ class PortfolioManager:
             else:
                 self._fii_dii_bias = "NEUTRAL"
 
-            fii_label = f"+Rs.{fii_net/1e7:,.0f}Cr" if fii_net >= 0 else f"-Rs.{abs(fii_net)/1e7:,.0f}Cr"
-            dii_label = f"+Rs.{dii_net/1e7:,.0f}Cr" if dii_net >= 0 else f"-Rs.{abs(dii_net)/1e7:,.0f}Cr"
+            # Values from NSE are already in crores
+            fii_label = f"+Rs.{fii_net:,.0f}Cr" if fii_net >= 0 else f"-Rs.{abs(fii_net):,.0f}Cr"
+            dii_label = f"+Rs.{dii_net:,.0f}Cr" if dii_net >= 0 else f"-Rs.{abs(dii_net):,.0f}Cr"
             self.log.info(
                 f"FII/DII (prev day): FII {fii_label}, DII {dii_label} → {self._fii_dii_bias}"
             )
