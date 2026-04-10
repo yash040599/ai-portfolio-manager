@@ -122,7 +122,7 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | SL = wider-of(ATR, Claude). Target uses 1.5:1 R:R. SL capped at 2.5% |
-| 3b | **Post-merge R:R check** | R:R ≥ 1.3:1 | After ATR merge, if R:R < 1.3:1 → skip trade |
+| 3b | **Post-merge R:R check** | Adaptive: 1.2:1 → 1.0:1 | Starts strict (1.2:1), relaxes to 1.0:1 after 3 failed scans, stops trading after 5. Late entries: 1.2:1 |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
@@ -383,7 +383,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **Post-merge R:R check (1.3:1)** | After ATR SL merge (wider-of ATR vs structural), recalculate R:R. Skip trade if < 1.3:1. | `order_engine.py` |
+| **Post-merge R:R check (adaptive)** | After ATR merge, R:R must pass floor: 1.2:1 initially, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. All thresholds configurable. | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Fed to snapshot, rationale, and Claude prompt. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. | `stock_scanner_v2.py` |

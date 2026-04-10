@@ -499,11 +499,12 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: CLAUDE_REVIEW_MINUTES 20 → 30. Gives trades more room to develop before first Claude review.
 - **Files**: `config.py`
 
-### 92. ✅ Post-Merge R:R Check (1.3:1 Minimum)
+### 92. ✅ Post-Merge R:R Check (Adaptive Floor)
 - **Versions**: All (V2 NoAI + V2 AI)
 - **Gap**: After ATR SL merge (using wider of ATR and structural SL), the R:R ratio was not rechecked. Could enter trades with poor risk:reward after merge widened the SL.
-- **Fix**: After ATR merge, recalculate R:R. If < 1.3:1, skip the trade. Logged as "Post-merge R:R too low".
-- **Files**: `order_engine.py`
+- **Fix**: After ATR merge, recalculate R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.2:1), relaxes to `POST_MERGE_RR_RELAXED` (1.0:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable.
+- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality.
+- **Files**: `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py`
 
 ### 93. ✅ Volume Confirmation at Entry (RVol Gate)
 - **Versions**: All (V2 NoAI + V2 AI)
@@ -657,7 +658,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 89 | Increase circuit breaker to 4% | All | MEDIUM | ⬜ Pending | `config.py` |
 | 90 | Reduce default target to 1.2% | All | HIGH | ✅ Done | `config.py` |
 | 91 | Increase Claude review time to 30 min | V2 AI | HIGH | ✅ Done | `config.py` |
-| 92 | Post-merge R:R check (1.3:1) | All | MEDIUM | ✅ Done | `order_engine.py` |
+| 92 | Post-merge R:R check (adaptive) | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | 93 | Volume confirmation at entry (RVol gate) | All | LOW | ✅ Done | `order_engine.py` |
 | 94 | StochRSI indicator for entry timing | All | LOW | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 95 | Sector momentum filter (score boost) | All | LOW | ✅ Done | `stock_scanner_v2.py` |

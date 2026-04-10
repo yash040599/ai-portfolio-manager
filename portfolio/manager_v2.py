@@ -549,6 +549,13 @@ class PortfolioManagerV2(PortfolioManager):
                 mins_remaining = (sq_off - now).total_seconds() / 60
 
                 if mins_remaining >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                    if self.engine.is_rr_giveup():
+                        self._clear_status_line()
+                        self.log.warning(
+                            "All positions closed — R:R giveup active, "
+                            "no viable setups today. Stopping."
+                        )
+                        break
                     if self.engine.is_sl_paused():
                         self._clear_status_line()
                         self.log.info(
@@ -645,6 +652,7 @@ class PortfolioManagerV2(PortfolioManager):
                     and not self.engine.is_order_api_broken()
                     and not self._circuit_broken
                     and not self.engine.is_sl_paused()
+                    and not self.engine.is_rr_giveup()
                     and time_since_rescan >= rescan_cooldown
                 ):
                     sq_now = now_ist()
@@ -813,6 +821,7 @@ class PortfolioManagerV2(PortfolioManager):
                     and not self._circuit_broken
                     and not self.engine.is_sl_paused()
                     and not self._check_vix_spike()
+                    and not self.engine.is_rr_giveup()
                 ):
                     sq_now = now_ist()
                     sq_off = sq_now.replace(

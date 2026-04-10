@@ -408,6 +408,9 @@ class PortfolioManager:
 
         self.log.success(f"Entered {entered} position(s)")
 
+        # Track scan result for adaptive R:R relaxation
+        self.engine.record_scan_result(entered)
+
     # ================================================================
     # OBSERVATION PERIOD + DELAYED ENTRY
     # ================================================================

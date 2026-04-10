@@ -93,6 +93,53 @@ class OrderEngine:
         # Cancelled at market close to prevent stale trigger orders.
         self._pending_order_ids: set[str] = set()
 
+        # ── Adaptive R:R tracking ─────────────────────────────────
+        # Counts scans that produced 0 entries (all candidates failed
+        # R:R or other checks). After N failures, R:R floor relaxes.
+        self._zero_entry_scans: int = 0
+        self._rr_giveup: bool = False  # True = stop trading for the day
+
+    # ── Adaptive R:R methods ──────────────────────────────────
+
+    def current_rr_floor(self) -> float:
+        """Returns current post-merge R:R floor based on scan failure count."""
+        initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.2)
+        relaxed = getattr(self.cfg, "POST_MERGE_RR_RELAXED", 1.0)
+        floor   = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
+
+        if self._zero_entry_scans >= relax_after:
+            return max(relaxed, floor)
+        return max(initial, floor)
+
+    def record_scan_result(self, entered: int):
+        """Called after each scan+entry cycle. Tracks 0-entry streaks."""
+        if entered > 0:
+            # Success — reset counter
+            self._zero_entry_scans = 0
+            return
+
+        self._zero_entry_scans += 1
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
+        giveup_after = getattr(self.cfg, "RR_GIVEUP_AFTER_SCANS", 5)
+
+        if self._zero_entry_scans == relax_after:
+            new_floor = self.current_rr_floor()
+            self.log.warning(
+                f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries — "
+                f"relaxing R:R floor to {new_floor:.1f}:1"
+            )
+        elif self._zero_entry_scans >= giveup_after:
+            self._rr_giveup = True
+            self.log.warning(
+                f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries "
+                f"even at relaxed floor — no viable setups today, stopping"
+            )
+
+    def is_rr_giveup(self) -> bool:
+        """True if too many scans failed even at relaxed R:R floor."""
+        return self._rr_giveup
+
     def set_budget(self, amount: float):
         """Sets the trading budget and adjusts MAX_POSITIONS dynamically."""
         self._budget = amount
@@ -704,15 +751,19 @@ class OrderEngine:
                 )
                 return False
 
-        # ── Post-merge R:R floor (all entries) ────────────────────
+        # ── Post-merge R:R floor (all entries, adaptive) ───────────
         # After ATR merge, the SL/target may have shifted to create
         # an unfavourable R:R. Check even non-late entries.
+        # Floor adapts: starts at POST_MERGE_RR_INITIAL (1.2:1),
+        # relaxes to POST_MERGE_RR_RELAXED (1.0:1) after N failed
+        # scans, and never goes below POST_MERGE_RR_FLOOR (1.0:1).
+        rr_floor = self.current_rr_floor()
         sl_dist = abs(entry - sl)
         tgt_dist = abs(target - entry)
-        if sl_dist > 0 and tgt_dist / sl_dist < 1.3:
+        if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
             self.log.warning(
                 f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 after ATR merge — "
-                f"below 1.3:1 minimum, skipping"
+                f"below {rr_floor:.1f}:1 floor, skipping"
             )
             return False
 

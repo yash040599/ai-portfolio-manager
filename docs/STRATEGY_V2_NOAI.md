@@ -98,7 +98,7 @@ Observation period (ENTRY_DELAY_MINUTES from market open):
   → Volume confirmation: skip if live RVol < 0.7× average (live mode only)
   → ATR-based SL/target override (15-min candles, capped at MAX_INTRADAY_SL_PCT)
   → Uses wider of ATR SL vs config SL (structural levels respected)
-  → Post-merge R:R check: if R:R < 1.3:1 after ATR merge → skip trade
+  → Post-merge R:R check: adaptive floor (1.2:1 → 1.0:1 after 3 failed scans, stops after 5)
   → Smart position sizing (reduce qty if budget insufficient)
 
 Entry loop with fallback:
@@ -279,7 +279,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **Post-merge R:R check (1.3:1)** | After ATR SL merge (wider-of ATR vs structural), recalculate R:R. Skip trade if < 1.3:1. | `order_engine.py` |
+| **Post-merge R:R check (adaptive)** | After ATR merge, R:R floor starts at 1.2:1, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. All configurable. | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Added to technical snapshot and auto-generated rationale. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost in pre-filter. | `stock_scanner_v2.py` |

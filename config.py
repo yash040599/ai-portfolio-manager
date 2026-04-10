@@ -192,6 +192,21 @@ class Config:
     ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
 
+    # ── Post-Merge R:R Floor (adaptive) ────────────────────────
+    # After ATR merge widens SL, the R:R can drop. These settings
+    # control the minimum acceptable R:R before a trade is rejected.
+    # Starts strict, relaxes after repeated scan failures.
+    #   POST_MERGE_RR_INITIAL: starting R:R floor (first 3 scan attempts)
+    #   POST_MERGE_RR_RELAXED: relaxed floor after RR_RELAX_AFTER_SCANS failures
+    #   POST_MERGE_RR_FLOOR:   absolute minimum — never go below this
+    #   RR_RELAX_AFTER_SCANS:  how many 0-entry scans before relaxing
+    #   RR_GIVEUP_AFTER_SCANS: stop trading for the day after this many 0-entry scans at floor
+    POST_MERGE_RR_INITIAL:    float = 1.2  # strict: reward ≥ 1.2× risk
+    POST_MERGE_RR_RELAXED:    float = 1.0  # relaxed: reward ≥ risk (break-even)
+    POST_MERGE_RR_FLOOR:      float = 1.0  # absolute minimum (never below 1:1)
+    RR_RELAX_AFTER_SCANS:     int   = 3    # relax after 3 failed scans
+    RR_GIVEUP_AFTER_SCANS:    int   = 5    # stop trading after 5 failed scans at floor
+
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
     #   the position must profit before trailing starts.
