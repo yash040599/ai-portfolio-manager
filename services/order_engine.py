@@ -612,6 +612,11 @@ class OrderEngine:
                 )
                 entry = live_price
                 trade["entry_price"] = entry
+            else:
+                self.log.info(
+                    f"  ✓ {symbol}: price validated — plan Rs.{entry:.2f}, "
+                    f"live Rs.{live_price:.2f} ({deviation*100:.1f}% off)"
+                )
 
         # ── Bid-ask spread check ──────────────────────────────────
         max_spread = getattr(self.cfg, "MAX_SPREAD_PCT", 0)
@@ -629,6 +634,10 @@ class OrderEngine:
                         f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
                     )
                     return False
+                self.log.info(
+                    f"  ✓ {symbol}: spread {spread_pct:.2f}% OK "
+                    f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
+                )
 
         # ── Volume confirmation at entry ──────────────────────────
         # Skip stocks with below-average recent volume — low conviction.
@@ -644,6 +653,7 @@ class OrderEngine:
                         f"low volume, skipping entry"
                     )
                     return False
+                self.log.info(f"  ✓ {symbol}: RVol {rvol:.1f}x OK (≥0.7x)")
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
@@ -748,6 +758,10 @@ class OrderEngine:
                     f"reduction — below 1.2:1 minimum, skipping"
                 )
                 return False
+            elif sl_distance > 0:
+                self.log.info(
+                    f"  ✓ {symbol}: late-entry R:R {tgt_distance/sl_distance:.1f}:1 OK (≥1.2:1)"
+                )
 
         # ── R:R safety floor (all entries, adaptive) ─────────────────
         # Catches edge cases: ATR unavailable (config fallback R:R 0.8:1),
@@ -763,6 +777,11 @@ class OrderEngine:
                 f"below {rr_floor:.1f}:1 floor, skipping"
             )
             return False
+        elif sl_dist > 0:
+            self.log.info(
+                f"  ✓ {symbol}: R:R {tgt_dist/sl_dist:.1f}:1 OK "
+                f"(floor {rr_floor:.1f}:1) | SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
+            )
 
         # ── Pre-trade minimum profit check ────────────────────────
         # Skip trades where expected profit doesn't cover charges.
@@ -775,6 +794,10 @@ class OrderEngine:
                 f"< min Rs.{min_profit} (charges will eat it). Skipping."
             )
             return False
+        self.log.info(
+            f"  ✓ {symbol}: expected profit Rs.{expected_profit:.0f} OK "
+            f"(min Rs.{min_profit})"
+        )
 
         # ── Apply slippage in dry-run mode for realism ────────────
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
@@ -890,6 +913,15 @@ class OrderEngine:
                     f"time(s) today (max {max_reentries}). Skipping re-entry."
                 )
                 return False
+
+        # ── All pre-trade checks passed ───────────────────────────
+        sl_pct_final = abs(entry - sl) / entry * 100
+        tgt_pct_final = abs(target - entry) / entry * 100
+        self.log.info(
+            f"  ✓ {symbol}: ALL CHECKS PASSED — {side} {qty}x @ Rs.{entry:.2f} | "
+            f"SL Rs.{sl:.2f} ({sl_pct_final:.1f}%) | Target Rs.{target:.2f} ({tgt_pct_final:.1f}%) | "
+            f"Cost Rs.{entry * qty:,.0f}"
+        )
 
         # ── Place or simulate the order ───────────────────────────
         estimated_entry = entry  # Save pre-fill price for proportional SL/target scaling
