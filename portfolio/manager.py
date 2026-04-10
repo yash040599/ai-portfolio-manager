@@ -408,6 +408,19 @@ class PortfolioManager:
 
         self.log.success(f"Entered {entered} position(s)")
 
+        # Show budget utilisation after entry
+        if entered > 0:
+            exposure = self.engine._total_open_exposure()
+            budget = self.engine._budget
+            remaining = budget - exposure
+            open_count = len(self.engine.open_positions())
+            self.log.info(
+                f"  Budget deployed: Rs.{exposure:,.0f} / Rs.{budget:,.0f} "
+                f"({exposure/budget*100:.0f}%) | "
+                f"Remaining: Rs.{remaining:,.0f} | "
+                f"Positions: {open_count}/{self.cfg.MAX_POSITIONS}"
+            )
+
         # Track scan result for adaptive R:R relaxation
         self.engine.record_scan_result(entered)
 
