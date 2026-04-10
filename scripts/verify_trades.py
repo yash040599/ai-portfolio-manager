@@ -92,6 +92,10 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
         data = json.load(f)
 
     if data.get("verified") and not force:
+        # JSON already verified — but ledger rows may have been inserted
+        # after verification (e.g. fill_intraday_ledger ran later).
+        # Stamp any unverified ledger rows that match verified positions.
+        _stamp_verified_ledger_rows(data, target_str)
         print(f"\n  ✓ Already verified on {data.get('verified_on', '?')}")
         return {"verified": len([p for p in data.get("positions", []) if p.get("status") == "CLOSED"])}
 
@@ -372,6 +376,46 @@ def _compute_charges(total_buy: float, total_sell: float,
         "total_costs":           total_costs,
         "zerodha_monthly_fyi":   old_charges.get("zerodha_monthly_fyi", 500.0),
     }
+
+
+def _stamp_verified_ledger_rows(data: dict, date_str: str):
+    """Mark unverified ledger rows as 'verified' when the JSON is already verified.
+
+    This handles the case where ledger rows were inserted *after* the JSON
+    was verified (e.g. fill_intraday_ledger ran later).  We match by
+    (date, order_id) — the same key used by _update_tax_ledger.
+    """
+    conn = get_db()
+    unverified = conn.execute(
+        "SELECT id, order_id FROM intraday_tax_ledger "
+        "WHERE date=? AND verified != 'verified'",
+        (date_str,),
+    ).fetchall()
+    if not unverified:
+        return
+
+    # Build set of order_ids from verified positions
+    position_oids = set()
+    for pos in data.get("positions", []):
+        if pos.get("status") != "CLOSED":
+            continue
+        oid = pos.get("order_id", "")
+        if oid and oid != "EXTERNAL" and not oid.startswith("DRY_RUN"):
+            position_oids.add(oid)
+
+    stamped = 0
+    for row in unverified:
+        if row["order_id"] in position_oids:
+            conn.execute(
+                "UPDATE intraday_tax_ledger SET verified='verified' WHERE id=?",
+                (row["id"],),
+            )
+            stamped += 1
+
+    if stamped:
+        conn.commit()
+        print(f"    ✓ Stamped {stamped} ledger row(s) as verified (post-fill catch-up)")
+    conn.close()
 
 
 def _update_tax_ledger(data: dict, date_str: str, z_trades: list[dict]):
