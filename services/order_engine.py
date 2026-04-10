@@ -102,7 +102,7 @@ class OrderEngine:
     # ── Adaptive R:R methods ──────────────────────────────────
 
     def current_rr_floor(self) -> float:
-        """Returns current post-merge R:R floor based on scan failure count."""
+        """Returns current R:R floor based on scan failure count."""
         initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.2)
         relaxed = getattr(self.cfg, "POST_MERGE_RR_RELAXED", 1.0)
         floor   = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
@@ -568,9 +568,9 @@ class OrderEngine:
         Entry pipeline (each step can reject the trade):
           1. Validate entry price vs live Zerodha quote
           2. Bid-ask spread check (illiquid stocks)
-          3. ATR-based SL/target → merge wider of ATR vs Claude
+          3. ATR-based SL/target (pure ATR when available, config fallback otherwise)
           4. Late-entry target reduction (13:00 / 14:00 cutoffs)
-          5. R:R floor check (post late-entry)
+          5. R:R floor check (adaptive: 1.2:1 → 1.0:1 → giveup)
           6. Minimum profit check (must cover round-trip charges)
           7. Slippage simulation (dry-run only)
           8. Budget / max positions / duplicate / sector / direction guards
@@ -678,16 +678,14 @@ class OrderEngine:
                 f"Dynamic SL: Rs.{atr_sl:.2f} | Target: Rs.{atr_target:.2f}"
             )
 
-            # Merge: use WIDER (less protective) of ATR vs Claude SL.
-            # Why wider? Structural support/resistance from Claude > ATR noise.
-            # Tighter SL = premature exits from normal intraday volatility.
-            # ATR is a fallback floor, not the primary SL source.
-            if side == "BUY":
-                sl     = min(atr_sl, sl)      # pick whichever SL is farther from entry
-                target = min(atr_target, target) if target > entry else atr_target
-            else:
-                sl     = max(atr_sl, sl)      # for shorts, higher SL = wider
-                target = max(atr_target, target) if target < entry else atr_target
+            # Use ATR directly for SL and target.
+            # Config defaults (DEFAULT_STOP_LOSS_PCT / DEFAULT_TARGET_PCT) are
+            # arbitrary percentages, not structural levels. ATR is computed from
+            # actual per-stock volatility and always gives TARGET_RR_MULTIPLIER R:R.
+            # The old merge (wider SL + tighter target) created 0.6-0.8:1 R:R
+            # because config SL (1.5%) > config target (1.2%) → worst of both.
+            sl     = atr_sl
+            target = atr_target
         else:
             self.log.info(
                 f"ATR unavailable for {symbol} — using Claude SL: Rs.{sl:.2f} / Target: Rs.{target:.2f}"
@@ -751,18 +749,17 @@ class OrderEngine:
                 )
                 return False
 
-        # ── Post-merge R:R floor (all entries, adaptive) ───────────
-        # After ATR merge, the SL/target may have shifted to create
-        # an unfavourable R:R. Check even non-late entries.
+        # ── R:R safety floor (all entries, adaptive) ─────────────────
+        # Catches edge cases: ATR unavailable (config fallback R:R 0.8:1),
+        # SL capped at MAX_INTRADAY_SL_PCT, or late-entry target squeeze.
         # Floor adapts: starts at POST_MERGE_RR_INITIAL (1.2:1),
-        # relaxes to POST_MERGE_RR_RELAXED (1.0:1) after N failed
-        # scans, and never goes below POST_MERGE_RR_FLOOR (1.0:1).
+        # relaxes to POST_MERGE_RR_RELAXED (1.0:1) after N failed scans.
         rr_floor = self.current_rr_floor()
         sl_dist = abs(entry - sl)
         tgt_dist = abs(target - entry)
         if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
             self.log.warning(
-                f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 after ATR merge — "
+                f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 — "
                 f"below {rr_floor:.1f}:1 floor, skipping"
             )
             return False

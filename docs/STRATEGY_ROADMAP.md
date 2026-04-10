@@ -329,10 +329,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 
 These fixes were identified by analyzing 8 days of actual trade data showing -Rs.897 cumulative losses. Root causes: late entries chasing extended moves, SL too tight, targets unreachable, winners cut too early, too many small trades eating charges.
 
-### 49. ✅ Wider SL Logic (Structural Level Priority)
+### 49. ✅ ATR-Only SL/Target (Pure ATR Mode)
 - **Versions**: All
-- **Gap**: `_calculate_sl()` used the TIGHTER of ATR SL and structural SL. Result: SL too tight, shaken out by normal volatility before the trade works.
-- **Fix**: Use the WIDER of ATR SL and structural SL (`min()` for BUY, `max()` for SELL). Structural supports/resistances are respected rather than overridden by ATR noise.
+- **Gap**: Original code MERGED ATR SL with config SL ("wider of both"). When config SL (1.5%) > config target (1.2%), the merge always picked the wider SL from config + tighter target from config → 0.6-0.8:1 R:R → every trade rejected.
+- **Fix**: When ATR is available, use ATR SL and ATR target directly. Config defaults (`DEFAULT_STOP_LOSS_PCT`, `DEFAULT_TARGET_PCT`) are pure fallbacks for when ATR candle data is unavailable. Pure ATR always gives `TARGET_RR_MULTIPLIER` (1.5:1) R:R.
+- **Decision history**: V1 used tighter-of → too tight. #49 switched to wider-of → bad R:R. Now pure ATR (2026-04-10).
 - **Files**: `order_engine.py`
 
 ### 50. ✅ Late-Entry + Time-Decay Mutual Exclusion
@@ -499,11 +500,11 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: CLAUDE_REVIEW_MINUTES 20 → 30. Gives trades more room to develop before first Claude review.
 - **Files**: `config.py`
 
-### 92. ✅ Post-Merge R:R Check (Adaptive Floor)
+### 92. ✅ R:R Safety Floor (Adaptive)
 - **Versions**: All (V2 NoAI + V2 AI)
-- **Gap**: After ATR SL merge (using wider of ATR and structural SL), the R:R ratio was not rechecked. Could enter trades with poor risk:reward after merge widened the SL.
-- **Fix**: After ATR merge, recalculate R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.2:1), relaxes to `POST_MERGE_RR_RELAXED` (1.0:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable.
-- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality.
+- **Gap**: After ATR SL/target assignment, edge cases (ATR unavailable, SL capped, late-entry squeeze) could still create poor R:R. Need a catch-all safety net.
+- **Fix**: After all SL/target adjustments, check R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.2:1), relaxes to `POST_MERGE_RR_RELAXED` (1.0:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable.
+- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality. Merge removal (2026-04-10) fixes root cause — floor now catches only edge cases.
 - **Files**: `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py`
 
 ### 93. ✅ Volume Confirmation at Entry (RVol Gate)
@@ -562,6 +563,18 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: Changed from `self.log.info()` to `self.log.warning()` for both quote failure paths.
 - **Files**: `manager.py`
 
+### 102. ✅ ATR Pure Mode — Remove ATR/Config SL Merge
+- **Versions**: All
+- **Gap**: `enter_trade()` merged ATR SL with config SL using "wider of both" logic (`min(atr_sl, sl)` for BUY). When `DEFAULT_STOP_LOSS_PCT` (1.5%) > `DEFAULT_TARGET_PCT` (1.2%), the merge always picked config's wider SL + config's tighter target → 0.6-0.8:1 R:R → every stock failed the R:R floor → 0 trades entered across 5 scan cycles.
+- **Fix**: When ATR is available, use ATR SL and ATR target directly (no merge). Config defaults are pure fallbacks for when ATR candle data is unavailable. Pure ATR always produces exactly `TARGET_RR_MULTIPLIER` (1.5:1) R:R. Verified with all 11 failures from Apr 10 logs — all become 1.5:1 PASS.
+- **Files**: `order_engine.py`, `config.py` (comment updates)
+
+### 103. ✅ Candidate Pool — Return All Pre-Filtered Candidates
+- **Versions**: NoAI
+- **Gap**: `scan_noai()` returned only `max_trades + 5` candidates to the entry loop. With max_trades=2, only 7 candidates were tried. If the top picks failed R:R or other checks, the loop exhausted candidates quickly and triggered a wasteful full rescan.
+- **Fix**: Return ALL pre-filtered candidates (`direction_filtered`) to the entry loop. The loop still stops once position slots are filled. More candidates = more chances to find one that passes all 14 entry checks.
+- **Files**: `stock_scanner_v2.py`
+
 ---
 
 ## Implementation Status
@@ -615,7 +628,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 45 | Multi-day score trend | V2, NoAI | MEDIUM | ⬜ Pending | — |
 | 46 | ~~Smart square-off timing~~ | — | — | ❌ Removed | EOD accelerated exit (#27) covers this |
 | 47 | ~~Budget auto-scaling~~ | — | — | ❌ Removed | Loss-adjusted sizing (#15) + dynamic sizing (#58) cover this |
-| 49 | Wider SL logic | All | HIGH | ✅ Done | `order_engine.py` |
+| 49 | ATR-only SL/target (pure ATR) | All | HIGH | ✅ Done | `order_engine.py` |
 | 50 | Late-entry + time-decay exclusion | All | HIGH | ✅ Done | `order_engine.py` |
 | 51 | Extended move penalty | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 52 | RSI extreme hard cap | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
@@ -658,7 +671,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 89 | Increase circuit breaker to 4% | All | MEDIUM | ⬜ Pending | `config.py` |
 | 90 | Reduce default target to 1.2% | All | HIGH | ✅ Done | `config.py` |
 | 91 | Increase Claude review time to 30 min | V2 AI | HIGH | ✅ Done | `config.py` |
-| 92 | Post-merge R:R check (adaptive) | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| 92 | R:R safety floor (adaptive) | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | 93 | Volume confirmation at entry (RVol gate) | All | LOW | ✅ Done | `order_engine.py` |
 | 94 | StochRSI indicator for entry timing | All | LOW | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 95 | Sector momentum filter (score boost) | All | LOW | ✅ Done | `stock_scanner_v2.py` |
@@ -668,4 +681,6 @@ Identified by deep code review against industry standards for candle-based intra
 | 99 | Morning/Evening Star gap fix (bug) | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
 | 100 | Three White Soldiers/Crows body fix (bug) | V2, NoAI | HIGH | ✅ Done | `candle_patterns.py` |
 | 101 | Observation filter log level fix (bug) | All | MEDIUM | ✅ Done | `manager.py` |
+| 102 | ATR pure mode (remove merge) | All | CRITICAL | ✅ Done | `order_engine.py`, `config.py` |
+| 103 | Candidate pool: all pre-filtered | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 

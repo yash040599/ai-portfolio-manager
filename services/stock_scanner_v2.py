@@ -684,11 +684,12 @@ class StockScannerV2(StockScanner):
                 f"candidates: {buy_cands} BUY / {sell_cands} SELL)"
             )
 
-        # Include fallback candidates beyond max_trades — if primary
-        # picks fail sanity checks in enter_trade (R:R, late-entry
-        # reduction, min profit, etc.) the entry loop tries these next.
-        fallback_buffer = min(5, max(0, len(direction_filtered) - max_trades))
-        top = direction_filtered[:max_trades + fallback_buffer]
+        # Include ALL pre-filtered candidates — not just max_trades + 5.
+        # The entry loop in _enter_positions enforces MAX_POSITIONS, budget,
+        # and sector limits. Returning more candidates means if top picks
+        # fail R:R or other entry checks, the loop can try lower-scored
+        # candidates rather than triggering a wasteful full rescan.
+        top = direction_filtered
 
         # Step 3: Build trade plans from technical data
         budget = self._budget
@@ -1251,7 +1252,7 @@ STOP-LOSS AND TARGET RULES:
 • Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
 • For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
 • NOTE: At {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at {int(self.cfg.TRAIL_STEP_PCT)}% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
-• NOTE: The system uses the WIDER of Claude's SL vs ATR SL (14-period, 15-min candles). Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
+• NOTE: The system uses ATR-based SL (14-period, 15-min candles) when available, falling back to your SL otherwise. Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
 
 ══════════════════════════════════════════════════════════
 COMMON MISTAKES TO AVOID (from actual loss patterns):

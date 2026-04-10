@@ -23,7 +23,7 @@ python main.py --mode analyze
 A fully automated intraday trading bot. Default mode is **NoAI** (pure technical signals, zero Claude calls). The core loop:
 
 1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, StochRSI, and more), applies sector momentum filter, auto-selects best candidates by score
-2. **Execution** — enters positions with ATR-based dynamic stop-losses, validates entry prices against live Zerodha quotes, checks bid-ask spreads, volume confirmation (RVol gate), adaptive R:R floor (starts strict, relaxes after failed scans, gives up after repeated failures), and tries fallback candidates if primary picks fail entry checks
+2. **Execution** — enters positions with ATR-based dynamic stop-losses (pure ATR, no merge with config defaults), validates entry prices against live Zerodha quotes, checks bid-ask spreads, volume confirmation (RVol gate), adaptive R:R safety floor (starts strict, relaxes after failed scans, gives up after repeated failures), and tries fallback candidates if primary picks fail entry checks
 3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, runs stagnant position exit
 4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, and manual trade adoption
 5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API

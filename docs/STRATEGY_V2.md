@@ -11,11 +11,9 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-09 — V2 Review Cycle: target 1.5→1.2%, Claude review
-  20→30 min, post-merge R:R check, RVol entry gate, StochRSI indicator,
-  sector momentum filter, Claude rank/veto prompt, 15-min re-scan in review,
-  4 bug fixes (extended move penalty, Morning/Evening Star gap, 3WS/3BC body,
-  observation filter log level).
+  Last sync: 2026-04-10 — ATR pure mode (removed ATR/config merge that
+  created 0.6-0.8:1 R:R), expanded candidate pool to all pre-filtered,
+  R:R safety floor renamed (no longer "post-merge").
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -84,7 +82,7 @@ Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
-3. ATR-based SL/target calculation — uses **wider-of** ATR SL vs Claude SL
+3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only)
 4. Pre-trade checks pass (12 checks — see Risk Management section)
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan (fallback candidates included). Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha
@@ -121,8 +119,8 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
-| 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | SL = wider-of(ATR, Claude). Target uses 1.5:1 R:R. SL capped at 2.5% |
-| 3b | **Post-merge R:R check** | Adaptive: 1.2:1 → 1.0:1 | Starts strict (1.2:1), relaxes to 1.0:1 after 3 failed scans, stops trading after 5. Late entries: 1.2:1 |
+| 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
+| 3b | **R:R safety floor** | Adaptive: 1.2:1 → 1.0:1 | Starts strict (1.2:1), relaxes to 1.0:1 after 3 failed scans, stops trading after 5. Late entries: 1.2:1 |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −35% | If R:R drops below 1.2:1 → skip |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
@@ -383,7 +381,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **Post-merge R:R check (adaptive)** | After ATR merge, R:R must pass floor: 1.2:1 initially, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. All thresholds configurable. | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| **R:R safety floor (adaptive)** | R:R must pass floor: 1.2:1 initially, relaxes to 1.0:1 after 3 failed scans, stops trading after 5 failures at floor. Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Fed to snapshot, rationale, and Claude prompt. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. | `stock_scanner_v2.py` |
