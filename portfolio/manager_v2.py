@@ -739,12 +739,12 @@ class PortfolioManagerV2(PortfolioManager):
                 )
                 break
 
-            # ── End-of-day accelerated exit ─────────────────────
+            # ── Late-day loser exit ───────────────────────────────
             if self.engine.open_positions():
-                eod_closed = self.engine.check_eod_exit(quotes)
-                if eod_closed > 0:
+                loser_closed = self.engine.check_loser_exit(quotes)
+                if loser_closed > 0:
                     self._clear_status_line()
-                    self.log.info(f"{eod_closed} losing position(s) exited (EOD accelerated exit)")
+                    self.log.info(f"{loser_closed} losing position(s) auto-exited (late-day loser cleanup)")
 
             # ── Dynamic poll rate ─────────────────────────────────
             if self.engine.open_positions():

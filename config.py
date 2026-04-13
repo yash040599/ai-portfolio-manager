@@ -283,17 +283,19 @@ class Config:
     # this many minutes remain until square-off. Prevents entering
     # too late when full-day targets are impossible.
     # 45 min = won't enter after ~2:25 PM (with 3:10 square-off).
-    # Safe because late-entry target reduction + EOD accelerated exit
+    # Safe because late-entry target reduction + late-day loser exit
     # already protect against late-day risk.
     MIN_MINUTES_FOR_ENTRY: int = 45
 
-    # ── End-of-Day Accelerated Exit ───────────────────────────────
-    # EOD_EXIT_AFTER_HOUR / MINUTE: after this time, auto-exit any
+    # ── Late-Day Loser Exit ─────────────────────────────────────
+    # LOSER_EXIT_HOUR / MINUTE: after this time, auto-exit any
     #   losing position. Prevents holding losers into the close where
     #   liquidity drops and square-off slippage is higher.
     # Breakeven positions get SL tightened to entry ± 0.1%.
-    EOD_EXIT_AFTER_HOUR:   int = 14   # 2:45 PM IST
-    EOD_EXIT_AFTER_MINUTE: int = 45
+    # NOTE: This is NOT the full square-off (SQUARE_OFF_HOUR:MINUTE).
+    #   Winners with active trails keep running until square-off.
+    LOSER_EXIT_HOUR:   int = 14   # 2:45 PM IST
+    LOSER_EXIT_MINUTE: int = 45
 
     # ── Late Entry Target Compression ─────────────────────────────
     # Trades entered after 1 PM get reduced targets (less time to hit).

@@ -1189,9 +1189,19 @@ class StockScannerV2(StockScanner):
         elif hour < 13:
             time_phase = "MIDDAY LULL (11:00 AM-1:00 PM): Volume drops, ranges narrow. Favour mean-reversion setups near VWAP. Reduce conviction on breakout trades."
         elif hour < 14:
-            time_phase = "AFTERNOON (1:00-2:00 PM): European markets opening can bring fresh volatility. Reduce targets by 30% due to less time for trades to play out."
+            time_phase = f"AFTERNOON (1:00-2:00 PM): European markets opening can bring fresh volatility. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_1:.0f}% for afternoon entries."
         else:
-            time_phase = "LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). Reduce targets by 50%."
+            time_phase = f"LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% for late entries."
+
+        # R:R floor varies with time — align Claude's rejection with code
+        afternoon_hour = self.cfg.RR_AFTERNOON_HOUR
+        late_hour = self.cfg.RR_LATE_HOUR
+        if hour >= late_hour:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_LATE}"
+        elif hour >= afternoon_hour:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_AFTERNOON}"
+        else:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_MORNING}"
 
         min_util = self.cfg.MIN_BUDGET_UTILISATION_PCT
 
@@ -1318,7 +1328,7 @@ HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ✗ REJECT SHORT if stock already DOWN >2% from today's open — move is EXTENDED, bounce risk is high.
 ✗ REJECT SHORT if RSI < 25 — stock is in CAPITULATION zone, a bounce is almost certain.
 ✗ REJECT BUY if RSI > 80 — stock is in EUPHORIA zone, a pullback is almost certain.
-✗ REJECT if Risk:Reward < 1:1.5 — not enough edge to cover costs and slippage.
+✗ REJECT if Risk:Reward < {rr_min_text} — the system enforces this floor for the current time period. Aim for ≥{self.cfg.RR_TARGET_RATIO}:1 when possible.
 ✗ REJECT if RVol < 0.5 — no institutional participation, random noise.
 ✗ REJECT if trading AGAINST SuperTrend AND no confirmed reversal candle pattern exists.
 ✗ REJECT if MACD momentum = SHRINKING in the trade's direction — momentum is fading.
@@ -1365,8 +1375,8 @@ INDIAN MARKET AWARENESS:
 STOP-LOSS AND TARGET RULES:
 ══════════════════════════════════════════════════════════
 • Base SL on the nearest STRUCTURAL LEVEL: VWAP, SuperTrend value, previous day pivot, Fibonacci retracement level, or recent swing high/low. DO NOT use arbitrary fixed percentages.
-• SL range: {default_sl}% to 2% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
-• Target: minimum 1.5× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
+• SL range: {default_sl}% to {self.cfg.MAX_INTRADAY_SL_PCT}% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
+• Target: minimum {self.cfg.RR_TARGET_RATIO}× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
 • For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
 • NOTE: At {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at {int(self.cfg.TRAIL_STEP_PCT)}% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
 • NOTE: The system uses ATR-based SL (14-period, 15-min candles) when available, falling back to your SL otherwise. Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
@@ -1398,7 +1408,7 @@ SYMBOL: [NSE stock symbol]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price near current price]
 STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/Fib/swing]
-TARGET: [target price — at least 1.5× SL distance from entry]
+TARGET: [target price — at least {self.cfg.RR_TARGET_RATIO}× SL distance from entry]
 QTY: [number of shares within budget constraints]
 RATIONALE: [2-3 sentences: (1) confluence count X/13 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
 ---
@@ -1606,9 +1616,10 @@ REVIEW RULES — MUST FOLLOW:
 
 4. TIME MANAGEMENT (based on {mins_left:.0f} min remaining):
    • >120 min: Full discretion. HOLD winners, manage losers normally.
-   • 60-120 min: Reduce open targets by 30%. No new trades unless score ≥5.
-   • 30-60 min: Reduce open targets by 50%. EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
+   • 60-120 min: No new trades unless score ≥5.
+   • 30-60 min: EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
    • <30 min: EXIT ALL positions unless they are within 0.3% of target. Do NOT hold into square-off hoping for last-minute moves.
+   NOTE: The system already compresses targets automatically ({self.cfg.LATE_TARGET_CUT_PCT_1:.0f}-{self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% reduction at late entry, {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00). Targets shown above reflect these adjustments. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
 
 5. CUT LOSERS: If position is underwater AND 5-min candle shows a reversal pattern forming (e.g. HAMMER on your SHORT), EXIT immediately. Dead positions that drift sideways for 2+ reviews should also be exited — capital is better used elsewhere.
 

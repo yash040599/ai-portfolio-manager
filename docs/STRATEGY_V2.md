@@ -37,7 +37,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 | Claude API cost | Rs.0 | ~Rs.20-40/day (5-15 calls) |
 | Mid-day re-scan | Yes (every 30 min, no Claude call) | Yes (every 30 min, 1 Claude call) |
 
-Both modes share: pre-filter, risk management, SL-M orders, trailing stop, circuit breaker, time-decay, EOD exit, direction diversification.
+Both modes share: pre-filter, risk management, SL-M orders, trailing stop, circuit breaker, time-decay, loser exit, direction diversification.
 
 ---
 
@@ -69,7 +69,7 @@ Cost: Rs.0 — pure computation on free Zerodha historical data.
 - Time-phase context (Opening / Morning Trend / Midday Lull / Afternoon / Late Session)
 - 14-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, VWAP Bands, MACD, ORB, Gap, RVol, Hourly EMA, BB Squeeze, ADX, Fib, StochRSI, Prev-Day S&R, Daily EMA Bias)
 - Rank/veto role: Claude must rank and filter from pre-filtered candidates, not generate new ones
-- Hard rejection filters (extended move >2%, RSI extremes, R:R <1:1.5, against-SuperTrend without reversal)
+- Hard rejection filters (extended move >2%, RSI extremes, R:R below time-based floor, against-SuperTrend without reversal)
 - Indian market awareness (NIFTY regime, F&O expiry, sector clustering)
 - Common mistakes to avoid (chasing extended moves, all-same-direction)
 
@@ -101,7 +101,7 @@ Claude returns: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
 ### Phase 5 — Square Off & Report
 
-- **2:45 PM (EOD exit):** Exit losing positions at market. Tighten breakeven SL to entry ±0.1%.
+- **2:45 PM (loser exit):** Exit losing positions at market. Tighten breakeven SL to entry ±0.1%. Winners with active trails keep running.
 - **3:10 PM (Square off):** Close all remaining positions.
 - Generate `trading_data_{date}.json` + `trading_report_{date}.txt`
 - Record trades to `data/trades.db` (for Claude learning context)
@@ -175,7 +175,7 @@ Only active when `USE_EXCHANGE_SL=True` AND `DRY_RUN=False`.
 
 After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`) of entry-to-target distance. Applied once per position. Skipped if late-entry reduction was already applied (prevents stacking).
 
-### EOD Accelerated Exit (2:45 PM)
+### Late-Day Loser Exit (2:45 PM)
 
 | Position State | Action |
 |---------------|--------|

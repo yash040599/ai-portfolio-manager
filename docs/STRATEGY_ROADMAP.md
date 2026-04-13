@@ -200,10 +200,10 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: In `enter_trade()`, check the sector of the new stock against sectors of existing open positions. Reject if sector already has MAX_PER_SECTOR open positions.
 - **Source**: Portfolio theory — correlated positions amplify drawdown when a sector drops.
 
-### 27. ✅ End-of-Day Accelerated Exit (NoAI)
+### 27. ✅ Late-Day Loser Exit (NoAI)
 - **Versions**: NoAI, V2
 - **Gap**: Claude prompt says "EXIT ALL underwater positions <30 min", but NoAI code doesn't enforce this. Losing positions sit until 15:10 square-off, risking slippage in low-liquidity closing minutes.
-- **Fix**: After `EOD_EXIT_AFTER_HOUR:EOD_EXIT_AFTER_MINUTE` (default 14:45), auto-exit any position that is at a loss. Breakeven positions get SL tightened to entry - 0.1%.
+- **Fix**: After `LOSER_EXIT_HOUR:LOSER_EXIT_MINUTE` (default 14:45), auto-exit any position that is at a loss. Breakeven positions get SL tightened to entry - 0.1%. Winners with active trails keep running until square-off.
 - **Source**: Professional day trading — don't hold losers into the close.
 
 ### 28. ✅ ADX Trend Strength Filter
@@ -318,7 +318,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Effort**: Medium | **Impact**: Medium
 
 ### 46. ~~Smart Square-Off Timing~~ *(Removed)*
-- **Reason**: Marginal ±5 min difference. EOD accelerated exit (#27) already exits losers early. Risk of holding past close outweighs benefit of 5 extra minutes.
+- **Reason**: Marginal ±5 min difference. Late-day loser exit (#27) already exits losers early. Risk of holding past close outweighs benefit of 5 extra minutes.
 
 ### 47. ~~Budget Auto-Scaling Based on Win Rate~~ *(Removed)*
 - **Reason**: Over-engineering — loss-adjusted sizing (#15) already reduces budget after losses. Dynamic position sizing (#58) scales with available capital. Adding win-rate scaling on top adds complexity for minimal incremental benefit.
@@ -619,7 +619,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 24 | Backtesting framework | All | MEDIUM | ⬜ Pending | — |
 | 25 | Trade journaling + analytics | All | MEDIUM | ✅ Done | `performance_tracker.py`, `view_performance.py` |
 | 26 | Sector cap at entry time | All | HIGH | ✅ Done | `order_engine.py` |
-| 27 | EOD accelerated exit | NoAI, V2 | HIGH | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
+| 27 | Late-day loser exit | NoAI, V2 | HIGH | ✅ Done | `order_engine.py`, `manager_v2.py`, `config.py` |
 | 28 | ADX trend strength | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py` |
 | 29 | Thursday expiry handling | All | MEDIUM | ✅ Done | `manager.py`, `config.py` |
 | 30 | 3-day candle lookback | V2, NoAI | MEDIUM | ✅ Done | `stock_scanner_v2.py` |
@@ -638,7 +638,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 43 | Real-time trade verification | All | HIGH | ✅ Done | `scripts/verify_trades.py` |
 | 44 | WebSocket tick data | All | MEDIUM | ⬜ Pending | — |
 | 45 | Multi-day score trend | V2, NoAI | MEDIUM | ⬜ Pending | — |
-| 46 | ~~Smart square-off timing~~ | — | — | ❌ Removed | EOD accelerated exit (#27) covers this |
+| 46 | ~~Smart square-off timing~~ | — | — | ❌ Removed | Late-day loser exit (#27) covers this |
 | 47 | ~~Budget auto-scaling~~ | — | — | ❌ Removed | Loss-adjusted sizing (#15) + dynamic sizing (#58) cover this |
 | 49 | ATR-only SL/target (pure ATR) | All | HIGH | ✅ Done | `order_engine.py` |
 | 50 | Late-entry + time-decay exclusion | All | HIGH | ✅ Done | `order_engine.py` |

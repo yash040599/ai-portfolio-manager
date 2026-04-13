@@ -138,7 +138,7 @@ V1 shares `OrderEngine` with V2/NoAI — all entry checks and position managemen
 - Full price table: symbol, LTP, change%, volume, day OHLC
 - NIFTY 50 index trend + volatility regime
 - Recent trade history (win rates, P&L, losing stocks to avoid)
-- 8 strict rules (don't chase >2% moves, min 1:1.5 R:R, etc.)
+- 8 strict rules (don't chase >2% moves, time-based R:R floor, etc.)
 - Strategy framework (ORB, VWAP mean-reversion, sector strength)
 
 ### Periodic Review Prompt

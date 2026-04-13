@@ -307,9 +307,19 @@ class StockScanner:
         elif hour < 13:
             time_phase = "MIDDAY (11 AM-1 PM): Volume drops. Favour mean-reversion near day's VWAP."
         elif hour < 14:
-            time_phase = "AFTERNOON (1-2 PM): Reduce targets by 30%. European market opens — fresh volatility but less time."
+            time_phase = f"AFTERNOON (1-2 PM): European market opens — fresh volatility but less time. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_1:.0f}% for afternoon entries."
         else:
-            time_phase = "LATE SESSION (after 2 PM): Only high-conviction setups. Reduce targets by 50%."
+            time_phase = f"LATE SESSION (after 2 PM): Only high-conviction setups. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% for late entries."
+
+        # R:R floor varies with time — align Claude's rejection with code
+        afternoon_hour = self.cfg.RR_AFTERNOON_HOUR
+        late_hour = self.cfg.RR_LATE_HOUR
+        if hour >= late_hour:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_LATE}"
+        elif hour >= afternoon_hour:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_AFTERNOON}"
+        else:
+            rr_min_text = f"1:{self.cfg.RR_FLOOR_MORNING}"
 
         return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of experience in price action, sector rotation, and NSE microstructure.
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
@@ -324,12 +334,12 @@ HARD REJECTION FILTERS — REJECT any trade that fails even ONE:
 ══════════════════════════════════════════════════════════
 ✗ REJECT BUY if stock already UP >2% from PrevClose — move is extended, mean-reversion risk.
 ✗ REJECT SELL if stock already DOWN >2% from PrevClose — move is extended, bounce risk.
-✗ REJECT if Risk:Reward < 1:1.5 — insufficient edge after costs.
+✗ REJECT if Risk:Reward < {rr_min_text} — the system enforces this floor for the current time period. Aim for ≥{self.cfg.RR_TARGET_RATIO}:1 when possible.
 ✗ REJECT if no clear structural level for stop-loss — no random % stops.
 ✗ REJECT if stock gapped up/down >1.5% AND is still near the extreme — do NOT chase gaps. If it pulled back toward the gap edge, a pullback entry is acceptable.
 ✗ REJECT if total position cost across ALL trades would exceed Rs.{budget:,}.
 
-NOTE: The system automatically takes partial profit (50% of qty) at 1× risk profit and trails SL on the remainder. Prefer qty >= 2 so partial exits can work.
+NOTE: The system automatically takes partial profit (33% of qty) at {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}× risk profit and trails SL at {int(self.cfg.TRAIL_STEP_PCT)}% of profit on the remainder. Prefer qty >= 3 so partial exits can work.
 
 ══════════════════════════════════════════════════════════
 TRADING APPROACH (use price action from the data below):
@@ -357,8 +367,8 @@ Use these to infer setups:
    Low volume on a breakout = likely false breakout → avoid.
 
 5. STOP-LOSS PLACEMENT:
-   BUY: SL just below today's low or open (whichever is tighter and structural). Range: {default_sl}%-2%.
-   SELL: SL just above today's high or open. Range: {default_sl}%-2%.
+   BUY: SL just below today's low or open (whichever is tighter and structural). Range: {default_sl}%-{self.cfg.MAX_INTRADAY_SL_PCT}%.
+   SELL: SL just above today's high or open. Range: {default_sl}%-{self.cfg.MAX_INTRADAY_SL_PCT}%.
    NEVER use arbitrary fixed % — always reference a structural level (O, H, L, PrevClose).
 
 ══════════════════════════════════════════════════════════
@@ -386,7 +396,7 @@ SYMBOL: [NSE stock symbol e.g. RELIANCE]
 SIDE: [BUY or SELL]
 ENTRY_PRICE: [realistic entry price in Rs., near current price]
 STOP_LOSS: [stop-loss price in Rs. — state which structural level: today's L/H, Open, or PrevClose]
-TARGET: [target price in Rs. — must be at least 1.5× the SL distance from entry]
+TARGET: [target price in Rs. — must be at least {self.cfg.RR_TARGET_RATIO}× the SL distance from entry]
 QTY: [number of shares — must fit within budget constraints]
 RATIONALE: [2-3 sentences: (1) what setup (ORB/mean-reversion/relative strength), (2) structural SL level, (3) R:R ratio. If Chg >2%, explain why it's NOT an extended-move violation.]
 ---
@@ -511,9 +521,10 @@ REVIEW RULES — MUST FOLLOW:
 
 2. TIME MANAGEMENT ({mins_left:.0f} min remaining):
    • >120 min: Full discretion. Manage positions normally.
-   • 60-120 min: Reduce targets by 30%. No new trades unless strong setup.
-   • 30-60 min: Reduce targets by 50%. EXIT underwater positions. HOLD only profitable positions with strong momentum.
+   • 60-120 min: No new trades unless strong setup.
+   • 30-60 min: EXIT underwater positions. HOLD only profitable positions with strong momentum.
    • <30 min: EXIT ALL positions unless within 0.3% of target.
+   NOTE: The system already compresses targets automatically ({self.cfg.LATE_TARGET_CUT_PCT_1:.0f}-{self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% reduction at late entry, {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00). Targets shown above reflect these adjustments. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
 
 3. CUT LOSERS: Positions underwater that have been drifting sideways for 2+ review cycles → EXIT. Dead money is worse than a small loss.
 

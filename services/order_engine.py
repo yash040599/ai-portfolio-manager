@@ -109,14 +109,11 @@ class OrderEngine:
         Afternoon (1-2):  RR_FLOOR_AFTERNOON (1.2)
         Late (>2 PM):     RR_FLOOR_LATE     (1.0)
         """
-        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
-        late_hour      = getattr(self.cfg, "RR_LATE_HOUR", 14)
-
-        if hour >= late_hour:
-            return getattr(self.cfg, "RR_FLOOR_LATE", 1.0)
-        if hour >= afternoon_hour:
-            return getattr(self.cfg, "RR_FLOOR_AFTERNOON", 1.2)
-        return getattr(self.cfg, "RR_FLOOR_MORNING", 1.3)
+        if hour >= self.cfg.RR_LATE_HOUR:
+            return self.cfg.RR_FLOOR_LATE
+        if hour >= self.cfg.RR_AFTERNOON_HOUR:
+            return self.cfg.RR_FLOOR_AFTERNOON
+        return self.cfg.RR_FLOOR_MORNING
 
     def current_rr_floor(self, hour: int = 10) -> float:
         """Returns current R:R floor based on time of day, scan failures,
@@ -128,32 +125,26 @@ class OrderEngine:
         3. If mid-day retry → time_floor - RR_RETRY_STEP
         """
         time_floor = self._time_based_rr_floor(hour)
-        relaxed    = getattr(self.cfg, "RR_FLOOR_RELAXED", 1.1)
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
 
-        if self._zero_entry_scans >= relax_after:
+        if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
             # Take the more lenient (lower) of time-based and relaxed
-            return min(time_floor, relaxed)
+            return min(time_floor, self.cfg.RR_FLOOR_RELAXED)
 
         # Mid-day retry: step down from current floor
         if self._rr_retry_active:
-            step = getattr(self.cfg, "RR_RETRY_STEP", 0.1)
-            return max(time_floor - step, 1.0)
+            return max(time_floor - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
 
         return time_floor
 
     def _rr_floor_label(self, hour: int) -> str:
         """Returns a descriptive label for the current R:R floor state."""
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
-        if self._zero_entry_scans >= relax_after:
+        if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
             return "relaxed"
         if self._rr_retry_active:
             return "retry"
-        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
-        late_hour      = getattr(self.cfg, "RR_LATE_HOUR", 14)
-        if hour >= late_hour:
+        if hour >= self.cfg.RR_LATE_HOUR:
             return "late"
-        if hour >= afternoon_hour:
+        if hour >= self.cfg.RR_AFTERNOON_HOUR:
             return "afternoon"
         return "morning"
 
@@ -165,10 +156,8 @@ class OrderEngine:
             return
 
         self._zero_entry_scans += 1
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
-        giveup_after = getattr(self.cfg, "RR_GIVEUP_AFTER_FAILS", 5)
 
-        if self._zero_entry_scans == relax_after:
+        if self._zero_entry_scans == self.cfg.RR_RELAX_AFTER_FAILS:
             hour_now = now_ist().hour
             new_floor = self.current_rr_floor(hour=hour_now)
             label = self._rr_floor_label(hour=hour_now)
@@ -176,7 +165,7 @@ class OrderEngine:
                 f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries — "
                 f"relaxing R:R floor to {new_floor:.1f}:1 ({label})"
             )
-        elif self._zero_entry_scans >= giveup_after:
+        elif self._zero_entry_scans >= self.cfg.RR_GIVEUP_AFTER_FAILS:
             self._rr_giveup = True
             self.log.warning(
                 f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries "
@@ -246,38 +235,13 @@ class OrderEngine:
             side = "BUY" if qty > 0 else "SELL"
             abs_qty = abs(qty)
 
-            # Calculate ATR-based SL/target around the actual entry
+            # ATR-based SL/target (same logic as enter_trade / sync_external)
             atr = self.calculate_atr(symbol, exchange)
-            if atr and atr > 0:
-                multiplier = self.cfg.ATR_MULTIPLIER
-                rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
-                if side == "BUY":
-                    sl     = round(avg_price - multiplier * atr, 2)
-                    target = round(avg_price + multiplier * rr_mult * atr, 2)
-                else:
-                    sl     = round(avg_price + multiplier * atr, 2)
-                    target = round(avg_price - multiplier * rr_mult * atr, 2)
-
-                # Cap SL at MAX_INTRADAY_SL_PCT (same as external adoption)
-                max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
-                sl_pct = abs(sl - avg_price) / avg_price * 100
-                if sl_pct > max_sl_pct:
-                    if side == "BUY":
-                        sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 + max_sl_pct * rr_mult / 100), 2)
-                    else:
-                        sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 - max_sl_pct * rr_mult / 100), 2)
+            result = self._compute_atr_sl_target(avg_price, side, atr)
+            if result:
+                sl, target = result
             else:
-                # Fallback: use config defaults (same as sync_external_positions)
-                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
-                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
-                if side == "BUY":
-                    sl     = round(avg_price * (1 - sl_pct), 2)
-                    target = round(avg_price * (1 + tgt_pct), 2)
-                else:
-                    sl     = round(avg_price * (1 + sl_pct), 2)
-                    target = round(avg_price * (1 - tgt_pct), 2)
+                sl, target = self._default_sl_target(avg_price, side)
 
             position = {
                 "symbol":       symbol,
@@ -380,38 +344,13 @@ class OrderEngine:
             if (symbol, side) in known_positions:
                 continue
 
-            # Calculate ATR-based SL/target (same as crash resume)
+            # ATR-based SL/target (same logic as enter_trade / load_existing)
             atr = self.calculate_atr(symbol, exchange)
-            if atr and atr > 0:
-                multiplier = self.cfg.ATR_MULTIPLIER
-                rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
-                if side == "BUY":
-                    sl     = round(avg_price - multiplier * atr, 2)
-                    target = round(avg_price + multiplier * rr_mult * atr, 2)
-                else:
-                    sl     = round(avg_price + multiplier * atr, 2)
-                    target = round(avg_price - multiplier * rr_mult * atr, 2)
-
-                # Cap SL at MAX_INTRADAY_SL_PCT
-                max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
-                sl_pct = abs(sl - avg_price) / avg_price * 100
-                if sl_pct > max_sl_pct:
-                    if side == "BUY":
-                        sl     = round(avg_price * (1 - max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 + max_sl_pct * rr_mult / 100), 2)
-                    else:
-                        sl     = round(avg_price * (1 + max_sl_pct / 100), 2)
-                        target = round(avg_price * (1 - max_sl_pct * rr_mult / 100), 2)
+            result = self._compute_atr_sl_target(avg_price, side, atr)
+            if result:
+                sl, target = result
             else:
-                # Fallback: default SL/target from config
-                sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
-                tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
-                if side == "BUY":
-                    sl     = round(avg_price * (1 - sl_pct), 2)
-                    target = round(avg_price * (1 + tgt_pct), 2)
-                else:
-                    sl     = round(avg_price * (1 + sl_pct), 2)
-                    target = round(avg_price * (1 - tgt_pct), 2)
+                sl, target = self._default_sl_target(avg_price, side)
 
             position = {
                 "symbol":       symbol,
@@ -564,7 +503,7 @@ class OrderEngine:
         if period <= 0:
             period = self.cfg.ATR_PERIOD
 
-        interval = getattr(self.cfg, "ATR_INTERVAL", "15minute")
+        interval = self.cfg.ATR_INTERVAL
 
         to_date   = now_ist().date()
         # For intraday intervals, fetch 5 trading days to get enough candles
@@ -595,6 +534,53 @@ class OrderEngine:
 
         atr = sum(true_ranges) / len(true_ranges)
         return round(atr, 2)
+
+    def _compute_atr_sl_target(
+        self, price: float, side: str, atr: float | None
+    ) -> tuple[float, float] | None:
+        """
+        Compute ATR-based stop-loss and target for a given entry price.
+        Returns (sl, target) or None if ATR is unavailable/zero.
+
+        SL  = price ± ATR_MULTIPLIER × ATR
+        Tgt = price ± ATR_MULTIPLIER × RR_TARGET_RATIO × ATR
+        SL is capped at MAX_INTRADAY_SL_PCT (target rescaled to keep R:R).
+
+        Used by: enter_trade, load_existing_positions, sync_external_positions.
+        """
+        if not atr or atr <= 0:
+            return None
+
+        multiplier = self.cfg.ATR_MULTIPLIER
+        rr_mult = self.cfg.RR_TARGET_RATIO
+
+        if side == "BUY":
+            sl     = round(price - multiplier * atr, 2)
+            target = round(price + multiplier * rr_mult * atr, 2)
+        else:
+            sl     = round(price + multiplier * atr, 2)
+            target = round(price - multiplier * rr_mult * atr, 2)
+
+        # Cap SL at MAX_INTRADAY_SL_PCT to prevent swing-trade-sized stops
+        max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
+        sl_pct = abs(sl - price) / price * 100
+        if sl_pct > max_sl_pct:
+            if side == "BUY":
+                sl     = round(price * (1 - max_sl_pct / 100), 2)
+                target = round(price * (1 + max_sl_pct * rr_mult / 100), 2)
+            else:
+                sl     = round(price * (1 + max_sl_pct / 100), 2)
+                target = round(price * (1 - max_sl_pct * rr_mult / 100), 2)
+
+        return sl, target
+
+    def _default_sl_target(self, price: float, side: str) -> tuple[float, float]:
+        """Fallback SL/target using DEFAULT_STOP_LOSS_PCT / DEFAULT_TARGET_PCT."""
+        sl_pct  = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+        tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+        if side == "BUY":
+            return round(price * (1 - sl_pct), 2), round(price * (1 + tgt_pct), 2)
+        return round(price * (1 + sl_pct), 2), round(price * (1 - tgt_pct), 2)
 
     # ================================================================
     # ENTRY — OPEN A NEW POSITION
@@ -666,7 +652,7 @@ class OrderEngine:
                 )
 
         # ── Bid-ask spread check ──────────────────────────────────
-        max_spread = getattr(self.cfg, "MAX_SPREAD_PCT", 0)
+        max_spread = self.cfg.MAX_SPREAD_PCT
         if max_spread > 0 and not self.cfg.DRY_RUN:
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
             depth = quote_data.get("depth", {})
@@ -704,45 +690,24 @@ class OrderEngine:
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
-        if atr and atr > 0:
-            multiplier = self.cfg.ATR_MULTIPLIER
-            rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
-            if side == "BUY":
-                atr_sl     = round(entry - multiplier * atr, 2)
-                atr_target = round(entry + multiplier * rr_mult * atr, 2)
-            else:  # SELL (short)
-                atr_sl     = round(entry + multiplier * atr, 2)
-                atr_target = round(entry - multiplier * rr_mult * atr, 2)
+        result = self._compute_atr_sl_target(entry, side, atr)
+        if result:
+            sl, target = result
 
-            # Cap SL at MAX_INTRADAY_SL_PCT to prevent swing-trade-sized stops
-            max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
-            sl_pct = abs(atr_sl - entry) / entry * 100
-            if sl_pct > max_sl_pct:
-                if side == "BUY":
-                    atr_sl     = round(entry * (1 - max_sl_pct / 100), 2)
-                    atr_target = round(entry * (1 + max_sl_pct * rr_mult / 100), 2)
-                else:
-                    atr_sl     = round(entry * (1 + max_sl_pct / 100), 2)
-                    atr_target = round(entry * (1 - max_sl_pct * rr_mult / 100), 2)
+            # Log cap info if SL was wider than MAX_INTRADAY_SL_PCT
+            raw_sl_pct = self.cfg.ATR_MULTIPLIER * atr / entry * 100
+            max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
+            if raw_sl_pct > max_sl_pct:
                 self.log.info(
-                    f"ATR SL was {sl_pct:.1f}% — capped to {max_sl_pct}%: "
-                    f"SL Rs.{atr_sl:.2f} | Target Rs.{atr_target:.2f}"
+                    f"ATR SL was {raw_sl_pct:.1f}% — capped to {max_sl_pct}%: "
+                    f"SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
                 )
 
             self.log.info(
-                f"ATR({self.cfg.ATR_PERIOD}, {getattr(self.cfg, 'ATR_INTERVAL', '15minute')}) "
+                f"ATR({self.cfg.ATR_PERIOD}, {self.cfg.ATR_INTERVAL}) "
                 f"for {symbol}: Rs.{atr:.2f} | "
-                f"Dynamic SL: Rs.{atr_sl:.2f} | Target: Rs.{atr_target:.2f}"
+                f"Dynamic SL: Rs.{sl:.2f} | Target: Rs.{target:.2f}"
             )
-
-            # Use ATR directly for SL and target.
-            # Config defaults (DEFAULT_STOP_LOSS_PCT / DEFAULT_TARGET_PCT) are
-            # arbitrary percentages, not structural levels. ATR is computed from
-            # actual per-stock volatility and always gives RR_TARGET_RATIO R:R.
-            # The old merge (wider SL + tighter target) created 0.6-0.8:1 R:R
-            # because config SL (1.5%) > config target (1.2%) → worst of both.
-            sl     = atr_sl
-            target = atr_target
         else:
             self.log.info(
                 f"ATR unavailable for {symbol} — using Claude SL: Rs.{sl:.2f} / Target: Rs.{target:.2f}"
@@ -754,7 +719,7 @@ class OrderEngine:
         if side == "BUY" and sl >= entry:
             default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
             sl = round(entry * (1 - default_sl_pct / 100), 2)
-            target = round(entry * (1 + default_sl_pct * getattr(self.cfg, 'RR_TARGET_RATIO', 1.5) / 100), 2)
+            target = round(entry * (1 + default_sl_pct * self.cfg.RR_TARGET_RATIO / 100), 2)
             self.log.warning(
                 f"{symbol}: SL was above entry (invalid for BUY) — "
                 f"reset to default {default_sl_pct}%: SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
@@ -762,7 +727,7 @@ class OrderEngine:
         elif side == "SELL" and sl <= entry:
             default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
             sl = round(entry * (1 + default_sl_pct / 100), 2)
-            target = round(entry * (1 - default_sl_pct * getattr(self.cfg, 'RR_TARGET_RATIO', 1.5) / 100), 2)
+            target = round(entry * (1 - default_sl_pct * self.cfg.RR_TARGET_RATIO / 100), 2)
             self.log.warning(
                 f"{symbol}: SL was below entry (invalid for SELL) — "
                 f"reset to default {default_sl_pct}%: SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
@@ -776,12 +741,10 @@ class OrderEngine:
         # hitting time-decay or square-off instead of target.
         hour_now = now.hour
         late_reduction = 0.0
-        late_hour = getattr(self.cfg, "RR_LATE_HOUR", 14)
-        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
-        if hour_now >= late_hour:
-            late_reduction = getattr(self.cfg, "LATE_TARGET_CUT_PCT_2", 25.0)
-        elif hour_now >= afternoon_hour:
-            late_reduction = getattr(self.cfg, "LATE_TARGET_CUT_PCT_1", 20.0)
+        if hour_now >= self.cfg.RR_LATE_HOUR:
+            late_reduction = self.cfg.LATE_TARGET_CUT_PCT_2
+        elif hour_now >= self.cfg.RR_AFTERNOON_HOUR:
+            late_reduction = self.cfg.LATE_TARGET_CUT_PCT_1
 
         if late_reduction > 0:
             if side == "BUY":
@@ -823,7 +786,7 @@ class OrderEngine:
         # ── Pre-trade minimum profit check ────────────────────────
         # Skip trades where expected profit doesn't cover charges.
         # Round-trip charges for small intraday trades ~Rs.40-50.
-        min_profit = getattr(self.cfg, 'MIN_EXPECTED_PROFIT', 50)
+        min_profit = self.cfg.MIN_EXPECTED_PROFIT
         expected_profit = abs(target - entry) * qty
         if expected_profit < min_profit:
             self.log.warning(
@@ -929,7 +892,7 @@ class OrderEngine:
         # Short delivery if cover fails is extremely expensive
         # (Rs.500-5000+ in penalties). Early cutoff gives time to
         # handle order failures before Zerodha's 3:25 auto-square.
-        short_cutoff = getattr(self.cfg, 'SHORT_ENTRY_CUTOFF_HOUR', 13)
+        short_cutoff = self.cfg.SHORT_ENTRY_CUTOFF_HOUR
         if side == "SELL" and now.hour >= short_cutoff:
             self.log.warning(
                 f"Cannot short {symbol} after {short_cutoff}:00 — "
@@ -1012,10 +975,10 @@ class OrderEngine:
                         sl     = round(sl * ratio, 2)
                         target = round(target * ratio, 2)
                         # Re-validate SL cap after scaling (scaling can push SL beyond MAX_INTRADAY_SL_PCT)
-                        max_sl_pct = getattr(self.cfg, 'MAX_INTRADAY_SL_PCT', 2.5)
+                        max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
                         actual_sl_pct = abs(sl - entry) / entry * 100 if entry > 0 else 0
                         if actual_sl_pct > max_sl_pct:
-                            rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
+                            rr_mult = self.cfg.RR_TARGET_RATIO
                             if side == 'BUY':
                                 sl = round(entry * (1 - max_sl_pct / 100), 2)
                                 target = round(entry * (1 + max_sl_pct * rr_mult / 100), 2)
@@ -1081,7 +1044,7 @@ class OrderEngine:
         # Exchange SL-M triggers instantly at trigger_price — no polling delay.
         # Software monitoring (check_stops_and_targets) is the fallback;
         # it handles targets, trailing, and time-decay — things SL-M can't do.
-        use_exchange_sl = getattr(self.cfg, 'USE_EXCHANGE_SL', False)
+        use_exchange_sl = self.cfg.USE_EXCHANGE_SL
         if use_exchange_sl and not self.cfg.DRY_RUN and hasattr(self.zerodha, 'place_sl_m_order'):
             sl_side = "SELL" if side == "BUY" else "BUY"
             try:
@@ -1765,22 +1728,22 @@ class OrderEngine:
         return closed
 
     # ================================================================
-    # END-OF-DAY ACCELERATED EXIT
+    # LATE-DAY LOSER EXIT
     # ================================================================
 
-    def check_eod_exit(self, quotes: dict) -> int:
+    def check_loser_exit(self, quotes: dict) -> int:
         """
-        After EOD_EXIT_AFTER_HOUR:MINUTE, auto-exit losing positions
+        After LOSER_EXIT_HOUR:MINUTE, auto-exit losing positions
         and tighten SL on breakeven positions. Prevents holding losers
         into the illiquid closing minutes.
 
         Returns the number of positions exited.
         """
-        eod_hour = self.cfg.EOD_EXIT_AFTER_HOUR
-        eod_min  = self.cfg.EOD_EXIT_AFTER_MINUTE
+        exit_hour = self.cfg.LOSER_EXIT_HOUR
+        exit_min  = self.cfg.LOSER_EXIT_MINUTE
         now = now_ist()
-        eod_time = now.replace(hour=eod_hour, minute=eod_min, second=0, microsecond=0)
-        if now < eod_time:
+        exit_time = now.replace(hour=exit_hour, minute=exit_min, second=0, microsecond=0)
+        if now < exit_time:
             return 0
 
         closed = 0
@@ -1798,10 +1761,10 @@ class OrderEngine:
 
             if pnl < 0:
                 self.log.warning(
-                    f"EOD EXIT: {pos['symbol']} {side} — losing Rs.{pnl:+,.2f}, "
+                    f"LOSER EXIT: {pos['symbol']} {side} — losing Rs.{pnl:+,.2f}, "
                     f"exiting before close"
                 )
-                self.exit_position(pos, current_price, "EOD_EXIT")
+                self.exit_position(pos, current_price, "LOSER_EXIT")
                 closed += 1
             elif abs(pnl) < entry * pos["qty"] * 0.001:
                 # Near breakeven — tighten SL to entry ± 0.1%
@@ -1811,7 +1774,7 @@ class OrderEngine:
                         pos["stop_loss"] = tight_sl
                         self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
-                            f"EOD TIGHTEN: {pos['symbol']} — SL → Rs.{tight_sl:.2f} (breakeven protect)"
+                            f"LOSER TIGHTEN: {pos['symbol']} — SL → Rs.{tight_sl:.2f} (breakeven protect)"
                         )
                 else:
                     tight_sl = round(entry * 1.001, 2)
@@ -1819,7 +1782,7 @@ class OrderEngine:
                         pos["stop_loss"] = tight_sl
                         self._update_exchange_sl(pos, tight_sl)
                         self.log.info(
-                            f"EOD TIGHTEN: {pos['symbol']} — SL → Rs.{tight_sl:.2f} (breakeven protect)"
+                            f"LOSER TIGHTEN: {pos['symbol']} — SL → Rs.{tight_sl:.2f} (breakeven protect)"
                         )
 
         return closed
@@ -1905,7 +1868,7 @@ class OrderEngine:
                         continue
 
                     # Cap SL width at MAX_INTRADAY_SL_PCT
-                    max_sl_pct = getattr(self.cfg, "MAX_INTRADAY_SL_PCT", 2.5)
+                    max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
                     sl_dist_pct = abs(new_sl - entry) / entry * 100
                     if sl_dist_pct > max_sl_pct:
                         if side == "BUY":
