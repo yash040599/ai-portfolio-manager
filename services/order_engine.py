@@ -98,18 +98,30 @@ class OrderEngine:
         # R:R or other checks). After N failures, R:R floor relaxes.
         self._zero_entry_scans: int = 0
         self._rr_giveup: bool = False  # True = stop trading for the day
+        self._rr_delta_active: bool = False  # True = within-scan step-down active
 
     # ── Adaptive R:R methods ──────────────────────────────────
 
     def current_rr_floor(self) -> float:
-        """Returns current R:R floor based on scan failure count."""
-        initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.2)
-        relaxed = getattr(self.cfg, "POST_MERGE_RR_RELAXED", 1.0)
+        """Returns current R:R floor based on scan failure count.
+
+        When _rr_delta_active is True and we're still at the INITIAL
+        level (not yet relaxed), returns INITIAL - DELTA instead.
+        This gives within-scan step-down: try strict first, then
+        step down once if all candidates fail.
+        """
+        initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.3)
+        relaxed = getattr(self.cfg, "POST_MERGE_RR_RELAXED", 1.1)
         floor   = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
         relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
 
         if self._zero_entry_scans >= relax_after:
             return max(relaxed, floor)
+
+        # At INITIAL level — apply delta step-down if active
+        if self._rr_delta_active:
+            delta = getattr(self.cfg, "RR_INITIAL_DELTA", 0)
+            return max(initial - delta, floor)
         return max(initial, floor)
 
     def record_scan_result(self, entered: int):

@@ -11,8 +11,8 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-11 — Fallback promotion, score-weighted sizing,
-  late-entry tier 2 reduction 35→25%, R:R values synced with code.
+  Last sync: 2026-04-13 — R:R delta step-down for mid-day rescans,
+  direction filter fallback fix, R:R scan counts synced with code.
 ══════════════════════════════════════════════════════════════ -->
 
 ## Overview
@@ -119,7 +119,7 @@ Every trade must pass these checks in order. If any fails, the trade is rejected
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `TARGET_RR_MULTIPLIER = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
-| 3b | **R:R safety floor** | Adaptive: 1.3:1 → 1.1:1 (floor 1.0:1) | Starts strict (1.3:1), relaxes to 1.1:1 after 6 failed scans, stops trading after 10. Late entries: 1.0:1 (POST_MERGE_RR_FLOOR) |
+| 3b | **R:R safety floor** | Adaptive: 1.3:1 → 1.1:1 (floor 1.0:1) | Starts strict (1.3:1), relaxes to 1.1:1 after 3 failed scans, stops trading after 5. Late entries: 1.0:1 (POST_MERGE_RR_FLOOR). **Mid-day delta:** on mid-day rescans only, if all candidates fail at 1.3:1, retries once at 1.2:1 (RR_INITIAL_DELTA = 0.1) before counting a scan failure. Morning scan never uses delta. |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | If R:R drops below 1.0:1 (POST_MERGE_RR_FLOOR) → skip |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `|target − entry| × qty < Rs.50` |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
@@ -321,6 +321,9 @@ All patterns: volume-confirmed (×1.3 high vol, ×0.5 low) and freshness-decayed
 | `V2_MIN_SCORE` | 2.0 | Pre-filter threshold |
 | `TARGET_DECAY_PCT` | 25% | After 2 PM |
 | `MAX_LOSS_PER_DAY_PCT` | 3% | Circuit breaker |
+| `RR_RELAX_AFTER_SCANS` | 3 | Relax R:R floor after N failed scans |
+| `RR_GIVEUP_AFTER_SCANS` | 5 | Stop trading after N failures at floor |
+| `RR_INITIAL_DELTA` | 0.1 | Mid-day step-down: 1.3→1.2 if all fail (0 = off) |
 
 ---
 
@@ -380,13 +383,15 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **R:R safety floor (adaptive)** | R:R must pass floor: 1.3:1 initially, relaxes to 1.1:1 after 6 failed scans, stops trading after 10 failures at floor. Hard minimum 1.0:1 (POST_MERGE_RR_FLOOR). Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| **R:R safety floor (adaptive)** | R:R must pass floor: 1.3:1 initially, relaxes to 1.1:1 after 3 failed scans, stops trading after 5 failures at floor. Hard minimum 1.0:1 (POST_MERGE_RR_FLOOR). Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). **Mid-day delta step-down:** on mid-day rescans, if all candidates fail at INITIAL (1.3:1), retries once at 1.2:1 before counting a failed scan. Morning scan skips delta (has observation period + multiple candidates + adaptive relaxation). | `config.py`, `order_engine.py`, `manager.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Fed to snapshot, rationale, and Claude prompt. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost. | `stock_scanner_v2.py` |
 | **Extended move penalty fix** | Penalty now only applies when chasing (score matches move direction). Contrarian setups no longer penalised. | `technical_indicators.py` |
 | **Morning/Evening Star gap check** | Star candle must be in lower 40% (Morning) or upper 60% (Evening) of first candle's range. Eliminates false positives. | `candle_patterns.py` |
 | **Three White Soldiers/Crows body fix** | Each candle must open within the prior candle's body (per Nison's definition). | `candle_patterns.py` |
+| **Direction filter fallback fix** | Direction filter was hard-clipping at slot count, dropping all extra candidates. Now separates `direction_primary` and `direction_fallback` — extras in allowed directions kept as fallbacks for entry loop. | `stock_scanner_v2.py` |
+| **R:R delta mid-day guard** | Delta step-down only fires on mid-day rescans (all-closed, slot-freed, opportunity). Morning scan excluded via `_initial_entry_done` flag — it has observation period + multiple candidates + adaptive relaxation. | `manager.py` |
 
 ### V2 AI Only
 

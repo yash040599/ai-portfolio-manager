@@ -500,12 +500,12 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: CLAUDE_REVIEW_MINUTES 20 → 30. Gives trades more room to develop before first Claude review.
 - **Files**: `config.py`
 
-### 92. ✅ R:R Safety Floor (Adaptive)
+### 92. ✅ R:R Safety Floor (Adaptive) + Mid-Day Delta Step-Down
 - **Versions**: All (V2 NoAI + V2 AI)
-- **Gap**: After ATR SL/target assignment, edge cases (ATR unavailable, SL capped, late-entry squeeze) could still create poor R:R. Need a catch-all safety net.
-- **Fix**: After all SL/target adjustments, check R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.2:1), relaxes to `POST_MERGE_RR_RELAXED` (1.0:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable.
-- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality. Merge removal (2026-04-10) fixes root cause — floor now catches only edge cases.
-- **Files**: `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py`
+- **Gap**: After ATR SL/target assignment, edge cases (ATR unavailable, SL capped, late-entry squeeze) could still create poor R:R. Need a catch-all safety net. Mid-day rescans have only 1-2 candidates + late-entry squeeze compresses R:R — a scan failure wastes 30 min.
+- **Fix**: After all SL/target adjustments, check R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.3:1), relaxes to `POST_MERGE_RR_RELAXED` (1.1:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable. **Delta step-down** (2026-04-13): on mid-day rescans only, if all candidates fail at INITIAL, retry at INITIAL − `RR_INITIAL_DELTA` (0.1, so 1.3→1.2). Morning scan excluded via `_initial_entry_done` flag — it has a 5-min observation period, multiple candidates, and the adaptive relaxation system to handle failures over multiple scans.
+- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality. Merge removal (2026-04-10) fixes root cause — floor now catches only edge cases. Delta step-down (2026-04-13) prevents wasted mid-day rescans when late-entry squeeze compresses R:R.
+- **Files**: `config.py`, `order_engine.py`, `manager.py`
 
 ### 93. ✅ Volume Confirmation at Entry (RVol Gate)
 - **Versions**: All (V2 NoAI + V2 AI)
@@ -574,6 +574,18 @@ Identified by deep code review against industry standards for candle-based intra
 - **Gap**: `scan_noai()` returned only `max_trades + 5` candidates to the entry loop. With max_trades=2, only 7 candidates were tried. If the top picks failed R:R or other checks, the loop exhausted candidates quickly and triggered a wasteful full rescan.
 - **Fix**: Return ALL pre-filtered candidates (`direction_filtered`) to the entry loop. The loop still stops once position slots are filled. More candidates = more chances to find one that passes all 14 entry checks.
 - **Files**: `stock_scanner_v2.py`
+
+### 108. ✅ Direction Filter Fallback Fix (Bug)
+- **Versions**: NoAI
+- **Gap**: `scan_noai()` direction filter hard-clipped at slot count (`buy_slots`/`sell_slots`), dropping ALL extra candidates. If a mid-day rescan had 1 slot and the single pick failed R:R, there was no fallback — the scan was wasted.
+- **Fix**: Separate `direction_primary` (top N for each direction) and `direction_fallback` (extras in allowed directions). Both returned to entry loop. Primary picks fill slots first, fallbacks tried if primary fails checks.
+- **Files**: `stock_scanner_v2.py`
+
+### 109. ✅ R:R Delta Mid-Day-Only Guard
+- **Versions**: All (V2 NoAI + V2 AI)
+- **Gap**: Delta step-down (item #92) fired on ALL `_enter_positions()` calls including the morning scan. Morning scan doesn't need delta — it has a 5-min observation period, multiple candidates, and the adaptive relaxation system to handle failures over multiple scan cycles.
+- **Fix**: `_initial_entry_done` flag in `PortfolioManager.__init__` (default False). Checked in delta block — delta only fires when True. Set to True at end of `_enter_positions()`. Morning scan (via `_observe_and_enter()`) calls `_enter_positions()` once with flag False → delta skipped → flag flips True. All subsequent mid-day calls see True and can use delta.
+- **Files**: `manager.py`
 
 ---
 
@@ -671,7 +683,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 89 | Increase circuit breaker to 4% | All | MEDIUM | ⬜ Pending | `config.py` |
 | 90 | Reduce default target to 1.2% | All | HIGH | ✅ Done | `config.py` |
 | 91 | Increase Claude review time to 30 min | V2 AI | HIGH | ✅ Done | `config.py` |
-| 92 | R:R safety floor (adaptive) | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py`, `manager.py`, `manager_v2.py` |
+| 92 | R:R safety floor (adaptive) + mid-day delta | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py`, `manager.py` |
 | 93 | Volume confirmation at entry (RVol gate) | All | LOW | ✅ Done | `order_engine.py` |
 | 94 | StochRSI indicator for entry timing | All | LOW | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 95 | Sector momentum filter (score boost) | All | LOW | ✅ Done | `stock_scanner_v2.py` |
@@ -687,4 +699,6 @@ Identified by deep code review against industry standards for candle-based intra
 | 105 | Late-entry R:R uses POST_MERGE_RR_FLOOR | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
 | 106 | Late-entry tier 2 reduction 35→25% | All | MEDIUM | ✅ Done | `config.py` |
 | 107 | Score-weighted position sizing | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 108 | Direction filter fallback fix (bug) | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
+| 109 | R:R delta mid-day-only guard | All | HIGH | ✅ Done | `manager.py` |
 

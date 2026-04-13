@@ -202,11 +202,16 @@ class Config:
     #                          can go below this (safety net against misconfiguration)
     #   RR_RELAX_AFTER_SCANS:  how many 0-entry scans before relaxing
     #   RR_GIVEUP_AFTER_SCANS: stop trading for the day after this many 0-entry scans at relaxed floor
+    #   RR_INITIAL_DELTA:      within-scan step-down — if ALL candidates fail
+    #                          at INITIAL, retry at INITIAL - DELTA before
+    #                          giving up on the scan. Only at INITIAL level;
+    #                          ignored once relaxed. Set to 0 to disable.
     POST_MERGE_RR_INITIAL:    float = 1.3  # strict: reward ≥ 1.3× risk
     POST_MERGE_RR_RELAXED:    float = 1.1  # relaxed: reward ≥ 1.1× risk
     POST_MERGE_RR_FLOOR:      float = 1.0  # absolute minimum (never below 1:1)
     RR_RELAX_AFTER_SCANS:     int   = 3    # relax after 3 failed scans
     RR_GIVEUP_AFTER_SCANS:    int   = 5    # stop trading after 5 failed scans at floor
+    RR_INITIAL_DELTA:         float = 0.1  # step-down: 1.3 → 1.2 if all fail at 1.3
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk

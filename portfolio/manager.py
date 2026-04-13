@@ -78,6 +78,7 @@ class PortfolioManager:
         self._prev_runs: dict | None = None     # cached previous-run totals for today
         self._status_lines_printed = False       # tracks 2-line status display
         self._last_external_sync: float = 0.0    # periodic manual trade detection
+        self._initial_entry_done = False         # True after first _enter_positions() completes
 
         # ── Market intelligence ───────────────────────────────────
         self._india_vix: float = 0.0           # India VIX value (0 = unavailable)
@@ -382,6 +383,9 @@ class PortfolioManager:
 
         Stops immediately if Zerodha order API is broken (consecutive
         failures hit the limit).
+
+        If all candidates fail and the R:R floor is still at INITIAL
+        level, activates the delta step-down and retries once.
         """
         self.log.section("ENTERING POSITIONS")
 
@@ -390,21 +394,28 @@ class PortfolioManager:
         self.engine.sync_external_positions()
 
         plans = trades if trades is not None else self._trade_plans
-        entered = 0
-        for trade in plans:
-            if self._shutdown_requested:
-                break
-            if self.engine.is_order_api_broken():
-                self.log.error(
-                    "Zerodha order API is broken — aborting remaining entries"
-                )
-                break
-            # Stop attempting once all position slots are filled
-            if len(self.engine.open_positions()) >= self.cfg.MAX_POSITIONS:
-                break
-            if self.engine.enter_trade(trade):
-                entered += 1
-            time.sleep(0.5)  # small gap between order placements
+        entered = self._attempt_entries(plans)
+
+        # ── Delta step-down retry ─────────────────────────────────
+        # If all candidates failed and we're still at INITIAL floor,
+        # retry with INITIAL - DELTA. Only at INITIAL level; once
+        # relaxed the delta is not applied.
+        # Guard: only on mid-day rescans (after the morning entry
+        # completes) where late-entry squeeze compresses R:R.
+        delta = getattr(self.cfg, "RR_INITIAL_DELTA", 0)
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
+        at_initial = self.engine._zero_entry_scans < relax_after
+        if entered == 0 and delta > 0 and at_initial and plans and self._initial_entry_done:
+            initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.3)
+            self.log.info(
+                f"R:R delta step-down: all candidates failed at {initial:.1f}:1 "
+                f"— retrying at {initial - delta:.1f}:1"
+            )
+            self.engine._rr_delta_active = True
+            try:
+                entered = self._attempt_entries(plans)
+            finally:
+                self.engine._rr_delta_active = False
 
         self.log.success(f"Entered {entered} position(s)")
 
@@ -423,6 +434,27 @@ class PortfolioManager:
 
         # Track scan result for adaptive R:R relaxation
         self.engine.record_scan_result(entered)
+
+        # Mark initial entry done — subsequent calls are mid-day rescans
+        self._initial_entry_done = True
+
+    def _attempt_entries(self, plans: list[dict]) -> int:
+        """Run through trade plans and attempt to enter each. Returns count."""
+        entered = 0
+        for trade in plans:
+            if self._shutdown_requested:
+                break
+            if self.engine.is_order_api_broken():
+                self.log.error(
+                    "Zerodha order API is broken — aborting remaining entries"
+                )
+                break
+            if len(self.engine.open_positions()) >= self.cfg.MAX_POSITIONS:
+                break
+            if self.engine.enter_trade(trade):
+                entered += 1
+            time.sleep(0.5)
+        return entered
 
     # ================================================================
     # OBSERVATION PERIOD + DELAYED ENTRY
