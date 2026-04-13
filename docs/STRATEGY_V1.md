@@ -170,4 +170,4 @@ V1 shares `OrderEngine` with V2/NoAI — all entry checks and position managemen
 > **This document is frozen.** Do not add new sections or update parameter
 > values for V1-specific changes. V1 inherits shared OrderEngine changes
 > passively. For the actively maintained strategy, see
-> [STRATEGY_V2.md](STRATEGY_V2.md) or [STRATEGY_V2_NOAI.md](STRATEGY_V2_NOAI.md).
+> [STRATEGY_V2.md](STRATEGY_V2.md).

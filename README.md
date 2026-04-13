@@ -64,7 +64,7 @@ python main.py --mode trade --v1
 python main.py --mode login
 ```
 
-NoAI mode uses the same candle pipeline for everything — stock selection, monitoring, and re-scans — with zero API costs. See **[docs/STRATEGY_V2_NOAI.md](docs/STRATEGY_V2_NOAI.md)** for details.
+NoAI mode uses the same candle pipeline for everything — stock selection, monitoring, and re-scans — with zero API costs. See **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** for the complete strategy reference.
 
 ### Historical Data Caching
 
@@ -74,8 +74,7 @@ Previous days' candle data is cached in `data/candle_cache.db` (SQLite) to avoid
 
 | Doc | What it covers |
 |-----|---------------|
-| **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** | V2 strategy architecture — indicators, patterns, scoring system, risk layers |
-| **[docs/STRATEGY_V2_NOAI.md](docs/STRATEGY_V2_NOAI.md)** | NoAI strategy — fully automated, zero Claude calls |
+| **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)** | Complete V2 strategy reference — NoAI (default) + Claude AI modes, all indicators, patterns, scoring, risk layers |
 | **[docs/STRATEGY_V1.md](docs/STRATEGY_V1.md)** | V1 strategy architecture (deprecated — frozen, no new changes) |
 | **[docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md)** | Strategy improvement roadmap with research-backed enhancements |
 | **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)** | Comprehensive intraday trading tax guide for India |
@@ -293,8 +292,7 @@ ai-portfolio-manager/
 ├── docs/
 │   ├── TAX_GUIDE.md         # Comprehensive intraday trading tax guide for India
 │   ├── STRATEGY_V1.md       # V1 trading strategy — architecture, flow, risk layers
-│   ├── STRATEGY_V2.md       # V2 candle strategy — indicators, patterns, scoring system
-│   ├── STRATEGY_V2_NOAI.md  # NoAI strategy — fully automated, zero Claude calls
+│   ├── STRATEGY_V2.md       # Complete V2 strategy reference — NoAI + Claude AI modes
 │   └── STRATEGY_ROADMAP.md  # Strategy improvement roadmap — research-backed enhancements
 ├── data/
 │   ├── trades.db            # SQLite database (auto-created on first run)
