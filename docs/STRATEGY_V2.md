@@ -245,8 +245,8 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ### Score Interpretation
 
-| |Score| | Signal | Action |
-|---------|--------|--------|
+| \|Score\| | Signal | Action |
+|-----------|--------|--------|
 | ≥ 5 | STRONG | High conviction trade |
 | 2-5 | MODERATE | Passes filter (Claude decides in `--ai`; auto-entered in NoAI) |
 | < 2 | WEAK | Filtered out |
