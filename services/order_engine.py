@@ -582,7 +582,7 @@ class OrderEngine:
           2. Bid-ask spread check (illiquid stocks)
           3. ATR-based SL/target (pure ATR when available, config fallback otherwise)
           4. Late-entry target reduction (13:00 / 14:00 cutoffs)
-          5. R:R floor check (adaptive: 1.2:1 → 1.0:1 → giveup)
+          5. R:R floor check (adaptive: 1.3:1 → 1.1:1 → giveup; mid-day delta step-down)
           6. Minimum profit check (must cover round-trip charges)
           7. Slippage simulation (dry-run only)
           8. Budget / max positions / duplicate / sector / direction guards
@@ -781,8 +781,9 @@ class OrderEngine:
         # ── R:R safety floor (all entries, adaptive) ─────────────────
         # Catches edge cases: ATR unavailable (config fallback R:R 0.8:1),
         # SL capped at MAX_INTRADAY_SL_PCT, or late-entry target squeeze.
-        # Floor adapts: starts at POST_MERGE_RR_INITIAL (1.2:1),
-        # relaxes to POST_MERGE_RR_RELAXED (1.0:1) after N failed scans.
+        # Floor adapts: starts at POST_MERGE_RR_INITIAL (1.3:1),
+        # relaxes to POST_MERGE_RR_RELAXED (1.1:1) after N failed scans.
+        # Mid-day rescans get delta step-down (1.3→1.2) via _rr_delta_active.
         rr_floor = self.current_rr_floor()
         sl_dist = abs(entry - sl)
         tgt_dist = abs(target - entry)
