@@ -659,23 +659,34 @@ class StockScannerV2(StockScanner):
         buy_slots = max(0, buy_limit - open_buys)
         sell_slots = max(0, sell_limit - open_sells)
 
-        # Pre-filter candidates by available direction slots
-        direction_filtered = []
+        # Separate candidates into primary (within slot limits) and
+        # fallback (extra candidates in the same direction).  Previous
+        # logic hard-clipped at slot count, killing all fallbacks.  Now
+        # extras are kept so that if the primary pick fails entry checks
+        # (R:R, spread, price drift) the next candidate can be tried.
+        direction_primary = []
+        direction_fallback = []
         _used_buy = 0
         _used_sell = 0
         for c in candidates:
             side = "BUY" if c["combined_score"] > 0 else "SELL"
             if side == "BUY":
-                if _used_buy >= buy_slots:
-                    continue
-                _used_buy += 1
+                if _used_buy < buy_slots:
+                    _used_buy += 1
+                    direction_primary.append(c)
+                elif buy_slots > 0:
+                    # Extra BUY — keep as fallback (direction is allowed)
+                    direction_fallback.append(c)
+                # else: buy_slots == 0 → direction fully blocked, skip
             else:
-                if _used_sell >= sell_slots:
-                    continue
-                _used_sell += 1
-            direction_filtered.append(c)
+                if _used_sell < sell_slots:
+                    _used_sell += 1
+                    direction_primary.append(c)
+                elif sell_slots > 0:
+                    # Extra SELL — keep as fallback
+                    direction_fallback.append(c)
 
-        if not direction_filtered and candidates:
+        if not direction_primary and candidates:
             buy_cands = len(buy_candidates)
             sell_cands = len(sell_candidates)
             self.log.warning(
@@ -684,12 +695,12 @@ class StockScannerV2(StockScanner):
                 f"candidates: {buy_cands} BUY / {sell_cands} SELL)"
             )
 
-        # Include ALL pre-filtered candidates — not just max_trades + 5.
+        # Primary picks first, then fallbacks (sorted by |score|).
         # The entry loop in _enter_positions enforces MAX_POSITIONS, budget,
         # and sector limits. Returning more candidates means if top picks
         # fail R:R or other entry checks, the loop can try lower-scored
         # candidates rather than triggering a wasteful full rescan.
-        top = direction_filtered
+        top = direction_primary + direction_fallback
 
         # Step 3: Build trade plans from technical data
         budget = self._budget

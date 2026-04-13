@@ -205,8 +205,8 @@ class Config:
     POST_MERGE_RR_INITIAL:    float = 1.3  # strict: reward ≥ 1.3× risk
     POST_MERGE_RR_RELAXED:    float = 1.1  # relaxed: reward ≥ 1.1× risk
     POST_MERGE_RR_FLOOR:      float = 1.0  # absolute minimum (never below 1:1)
-    RR_RELAX_AFTER_SCANS:     int   = 6    # relax after 6 failed scans
-    RR_GIVEUP_AFTER_SCANS:    int   = 10    # stop trading after 10 failed scans at floor
+    RR_RELAX_AFTER_SCANS:     int   = 3    # relax after 3 failed scans
+    RR_GIVEUP_AFTER_SCANS:    int   = 5    # stop trading after 5 failed scans at floor
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
