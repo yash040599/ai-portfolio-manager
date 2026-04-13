@@ -567,7 +567,7 @@ class PortfolioManagerV2(PortfolioManager):
                     if self._check_vix_spike():
                         self._clear_status_line()
                         self.log.info(
-                            f"All positions closed but VIX spike active — "
+                            f"All positions closed but VIX (Volatility Index) spike active — "
                             f"waiting for VIX to settle before re-scanning"
                         )
                         time.sleep(base_poll)
@@ -802,7 +802,7 @@ class PortfolioManagerV2(PortfolioManager):
                     if self._check_vix_spike():
                         self._clear_status_line()
                         self.log.warning(
-                            f"⚠ VIX SPIKE detected: {self._india_vix:.1f} "
+                            f"⚠ VIX (Volatility Index) SPIKE detected: {self._india_vix:.1f} "
                             f"(opened at {self._india_vix_open:.1f}) — "
                             f"pausing new entries"
                         )

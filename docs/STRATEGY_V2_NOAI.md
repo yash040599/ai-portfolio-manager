@@ -100,8 +100,8 @@ Observation period (ENTRY_DELAY_MINUTES from market open):
   → Volume confirmation: skip if live RVol < 0.7× average (live mode only)
   → ATR-based SL/target (pure ATR when available, config defaults as fallback only)
   → SL capped at MAX_INTRADAY_SL_PCT (2.5%)
-  → R:R safety floor: adaptive (1.3:1 → 1.1:1 after 3 failed scans, floor 1.0:1, stops after 5)
-  → Mid-day delta: if all candidates fail at 1.3:1, retry at 1.2:1 (morning scan excluded)
+  → R:R floor: time-based (morning 1.3, afternoon 1.2, late 1.0) + adaptive (relaxes to 1.1 after 3 fails)
+  → Mid-day retry: on mid-day rescans, retry at floor - 0.1 if first pass fails; morning scan excluded
   → Smart position sizing (reduce qty if budget insufficient)
 
 Entry loop with fallback:
@@ -282,7 +282,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% is more achievable for intraday NSE. | `config.py` |
-| **R:R safety floor (adaptive)** | R:R floor starts at 1.3:1, relaxes to 1.1:1 after 3 failed scans, stops trading after 5 failures at floor. Hard minimum 1.0:1 (POST_MERGE_RR_FLOOR). Catches edge cases (ATR unavailable, SL capped, late-entry squeeze). **Mid-day delta:** on mid-day rescans, if all candidates fail at 1.3:1, retries at 1.2:1 (RR_INITIAL_DELTA) before counting a failed scan. Morning scan excluded — has observation period + multiple candidates. | `config.py`, `order_engine.py`, `manager.py` |
+| **R:R floor (time-based + adaptive)** | Explicit floor per time period: morning 1.3:1, afternoon 1.2:1, late 1.0:1. Relaxes to min(time_floor, 1.1) after 3 failed scans, stops after 5. Mid-day retry: floor - 0.1 on mid-day rescans. | `config.py`, `order_engine.py`, `manager.py` |
 | **Volume confirmation at entry** | At entry time (live mode), skip if RVol < 0.7× average. Prevents entries into dying volume. | `order_engine.py` |
 | **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. Added to technical snapshot and auto-generated rationale. | `technical_indicators.py`, `stock_scanner_v2.py` |
 | **Sector momentum filter** | When ≥3 stocks in a sector agree on direction, each gets ±0.5 score boost in pre-filter. | `stock_scanner_v2.py` |
@@ -290,7 +290,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | **Morning/Evening Star gap check** | Star candle must be in lower 40% (Morning) or upper 60% (Evening) of first candle's range. | `candle_patterns.py` |
 | **Three White Soldiers/Crows body fix** | Each candle must open within the prior candle's body (per Nison's definition). | `candle_patterns.py` |
 | **Direction filter fallback fix** | Direction filter was hard-clipping at slot count, dropping all fallback candidates. Now separates primary vs fallback — extras in allowed directions kept for entry loop. | `stock_scanner_v2.py` |
-| **R:R delta mid-day guard** | Delta step-down only fires on mid-day rescans (not morning scan). Morning has observation period + multiple candidates + adaptive relaxation over multiple scans. | `manager.py` |
+| **R:R mid-day retry guard** | Mid-day retry step-down only fires on mid-day rescans (not morning scan). Morning has observation period + multiple candidates + adaptive relaxation over multiple scans. | `manager.py` |
 
 ### AI-Only Changes (not applicable to NoAI)
 

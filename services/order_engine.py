@@ -98,31 +98,64 @@ class OrderEngine:
         # R:R or other checks). After N failures, R:R floor relaxes.
         self._zero_entry_scans: int = 0
         self._rr_giveup: bool = False  # True = stop trading for the day
-        self._rr_delta_active: bool = False  # True = within-scan step-down active
+        self._rr_retry_active: bool = False  # True = within-scan step-down active
 
     # ── Adaptive R:R methods ──────────────────────────────────
 
-    def current_rr_floor(self) -> float:
-        """Returns current R:R floor based on scan failure count.
+    def _time_based_rr_floor(self, hour: int) -> float:
+        """Returns the R:R floor for the given hour of day.
 
-        When _rr_delta_active is True and we're still at the INITIAL
-        level (not yet relaxed), returns INITIAL - DELTA instead.
-        This gives within-scan step-down: try strict first, then
-        step down once if all candidates fail.
+        Morning (<1 PM): RR_FLOOR_MORNING  (1.3)
+        Afternoon (1-2):  RR_FLOOR_AFTERNOON (1.2)
+        Late (>2 PM):     RR_FLOOR_LATE     (1.0)
         """
-        initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.3)
-        relaxed = getattr(self.cfg, "POST_MERGE_RR_RELAXED", 1.1)
-        floor   = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
+        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
+        late_hour      = getattr(self.cfg, "RR_LATE_HOUR", 14)
+
+        if hour >= late_hour:
+            return getattr(self.cfg, "RR_FLOOR_LATE", 1.0)
+        if hour >= afternoon_hour:
+            return getattr(self.cfg, "RR_FLOOR_AFTERNOON", 1.2)
+        return getattr(self.cfg, "RR_FLOOR_MORNING", 1.3)
+
+    def current_rr_floor(self, hour: int = 10) -> float:
+        """Returns current R:R floor based on time of day, scan failures,
+        and mid-day retry state.
+
+        Priority:
+        1. Time-based floor (morning 1.3, afternoon 1.2, late 1.0)
+        2. If N scans failed → min(time_floor, RR_FLOOR_RELAXED)
+        3. If mid-day retry → time_floor - RR_RETRY_STEP
+        """
+        time_floor = self._time_based_rr_floor(hour)
+        relaxed    = getattr(self.cfg, "RR_FLOOR_RELAXED", 1.1)
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
 
         if self._zero_entry_scans >= relax_after:
-            return max(relaxed, floor)
+            # Take the more lenient (lower) of time-based and relaxed
+            return min(time_floor, relaxed)
 
-        # At INITIAL level — apply delta step-down if active
-        if self._rr_delta_active:
-            delta = getattr(self.cfg, "RR_INITIAL_DELTA", 0)
-            return max(initial - delta, floor)
-        return max(initial, floor)
+        # Mid-day retry: step down from current floor
+        if self._rr_retry_active:
+            step = getattr(self.cfg, "RR_RETRY_STEP", 0.1)
+            return max(time_floor - step, 1.0)
+
+        return time_floor
+
+    def _rr_floor_label(self, hour: int) -> str:
+        """Returns a descriptive label for the current R:R floor state."""
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
+        if self._zero_entry_scans >= relax_after:
+            return "relaxed"
+        if self._rr_retry_active:
+            return "retry"
+        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
+        late_hour      = getattr(self.cfg, "RR_LATE_HOUR", 14)
+        if hour >= late_hour:
+            return "late"
+        if hour >= afternoon_hour:
+            return "afternoon"
+        return "morning"
 
     def record_scan_result(self, entered: int):
         """Called after each scan+entry cycle. Tracks 0-entry streaks."""
@@ -132,14 +165,16 @@ class OrderEngine:
             return
 
         self._zero_entry_scans += 1
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
-        giveup_after = getattr(self.cfg, "RR_GIVEUP_AFTER_SCANS", 5)
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
+        giveup_after = getattr(self.cfg, "RR_GIVEUP_AFTER_FAILS", 5)
 
         if self._zero_entry_scans == relax_after:
-            new_floor = self.current_rr_floor()
+            hour_now = now_ist().hour
+            new_floor = self.current_rr_floor(hour=hour_now)
+            label = self._rr_floor_label(hour=hour_now)
             self.log.warning(
                 f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries — "
-                f"relaxing R:R floor to {new_floor:.1f}:1"
+                f"relaxing R:R floor to {new_floor:.1f}:1 ({label})"
             )
         elif self._zero_entry_scans >= giveup_after:
             self._rr_giveup = True
@@ -215,7 +250,7 @@ class OrderEngine:
             atr = self.calculate_atr(symbol, exchange)
             if atr and atr > 0:
                 multiplier = self.cfg.ATR_MULTIPLIER
-                rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
+                rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
                 if side == "BUY":
                     sl     = round(avg_price - multiplier * atr, 2)
                     target = round(avg_price + multiplier * rr_mult * atr, 2)
@@ -349,7 +384,7 @@ class OrderEngine:
             atr = self.calculate_atr(symbol, exchange)
             if atr and atr > 0:
                 multiplier = self.cfg.ATR_MULTIPLIER
-                rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
+                rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
                 if side == "BUY":
                     sl     = round(avg_price - multiplier * atr, 2)
                     target = round(avg_price + multiplier * rr_mult * atr, 2)
@@ -582,7 +617,7 @@ class OrderEngine:
           2. Bid-ask spread check (illiquid stocks)
           3. ATR-based SL/target (pure ATR when available, config fallback otherwise)
           4. Late-entry target reduction (13:00 / 14:00 cutoffs)
-          5. R:R floor check (adaptive: 1.3:1 → 1.1:1 → giveup; mid-day delta step-down)
+          5. R:R floor check (time-based: morning 1.3, afternoon 1.2, late 1.0 + adaptive relaxation)
           6. Minimum profit check (must cover round-trip charges)
           7. Slippage simulation (dry-run only)
           8. Budget / max positions / duplicate / sector / direction guards
@@ -671,7 +706,7 @@ class OrderEngine:
         atr = self.calculate_atr(symbol, exchange)
         if atr and atr > 0:
             multiplier = self.cfg.ATR_MULTIPLIER
-            rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
+            rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
             if side == "BUY":
                 atr_sl     = round(entry - multiplier * atr, 2)
                 atr_target = round(entry + multiplier * rr_mult * atr, 2)
@@ -703,7 +738,7 @@ class OrderEngine:
             # Use ATR directly for SL and target.
             # Config defaults (DEFAULT_STOP_LOSS_PCT / DEFAULT_TARGET_PCT) are
             # arbitrary percentages, not structural levels. ATR is computed from
-            # actual per-stock volatility and always gives TARGET_RR_MULTIPLIER R:R.
+            # actual per-stock volatility and always gives RR_TARGET_RATIO R:R.
             # The old merge (wider SL + tighter target) created 0.6-0.8:1 R:R
             # because config SL (1.5%) > config target (1.2%) → worst of both.
             sl     = atr_sl
@@ -719,7 +754,7 @@ class OrderEngine:
         if side == "BUY" and sl >= entry:
             default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
             sl = round(entry * (1 - default_sl_pct / 100), 2)
-            target = round(entry * (1 + default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
+            target = round(entry * (1 + default_sl_pct * getattr(self.cfg, 'RR_TARGET_RATIO', 1.5) / 100), 2)
             self.log.warning(
                 f"{symbol}: SL was above entry (invalid for BUY) — "
                 f"reset to default {default_sl_pct}%: SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
@@ -727,7 +762,7 @@ class OrderEngine:
         elif side == "SELL" and sl <= entry:
             default_sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT
             sl = round(entry * (1 + default_sl_pct / 100), 2)
-            target = round(entry * (1 - default_sl_pct * getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5) / 100), 2)
+            target = round(entry * (1 - default_sl_pct * getattr(self.cfg, 'RR_TARGET_RATIO', 1.5) / 100), 2)
             self.log.warning(
                 f"{symbol}: SL was below entry (invalid for SELL) — "
                 f"reset to default {default_sl_pct}%: SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
@@ -736,15 +771,17 @@ class OrderEngine:
         # ── Late-entry target reduction ───────────────────────────
         # Two-tier cutoffs based on time remaining before 3:10 PM square-off:
         #   13:00+ → 20% target reduction (still ~2h to hit target)
-        #   14:00+ → 35% target reduction (only ~1h, aggressive trades fail)
+        #   14:00+ → 25% target reduction (only ~1h, aggressive trades fail)
         # This prevents entering with unreachable targets that end up
         # hitting time-decay or square-off instead of target.
         hour_now = now.hour
         late_reduction = 0.0
-        if hour_now >= getattr(self.cfg, "LATE_ENTRY_HOUR_2", 14):
-            late_reduction = getattr(self.cfg, "LATE_ENTRY_REDUCTION_2", 35.0)
-        elif hour_now >= getattr(self.cfg, "LATE_ENTRY_HOUR_1", 13):
-            late_reduction = getattr(self.cfg, "LATE_ENTRY_REDUCTION_1", 20.0)
+        late_hour = getattr(self.cfg, "RR_LATE_HOUR", 14)
+        afternoon_hour = getattr(self.cfg, "RR_AFTERNOON_HOUR", 13)
+        if hour_now >= late_hour:
+            late_reduction = getattr(self.cfg, "LATE_TARGET_CUT_PCT_2", 25.0)
+        elif hour_now >= afternoon_hour:
+            late_reduction = getattr(self.cfg, "LATE_TARGET_CUT_PCT_1", 20.0)
 
         if late_reduction > 0:
             if side == "BUY":
@@ -759,44 +796,28 @@ class OrderEngine:
             # Mark position so time-decay doesn't stack on top
             trade["_late_entry_reduced"] = True
 
-        # ── Minimum R:R floor for late entries ────────────────────
-        # If target is too close after late-entry reduction, skip.
-        # Uses POST_MERGE_RR_FLOOR (absolute min R:R) as safety-net;
-        # the stricter adaptive R:R in Stage 5 is the primary gate.
-        late_rr_floor = getattr(self.cfg, "POST_MERGE_RR_FLOOR", 1.0)
-        if late_reduction > 0:
-            sl_distance = abs(entry - sl)
-            tgt_distance = abs(target - entry)
-            if sl_distance > 0 and tgt_distance / sl_distance < late_rr_floor:
-                self.log.warning(
-                    f"{symbol}: R:R {tgt_distance/sl_distance:.1f}:1 after late-entry "
-                    f"reduction — below {late_rr_floor:.1f}:1 minimum, skipping"
-                )
-                return False
-            elif sl_distance > 0:
-                self.log.info(
-                    f"  ✓ {symbol}: late-entry R:R {tgt_distance/sl_distance:.1f}:1 OK (≥{late_rr_floor:.1f}:1)"
-                )
-
-        # ── R:R safety floor (all entries, adaptive) ─────────────────
-        # Catches edge cases: ATR unavailable (config fallback R:R 0.8:1),
-        # SL capped at MAX_INTRADAY_SL_PCT, or late-entry target squeeze.
-        # Floor adapts: starts at POST_MERGE_RR_INITIAL (1.3:1),
-        # relaxes to POST_MERGE_RR_RELAXED (1.1:1) after N failed scans.
-        # Mid-day rescans get delta step-down (1.3→1.2) via _rr_delta_active.
-        rr_floor = self.current_rr_floor()
+        # ── R:R safety floor (time-aware + adaptive) ─────────────
+        # One unified check. Floor depends on time of day:
+        #   Morning (<1 PM): RR_FLOOR_MORNING (1.3)
+        #   Afternoon (1-2): RR_FLOOR_AFTERNOON (1.2)
+        #   Late (>2 PM):    RR_FLOOR_LATE (1.0)
+        # After N zero-entry scans: min(time_floor, RR_FLOOR_RELAXED)
+        # Mid-day retry: time_floor - RR_RETRY_STEP
+        rr_floor = self.current_rr_floor(hour=hour_now)
+        floor_label = self._rr_floor_label(hour=hour_now)
         sl_dist = abs(entry - sl)
         tgt_dist = abs(target - entry)
+
         if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
             self.log.warning(
                 f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 — "
-                f"below {rr_floor:.1f}:1 floor, skipping"
+                f"below {rr_floor:.1f}:1 {floor_label} floor, skipping"
             )
             return False
         elif sl_dist > 0:
             self.log.info(
                 f"  ✓ {symbol}: R:R {tgt_dist/sl_dist:.1f}:1 OK "
-                f"(floor {rr_floor:.1f}:1) | SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
+                f"({floor_label} floor {rr_floor:.1f}:1) | SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
             )
 
         # ── Pre-trade minimum profit check ────────────────────────
@@ -994,7 +1015,7 @@ class OrderEngine:
                         max_sl_pct = getattr(self.cfg, 'MAX_INTRADAY_SL_PCT', 2.5)
                         actual_sl_pct = abs(sl - entry) / entry * 100 if entry > 0 else 0
                         if actual_sl_pct > max_sl_pct:
-                            rr_mult = getattr(self.cfg, 'TARGET_RR_MULTIPLIER', 1.5)
+                            rr_mult = getattr(self.cfg, 'RR_TARGET_RATIO', 1.5)
                             if side == 'BUY':
                                 sl = round(entry * (1 - max_sl_pct / 100), 2)
                                 target = round(entry * (1 + max_sl_pct * rr_mult / 100), 2)

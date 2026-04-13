@@ -179,39 +179,55 @@ class Config:
 
     # ATR_MULTIPLIER: multiplier for ATR to compute dynamic stop-loss.
     #   SL = entry - (ATR_MULTIPLIER × ATR) for longs.
-    #   Target = entry + (ATR_MULTIPLIER × TARGET_RR_MULTIPLIER × ATR).
+    #   Target = entry + (ATR_MULTIPLIER × RR_TARGET_RATIO × ATR).
     #   Falls back to DEFAULT_STOP_LOSS_PCT if historical data is unavailable.
-    #
-    # TARGET_RR_MULTIPLIER: reward-to-risk ratio for ATR targets.
-    #   1.5 = target distance is 1.5× the SL distance (1.5:1 R:R).
-    #   Higher = bigger wins but lower hit rate. 1.5:1 is optimal for
-    #   Indian intraday where most stocks move 1-1.5% net per day.
     ATR_MULTIPLIER: float = 1.5
-    TARGET_RR_MULTIPLIER: float = 1.5
     ATR_PERIOD:     int   = 14    # number of candles for ATR calculation
     ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
 
-    # ── R:R Safety Floor (adaptive) ──────────────────────────
-    # Catches edge cases: ATR unavailable (config fallback has 0.8:1 R:R),
-    # SL capped at MAX_INTRADAY_SL_PCT, or late-entry target squeeze.
-    # Starts strict, relaxes after repeated scan failures.
-    #   POST_MERGE_RR_INITIAL: starting R:R floor (first N scan attempts)
-    #   POST_MERGE_RR_RELAXED: relaxed floor after RR_RELAX_AFTER_SCANS failures
-    #   POST_MERGE_RR_FLOOR:   hard minimum clamp — neither INITIAL nor RELAXED
-    #                          can go below this (safety net against misconfiguration)
-    #   RR_RELAX_AFTER_SCANS:  how many 0-entry scans before relaxing
-    #   RR_GIVEUP_AFTER_SCANS: stop trading for the day after this many 0-entry scans at relaxed floor
-    #   RR_INITIAL_DELTA:      within-scan step-down — if ALL candidates fail
-    #                          at INITIAL, retry at INITIAL - DELTA before
-    #                          giving up on the scan. Only at INITIAL level;
-    #                          ignored once relaxed. Set to 0 to disable.
-    POST_MERGE_RR_INITIAL:    float = 1.3  # strict: reward ≥ 1.3× risk
-    POST_MERGE_RR_RELAXED:    float = 1.1  # relaxed: reward ≥ 1.1× risk
-    POST_MERGE_RR_FLOOR:      float = 1.0  # absolute minimum (never below 1:1)
-    RR_RELAX_AFTER_SCANS:     int   = 3    # relax after 3 failed scans
-    RR_GIVEUP_AFTER_SCANS:    int   = 5    # stop trading after 5 failed scans at floor
-    RR_INITIAL_DELTA:         float = 0.1  # step-down: 1.3 → 1.2 if all fail at 1.3
+    # ── R:R (Risk:Reward) Settings ────────────────────────────────
+    # R:R = (target distance) / (stop distance).
+    # ATR produces a base R:R of RR_TARGET_RATIO (1.5:1).
+    # Late targets are compressed (less time left in the day).
+    # The floor ensures the compressed R:R is still worth the trade.
+    #
+    # TIME-BASED FLOORS — which floor applies depends on time of day:
+    #   ┌─────────────────┬───────────┬─────────────────────────────────┐
+    #   │ Period          │ R:R Floor │ Why                             │
+    #   ├─────────────────┼───────────┼─────────────────────────────────┤
+    #   │ Morning (<1 PM) │ 1.3:1     │ Full ATR target, be selective   │
+    #   │ Afternoon (1-2) │ 1.2:1     │ 20% target compress → R:R ~1.2 │
+    #   │ Late (>2 PM)    │ 1.0:1     │ 25% compress → R:R ~1.1, tight │
+    #   └─────────────────┴───────────┴─────────────────────────────────┘
+    #
+    # FAILURE RELAXATION:
+    #   After RR_RELAX_AFTER_FAILS (3) zero-entry scans → floor drops
+    #   to min(current_time_floor, RR_FLOOR_RELAXED). This helps when
+    #   ALL candidates are borderline (e.g. morning 1.25:1 fails 1.3).
+    #   After RR_GIVEUP_AFTER_FAILS (5) failures → stop trading.
+    #
+    # MID-DAY RETRY:
+    #   After the first entry fills, if a mid-day rescan finds 0
+    #   entries, retries once with floor reduced by RR_RETRY_STEP
+    #   (e.g. morning 1.3 → 1.2). Morning scan never retries.
+    #
+    # TARGET COMPRESSION (late entries, separate from floor):
+    #   After 1 PM: target reduced by LATE_TARGET_CUT_PCT_1 (20%).
+    #   After 2 PM: target reduced by LATE_TARGET_CUT_PCT_2 (25%).
+    #   The floor values above are calibrated to these compressions.
+    RR_TARGET_RATIO:       float = 1.5   # base R:R from ATR (target = SL × this)
+    RR_FLOOR_MORNING:      float = 1.3   # before 1 PM — strict
+    RR_FLOOR_AFTERNOON:    float = 1.2   # 1 PM to 2 PM
+    RR_FLOOR_LATE:         float = 1.0   # after 2 PM — safety net only
+    RR_FLOOR_RELAXED:      float = 1.1   # after N failed scans (any time)
+    RR_RETRY_STEP:         float = 0.1   # mid-day retry step-down (1.3 → 1.2)
+    RR_RELAX_AFTER_FAILS:  int   = 3     # zero-entry scans before relaxing
+    RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before giving up
+    RR_AFTERNOON_HOUR:     int   = 13    # 1 PM — afternoon rules start
+    RR_LATE_HOUR:          int   = 14    # 2 PM — late rules start
+    LATE_TARGET_CUT_PCT_1: float = 20.0  # target % reduction after 1 PM
+    LATE_TARGET_CUT_PCT_2: float = 25.0  # target % reduction after 2 PM
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
@@ -279,17 +295,12 @@ class Config:
     EOD_EXIT_AFTER_HOUR:   int = 14   # 2:45 PM IST
     EOD_EXIT_AFTER_MINUTE: int = 45
 
-    # ── Late Entry Target Reduction ───────────────────────────────
+    # ── Late Entry Target Compression ─────────────────────────────
     # Trades entered after 1 PM get reduced targets (less time to hit).
-    # LATE_ENTRY_HOUR_1 / REDUCTION_1: after 1 PM, reduce by 20%.
-    # LATE_ENTRY_HOUR_2 / REDUCTION_2: after 2 PM, reduce by 25%.
-    # After reduction, POST_MERGE_RR_FLOOR (absolute minimum R:R)
-    # is used as a safety-net. The stricter adaptive R:R in Stage 5
-    # is the primary gate.
-    LATE_ENTRY_HOUR_1:       int   = 13
-    LATE_ENTRY_REDUCTION_1:  float = 20.0
-    LATE_ENTRY_HOUR_2:       int   = 14
-    LATE_ENTRY_REDUCTION_2:  float = 25.0
+    # Uses RR_AFTERNOON_HOUR / RR_LATE_HOUR and LATE_TARGET_CUT_PCT_*
+    # defined in the R:R Settings section above.
+    # After compression, the R:R floor for that time period decides
+    # whether the trade is still worth entering.
 
     # ── Short Position Safety ─────────────────────────────────────
     # SHORT_ENTRY_CUTOFF_HOUR: don't open new SHORT positions after

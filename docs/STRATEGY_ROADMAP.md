@@ -233,7 +233,7 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 ### 32. ✅ Late-Entry Target Reduction
 - **Versions**: All
 - **Gap**: A trade at 2 PM gets the same ATR target as one at 9:30 AM, but has only 70 min for target to hit vs 340 min. Probability of hitting target is dramatically lower.
-- **Fix**: Apply target reduction at entry time (not just existing time-decay on open positions). After 1 PM: reduce target by 20%. After 2 PM: reduce by 25%. POST_MERGE_RR_FLOOR (absolute min R:R, default 1.0:1) acts as safety-net while adaptive R:R (Stage 5) is the primary gate.
+- **Fix**: Apply target reduction at entry time (not just existing time-decay on open positions). After 1 PM: reduce target by `LATE_TARGET_CUT_PCT_1` (20%). After 2 PM: reduce by `LATE_TARGET_CUT_PCT_2` (25%). Time-based R:R floor (`RR_FLOOR_AFTERNOON` / `RR_FLOOR_LATE`) ensures compressed R:R is still worth trading.
 - **Source**: Time-value decay in intraday positions — targets must be realistic for remaining time.
 
 ---
@@ -332,7 +332,7 @@ These fixes were identified by analyzing 8 days of actual trade data showing -Rs
 ### 49. ✅ ATR-Only SL/Target (Pure ATR Mode)
 - **Versions**: All
 - **Gap**: Original code MERGED ATR SL with config SL ("wider of both"). When config SL (1.5%) > config target (1.2%), the merge always picked the wider SL from config + tighter target from config → 0.6-0.8:1 R:R → every trade rejected.
-- **Fix**: When ATR is available, use ATR SL and ATR target directly. Config defaults (`DEFAULT_STOP_LOSS_PCT`, `DEFAULT_TARGET_PCT`) are pure fallbacks for when ATR candle data is unavailable. Pure ATR always gives `TARGET_RR_MULTIPLIER` (1.5:1) R:R.
+- **Fix**: When ATR is available, use ATR SL and ATR target directly. Config defaults (`DEFAULT_STOP_LOSS_PCT`, `DEFAULT_TARGET_PCT`) are pure fallbacks for when ATR candle data is unavailable. Pure ATR always gives `RR_TARGET_RATIO` (1.5:1) R:R.
 - **Decision history**: V1 used tighter-of → too tight. #49 switched to wider-of → bad R:R. Now pure ATR (2026-04-10).
 - **Files**: `order_engine.py`
 
@@ -500,11 +500,11 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: CLAUDE_REVIEW_MINUTES 20 → 30. Gives trades more room to develop before first Claude review.
 - **Files**: `config.py`
 
-### 92. ✅ R:R Safety Floor (Adaptive) + Mid-Day Delta Step-Down
+### 92. ✅ R:R Floor (Time-Based + Adaptive) + Mid-Day Retry
 - **Versions**: All (V2 NoAI + V2 AI)
-- **Gap**: After ATR SL/target assignment, edge cases (ATR unavailable, SL capped, late-entry squeeze) could still create poor R:R. Need a catch-all safety net. Mid-day rescans have only 1-2 candidates + late-entry squeeze compresses R:R — a scan failure wastes 30 min.
-- **Fix**: After all SL/target adjustments, check R:R. Adaptive floor: starts at `POST_MERGE_RR_INITIAL` (1.3:1), relaxes to `POST_MERGE_RR_RELAXED` (1.1:1) after `RR_RELAX_AFTER_SCANS` (3) failed scans, stops trading after `RR_GIVEUP_AFTER_SCANS` (5) failures at floor. All values configurable. **Delta step-down** (2026-04-13): on mid-day rescans only, if all candidates fail at INITIAL, retry at INITIAL − `RR_INITIAL_DELTA` (0.1, so 1.3→1.2). Morning scan excluded via `_initial_entry_done` flag — it has a 5-min observation period, multiple candidates, and the adaptive relaxation system to handle failures over multiple scans.
-- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality. Merge removal (2026-04-10) fixes root cause — floor now catches only edge cases. Delta step-down (2026-04-13) prevents wasted mid-day rescans when late-entry squeeze compresses R:R.
+- **Gap**: After ATR SL/target assignment, edge cases (ATR unavailable, SL capped, late-entry squeeze) could still create poor R:R. Need a catch-all safety net. Late-entry target reduction (20-25%) compresses ATR's 1.5:1 to ~1.2:1, which is mathematically guaranteed to fail a 1.3:1 floor — making all late entries impossible.
+- **Fix**: Time-based R:R floor with explicit values per period: morning 1.3 (`RR_FLOOR_MORNING`), afternoon 1.2 (`RR_FLOOR_AFTERNOON`), late 1.0 (`RR_FLOOR_LATE`). Relaxes to min(time_floor, `RR_FLOOR_RELAXED` 1.1) after 3 failed scans, stops after 5. **Mid-day retry**: on mid-day rescans, if all candidates fail the current floor, retries once at floor - `RR_RETRY_STEP` (0.1). Morning scan excluded via `_initial_entry_done` flag.
+- **Decision history**: 1.3:1 (2026-04-09) too aggressive. 1.0:1 fixed (2026-04-10) worked but no adaptive relaxation. Adaptive (2026-04-10) starts strict, relaxes on market reality. Merge removal (2026-04-10) fixes root cause — floor catches only edge cases. Delta step-down (2026-04-13) prevents wasted mid-day rescans. Time-aware floor (2026-04-13) fixes late entries blocked by 1.3:1 floor. Config simplification (2026-04-13): renamed all `POST_MERGE_*` to `RR_FLOOR_*`, added explicit afternoon/late floors, removed redundant late-entry R:R check.
 - **Files**: `config.py`, `order_engine.py`, `manager.py`
 
 ### 93. ✅ Volume Confirmation at Entry (RVol Gate)
@@ -566,7 +566,7 @@ Identified by deep code review against industry standards for candle-based intra
 ### 102. ✅ ATR Pure Mode — Remove ATR/Config SL Merge
 - **Versions**: All
 - **Gap**: `enter_trade()` merged ATR SL with config SL using "wider of both" logic (`min(atr_sl, sl)` for BUY). When `DEFAULT_STOP_LOSS_PCT` (1.5%) > `DEFAULT_TARGET_PCT` (1.2%), the merge always picked config's wider SL + config's tighter target → 0.6-0.8:1 R:R → every stock failed the R:R floor → 0 trades entered across 5 scan cycles.
-- **Fix**: When ATR is available, use ATR SL and ATR target directly (no merge). Config defaults are pure fallbacks for when ATR candle data is unavailable. Pure ATR always produces exactly `TARGET_RR_MULTIPLIER` (1.5:1) R:R. Verified with all 11 failures from Apr 10 logs — all become 1.5:1 PASS.
+- **Fix**: When ATR is available, use ATR SL and ATR target directly (no merge). Config defaults are pure fallbacks for when ATR candle data is unavailable. Pure ATR always produces exactly `RR_TARGET_RATIO` (1.5:1) R:R. Verified with all 11 failures from Apr 10 logs — all become 1.5:1 PASS.
 - **Files**: `order_engine.py`, `config.py` (comment updates)
 
 ### 103. ✅ Candidate Pool — Return All Pre-Filtered Candidates
@@ -581,10 +581,10 @@ Identified by deep code review against industry standards for candle-based intra
 - **Fix**: Separate `direction_primary` (top N for each direction) and `direction_fallback` (extras in allowed directions). Both returned to entry loop. Primary picks fill slots first, fallbacks tried if primary fails checks.
 - **Files**: `stock_scanner_v2.py`
 
-### 109. ✅ R:R Delta Mid-Day-Only Guard
+### 109. ✅ R:R Mid-Day Retry Guard
 - **Versions**: All (V2 NoAI + V2 AI)
-- **Gap**: Delta step-down (item #92) fired on ALL `_enter_positions()` calls including the morning scan. Morning scan doesn't need delta — it has a 5-min observation period, multiple candidates, and the adaptive relaxation system to handle failures over multiple scan cycles.
-- **Fix**: `_initial_entry_done` flag in `PortfolioManager.__init__` (default False). Checked in delta block — delta only fires when True. Set to True at end of `_enter_positions()`. Morning scan (via `_observe_and_enter()`) calls `_enter_positions()` once with flag False → delta skipped → flag flips True. All subsequent mid-day calls see True and can use delta.
+- **Gap**: Mid-day retry step-down (item #92) fired on ALL `_enter_positions()` calls including the morning scan. Morning scan doesn't need retry — it has a 5-min observation period, multiple candidates, and the adaptive relaxation system to handle failures over multiple scan cycles.
+- **Fix**: `_initial_entry_done` flag in `PortfolioManager.__init__` (default False). Checked in retry block — retry only fires when True. Set to True at end of `_enter_positions()`. Morning scan (via `_observe_and_enter()`) calls `_enter_positions()` once with flag False → retry skipped → flag flips True. All subsequent mid-day calls see True and can use retry.
 - **Files**: `manager.py`
 
 ---
@@ -696,9 +696,9 @@ Identified by deep code review against industry standards for candle-based intra
 | 102 | ATR pure mode (remove merge) | All | CRITICAL | ✅ Done | `order_engine.py`, `config.py` |
 | 103 | Candidate pool: all pre-filtered | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 | 104 | Fallback promotion on budget drop | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
-| 105 | Late-entry R:R uses POST_MERGE_RR_FLOOR | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
+| 105 | Late-entry R:R uses `RR_FLOOR_LATE` | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
 | 106 | Late-entry tier 2 reduction 35→25% | All | MEDIUM | ✅ Done | `config.py` |
 | 107 | Score-weighted position sizing | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 | 108 | Direction filter fallback fix (bug) | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
-| 109 | R:R delta mid-day-only guard | All | HIGH | ✅ Done | `manager.py` |
+| 109 | R:R mid-day retry guard | All | HIGH | ✅ Done | `manager.py` |
 

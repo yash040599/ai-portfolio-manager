@@ -396,26 +396,26 @@ class PortfolioManager:
         plans = trades if trades is not None else self._trade_plans
         entered = self._attempt_entries(plans)
 
-        # ── Delta step-down retry ─────────────────────────────────
-        # If all candidates failed and we're still at INITIAL floor,
-        # retry with INITIAL - DELTA. Only at INITIAL level; once
-        # relaxed the delta is not applied.
-        # Guard: only on mid-day rescans (after the morning entry
-        # completes) where late-entry squeeze compresses R:R.
-        delta = getattr(self.cfg, "RR_INITIAL_DELTA", 0)
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_SCANS", 3)
-        at_initial = self.engine._zero_entry_scans < relax_after
-        if entered == 0 and delta > 0 and at_initial and plans and self._initial_entry_done:
-            initial = getattr(self.cfg, "POST_MERGE_RR_INITIAL", 1.3)
+        # ── Mid-day retry step-down ────────────────────────────────
+        # If all candidates failed and we haven't relaxed yet,
+        # retry with floor reduced by RR_RETRY_STEP. Only fires on
+        # mid-day rescans (after the morning entry completes).
+        retry_step = getattr(self.cfg, "RR_RETRY_STEP", 0)
+        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
+        at_normal = self.engine._zero_entry_scans < relax_after
+        if entered == 0 and retry_step > 0 and at_normal and plans and self._initial_entry_done:
+            hour_now = now_ist().hour
+            current_floor = self.engine.current_rr_floor(hour=hour_now)
+            retry_floor = max(current_floor - retry_step, 1.0)
             self.log.info(
-                f"R:R delta step-down: all candidates failed at {initial:.1f}:1 "
-                f"— retrying at {initial - delta:.1f}:1"
+                f"R:R retry: all candidates failed at {current_floor:.1f}:1 "
+                f"— retrying at {retry_floor:.1f}:1"
             )
-            self.engine._rr_delta_active = True
+            self.engine._rr_retry_active = True
             try:
                 entered = self._attempt_entries(plans)
             finally:
-                self.engine._rr_delta_active = False
+                self.engine._rr_retry_active = False
 
         self.log.success(f"Entered {entered} position(s)")
 
@@ -1157,7 +1157,7 @@ class PortfolioManager:
                     elif vix_price <= self.cfg.VIX_LOW_THRESHOLD:
                         vix_regime = "LOW"
 
-                    vix_text = f"\n  India VIX: {vix_price:.2f} ({vix_regime})"
+                    vix_text = f"\n  India VIX (Volatility Index): {vix_price:.2f} ({vix_regime})"
                     if vix_regime == "HIGH":
                         vix_text += (
                             f" — HIGH FEAR: reduce position sizes, widen SLs, "
@@ -1177,7 +1177,7 @@ class PortfolioManager:
                         )
                         if vix_change_pct >= self.cfg.VIX_SPIKE_PCT:
                             vix_text += (
-                                f"\n  ⚠ VIX SPIKE: +{vix_change_pct:.1f}% intraday "
+                                f"\n  ⚠ VIX (Volatility Index) SPIKE: +{vix_change_pct:.1f}% intraday "
                                 f"— CAUTION with new entries"
                             )
             except Exception:
@@ -1186,7 +1186,7 @@ class PortfolioManager:
             # ── FII/DII bias (if available) ───────────────────────
             fii_dii_text = ""
             if self._fii_dii_bias:
-                fii_dii_text = f"\n  FII/DII bias (prev day): {self._fii_dii_bias}"
+                fii_dii_text = f"\n  FII/DII (Foreign & Domestic Institutional Investors) bias (prev day): {self._fii_dii_bias}"
 
             # ── Pre-open intelligence (if available) ──────────────
             preopen_text = ""
@@ -1260,18 +1260,18 @@ class PortfolioManager:
             self.cfg.V2_MIN_SCORE += bump_score
 
             self.log.info(
-                f"📈 India VIX {self._india_vix:.1f} ≥ {self.cfg.VIX_HIGH_THRESHOLD} "
+                f"📈 India VIX (Volatility Index) {self._india_vix:.1f} ≥ {self.cfg.VIX_HIGH_THRESHOLD} "
                 f"(HIGH VOLATILITY): max positions → {self.cfg.MAX_POSITIONS}, "
                 f"min score → {self.cfg.V2_MIN_SCORE:.1f}"
             )
         elif self._india_vix <= self.cfg.VIX_LOW_THRESHOLD:
             self.log.info(
-                f"📉 India VIX {self._india_vix:.1f} ≤ {self.cfg.VIX_LOW_THRESHOLD} "
+                f"📉 India VIX (Volatility Index) {self._india_vix:.1f} ≤ {self.cfg.VIX_LOW_THRESHOLD} "
                 f"(LOW VOLATILITY): breakout-friendly market, tighter targets"
             )
         else:
             self.log.info(
-                f"📊 India VIX {self._india_vix:.1f} (NORMAL range)"
+                f"📊 India VIX (Volatility Index) {self._india_vix:.1f} (NORMAL range)"
             )
 
     def _check_vix_spike(self) -> bool:
@@ -1433,7 +1433,8 @@ class PortfolioManager:
             fii_label = f"+Rs.{fii_net:,.0f}Cr" if fii_net >= 0 else f"-Rs.{abs(fii_net):,.0f}Cr"
             dii_label = f"+Rs.{dii_net:,.0f}Cr" if dii_net >= 0 else f"-Rs.{abs(dii_net):,.0f}Cr"
             self.log.info(
-                f"FII/DII (prev day): FII {fii_label}, DII {dii_label} → {self._fii_dii_bias}"
+                f"FII/DII (Foreign & Domestic Institutional Investors) prev day: "
+                f"FII {fii_label}, DII {dii_label} → {self._fii_dii_bias}"
             )
 
         except Exception as e:

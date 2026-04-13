@@ -23,7 +23,7 @@ python main.py --mode analyze
 A fully automated intraday trading bot. Default mode is **NoAI** (pure technical signals, zero Claude calls). The core loop:
 
 1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, StochRSI, and more), applies sector momentum filter, auto-selects best candidates by score
-2. **Execution** — enters positions with ATR-based dynamic stop-losses (pure ATR, no merge with config defaults), validates entry prices against live Zerodha quotes, checks bid-ask spreads, volume confirmation (RVol gate), adaptive R:R safety floor (starts strict, relaxes after failed scans, gives up after repeated failures), and tries fallback candidates if primary picks fail entry checks
+2. **Execution** — enters positions with ATR-based dynamic stop-losses (pure ATR, no merge with config defaults), validates entry prices against live Zerodha quotes, checks bid-ask spreads, volume confirmation (RVol gate), time-based R:R floor (morning 1.3:1, afternoon 1.2:1, late 1.0:1 — relaxes after failed scans, gives up after repeated failures), and tries fallback candidates if primary picks fail entry checks
 3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, runs stagnant position exit
 4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, and manual trade adoption
 5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API
@@ -209,6 +209,10 @@ Open `config.py` and review the key settings. Everything is commented — the ma
 | `MAX_POSITIONS` | `3` | Max simultaneous trades |
 | `DRY_RUN` | `False` | Simulate trades without placing real orders (use `--dryrun` flag) |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |
+| `RR_TARGET_RATIO` | `1.5` | Base risk:reward ratio from ATR (1.5:1) |
+| `RR_FLOOR_MORNING` | `1.3` | R:R floor before 1 PM — strict |
+| `RR_FLOOR_AFTERNOON` | `1.2` | R:R floor 1-2 PM (after target compression) |
+| `RR_FLOOR_LATE` | `1.0` | R:R floor after 2 PM — safety net |
 
 All timing, risk management, indicator, and tax settings are in `config.py` with detailed comments.
 
