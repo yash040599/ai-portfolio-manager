@@ -258,11 +258,11 @@ Research-backed improvements based on Investopedia, Zerodha Varsity, Toby Crabel
 - **Fix**: Before placing an order, check top 5 bid-ask levels via Zerodha's depth data. Skip stocks with spread > 0.3%.
 - **Effort**: Low | **Impact**: Medium
 
-### 36. Intraday Momentum Score (Rate of Change)
+### 36. ✅ Intraday Score Momentum (Rate of Change)
 - **Versions**: V2, NoAI
 - **Gap**: Score is a snapshot at scan time. A stock scored +8 might already be decelerating. Rate of change (RoC) of score over 2-3 scans would detect momentum fade early.
-- **Fix**: Cache previous scan scores in memory. Compute delta_score. Penalize entries where score is falling fast.
-- **Effort**: Medium | **Impact**: Medium
+- **Fix**: Cache previous scan scores in memory (`_prev_scan_scores`). Compute `score_delta` per candidate. Show Δ in logs, NoAI rationale, Claude snapshot, and indicator snapshot for learning DB. First scan has no delta (no previous data).
+- **Files**: `stock_scanner_v2.py`
 
 ### 37. ~~Correlation-Based Position Sizing~~ *(Removed)*
 - **Reason**: Redundant — sector cap (#8, #26) + direction diversification (#53, #76) + max 3 positions (#54) already prevent correlated drawdowns. Adding intraday correlation tracking adds complexity for negligible benefit at this position count.
@@ -366,18 +366,17 @@ These fixes were identified by analyzing 8 days of actual trade data showing -Rs
 - **Fix**: MAX_POSITIONS 5→3. MIN_BUDGET_UTILISATION_PCT 60→0 (disabled — idle capital is better than forced trades). Concentrates capital into fewer, higher-conviction trades.
 - **Files**: `config.py`
 
-### 55. LIMIT Orders for Entry/Exit
+### 55. ✅ LIMIT Orders for Entry
 - **Versions**: All
-- **Priority**: MEDIUM (implement when slippage data confirms need)
 - **Gap**: MARKET orders cause adverse fills (Rs.20-40/day slippage on Rs.18K budget). In liquid NSE stocks, LIMIT at LTP should fill within seconds.
-- **Fix**: Change `place_order()` calls from `order_type="MARKET"` to `order_type="LIMIT"` with `price=ltp`. Add a 5-10s fill check; if not filled, cancel and retry at updated LTP. Fall back to MARKET after 2 LIMIT failures.
-- **Files**: `order_engine.py`, `zerodha_client.py`
+- **Fix**: Entry orders use LIMIT at LTP with `LIMIT_ORDER_TIMEOUT` (8s) wait. Cancel + retry up to `LIMIT_MAX_RETRIES` (2) times. Fall back to MARKET after all LIMIT attempts fail. Exit orders always use MARKET for guaranteed fill. Controlled by `USE_LIMIT_ORDERS` config (default True).
+- **Files**: `config.py`, `order_engine.py`
 
-### 56. Scan Universe Price Filter
+### 56. ✅ Scan Universe Price Filter
 - **Versions**: V2, NoAI
-- **Priority**: MEDIUM
-- **Gap**: No guard against very low-price (Rs.10-50) or very high-price (Rs.3000+) stocks. Low-price stocks have high % spreads. High-price stocks need too much capital for proper sizing.
-- **Fix**: Add MIN_STOCK_PRICE (default Rs.100) and MAX_STOCK_PRICE (default Rs.800) config. Filter during scan phase — skip stocks outside range.
+- **Gap**: No guard against very low-price (Rs.10-50) or very high-price stocks. Low-price stocks have high % spreads. High-price stocks need too much capital for proper sizing.
+- **Fix**: `SCAN_MIN_PRICE` (default Rs.100) and `SCAN_MAX_PRICE` (default 0 = auto from budget × MAX_POSITION_PCT). Filter applied at start of pre-filter scan before candle analysis.
+- **Files**: `config.py`, `stock_scanner_v2.py`
 - **Files**: `config.py`, `stock_scanner_v2.py`
 
 ### 57. ~~VWAP Exclude Incomplete Candle~~ *(Removed)*
@@ -589,6 +588,22 @@ Identified by deep code review against industry standards for candle-based intra
 
 ---
 
+## COMPLETED — Infrastructure Hardening (April 2026)
+
+### 110. ✅ SQLite WAL Mode
+- **Versions**: All (infrastructure)
+- **Gap**: Both databases (`candle_cache.db`, `trades.db`) use SQLite's default journal mode. If Phase 1 (analyser) and Phase 2 (manager) run simultaneously, or if the bot crashes mid-write, DB corruption is possible.
+- **Fix**: Added `PRAGMA journal_mode=WAL` to `_connect()` in both `candle_cache.py` and `performance_tracker.py`. WAL allows concurrent readers + one writer without locking.
+- **Files**: `candle_cache.py`, `performance_tracker.py`
+
+### 111. ✅ Trades Table Dedup Constraint
+- **Versions**: All (infrastructure)
+- **Gap**: If `record_trades()` is called twice (crash between record and report write), same trade gets double-inserted. P&L analytics double-count.
+- **Fix**: Added `UNIQUE INDEX idx_trades_dedup ON trades (date, symbol, side, entry_time)`. Changed `INSERT INTO` to `INSERT OR IGNORE INTO`. Idempotent — safe to call multiple times.
+- **Files**: `performance_tracker.py`
+
+---
+
 ## Implementation Status
 
 | # | Improvement | Versions | Priority | Status | Implemented In |
@@ -628,7 +643,7 @@ Identified by deep code review against industry standards for candle-based intra
 | 33 | Fibonacci retracement levels | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 34 | VWAP SD bands | V2, NoAI | MEDIUM | ✅ Done | `technical_indicators.py`, `stock_scanner_v2.py` |
 | 35 | Bid-ask spread check | All | MEDIUM | ✅ Done | `order_engine.py`, `config.py` |
-| 36 | Intraday momentum (RoC) | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 36 | Intraday score momentum (RoC) | V2, NoAI | MEDIUM | ✅ Done | `stock_scanner_v2.py` |
 | 37 | ~~Correlation-based sizing~~ | — | — | ❌ Removed | Redundant w/ sector cap + direction diversification |
 | 38 | Improved slippage model | Dry Run | LOW | ✅ Done | `order_engine.py` |
 | 39 | ATR percentile ranking | V2, NoAI | MEDIUM | ⬜ Pending | — |
@@ -646,8 +661,8 @@ Identified by deep code review against industry standards for candle-based intra
 | 52 | RSI extreme hard cap | V2, NoAI | HIGH | ✅ Done | `technical_indicators.py` |
 | 53 | Direction diversification (score-aware) | All | HIGH | ✅ Done | `order_engine.py`, `stock_scanner_v2.py` |
 | 54 | Fewer trades, bigger size | All | HIGH | ✅ Done | `config.py` |
-| 55 | LIMIT orders for entry/exit | All | MEDIUM | ⬜ Pending | — |
-| 56 | Scan universe price filter | V2, NoAI | MEDIUM | ⬜ Pending | — |
+| 55 | LIMIT orders for entry | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
+| 56 | Scan universe price filter | V2, NoAI | MEDIUM | ✅ Done | `config.py`, `stock_scanner_v2.py` |
 | 57 | ~~VWAP exclude incomplete candle~~ | — | — | ❌ Removed | Negligible impact on cumulative VWAP |
 | 58 | Dynamic position sizing by budget | All | MEDIUM | ✅ Done | `config.py`, `order_engine.py` |
 | 59 | R:R 1.5:1 + configurable multiplier | All | HIGH | ✅ Done | `config.py`, `order_engine.py` |
@@ -701,4 +716,6 @@ Identified by deep code review against industry standards for candle-based intra
 | 107 | Score-weighted position sizing | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 | 108 | Direction filter fallback fix (bug) | NoAI | HIGH | ✅ Done | `stock_scanner_v2.py` |
 | 109 | R:R mid-day retry guard | All | HIGH | ✅ Done | `manager.py` |
+| 110 | SQLite WAL mode | All | LOW | ✅ Done | `candle_cache.py`, `performance_tracker.py` |
+| 111 | Trades table dedup constraint | All | LOW | ✅ Done | `performance_tracker.py` |
 

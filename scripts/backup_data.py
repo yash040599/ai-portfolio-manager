@@ -148,7 +148,7 @@ UNIQUE_TABLES = {
 # Tables without UNIQUE constraints — deduplicate on all data columns
 APPEND_TABLES = {
     "trades":             ("date", "symbol", "side", "entry_price", "exit_price",
-                           "qty", "pnl", "exit_reason"),
+                           "qty", "pnl", "exit_reason", "entry_time"),
     "portfolio_analyses": ("date", "symbol", "action", "conviction", "current_price",
                            "invested_value", "current_value"),
 }

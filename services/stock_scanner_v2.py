@@ -145,6 +145,13 @@ class StockScannerV2(StockScanner):
         self.zerodha = zerodha
         self._cache = CandleCache()
 
+        # ── Score momentum tracking ───────────────────────────────
+        # Caches the last scan's composite scores per symbol so we can
+        # compute score RoC (Rate of Change) across scans. Detects
+        # decelerating setups before entry — a stock accelerating from
+        # +5→+8 is better than one decelerating from +10→+7.
+        self._prev_scan_scores: dict[str, float] = {}
+
         # Cleanup old cached data on startup (keep 45 days)
         try:
             cleaned = self._cache.cleanup_old(keep_days=45)
@@ -400,11 +407,41 @@ class StockScannerV2(StockScanner):
         universe = self.get_universe()
         self.log.info(f"V2 pre-filter: analysing {len(universe)} stocks with candle patterns...")
 
+        # ── Price range filter ────────────────────────────────────
+        # Skip stocks outside SCAN_MIN_PRICE / SCAN_MAX_PRICE range.
+        # Eliminates illiquid penny stocks and stocks too expensive to size.
+        min_price = self.cfg.SCAN_MIN_PRICE
+        max_price = self.cfg.SCAN_MAX_PRICE
+        if max_price <= 0:
+            # Auto from budget: price must allow at least 1 share
+            # within the per-stock capital cap.
+            max_price = self._budget * self.cfg.MAX_POSITION_PCT / 100
+
+        price_filtered = []
+        dropped_price = 0
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            ltp = q.get("last_price", 0)
+            if ltp <= 0:
+                price_filtered.append(symbol)  # no quote = still analyse
+                continue
+            if ltp < min_price or ltp > max_price:
+                dropped_price += 1
+                continue
+            price_filtered.append(symbol)
+
+        if dropped_price:
+            self.log.info(
+                f"  Price filter: dropped {dropped_price} stocks outside "
+                f"Rs.{min_price:.0f}-{max_price:.0f} range"
+            )
+
         scored = []
-        for i, symbol in enumerate(universe):
+        for i, symbol in enumerate(price_filtered):
             # Progress indicator for large universes
             if (i + 1) % 20 == 0:
-                self.log.info(f"  ...analysed {i + 1}/{len(universe)}")
+                self.log.info(f"  ...analysed {i + 1}/{len(price_filtered)}")
 
             result = self._analyse_stock(symbol)
             if result:
@@ -498,14 +535,57 @@ class StockScannerV2(StockScanner):
         # Take top candidates
         top = sector_diversified[:MAX_CANDIDATES]
 
+        # ── Score momentum (RoC) — compare with previous scan ─────
+        # Enriches each candidate with score_delta from last scan.
+        # Positive delta = accelerating, negative = decelerating.
+        # First scan of the day has no delta (None).
+        # DECISION IMPACT (NoAI + AI): When two candidates have the same
+        # |score|, the accelerating one ranks higher (sort tiebreaker).
+        # This means NoAI will prefer +7 (Δ+2) over +7 (Δ-1) when both
+        # compete for the same slot. A strong penalty of -0.5 is applied
+        # to rapidly decelerating candidates (Δ ≤ -2) as a score adjustment.
+        new_scores: dict[str, float] = {}
+        momentum_count = 0
+        for c in top:
+            sym = c["symbol"]
+            raw_score = c["combined_score"]  # save BEFORE penalty
+            new_scores[sym] = raw_score      # store RAW score for next scan's delta
+            prev = self._prev_scan_scores.get(sym)
+            if prev is not None:
+                delta = round(raw_score - prev, 1)
+                c["score_delta"] = delta
+                momentum_count += 1
+                # Penalize rapidly decelerating setups — momentum is fading
+                if abs(delta) >= 2 and delta < 0 and c["combined_score"] > 0:
+                    c["combined_score"] = round(c["combined_score"] - 0.5, 1)
+                elif abs(delta) >= 2 and delta > 0 and c["combined_score"] < 0:
+                    c["combined_score"] = round(c["combined_score"] + 0.5, 1)
+            else:
+                c["score_delta"] = None  # first scan, no delta
+        self._prev_scan_scores = new_scores  # store RAW scores (no penalty) for next scan
+
+        # Re-sort with momentum as tiebreaker: |score| primary, delta secondary
+        top.sort(key=lambda x: (abs(x["combined_score"]), x.get("score_delta") or 0), reverse=True)
+
+        if momentum_count:
+            accel = sum(1 for c in top if (c.get("score_delta") or 0) > 0)
+            decel = sum(1 for c in top if (c.get("score_delta") or 0) < 0)
+            if accel or decel:
+                self.log.info(
+                    f"  Score momentum: {accel} accelerating, {decel} decelerating "
+                    f"(vs previous scan)"
+                )
+
         if top:
             self.log.info(f"  Top {len(top)} candidates by technical score:")
             for r in top:
                 ps = r["pattern_summary"]
                 patterns_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
                 rvol_str = f"  RVol: {r['rvol']:.1f}x" if r.get("rvol", 0) > 0 else ""
+                delta = r.get("score_delta")
+                delta_str = f"  Δ{delta:+.1f}" if delta is not None else ""
                 self.log.info(
-                    f"    {r['symbol']:<14} score: {r['combined_score']:>+5.1f}  "
+                    f"    {r['symbol']:<14} score: {r['combined_score']:>+5.1f}{delta_str}  "
                     f"tech: {r['technical']['signal']:<12} "
                     f"patterns: {patterns_str}{rvol_str}"
                 )
@@ -791,6 +871,9 @@ class StockScannerV2(StockScanner):
                 parts.append(f"Patterns: {', '.join(ps['patterns'][:2])}")
             if c.get("rvol", 0) > 1.5:
                 parts.append(f"RVol {c['rvol']:.1f}x")
+            delta = c.get("score_delta")
+            if delta is not None:
+                parts.append(f"Δ{delta:+.1f}")
 
             trades.append({
                 "symbol": symbol,
@@ -1027,6 +1110,7 @@ class StockScannerV2(StockScanner):
             "orb": tech.get("orb", {}).get("signal", ""),
             "rvol": candidate.get("rvol", 0),
             "ext_move": tech.get("extended_move_pct", 0),
+            "score_delta": candidate.get("score_delta"),
         }
         return json.dumps(snap)
 
@@ -1152,6 +1236,10 @@ class StockScannerV2(StockScanner):
             if abs(ext_move) > 1.5:
                 ext_str = f"  ⚠ ExtMove: {ext_move:+.1f}%"
 
+            # Score momentum (delta from previous scan)
+            delta = c.get("score_delta")
+            delta_str = f"  ScoreΔ: {delta:+.1f}" if delta is not None else ""
+
             lines.append(
                 f"{symbol:<14} "
                 f"Rs.{price:>10.2f}  Chg: {change_pct:>+6.2f}%  "
@@ -1161,7 +1249,7 @@ class StockScannerV2(StockScanner):
                 f"EMA(9/21): {ema_info['signal']}  "
                 f"SuperTrend: {st_info['trend']}  "
                 f"Score: {c['combined_score']:+.1f}  "
-                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}{stoch_str}{ext_str}"
+                f"Patterns: [{patterns}]{sr_str}{macd_str}{orb_str}{gap_str}{hourly_str}{bb_str}{adx_str}{fib_str}{vwap_b_str}{stoch_str}{ext_str}{delta_str}"
             )
 
         return "\n".join(lines)

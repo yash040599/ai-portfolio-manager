@@ -104,9 +104,21 @@ class PerformanceTracker:
                 except sqlite3.OperationalError:
                     pass  # column already exists
 
+            # Unique constraint: prevent duplicate trades on crash-restart.
+            # Uses (date, symbol, entry_time) — same stock can be traded
+            # multiple times per day but not at the exact same entry_time.
+            try:
+                conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_dedup "
+                    "ON trades (date, symbol, side, entry_time)"
+                )
+            except sqlite3.OperationalError:
+                pass  # index already exists or can't create on existing data
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.DB_PATH)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     # ================================================================
@@ -134,7 +146,7 @@ class PerformanceTracker:
                 total_pnl = p.get("pnl", 0) + p.get("_partial_pnl", 0)
                 total_qty = p.get("qty", 0) + p.get("_partial_qty", 0)
                 conn.execute(
-                    """INSERT INTO trades
+                    """INSERT OR IGNORE INTO trades
                        (date, symbol, side, entry_price, exit_price, qty,
                         pnl, exit_reason, claude_confidence, market_condition,
                         entry_score, entry_rsi, entry_time, exit_time,

@@ -356,6 +356,18 @@ class Config:
     #   Set to False to use the legacy software-monitored SL polling.
     USE_EXCHANGE_SL: bool = True
 
+    # ── LIMIT Orders ──────────────────────────────────────────────
+    # USE_LIMIT_ORDERS: place LIMIT orders at LTP instead of MARKET.
+    #   MARKET orders get adverse fills (Rs.20-40/day slippage on
+    #   Rs.18K budget). On liquid NIFTY100 stocks, LIMIT at LTP fills
+    #   within seconds. If LIMIT doesn't fill within LIMIT_ORDER_TIMEOUT
+    #   seconds, cancel and retry at updated LTP. After LIMIT_MAX_RETRIES
+    #   failures, fall back to MARKET. Only for entry orders — exits
+    #   always use MARKET for guaranteed fill.
+    USE_LIMIT_ORDERS: bool = True
+    LIMIT_ORDER_TIMEOUT: int = 8   # seconds to wait for LIMIT fill
+    LIMIT_MAX_RETRIES:  int = 2    # LIMIT attempts before MARKET fallback
+
     # MIN_EXPECTED_PROFIT: skip trades where expected profit (target
     # distance × qty) is less than this amount in Rs.. Prevents
     # entering trades where brokerage + STT eats all the profit.
@@ -373,6 +385,17 @@ class Config:
     # 15minute = good balance of signal clarity vs responsiveness.
     # 5minute = more signals but noisier patterns.
     V2_CANDLE_INTERVAL: str = "15minute"
+
+    # ── Scan Price Filter ─────────────────────────────────────────
+    # Skip stocks outside this price range during scanning.
+    # MIN: Very low-price stocks (Rs.10-50) have terrible bid-ask
+    #   spreads (0.5-2%) that eat into tight ATR targets.
+    # MAX: Very high-price stocks can't be properly sized with a
+    #   small budget (1 share = too concentrated). Set to 0 to disable.
+    #   Auto-calculated from budget if 0: budget × MAX_POSITION_PCT / 100
+    #   ensures at least 1 share fits within per-stock cap.
+    SCAN_MIN_PRICE: float = 100.0
+    SCAN_MAX_PRICE: float = 0  # 0 = auto from budget (budget × MAX_POSITION_PCT%)
 
     # OPPORTUNITY_RESCAN_MINUTES: how often to scan for new trades
     # when there are free position slots. Independent of position

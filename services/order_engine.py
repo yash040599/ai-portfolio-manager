@@ -583,6 +583,141 @@ class OrderEngine:
         return round(price * (1 + sl_pct), 2), round(price * (1 - tgt_pct), 2)
 
     # ================================================================
+    # ENTRY ORDER — LIMIT WITH MARKET FALLBACK
+    # ================================================================
+
+    def _place_entry_order(
+        self, symbol: str, exchange: str, qty: int, side: str, price: float,
+    ) -> str:
+        """
+        Places an entry order using LIMIT-first strategy when enabled.
+
+        USE_LIMIT_ORDERS = True:
+          1. Place LIMIT at current LTP
+          2. Wait LIMIT_ORDER_TIMEOUT seconds for fill
+          3. Check filled qty — if fully filled, return
+          4. If partially filled, cancel remainder and return (use partial qty)
+          5. If unfilled, cancel and retry at new LTP
+          6. After LIMIT_MAX_RETRIES failures, fall back to MARKET for remaining qty
+          7. If cancel fails, verify order status before placing MARKET to prevent double-entry
+
+        USE_LIMIT_ORDERS = False:
+          Place MARKET order directly (original behavior).
+
+        Returns order_id of the (first) successful fill. Raises on failure.
+        """
+        if not self.cfg.USE_LIMIT_ORDERS:
+            return self.zerodha.place_order(
+                symbol=symbol, exchange=exchange,
+                qty=qty, side=side, order_type="MARKET",
+            )
+
+        max_retries = self.cfg.LIMIT_MAX_RETRIES
+        timeout = self.cfg.LIMIT_ORDER_TIMEOUT
+        remaining_qty = qty
+
+        for attempt in range(1, max_retries + 1):
+            # Fetch fresh LTP for LIMIT price
+            try:
+                quotes = self.zerodha.get_quotes(
+                    [{"symbol": symbol, "exchange": exchange}]
+                ) or {}
+                ltp = quotes.get(f"{exchange}:{symbol}", {}).get("last_price", 0)
+            except Exception:
+                ltp = 0
+
+            if ltp <= 0:
+                ltp = price  # fallback to planned entry
+
+            self.log.info(
+                f"LIMIT entry attempt {attempt}/{max_retries}: "
+                f"{side} {remaining_qty}x {symbol} @ Rs.{ltp:.2f}"
+            )
+            try:
+                order_id = self.zerodha.place_order(
+                    symbol=symbol, exchange=exchange,
+                    qty=remaining_qty, side=side,
+                    order_type="LIMIT", price=round(ltp, 2),
+                )
+            except Exception as e:
+                self.log.warning(f"LIMIT order placement failed: {e}")
+                break  # fall through to MARKET
+
+            # Wait for fill
+            fill = self.zerodha.get_order_fill_price(order_id, timeout=timeout)
+
+            # Check actual filled qty (handles partial fills)
+            filled_qty = self.zerodha.get_order_filled_qty(order_id) or 0
+
+            if filled_qty >= remaining_qty:
+                # Fully filled
+                self.log.success(
+                    f"LIMIT fill: {side} {filled_qty}x {symbol} @ Rs.{fill:.2f} "
+                    f"(attempt {attempt})"
+                )
+                return str(order_id)
+
+            if filled_qty > 0:
+                # Partial fill — cancel remainder, accept what we got
+                self.log.info(
+                    f"LIMIT partial fill: {filled_qty}/{remaining_qty} shares @ Rs.{fill:.2f} "
+                    f"— cancelling remainder"
+                )
+                try:
+                    self.zerodha.cancel_order(order_id)
+                except Exception:
+                    pass  # remainder may already be cancelled
+                # Reduce remaining for potential MARKET fallback
+                remaining_qty -= filled_qty
+                # Return this order_id — enter_trade will get the partial fill price
+                # and the position will have the partial qty
+                return str(order_id)
+
+            # Zero fills — cancel before retry
+            self.log.info(
+                f"LIMIT not filled in {timeout}s — cancelling order {order_id}"
+            )
+            cancel_ok = False
+            try:
+                self.zerodha.cancel_order(order_id)
+                cancel_ok = True
+            except Exception as e:
+                self.log.warning(f"LIMIT cancel failed for {order_id}: {e}")
+
+            if not cancel_ok:
+                # Cancel failed — order might still be live or might have filled.
+                # Re-check filled qty to avoid double-entry.
+                time.sleep(1)  # brief pause for exchange state to settle
+                recheck_qty = self.zerodha.get_order_filled_qty(order_id) or 0
+                if recheck_qty > 0:
+                    self.log.warning(
+                        f"LIMIT order {order_id} filled {recheck_qty} shares after "
+                        f"cancel attempt — using this fill"
+                    )
+                    return str(order_id)
+                # Still not filled and cancel failed — order is in unknown state.
+                # Do NOT place MARKET to avoid double-entry. Raise error.
+                raise RuntimeError(
+                    f"LIMIT order {order_id} for {symbol}: cancel failed and "
+                    f"fill status unknown — manual check required"
+                )
+
+        if remaining_qty <= 0:
+            # All shares were filled via partial fills across retries
+            # (shouldn't reach here, but safety)
+            return str(order_id)
+
+        # All LIMIT attempts exhausted with 0 fills — fall back to MARKET
+        self.log.warning(
+            f"LIMIT failed {max_retries}x for {symbol} — "
+            f"falling back to MARKET for {remaining_qty} shares"
+        )
+        return self.zerodha.place_order(
+            symbol=symbol, exchange=exchange,
+            qty=remaining_qty, side=side, order_type="MARKET",
+        )
+
+    # ================================================================
     # ENTRY — OPEN A NEW POSITION
     # ================================================================
 
@@ -942,15 +1077,24 @@ class OrderEngine:
             return False
         else:
             try:
-                order_id = self.zerodha.place_order(
-                    symbol=symbol, exchange=exchange,
-                    qty=qty, side=side, order_type="MARKET",
-                )
+                order_id = self._place_entry_order(symbol, exchange, qty, side, entry)
                 # Order succeeded — reset failure counter
                 self._consecutive_order_failures = 0
 
+                # Reconcile actual filled qty (LIMIT orders can partially fill)
+                actual_qty = self.zerodha.get_order_filled_qty(order_id)
+                if actual_qty and actual_qty != qty:
+                    self.log.warning(
+                        f"Qty reconciliation: {symbol} planned {qty} shares "
+                        f"→ actual {actual_qty} (LIMIT partial fill)"
+                    )
+                    qty = actual_qty
+                    trade["qty"] = qty
+                    cost = entry * qty
+
                 # Fetch actual fill price from Zerodha
-                fill_price = self.zerodha.get_order_fill_price(order_id)
+                # Short timeout since _place_entry_order already waited for fill
+                fill_price = self.zerodha.get_order_fill_price(order_id, timeout=3)
                 if fill_price:
                     deviation = abs(fill_price - entry) / entry if entry > 0 else 0
                     if deviation > 0.05:

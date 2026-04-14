@@ -13,9 +13,8 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-13 — Consolidated from STRATEGY_V2.md and
-  STRATEGY_V2_NOAI.md. Time-based R:R floors, config-derived AI
-  prompts, SL helper extraction, LOSER_EXIT rename.
+  Last sync: 2026-04-14 — Price filter, score momentum (RoC), LIMIT
+  orders with fallback, SQLite WAL mode, trades dedup constraint.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -113,6 +112,8 @@ Identical in both modes. Pure computation on free Zerodha historical data.
 
 ```
 For each stock in NIFTY100 (~100 stocks):
+  → Price filter: skip stocks outside SCAN_MIN_PRICE–SCAN_MAX_PRICE
+      (Rs.100 min; max auto-calculated from budget × MAX_POSITION_PCT)
   → Fetch 15-min candles (last 3 days) from Zerodha Historical API
   → Fetch daily candles (last 30 days) for trend context
   → Detect 14 candlestick patterns on 15-min data
@@ -125,6 +126,7 @@ For each stock in NIFTY100 (~100 stocks):
   → Apply Nifty trend hard filter (against-trend needs |score| ≥ 3)
   → Sector diversification: max 2 per sector (12 sectors in SECTOR_MAP)
   → Filter: |score| ≥ V2_MIN_SCORE (default 2.0)
+  → Compute score momentum (Δ from previous scan): accelerating vs decelerating
   → Take top 15 by |score|
 ```
 
@@ -171,7 +173,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
 4. Pre-trade checks pass (12 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
-6. Place entry order on Zerodha (MARKET order, or simulated in DRY_RUN)
+6. Place entry order on Zerodha: LIMIT at LTP with `LIMIT_ORDER_TIMEOUT` (8s) wait, cancel + retry up to `LIMIT_MAX_RETRIES` (2) times, then MARKET fallback. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
 8. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
@@ -532,6 +534,9 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `TARGET_DECAY_AFTER_HOUR` | 14 | 2:00 PM IST |
 | `MIN_EXPECTED_PROFIT` | Rs.50 | Min viable profit (charges ~Rs.40-50) |
 | `USE_EXCHANGE_SL` | True | SL-M on NSE |
+| `USE_LIMIT_ORDERS` | True | LIMIT at LTP for entries (less slippage) |
+| `LIMIT_ORDER_TIMEOUT` | 8s | Wait for LIMIT fill before cancel |
+| `LIMIT_MAX_RETRIES` | 2 | LIMIT attempts before MARKET fallback |
 | `LOSER_EXIT_HOUR:MINUTE` | 14:45 | 2:45 PM loser exit |
 
 ### Timing / Entry
@@ -555,6 +560,8 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `SUPERTREND_PERIOD` | 7 | Intraday-optimised (default 10 too slow) |
 | `SUPERTREND_MULTIPLIER` | 2.0 | Tighter bands (default 3.0 too wide) |
 | `SCAN_UNIVERSE` | "NIFTY100" | Stock universe |
+| `SCAN_MIN_PRICE` | Rs.100 | Skip penny stocks with wide spreads |
+| `SCAN_MAX_PRICE` | 0 (auto) | 0 = budget × MAX_POSITION_PCT; skip stocks too expensive to size |
 
 ### Monitoring / Cooldowns
 
