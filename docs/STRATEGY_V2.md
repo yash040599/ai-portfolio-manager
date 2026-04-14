@@ -13,8 +13,7 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-14 — Price filter, score momentum (RoC), LIMIT
-  orders with fallback, SQLite WAL mode, trades dedup constraint.
+  Last sync: 2026-04-15 — Roadmap cleanup, removed 8 items, 3 pending.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -714,13 +713,10 @@ For full V1 details, see [STRATEGY_V1.md](STRATEGY_V1.md).
 
 ## Known Limitations
 
-See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for the full list. All remaining items are LOW or MEDIUM priority.
+See [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) for the full list. Only 3 items remain pending.
 
 | # | Gap | Priority | Est. Impact |
 |---|-----|----------|-------------|
-| 55 | MARKET → LIMIT orders | MEDIUM | Rs.20-40/day slippage |
-| 24 | Backtesting framework | MEDIUM | Enables measured optimization (V3 infra) |
-| 44 | WebSocket tick data | MEDIUM | Faster SL/target execution |
-| 40 | Claude prompt feedback loop | LOW | Only applies to `--ai` mode |
-| 56 | Stock price range filter | MEDIUM | Filters out poor-spread stocks |
-| 41 | Holiday-shifted expiry detection | LOW | ~2-3 days/year edge case |
+| 24 | Backtesting framework | LOW | Enables measured optimization |
+| 44 | WebSocket tick data | MEDIUM | Faster target/trail execution |
+| 41 | Holiday-shifted expiry detection | LOW | ~3 days/year edge case |
