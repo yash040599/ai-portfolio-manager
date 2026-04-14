@@ -439,9 +439,10 @@ class StockScannerV2(StockScanner):
 
         scored = []
         for i, symbol in enumerate(price_filtered):
-            # Progress indicator for large universes
-            if (i + 1) % 20 == 0:
-                self.log.info(f"  ...analysed {i + 1}/{len(price_filtered)}")
+            # Progress indicator — every 25% of universe
+            quarter = max(1, len(price_filtered) // 4)
+            if (i + 1) % quarter == 0 or i + 1 == len(price_filtered):
+                self.log.info(f"  Analysing... {i + 1}/{len(price_filtered)}")
 
             result = self._analyse_stock(symbol)
             if result:
@@ -577,14 +578,11 @@ class StockScannerV2(StockScanner):
                 )
 
         if top:
-            # Pipeline summary — user sees how candidates were narrowed down
             self.log.info(
-                f"  ── Pre-filter pipeline: {len(price_filtered)} priced "
-                f"→ {len(scored)} analysed → {len(passed_score)} scored "
-                f"→ {len(filtered)} trend-filtered → {len(sector_diversified)} diversified "
-                f"→ {len(top)} top candidates"
+                f"  ── Result: {len(top)} candidates from {len(universe)} stocks "
+                f"(dropped: {dropped_price} price, {dropped_score} score, "
+                f"{dropped_trend} trend, {dropped_sector} sector)"
             )
-            self.log.info(f"  Top {len(top)} candidates by technical score:")
             for r in top:
                 ps = r["pattern_summary"]
                 patterns_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
@@ -929,30 +927,10 @@ class StockScannerV2(StockScanner):
         primary = self._boost_underdeployed(primary)
 
         all_trades = primary + fallback
-        if fallback:
-            self.log.success(
-                f"NoAI scan: {len(primary)} primary + {len(fallback)} fallback "
-                f"= {len(all_trades)} total candidates for entry loop"
-            )
-        else:
-            self.log.success(
-                f"NoAI scan: {len(primary)} candidates for entry loop "
-                f"(from {len(candidates)} pre-filtered)"
-            )
-        # Show primary picks explicitly
-        for i, t in enumerate(primary, 1):
-            tag = "PRIMARY" if i <= max_trades else "PROMOTED"
-            self.log.info(
-                f"  {tag} {i}: {t['side']} {t['symbol']} "
-                f"score {t.get('_entry_score', 0):+.1f} | qty {t['qty']}"
-            )
-        if fallback:
-            fb_syms = [t['symbol'] for t in fallback[:5]]
-            more = f" +{len(fallback)-5} more" if len(fallback) > 5 else ""
-            self.log.info(
-                f"  FALLBACK: {', '.join(fb_syms)}{more} "
-                f"(tried if primary fails entry checks)"
-            )
+        self.log.success(
+            f"NoAI scan: {len(primary)} primary + {len(fallback)} fallback "
+            f"= {len(all_trades)} candidates for entry loop"
+        )
         return all_trades
 
     # ================================================================

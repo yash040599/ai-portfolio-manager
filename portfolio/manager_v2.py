@@ -475,15 +475,25 @@ class PortfolioManagerV2(PortfolioManager):
         )
 
         if self._trade_plans:
+            # Show primary picks with full details, fallbacks just listed
+            max_t = self.cfg.MAX_POSITIONS
+            primary_plans = self._trade_plans[:max_t]
+            fallback_plans = self._trade_plans[max_t:]
             self.log.section("TRADE PLAN (NoAI)")
-            for i, t in enumerate(self._trade_plans, 1):
+            for i, t in enumerate(primary_plans, 1):
                 self.log.info(
-                    f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
+                    f"  Pick {i}: {t['side']} {t['qty']}x {t['symbol']} "
                     f"@ Rs.{t['entry_price']:.2f} | "
                     f"SL: Rs.{t['stop_loss']:.2f} | "
                     f"Target: Rs.{t['target_price']:.2f}"
                 )
-                self.log.info(f"           {t.get('rationale', '')}")
+                self.log.info(f"         {t.get('rationale', '')}")
+            if fallback_plans:
+                fb_syms = ", ".join(t['symbol'] for t in fallback_plans[:6])
+                extra = f" +{len(fallback_plans)-6}" if len(fallback_plans) > 6 else ""
+                self.log.info(
+                    f"  Fallback ({len(fallback_plans)}): {fb_syms}{extra}"
+                )
 
     # ================================================================
     # OVERRIDE: MONITOR LOOP (V2 — with dynamic polling + candle re-scan)
