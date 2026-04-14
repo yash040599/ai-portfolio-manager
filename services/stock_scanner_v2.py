@@ -577,6 +577,13 @@ class StockScannerV2(StockScanner):
                 )
 
         if top:
+            # Pipeline summary — user sees how candidates were narrowed down
+            self.log.info(
+                f"  ── Pre-filter pipeline: {len(price_filtered)} priced "
+                f"→ {len(scored)} analysed → {len(passed_score)} scored "
+                f"→ {len(filtered)} trend-filtered → {len(sector_diversified)} diversified "
+                f"→ {len(top)} top candidates"
+            )
             self.log.info(f"  Top {len(top)} candidates by technical score:")
             for r in top:
                 ps = r["pattern_summary"]
@@ -774,6 +781,12 @@ class StockScannerV2(StockScanner):
                 f"direction limit (BUY slots: {buy_slots}, SELL slots: {sell_slots}, "
                 f"candidates: {buy_cands} BUY / {sell_cands} SELL)"
             )
+        elif direction_primary:
+            self.log.info(
+                f"  Stock picking: {len(direction_primary)} primary + "
+                f"{len(direction_fallback)} fallback from {len(candidates)} candidates "
+                f"(BUY slots: {buy_slots}, SELL slots: {sell_slots})"
+            )
 
         # Primary picks first, then fallbacks (sorted by |score|).
         # The entry loop in _enter_positions enforces MAX_POSITIONS, budget,
@@ -918,12 +931,27 @@ class StockScannerV2(StockScanner):
         all_trades = primary + fallback
         if fallback:
             self.log.success(
-                f"NoAI scan: selected {len(primary)} trades + {len(fallback)} fallback "
-                f"from {len(candidates)} candidates"
+                f"NoAI scan: {len(primary)} primary + {len(fallback)} fallback "
+                f"= {len(all_trades)} total candidates for entry loop"
             )
         else:
             self.log.success(
-                f"NoAI scan: selected {len(primary)} trades from {len(candidates)} candidates"
+                f"NoAI scan: {len(primary)} candidates for entry loop "
+                f"(from {len(candidates)} pre-filtered)"
+            )
+        # Show primary picks explicitly
+        for i, t in enumerate(primary, 1):
+            tag = "PRIMARY" if i <= max_trades else "PROMOTED"
+            self.log.info(
+                f"  {tag} {i}: {t['side']} {t['symbol']} "
+                f"score {t.get('_entry_score', 0):+.1f} | qty {t['qty']}"
+            )
+        if fallback:
+            fb_syms = [t['symbol'] for t in fallback[:5]]
+            more = f" +{len(fallback)-5} more" if len(fallback) > 5 else ""
+            self.log.info(
+                f"  FALLBACK: {', '.join(fb_syms)}{more} "
+                f"(tried if primary fails entry checks)"
             )
         return all_trades
 

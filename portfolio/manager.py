@@ -441,6 +441,8 @@ class PortfolioManager:
     def _attempt_entries(self, plans: list[dict]) -> int:
         """Run through trade plans and attempt to enter each. Returns count."""
         entered = 0
+        tried = 0
+        skipped_full = 0
         for trade in plans:
             if self._shutdown_requested:
                 break
@@ -450,10 +452,25 @@ class PortfolioManager:
                 )
                 break
             if len(self.engine.open_positions()) >= self.cfg.MAX_POSITIONS:
+                skipped_full = len(plans) - tried
                 break
+            tried += 1
             if self.engine.enter_trade(trade):
                 entered += 1
             time.sleep(0.5)
+
+        # Summary: show user what happened across all candidates
+        rejected = tried - entered
+        remaining = len(plans) - tried - skipped_full
+        if tried > 0:
+            parts = [f"Tried {tried} candidate(s): {entered} entered"]
+            if rejected > 0:
+                parts.append(f"{rejected} rejected (see warnings above)")
+            if skipped_full > 0:
+                parts.append(f"{skipped_full} skipped (slots full)")
+            if remaining > 0:
+                parts.append(f"{remaining} not tried (slots full or shutdown)")
+            self.log.info("  Entry summary: " + ", ".join(parts))
         return entered
 
     # ================================================================
