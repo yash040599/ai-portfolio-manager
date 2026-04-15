@@ -13,7 +13,8 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-15 — Roadmap cleanup, removed 8 items, 3 pending.
+  Last sync: 2026-04-15 — Stagnant exit 0.5→0.3%, LIMIT partial fill,
+  volume gate fallback, backup dedup fix, R:R log clarity.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -393,7 +394,9 @@ After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`
 
 ### Stagnant Position Exit (NoAI Only)
 
-Replaces Claude's position reviews. After `STAGNANT_EXIT_MINUTES` (45 min), if a position hasn't moved ≥ `STAGNANT_EXIT_MIN_MOVE_PCT` (0.5%) toward its target, auto-exit to free the slot for a stronger setup.
+Replaces Claude's position reviews. After `STAGNANT_EXIT_MINUTES` (45 min), if a position hasn't moved ≥ `STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%) toward its target, auto-exit to free the slot for a stronger setup.
+
+Decision history: 0.5% was too aggressive with 1.2% target — exited positions at +0.3-0.4% profit as "stagnant" even though they were progressing toward target. Reduced to 0.3% (April 15 live data: 4 profitable trades preserved vs old threshold).
 
 In `--ai` mode, Claude reviews every 30 min instead and can recommend HOLD / EXIT / ADJUST_SL / ADJUST_TARGET with qualitative reasoning.
 
@@ -576,7 +579,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `CONSECUTIVE_SL_PAUSE_COUNT` | 3 | SLs before whipsaw pause |
 | `CONSECUTIVE_SL_PAUSE_MINUTES` | 30 | Whipsaw pause duration |
 | `STAGNANT_EXIT_MINUTES` | 45 | Stagnant exit (NoAI only) |
-| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.5% | Min move to avoid stagnant exit |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | Min move to avoid stagnant exit (was 0.5%, reduced Apr 15) |
 | `LOSS_SIZING_ENABLED` | True | Loss-adjusted sizing |
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Loss threshold for score bump (NoAI) |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Score increase after losses (NoAI) |

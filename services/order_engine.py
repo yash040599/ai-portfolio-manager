@@ -658,27 +658,20 @@ class OrderEngine:
                 return str(order_id)
 
             if filled_qty > 0 and filled_qty < remaining_qty:
-                # Partial fill — cancel unfilled portion.
-                # Don't accept partials: they create tiny positions
-                # (e.g., 1 of 13 shares) that can't trail properly.
-                # Cancel and let the full qty go to next attempt or MARKET.
+                # Partial fill — accept what we got and cancel remainder.
+                # The position will be smaller than planned but coherent.
+                # enter_trade reconciles actual qty via get_order_filled_qty.
+                # Attempting to MARKET the remainder would create a second
+                # order_id that the position tracker can't reconcile.
                 self.log.warning(
                     f"LIMIT partial fill: {filled_qty}/{remaining_qty} shares "
-                    f"— cancelling to retry full qty"
+                    f"@ Rs.{fill:.2f} — accepting partial, cancelling remainder"
                 )
                 try:
                     self.zerodha.cancel_order(order_id)
                 except Exception:
-                    pass
-                # The partial shares are already bought — we'll reconcile in
-                # enter_trade via get_order_filled_qty. But for MARKET fallback
-                # we need the remaining qty only.
-                remaining_qty -= filled_qty
-                # If very few remaining (< minimum viable), just accept partial
-                if remaining_qty <= 0:
-                    return str(order_id)
-                # Continue to next attempt with reduced qty
-                continue
+                    pass  # remainder may already be cancelled
+                return str(order_id)
 
             # Zero fills — cancel before retry
             self.log.info(
