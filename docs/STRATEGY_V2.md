@@ -13,8 +13,8 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-15 — Stagnant exit 0.5→0.3%, LIMIT partial fill,
-  volume gate fallback, backup dedup fix, R:R log clarity.
+  Last sync: 2026-04-15 — LIMIT order rewrite (1-tick buffer + full-timeout
+  polling), volume gate scan-RVol fallback, stagnant 0.5→0.3%.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -173,7 +173,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
 4. Pre-trade checks pass (12 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
-6. Place entry order on Zerodha: LIMIT at LTP with `LIMIT_ORDER_TIMEOUT` (8s) wait, cancel + retry up to `LIMIT_MAX_RETRIES` (2) times, then MARKET fallback. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
+6. Place entry order on Zerodha: LIMIT at LTP + 1 tick (Rs.0.05 buffer for BUY, -1 tick for SELL) to catch the top 2 price levels in the order book. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
 8. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
@@ -293,7 +293,7 @@ Every trade must pass these 12 checks in order. If any fails, the trade is rejec
 |---|-------|--------|-----------|
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
-| 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode only: skip if volume too low for reliable fills |
+| 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
 | 3b | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | Target compressed. R:R floor per time period ensures compressed R:R is still worth trading |
@@ -536,7 +536,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `TARGET_DECAY_AFTER_HOUR` | 14 | 2:00 PM IST |
 | `MIN_EXPECTED_PROFIT` | Rs.50 | Min viable profit (charges ~Rs.40-50) |
 | `USE_EXCHANGE_SL` | True | SL-M on NSE |
-| `USE_LIMIT_ORDERS` | True | LIMIT at LTP for entries (less slippage) |
+| `USE_LIMIT_ORDERS` | True | LIMIT at LTP + 1 tick buffer for entries |
 | `LIMIT_ORDER_TIMEOUT` | 8s | Wait for LIMIT fill before cancel |
 | `LIMIT_MAX_RETRIES` | 2 | LIMIT attempts before MARKET fallback |
 | `LOSER_EXIT_HOUR:MINUTE` | 14:45 | 2:45 PM loser exit |
