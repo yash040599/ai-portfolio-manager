@@ -657,21 +657,28 @@ class OrderEngine:
                 )
                 return str(order_id)
 
-            if filled_qty > 0:
-                # Partial fill — cancel remainder, accept what we got
-                self.log.info(
-                    f"LIMIT partial fill: {filled_qty}/{remaining_qty} shares @ Rs.{fill:.2f} "
-                    f"— cancelling remainder"
+            if filled_qty > 0 and filled_qty < remaining_qty:
+                # Partial fill — cancel unfilled portion.
+                # Don't accept partials: they create tiny positions
+                # (e.g., 1 of 13 shares) that can't trail properly.
+                # Cancel and let the full qty go to next attempt or MARKET.
+                self.log.warning(
+                    f"LIMIT partial fill: {filled_qty}/{remaining_qty} shares "
+                    f"— cancelling to retry full qty"
                 )
                 try:
                     self.zerodha.cancel_order(order_id)
                 except Exception:
-                    pass  # remainder may already be cancelled
-                # Reduce remaining for potential MARKET fallback
+                    pass
+                # The partial shares are already bought — we'll reconcile in
+                # enter_trade via get_order_filled_qty. But for MARKET fallback
+                # we need the remaining qty only.
                 remaining_qty -= filled_qty
-                # Return this order_id — enter_trade will get the partial fill price
-                # and the position will have the partial qty
-                return str(order_id)
+                # If very few remaining (< minimum viable), just accept partial
+                if remaining_qty <= 0:
+                    return str(order_id)
+                # Continue to next attempt with reduced qty
+                continue
 
             # Zero fills — cancel before retry
             self.log.info(
@@ -817,11 +824,33 @@ class OrderEngine:
                 rvol = live_volume / avg_volume
                 if rvol < 0.7:
                     self.log.warning(
-                        f"{symbol}: RVol {rvol:.1f}x (< 0.7x avg) — "
+                        f"{symbol}: live RVol {rvol:.1f}x (< 0.7x avg) — "
                         f"low volume, skipping entry"
                     )
                     return False
                 self.log.info(f"  ✓ {symbol}: RVol {rvol:.1f}x OK (≥0.7x)")
+            else:
+                # Zerodha didn't provide average_volume — fall back to
+                # scan-time RVol from the indicator snapshot.
+                scan_rvol = 0
+                snap_str = trade.get("_indicator_snapshot", "")
+                if snap_str:
+                    try:
+                        import json
+                        snap = json.loads(snap_str)
+                        scan_rvol = snap.get("rvol", 0)
+                    except Exception:
+                        pass
+                if scan_rvol > 0 and scan_rvol < 0.7:
+                    self.log.warning(
+                        f"{symbol}: scan RVol {scan_rvol:.1f}x (< 0.7x) — "
+                        f"low volume at scan time, skipping entry"
+                    )
+                    return False
+                elif scan_rvol > 0:
+                    self.log.info(f"  ✓ {symbol}: scan RVol {scan_rvol:.1f}x OK (≥0.7x, live avg unavailable)")
+                else:
+                    self.log.info(f"  ⚠ {symbol}: volume data unavailable — proceeding without RVol check")
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
         atr = self.calculate_atr(symbol, exchange)
@@ -907,15 +936,17 @@ class OrderEngine:
         tgt_dist = abs(target - entry)
 
         if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
+            actual_rr = tgt_dist / sl_dist
             self.log.warning(
-                f"{symbol}: R:R {tgt_dist/sl_dist:.1f}:1 — "
-                f"below {rr_floor:.1f}:1 {floor_label} floor, skipping"
+                f"{symbol}: R:R {actual_rr:.2f}:1 is below {rr_floor:.1f}:1 "
+                f"{floor_label} floor — skipping"
             )
             return False
         elif sl_dist > 0:
             self.log.info(
-                f"  ✓ {symbol}: R:R {tgt_dist/sl_dist:.1f}:1 OK "
-                f"({floor_label} floor {rr_floor:.1f}:1) | SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
+                f"  ✓ {symbol}: R:R {tgt_dist/sl_dist:.2f}:1 OK "
+                f"(floor {rr_floor:.1f}:1 {floor_label}) | "
+                f"SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
             )
 
         # ── Pre-trade minimum profit check ────────────────────────

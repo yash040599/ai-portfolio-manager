@@ -147,8 +147,11 @@ UNIQUE_TABLES = {
 
 # Tables without UNIQUE constraints — deduplicate on all data columns
 APPEND_TABLES = {
-    "trades":             ("date", "symbol", "side", "entry_price", "exit_price",
-                           "qty", "pnl", "exit_reason", "entry_time"),
+    # Dedup key must use ONLY immutable fields — fields that don't change
+    # after trade verification (verify_trades.py, import_zerodha_taxpnl.py).
+    # pnl and exit_price are mutable (corrected by verification) — excluded.
+    "trades":             ("date", "symbol", "side", "entry_price", "qty",
+                           "entry_time"),
     "portfolio_analyses": ("date", "symbol", "action", "conviction", "current_price",
                            "invested_value", "current_value"),
 }

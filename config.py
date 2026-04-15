@@ -423,8 +423,19 @@ class Config:
     #   hasn't moved toward target by at least STAGNANT_EXIT_MIN_MOVE_PCT,
     #   exit it to free the slot for a better trade. Only in NoAI mode
     #   (V2 has Claude reviews for this). Set to 0 to disable.
+    #
+    #   DECISION HISTORY:
+    #     0.5% (original): Too aggressive with 1.2% target — exited
+    #       positions at +0.3% profit as "stagnant" even though they were
+    #       25% of the way to target. On April 15, 9 of 13 trades hit
+    #       stagnant exit at exactly 45 min, including profitable ones
+    #       (ONGC +0.42%, HCLTECH +0.32%, VBL +0.37%). These were moving
+    #       in the right direction, just slowly.
+    #     0.3% (2026-04-15): Only exit truly dead positions. A stock that
+    #       moved 0.3% toward target in 45 min is progressing. Below 0.3%
+    #       means near-zero movement — likely going nowhere.
     STAGNANT_EXIT_MINUTES:      int   = 45
-    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.5
+    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3
 
     # ── Loss-Adjusted Position Sizing ─────────────────────────────
     # LOSS_SIZING_ENABLED: if True, reduce position sizes after
