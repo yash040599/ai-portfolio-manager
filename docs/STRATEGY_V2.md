@@ -478,7 +478,9 @@ MAX_POSITIONS auto-scales with budget to keep per-position size viable:
 | < Rs.25K | 2 | Rs.10-12K | ~0.4% |
 | Rs.25-60K | 3 | Rs.8-20K | ~0.3% |
 | Rs.60K-1L | 4 | Rs.15-25K | ~0.2% |
-| > Rs.1L | 5 | Rs.20K+ | ~0.2% |
+| Rs.1-3L | 5 | Rs.20-60K | ~0.2% |
+| Rs.3-5L | 6 | Rs.50-83K | ~0.1% |
+| > Rs.5L | 7 | Rs.70K+ | ~0.1% |
 
 Goal: round-trip charges (Rs.40-50) stay < 0.5% of each position. Set `MAX_POSITIONS_OVERRIDE > 0` to lock manually.
 

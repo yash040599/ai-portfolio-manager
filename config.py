@@ -695,7 +695,9 @@ class Config:
           < 25K  → 2 positions  (Rs.10-12K each)
            25-60K → 3 positions  (Rs.8-20K each)
            60-1L  → 4 positions  (Rs.15-25K each)
-          > 1L   → 5 positions  (Rs.20K+ each)
+           1-3L   → 5 positions  (Rs.20-60K each)
+           3-5L   → 6 positions  (Rs.50-83K each)
+          > 5L   → 7 positions  (Rs.70K+ each)
         """
         if cls.MAX_POSITIONS_OVERRIDE > 0:
             return cls.MAX_POSITIONS_OVERRIDE
@@ -706,8 +708,12 @@ class Config:
             return 3
         elif budget < 100_000:
             return 4
-        else:
+        elif budget < 300_000:
             return 5
+        elif budget < 500_000:
+            return 6
+        else:
+            return 7
 
     @classmethod
     def validate(cls, require_claude: bool = True) -> list[str]:
