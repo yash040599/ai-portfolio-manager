@@ -595,7 +595,7 @@ class OrderEngine:
         Industry-standard approach for Indian algo trading:
           1. Place LIMIT at LTP + 1 tick (BUY) or LTP - 1 tick (SELL)
              — catches 2 price levels in the order book for faster fill
-             — max "slippage" is Rs.0.05/share (negligible vs MARKET)
+             — max "slippage" is 1 tick/share (negligible vs MARKET)
           2. Wait FULL timeout, polling filled_qty every second
              — don't return early on first partial fill
              — most NIFTY100 orders fill fully in 2-5 seconds
@@ -604,8 +604,8 @@ class OrderEngine:
           5. If zero filled → cancel, retry with fresh LTP
           6. After all retries fail → MARKET fallback
 
-        NSE tick size: Rs.0.05 for stocks Rs.100+.
-        1-tick buffer cost: Rs.0.05/share × 8 shares = Rs.0.40
+        NSE tick size varies by instrument (Rs.0.05 or Rs.0.50).
+        Fetched dynamically via zerodha.get_tick_size().
         MARKET slippage saved: Rs.0.50-3.00 per share typically.
 
         Returns order_id on success. Raises on failure.
@@ -618,7 +618,7 @@ class OrderEngine:
 
         max_retries = self.cfg.LIMIT_MAX_RETRIES
         timeout = self.cfg.LIMIT_ORDER_TIMEOUT
-        tick = 0.05  # NSE tick size for stocks Rs.100+
+        tick = self.zerodha.get_tick_size(symbol, exchange)
 
         for attempt in range(1, max_retries + 1):
             # Fetch fresh LTP
@@ -638,9 +638,9 @@ class OrderEngine:
             # BUY: bid slightly higher → fill faster
             # SELL: ask slightly lower → fill faster
             if side == "BUY":
-                limit_price = round(ltp + tick, 2)
+                limit_price = self.zerodha.round_to_tick(ltp + tick, tick)
             else:
-                limit_price = round(ltp - tick, 2)
+                limit_price = self.zerodha.round_to_tick(ltp - tick, tick)
 
             self.log.info(
                 f"LIMIT entry attempt {attempt}/{max_retries}: "
@@ -820,6 +820,10 @@ class OrderEngine:
 
         # ── Volume confirmation at entry ──────────────────────────
         # Skip stocks with below-average recent volume — low conviction.
+        # Note: Kite quote API returns "volume" (today's traded qty) and
+        # "average_price" (VWAP), but NOT "average_volume". The field
+        # doesn't exist in Kite's response so avg_volume is always 0.
+        # We fall back to scan-time RVol from the indicator snapshot.
         if not self.cfg.DRY_RUN:
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
             live_volume = quote_data.get("volume", 0)

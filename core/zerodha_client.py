@@ -377,7 +377,7 @@ class ZerodhaClient:
         self.load_instruments()  # ensure cache is populated
         return self._tick_sizes.get(f"{exchange}:{symbol}", 0.05)
 
-    def _round_to_tick(self, price: float, tick: float) -> float:
+    def round_to_tick(self, price: float, tick: float) -> float:
         """Round price to the nearest multiple of tick size."""
         return round(round(price / tick) * tick, 2)
 
@@ -440,10 +440,11 @@ class ZerodhaClient:
             "validity":         self._kite.VALIDITY_DAY,
         }
 
-        # For LIMIT orders, set the price
+        # For LIMIT orders, round price to instrument tick size and set
         if order_type.upper() == "LIMIT" and price > 0:
             order_params["order_type"] = self._kite.ORDER_TYPE_LIMIT
-            order_params["price"] = price
+            tick = self.get_tick_size(symbol, exchange)
+            order_params["price"] = self.round_to_tick(price, tick)
 
         # Market protection is mandatory for MARKET/SL-M orders via API.
         # -1 = automatic protection applied by Zerodha per their guidelines.
@@ -531,7 +532,7 @@ class ZerodhaClient:
 
         # Round trigger to instrument tick size (e.g. 0.05 or 0.10)
         tick = self.get_tick_size(symbol, exchange)
-        trigger_price = self._round_to_tick(trigger_price, tick)
+        trigger_price = self.round_to_tick(trigger_price, tick)
 
         try:
             order_id = self._kite.place_order(
@@ -577,7 +578,7 @@ class ZerodhaClient:
         kwargs = {}
         if trigger_price is not None:
             tick = self.get_tick_size(symbol, exchange) if symbol and exchange else 0.05
-            kwargs["trigger_price"] = self._round_to_tick(trigger_price, tick)
+            kwargs["trigger_price"] = self.round_to_tick(trigger_price, tick)
         if price is not None:
             kwargs["price"] = price
         if quantity is not None:
