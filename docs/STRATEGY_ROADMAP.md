@@ -29,13 +29,14 @@ This document is the **history log** of every strategy improvement, the **backlo
 ### How to add a new item
 
 1. Pick the next available number (currently 153 and above are free).
-2. Add it under the right category in **Completed** (one-line description).
-3. If it changes user-visible behaviour, also:
+2. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
+3. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
+4. Bump the count in the category sub-heading and the top-line Completed count.
+5. If it changes user-visible behaviour, also:
    - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
    - If it introduces a new technical term, add a glossary entry there.
-   - Bump the completed-count heading.
-4. If the idea is still planned, add it to **Pending** with priority / impact / effort.
-5. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+6. If the idea is still planned, add it to **Pending** with priority / impact / effort.
+7. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
 
 ---
 
@@ -71,6 +72,8 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ### Completed (130 items)
 
+> Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
+
 | # | Improvement | Category |
 |---|------------|----------|
 | **Indicators (20)** | | |
@@ -94,7 +97,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (14)** | | |
+| **Risk Management (30)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -109,7 +112,23 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 53 | Direction diversification (score-aware, gap ≥3 = all slots) | Risk |
 | 64 | Short position cutoff (1 PM) | Risk |
 | 65 | Pre-trade minimum profit check (Rs.50) | Risk |
-| **Execution (28)** | | |
+| 115 | RSI contradiction filter (no SELL RSI>70, no BUY RSI<30) | Risk |
+| 116 | Declining re-entry block (score delta < 0 → skip) | Risk |
+| 119 | Expiry score bump raised 0.5 → 1.0 | Risk |
+| 122 | Expiry entry delay (15 min vs 5 min normal) | Risk |
+| 123 | Expiry max trades cap (5/day) | Risk |
+| 124 | Daily trade cap (12/day) to prevent churn | Risk |
+| 125 | VWAP trend block (no BUY below VWAP, no SELL above VWAP) | Risk |
+| 128 | Stagnant churn guard (no re-enter stagnant exits same direction) | Risk |
+| 129 | Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs) | Risk |
+| 130 | RSI contradiction filter symmetric (also block BUY RSI>75, SELL RSI<25) | Risk |
+| 131 | VWAP extension-chase block (BUY >+0.8%, SELL <−0.8%, override at \|score\|≥6) | Risk |
+| 132 | Fresh-reversal guard (skip entry when \|score_delta\|≥8, wait one cycle) | Risk |
+| 133 | Adoption grace window (10 min skip time-decay + loser-exit on RESUMED/EXTERNAL) | Risk |
+| 134 | MIN_SL_DISTANCE_PCT floor (0.8% normal, 1.0% expiry) — preserves R:R by widening target | Risk |
+| 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
+| 146 | Impact-cost / depth liquidity check — before entry, walk top-5 order-book levels and compute the weighted-average fill price for our full qty. Skip trade if slippage vs LTP exceeds `MAX_IMPACT_COST_PCT` (default 0.2%). Also skips when visible depth across top-5 is smaller than our qty. Fail-open on missing/malformed depth (logs a warning, lets trade through). Catches paper-thin book traps that spread-only checks miss. | Risk |
+| **Execution (35)** | | |
 | 10 | Partial profit taking (1/3 at 1.5R, trail 50%) | Execution |
 | 11 | Periodic opportunity scanning (30 min, free slots) | Execution |
 | 13 | Minimum capital deployment guidance | Execution |
@@ -138,6 +157,13 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 103 | Candidate pool: return all pre-filtered | Execution |
 | 104 | Fallback promotion on budget drop | Execution |
 | 107 | Score-weighted position sizing (simplified Kelly) | Execution |
+| 117 | Post-1pm SELL slot → BUY reallocation (score ≥ 4.0 guard) | Execution |
+| 118 | Expiry-day stagnant timer extension (+15 min) | Execution |
+| 126 | Midday lull stagnant timer extension (12:00-1:30 +15 min) | Execution |
+| 127 | MIN_EXPECTED_PROFIT raised 50 → 75 (2× charges) | Execution |
+| 135 | Expiry entry delay 15→30 min (market-open) with 15-min late-start floor | Execution |
+| 136 | Expiry position reduction skipped when budget < Rs.1L (small-account flexibility) | Execution |
+| 137 | Entry-delay semantic fix: observation window = `market_open + delay` (was `now + delay`). 9:30 script start with 30-min delay now correctly targets 9:45 entry instead of 10:00. | Execution |
 | **Market Intelligence (6)** | | |
 | 12 | Continuous NIFTY regime monitoring (every 15 min) | Market Intel |
 | 23 | India VIX volatility regime detection | Market Intel |
@@ -145,7 +171,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 42 | Pre-open auction data (9:08 gap detection) | Market Intel |
 | 76 | Smart direction diversification (score-aware) | Market Intel |
 | 78 | FII/DII flow bias (pre-market intelligence) | Market Intel |
-| **Infrastructure (8)** | | |
+| **Infrastructure (11)** | | |
 | 25 | Trade journaling + performance analytics | Infra |
 | 38 | Improved slippage model for dry run | Infra |
 | 43 | Real-time trade verification script | Infra |
@@ -154,7 +180,10 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 80 | EXTERNAL position unique order_id | Infra |
 | 81 | Sheet import updates charges on P&L match | Infra |
 | 110–111 | SQLite WAL mode + trades dedup constraint | Infra |
-| **Bug Fixes (20)** | | |
+| 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
+| 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
+| 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
+| **Bug Fixes (28)** | | |
 | 69 | SL sanity check after entry price override | Bug Fix |
 | 70 | SL-M partial fill verification | Bug Fix |
 | 71 | Fill price SL cap re-validation | Bug Fix |
@@ -172,43 +201,10 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 112 | Dynamic tick size for LIMIT orders (was hardcoded 0.05) | Bug Fix |
 | 113 | Defensive tick rounding in place_order() | Bug Fix |
 | 114 | fill_intraday_ledger skip dates with ZV_ rows (prevent VM/local dup) | Bug Fix |
-| **Strategy Improvements (5)** | | |
-| 115 | RSI contradiction filter (no SELL RSI>70, no BUY RSI<30) | Risk |
-| 116 | Declining re-entry block (score delta < 0 → skip) | Risk |
-| 117 | Post-1pm SELL slot → BUY reallocation (score ≥ 4.0 guard) | Execution |
-| 118 | Expiry-day stagnant timer extension (+15 min) | Execution |
-| 119 | Expiry score bump raised 0.5 → 1.0 | Risk |
-| **Observability (2)** | | |
-| 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
-| 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
-| **Strategy Gap Fixes (8)** | | |
-| 122 | Expiry entry delay (15 min vs 5 min normal) | Risk |
-| 123 | Expiry max trades cap (5/day) | Risk |
-| 124 | Daily trade cap (12/day) to prevent churn | Risk |
-| 125 | VWAP trend block (no BUY below VWAP, no SELL above VWAP) | Risk |
-| 126 | Midday lull stagnant timer extension (12:00-1:30 +15 min) | Execution |
-| 127 | MIN_EXPECTED_PROFIT raised 50 → 75 (2× charges) | Execution |
-| 128 | Stagnant churn guard (no re-enter stagnant exits same direction) | Risk |
-| 129 | Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs) | Risk |
-| **Apr 16 Opus4.7 Review (7)** | | |
-| 130 | RSI contradiction filter symmetric (also block BUY RSI>75, SELL RSI<25) | Risk |
-| 131 | VWAP extension-chase block (BUY >+0.8%, SELL <−0.8%, override at \|score\|≥6) | Risk |
-| 132 | Fresh-reversal guard (skip entry when \|score_delta\|≥8, wait one cycle) | Risk |
-| 133 | Adoption grace window (10 min skip time-decay + loser-exit on RESUMED/EXTERNAL) | Risk |
-| 134 | MIN_SL_DISTANCE_PCT floor (0.8% normal, 1.0% expiry) — preserves R:R by widening target | Risk |
-| 135 | Expiry entry delay 15→30 min (market-open) with 15-min late-start floor | Execution |
-| 136 | Expiry position reduction skipped when budget < Rs.1L (small-account flexibility) | Execution |
-| **Apr 17 Config / Semantics Cleanup (3)** | | |
-| 137 | Entry-delay semantic fix: observation window = `market_open + delay` (was `now + delay`). 9:30 script start with 30-min delay now correctly targets 9:45 entry instead of 10:00. | Execution |
-| 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
 | 139 | Defensive `abs(_entry_score or 0)` in declining re-entry block — explicit `None` no longer crashes | Bug Fix |
-| **Apr 17 Financial+SDE Review (4)** | | |
 | 140 | Order-API recovery: `_order_api_broken` now clears on first successful order. A transient Zerodha glitch no longer kills the entire trading day — the bot retries, and the failure counter re-trips only if the API is genuinely down. | Bug Fix |
 | 141 | VWAP guard exception now logs a WARNING (was silent `pass`). Malformed indicator snapshots are visible in logs instead of silently bypassing the VWAP protection. | Bug Fix |
-| 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
 | 143 | Removed sticky early-return on `_order_api_broken` in entry path. Rely on consecutive-failure counter to re-trip if the API is genuinely broken; allows recovery without manual restart. | Bug Fix |
-| **Apr 17 Profitability Fixes (2)** | | |
-| 146 | Impact-cost / depth liquidity check — before entry, walk top-5 order-book levels and compute the weighted-average fill price for our full qty. Skip trade if slippage vs LTP exceeds `MAX_IMPACT_COST_PCT` (default 0.2%). Also skips when visible depth across top-5 is smaller than our qty. Fail-open on missing/malformed depth (logs a warning, lets trade through). Catches paper-thin book traps that spread-only checks miss. | Risk |
 | 152 | SL-M placement failure now raises an ERROR-level loud alert (was a subtle WARNING). The position is flagged `_sl_m_failed=True` and the log clearly states "exchange-side protection is NOT in place; restart on a later trading day is NOT safe for this position". User can no longer run naked positions without seeing it. | Bug Fix |
 
 ---
