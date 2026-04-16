@@ -875,6 +875,80 @@ class OrderEngine:
                     f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
                 )
 
+        # ── Impact-cost / depth liquidity check (Roadmap #146) ────
+        # Spread alone is not enough — a tight best-bid/ask with only a
+        # few shares and a big gap to the next level means we'll fill at
+        # a worse weighted-average price. Walk the top-5 book levels and
+        # compute what our full qty would actually fill at; reject if
+        # slippage vs LTP exceeds MAX_IMPACT_COST_PCT.
+        # Fail-open on missing/malformed depth data (same policy as the
+        # VWAP guard — log a warning, let the trade through).
+        max_impact = self.cfg.MAX_IMPACT_COST_PCT
+        if max_impact > 0 and not self.cfg.DRY_RUN:
+            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
+            depth = quote_data.get("depth", {})
+            # BUY fills against sell-side (asks); SELL fills against buy-side (bids)
+            book_side = depth.get("sell", []) if side == "BUY" else depth.get("buy", [])
+            ltp = quote_data.get("last_price", entry) or entry
+            try:
+                remaining = int(qty)
+                filled_notional = 0.0
+                filled_qty = 0
+                for level in (book_side or []):
+                    if remaining <= 0:
+                        break
+                    lvl_price = level.get("price", 0) or 0
+                    lvl_qty   = level.get("quantity", 0) or 0
+                    if lvl_price <= 0 or lvl_qty <= 0:
+                        continue
+                    take = min(remaining, int(lvl_qty))
+                    filled_notional += take * lvl_price
+                    filled_qty      += take
+                    remaining       -= take
+
+                if filled_qty == 0 or ltp <= 0:
+                    # Nothing to measure — let trade through (fail-open)
+                    self.log.warning(
+                        f"{symbol}: impact-cost check skipped — "
+                        f"order-book depth unavailable or malformed"
+                    )
+                elif remaining > 0:
+                    # Not enough visible depth in top-5 for our full qty.
+                    # This is a strong liquidity signal — treat as a skip.
+                    visible = filled_qty
+                    self.log.warning(
+                        f"{symbol}: insufficient visible depth for {qty} shares "
+                        f"(only {visible} available in top-5 levels) — skipping"
+                    )
+                    return False
+                else:
+                    avg_fill = filled_notional / filled_qty
+                    # BUY: worse = higher than LTP; SELL: worse = lower than LTP
+                    if side == "BUY":
+                        impact_pct = (avg_fill - ltp) / ltp * 100
+                    else:
+                        impact_pct = (ltp - avg_fill) / ltp * 100
+                    # Negative means our side of the book is BETTER than LTP
+                    # (can happen right after a print) — floor at 0 for display.
+                    impact_display = max(impact_pct, 0.0)
+                    if impact_pct > max_impact:
+                        self.log.warning(
+                            f"{symbol}: impact cost {impact_display:.2f}% exceeds "
+                            f"MAX_IMPACT_COST_PCT ({max_impact}%) — skipping "
+                            f"(qty {qty} would fill @ Rs.{avg_fill:.2f} vs LTP Rs.{ltp:.2f})"
+                        )
+                        return False
+                    self.log.info(
+                        f"  ✓ {symbol}: impact cost {impact_display:.2f}% OK "
+                        f"(avg fill Rs.{avg_fill:.2f} vs LTP Rs.{ltp:.2f})"
+                    )
+            except Exception as e:
+                # Fail-open: malformed depth should not block trading
+                self.log.warning(
+                    f"{symbol}: impact-cost check skipped — "
+                    f"depth parse error ({type(e).__name__}: {e})"
+                )
+
         # ── Volume confirmation at entry ──────────────────────────
         # Skip stocks with below-average recent volume — low conviction.
         # Note: Kite quote API returns "volume" (today's traded qty) and
@@ -1455,6 +1529,9 @@ class OrderEngine:
             "_late_entry_reduced": trade.get("_late_entry_reduced", False),
             # Store initial SL at entry for correct trailing risk calculation
             "initial_sl": sl,
+            # Roadmap #152: flag set True if exchange SL-M placement fails.
+            # Defaults False — overwritten below if SL-M path runs.
+            "_sl_m_failed": False,
         }
 
         # ── Place SL-M order on exchange for instant SL execution ─
@@ -1473,23 +1550,34 @@ class OrderEngine:
                 # BUG FIX: Explicit handling and tracking of SL-M placement
                 if sl_order_id:
                     position["_sl_order_id"] = sl_order_id
+                    position["_sl_m_failed"] = False
                     self._pending_order_ids.add(sl_order_id)  # Track for cleanup at market close
                     self.log.info(
                         f"Exchange SL-M placed for {symbol}: {sl_side} {qty}x "
                         f"trigger Rs.{sl:.2f} | ID: {sl_order_id}"
                     )
                 else:
+                    # Roadmap #152: loud alert on silent SL-M failure.
+                    # User must see this — exchange-side protection is NOT in place.
                     position["_sl_order_id"] = None
-                    self.log.warning(
-                        f"SL-M placement returned None for {symbol} — "
-                        f"software SL monitoring will handle stop-loss"
+                    position["_sl_m_failed"] = True
+                    self.log.error(
+                        f"*** EXCHANGE SL-M FAILED for {symbol} *** "
+                        f"Zerodha returned no order ID. "
+                        f"Position is protected only by software SL monitoring — "
+                        f"a bot crash before exit would leave this position NAKED. "
+                        f"A restart on a later trading day is NOT safe for this position."
                     )
             except Exception as e:
-                # BUG FIX: Explicit error handling for SL-M placement failures
+                # Roadmap #152: loud alert on silent SL-M failure.
                 position["_sl_order_id"] = None
-                self.log.warning(
-                    f"SL-M placement exception for {symbol}: {e} — "
-                    f"software SL monitoring will handle stop-loss"
+                position["_sl_m_failed"] = True
+                self.log.error(
+                    f"*** EXCHANGE SL-M FAILED for {symbol} *** "
+                    f"Exception: {type(e).__name__}: {e}. "
+                    f"Position is protected only by software SL monitoring — "
+                    f"a bot crash before exit would leave this position NAKED. "
+                    f"A restart on a later trading day is NOT safe for this position."
                 )
 
         self.positions.append(position)

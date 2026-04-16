@@ -272,6 +272,18 @@ class Config:
     #   Set to 0 to disable the check.
     MAX_SPREAD_PCT: float = 0.3
 
+    # ── Impact-Cost / Depth Liquidity Check (Roadmap #146) ───────
+    # MAX_IMPACT_COST_PCT: skip entries where our full order qty would
+    #   fill at a weighted-average price more than this % worse than
+    #   LTP, based on top-5 order-book levels.
+    #   Catches "paper-thin ask, deep gap to next level" traps that
+    #   MAX_SPREAD_PCT alone misses. Fail-open when depth data is
+    #   missing/malformed (logs a warning, lets trade through).
+    #   Set to 0 to disable the check.
+    #   0.2% is conservative for NIFTY100 at typical slot size (< Rs.50K);
+    #   raise to 0.3-0.4% if you see frequent skips on stocks you want.
+    MAX_IMPACT_COST_PCT: float = 0.2
+
     # ── Dry-Run Realism ──────────────────────────────────────────
     # SLIPPAGE_PCT: simulated slippage added to entries and exits
     #   in dry-run mode. Makes simulated P&L more realistic.
@@ -862,6 +874,13 @@ class Config:
         _pct("EXPIRY_MIN_SL_DISTANCE_PCT", cls.EXPIRY_MIN_SL_DISTANCE_PCT, 10)
         if cls.MIN_SL_DISTANCE_PCT >= cls.MAX_INTRADAY_SL_PCT:
             errors.append("MIN_SL_DISTANCE_PCT must be < MAX_INTRADAY_SL_PCT")
+
+        # Liquidity filters
+        # MAX_SPREAD_PCT and MAX_IMPACT_COST_PCT accept 0 (disabled).
+        if cls.MAX_SPREAD_PCT < 0 or cls.MAX_SPREAD_PCT > 10:
+            errors.append(f"MAX_SPREAD_PCT out of range (0-10): {cls.MAX_SPREAD_PCT!r}")
+        if cls.MAX_IMPACT_COST_PCT < 0 or cls.MAX_IMPACT_COST_PCT > 10:
+            errors.append(f"MAX_IMPACT_COST_PCT out of range (0-10): {cls.MAX_IMPACT_COST_PCT!r}")
 
         # Risk caps
         _pct("MAX_LOSS_PER_DAY_PCT", cls.MAX_LOSS_PER_DAY_PCT, 20)

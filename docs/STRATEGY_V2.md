@@ -131,6 +131,7 @@ This is the single place to look up any unfamiliar term used in the rest of the 
 | **Tick** | The smallest price increment allowed for a stock (Rs.0.05 for most, Rs.0.50 for high-priced). | LIMIT orders are rounded to the nearest valid tick. |
 | **Bid / Ask** | Highest price a buyer will pay (bid) / lowest a seller will accept (ask). | Fetched from quote depth to compute spread. |
 | **Spread** | `(ask − bid) / LTP × 100`. Cost of instantly entering + exiting. | If spread > `MAX_SPREAD_PCT` (0.3%), skip trade — spread eats profit. |
+| **Impact cost** | How much our *full order qty* moves the fill price vs LTP. Formula: `(weighted_avg_fill − LTP) / LTP × 100`, computed by walking the top-5 order-book levels on the side we'd hit. | If impact cost > `MAX_IMPACT_COST_PCT` (0.2%), or visible depth across top-5 levels is smaller than our qty, skip the trade. Catches cases where spread looks tight but only a handful of shares are at the top, with a big gap to the next level. |
 | **Volume** | Number of shares traded in a candle. | High volume confirms patterns; low volume warns of weak signal. |
 | **RVol** | Relative Volume = today's volume ÷ 20-period average volume. | `RVol ≥ 0.7` required for entry (low-volume entries often reverse). |
 | **Gap** | Price difference between yesterday's close and today's open. | Gap ≥ `PREOPEN_GAP_SIGNIFICANT_PCT` (1%) with volume signals institutional interest. |
@@ -421,12 +422,13 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 21 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 22 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
+| 2a | **Impact-cost / depth check** | `MAX_IMPACT_COST_PCT = 0.2` | Walk top-5 order-book levels on the side we'd hit (asks for BUY, bids for SELL); compute weighted-average fill for our full qty. Skip if slippage vs LTP > 0.2%, or if visible top-5 depth < our qty. Fail-open (log warning, let trade through) when depth data is missing/malformed. Catches paper-thin top-of-book traps that spread-only misses |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable (Kite API doesn't provide average_volume) |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
 | 3b | **Min SL distance floor** | `MIN_SL_DISTANCE_PCT = 0.8`, expiry `1.0` | ATR on high-priced stocks can produce 0.4-0.6% SLs that wick on normal noise. Widens SL to floor and proportionally widens target to preserve R:R |
@@ -709,6 +711,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `MIN_MINUTES_FOR_ENTRY` | 45 | Late entry guard |
 | `MAX_REENTRIES_PER_STOCK` | 2 | Per stock per day |
 | `MAX_SPREAD_PCT` | 0.3% | Bid-ask spread filter |
+| `MAX_IMPACT_COST_PCT` | 0.2% | Impact-cost / depth filter (walks top-5 levels, skips thin books) |
 
 ### Scanner / Indicators
 
