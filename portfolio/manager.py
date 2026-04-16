@@ -510,24 +510,45 @@ class PortfolioManager:
             self._enter_positions()
             return
 
-        # If market has been open longer than the configured delay,
-        # reduce to 5 min — opening volatility has already passed.
+        # Observation-window semantics:
+        #   entry_time = market_open + delay (so at 9:30 start with delay=30,
+        #   entry is at 9:45 — we've already observed 15 of the 30 min).
+        # If market has already been open LONGER than the configured delay
+        # (late script start), use a short floor observation from now:
+        #   normal days: 5 min
+        #   expiry days: EXPIRY_ENTRY_DELAY_LATE_FLOOR (15 min) — F&O
+        #     settlement creates instability through the whole morning.
         now = now_ist()
         market_open = now.replace(
             hour=self.cfg.MARKET_OPEN_HOUR,
             minute=self.cfg.MARKET_OPEN_MINUTE,
             second=0, microsecond=0,
         )
+        target_entry_time = market_open + datetime.timedelta(minutes=delay)
         minutes_since_open = (now - market_open).total_seconds() / 60
-        if minutes_since_open >= delay:
-            delay = 5
+
+        if now >= target_entry_time:
+            # Late script start — observation window already passed.
+            expiry_mode = getattr(self, '_expiry_applied', False)
+            floor = self.cfg.EXPIRY_ENTRY_DELAY_LATE_FLOOR if expiry_mode else 5
+            entry_time = now + datetime.timedelta(minutes=floor)
+            delay = floor
             self.log.info(
-                f"Market has been open for {minutes_since_open:.0f} min — "
-                f"reduced observation to {delay} min (opening volatility passed)"
+                f"Market already open for {minutes_since_open:.0f} min — "
+                f"observation window passed, using {floor}-min floor "
+                f"({'expiry' if expiry_mode else 'opening volatility passed'})"
+            )
+        else:
+            # Normal path — entry aligned to market_open + delay
+            entry_time = target_entry_time
+            remaining = (target_entry_time - now).total_seconds() / 60
+            self.log.info(
+                f"Entry aligned to market_open + {delay} min "
+                f"(market open {minutes_since_open:.0f} min, "
+                f"{remaining:.0f} min to entry)"
             )
 
-        entry_time = now_ist() + datetime.timedelta(minutes=delay)
-        self.log.section(f"OBSERVATION MODE — watching prices for {delay} min")
+        self.log.section(f"OBSERVATION MODE — entry at {entry_time.strftime('%I:%M %p')}")
         self.log.info(
             f"Trades will be entered at {entry_time.strftime('%I:%M %p')} "
             f"for stocks with >{self.cfg.ENTRY_MIN_MOVE_PCT}% directional move"
@@ -1058,6 +1079,14 @@ class PortfolioManager:
         bump_atr   = self.cfg.EXPIRY_ATR_BUMP
         reduce_pos = self.cfg.EXPIRY_POSITION_REDUCTION
         bump_score = self.cfg.EXPIRY_SCORE_BUMP
+
+        # Skip position reduction on small accounts — combining fewer
+        # slots + tighter trade cap + stronger signal bar leaves small
+        # accounts unable to cover charges. Only reduce when budget is
+        # large enough that fewer slots still provide meaningful rotations.
+        budget = getattr(self, '_budget', 0) or 0
+        if budget > 0 and budget < self.cfg.EXPIRY_POSITION_REDUCTION_MIN_BUDGET:
+            reduce_pos = 0
 
         # Save originals so they can be restored if needed (Config is class-level)
         self._pre_expiry_atr = self.cfg.ATR_MULTIPLIER

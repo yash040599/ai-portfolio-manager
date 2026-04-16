@@ -186,6 +186,15 @@ class Config:
     ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
 
+    # MIN_SL_DISTANCE_PCT: floor for SL distance. ATR on high-priced
+    #   stocks can produce absurdly tight SLs (0.4-0.6%) that wick out
+    #   on normal intraday noise. When ATR produces something tighter,
+    #   the SL is widened to this floor and the target is widened
+    #   proportionally to preserve the R:R ratio.
+    #   On expiry days, EXPIRY_MIN_SL_DISTANCE_PCT overrides this
+    #   (wider floor due to bigger F&O-driven swings).
+    MIN_SL_DISTANCE_PCT: float = 0.8
+
     # ── R:R (Risk:Reward) Settings ────────────────────────────────
     # R:R = (target distance) / (stop distance).
     # ATR produces a base R:R of RR_TARGET_RATIO (1.5:1).
@@ -312,16 +321,76 @@ class Config:
     SHORT_ENTRY_CUTOFF_HOUR: int = 13   # 1:00 PM — no new shorts after 1 PM
 
     # ── Thursday Expiry Adjustments ───────────────────────────────
-    # On weekly F&O expiry Thursdays, NIFTY stocks see wider swings.
+    # On weekly F&O expiry Thursdays, NIFTY stocks see wider swings
+    # driven by options settlement. All of the values below apply
+    # ONLY on Thursdays (auto-detected via weekday check).
+    #
     # EXPIRY_ATR_BUMP: added to ATR_MULTIPLIER (wider SLs).
-    # EXPIRY_POSITION_REDUCTION: MAX_POSITIONS reduced by this many.
+    # EXPIRY_POSITION_REDUCTION: MAX_POSITIONS reduced by this many —
+    #   skipped when budget < EXPIRY_POSITION_REDUCTION_MIN_BUDGET so
+    #   small accounts keep full slot count for rotation capacity.
     # EXPIRY_SCORE_BUMP: added to V2_MIN_SCORE (demand stronger signals).
-    EXPIRY_ATR_BUMP:           float = 0.3
-    EXPIRY_POSITION_REDUCTION: int   = 1
-    EXPIRY_SCORE_BUMP:         float = 1.0   # was 0.5, raised: fewer slots = higher bar
-    EXPIRY_STAGNANT_EXTRA_MINUTES: int = 15  # extend stagnant timer on expiry days
-    EXPIRY_ENTRY_DELAY_MINUTES:    int = 15  # longer observation on expiry (vs 5 min normal)
-    EXPIRY_MAX_TRADES_PER_DAY:     int = 5   # cap total trades on expiry to reduce churn
+    # EXPIRY_STAGNANT_EXTRA_MINUTES: extends stagnant timer on expiry.
+    # EXPIRY_ENTRY_DELAY_MINUTES: observation window is "market_open + N"
+    #   — at 9:15 start with 30 min → entry at 9:45. At 9:30 start →
+    #   also 9:45 (we already observed 15 min). At 10:00 start → late
+    #   path uses EXPIRY_ENTRY_DELAY_LATE_FLOOR from current time.
+    # EXPIRY_MAX_TRADES_PER_DAY: caps total trades on expiry (each
+    #   exit+entry cycle costs ~Rs.36 in charges).
+    # EXPIRY_MIN_SL_DISTANCE_PCT: overrides MIN_SL_DISTANCE_PCT —
+    #   wider floor on expiry accommodates bigger option-driven swings.
+    EXPIRY_ATR_BUMP:                      float = 0.3
+    EXPIRY_POSITION_REDUCTION:            int   = 1
+    EXPIRY_POSITION_REDUCTION_MIN_BUDGET: float = 100000.0  # Rs.1L
+    EXPIRY_SCORE_BUMP:                    float = 1.0
+    EXPIRY_STAGNANT_EXTRA_MINUTES:        int   = 15
+    EXPIRY_ENTRY_DELAY_MINUTES:           int   = 30
+    EXPIRY_ENTRY_DELAY_LATE_FLOOR:        int   = 15
+    EXPIRY_MAX_TRADES_PER_DAY:            int   = 5
+    EXPIRY_MIN_SL_DISTANCE_PCT:           float = 1.0
+
+    # ── Entry Filter — RSI Contradiction (symmetric) ─────────────
+    # Blocks trades that fight or chase extreme RSI readings.
+    # Applies EVERY day (not expiry-specific).
+    #   SELL blocked when RSI > RSI_SELL_BLOCK_THRESHOLD (default 70)
+    #     → shorting into strong buying pressure
+    #   BUY blocked when RSI > RSI_BUY_BLOCK_THRESHOLD (default 75)
+    #     → buying an already-extended overbought move
+    #   BUY  blocked when RSI < 30 (hardcoded)  → oversold, wait for reversal
+    #   SELL blocked when RSI < 25 (hardcoded)  → selling an extended low
+    RSI_SELL_BLOCK_THRESHOLD: float = 70.0
+    RSI_BUY_BLOCK_THRESHOLD:  float = 75.0
+
+    # ── Entry Filter — VWAP Trend + Extension ────────────────────
+    # Two-sided VWAP guard (every day, activates after 10:15 AM when
+    # VWAP has enough candles to be stable):
+    #   1. Trend-fight block: BUY if price > 0.3% BELOW VWAP, or
+    #      SELL if price > 0.3% ABOVE VWAP. Fighting institutional flow.
+    #   2. Extension-chase block: BUY if price > VWAP_EXTENSION_BLOCK_PCT
+    #      ABOVE VWAP, or SELL if price > that BELOW VWAP. Move has
+    #      already happened, mean-reversion risk high.
+    # Extension block is overridden when |score| >= VWAP_EXT_SCORE_OVERRIDE
+    # (a very strong signal justifies chasing).
+    VWAP_EXTENSION_BLOCK_PCT: float = 0.8
+    VWAP_EXT_SCORE_OVERRIDE:  float = 6.0
+
+    # ── Entry Filter — Fresh Reversal Guard ──────────────────────
+    # If the composite score just swung hard since the previous scan
+    # (large |score_delta|), the setup has only just formed. Trading
+    # the first bar of a violent reversal is risky — wait one more
+    # scan cycle for confirmation.
+    # Applies every day.
+    FRESH_REVERSAL_DELTA_THRESHOLD: float = 8.0
+
+    # ── Adopted / External Position Handling ─────────────────────
+    # When the bot picks up a position it did not originate
+    # (load_existing_positions → RESUMED, sync_external_positions
+    # → EXTERNAL), it respects a grace window before applying
+    # bot-specific forced adjustments.
+    # During grace, TIME_DECAY_TARGET and LOSER_EXIT are skipped —
+    # software SL, target, trailing, and square-off still apply.
+    # Applies every day.
+    ADOPTED_POSITION_GRACE_MINUTES: int = 10
 
     # ── Daily Trade Cap ─────────────────────────────────────────
     # Prevents overtrading churn. Each exit+entry cycle costs ~Rs.36

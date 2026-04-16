@@ -576,6 +576,23 @@ class OrderEngine:
                 sl     = round(price * (1 + max_sl_pct / 100), 2)
                 target = round(price * (1 - max_sl_pct * rr_mult / 100), 2)
 
+        # Floor SL at MIN_SL_DISTANCE_PCT — ATR on high-priced stocks can
+        # produce absurdly tight SLs (0.5%) that wick out on normal noise.
+        # Target widens proportionally to preserve R:R.
+        min_sl_pct = (
+            self.cfg.EXPIRY_MIN_SL_DISTANCE_PCT
+            if getattr(self.cfg, '_expiry_applied', False)
+            else self.cfg.MIN_SL_DISTANCE_PCT
+        )
+        sl_pct = abs(sl - price) / price * 100
+        if sl_pct < min_sl_pct:
+            if side == "BUY":
+                sl     = round(price * (1 - min_sl_pct / 100), 2)
+                target = round(price * (1 + min_sl_pct * rr_mult / 100), 2)
+            else:
+                sl     = round(price * (1 + min_sl_pct / 100), 2)
+                target = round(price * (1 - min_sl_pct * rr_mult / 100), 2)
+
         return sl, target
 
     def _default_sl_target(self, price: float, side: str) -> tuple[float, float]:
@@ -585,6 +602,33 @@ class OrderEngine:
         if side == "BUY":
             return round(price * (1 - sl_pct), 2), round(price * (1 + tgt_pct), 2)
         return round(price * (1 + sl_pct), 2), round(price * (1 - tgt_pct), 2)
+
+    def _in_adoption_grace(self, pos: dict) -> bool:
+        """
+        Returns True if this position was adopted (ADOPT_EXTERNAL) or
+        resumed (RESUMED) within the grace window. During grace, bot
+        skips TIME_DECAY_TARGET and LOSER_EXIT so the user's manual
+        trade gets a chance to play out.
+        """
+        grace_min = self.cfg.ADOPTED_POSITION_GRACE_MINUTES
+        if grace_min <= 0:
+            return False
+        oid = pos.get("order_id") or ""
+        if oid not in ("RESUMED", "EXTERNAL") and not pos.get("_external"):
+            return False
+        entry_time_str = pos.get("entry_time", "")
+        if not entry_time_str:
+            return False
+        try:
+            now = now_ist()
+            entry_time = datetime.datetime.strptime(
+                f"{now.strftime('%Y-%m-%d')} {entry_time_str}",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            elapsed_min = (now - entry_time).total_seconds() / 60
+            return elapsed_min < grace_min
+        except ValueError:
+            return False
 
     # ================================================================
     # ENTRY ORDER — LIMIT WITH MARKET FALLBACK
@@ -760,10 +804,12 @@ class OrderEngine:
           8. Budget / max positions / duplicate / sector / direction guards
           9. Short entry cutoff
          10. Max re-entries per stock + declining score block
-         11. RSI contradiction filter (no SELL when RSI>70, no BUY when RSI<30)
+         11. RSI contradiction filter (symmetric): no SELL at RSI>70, no BUY at RSI>75,
+             no BUY at RSI<30, no SELL at RSI<25
          12. Daily trade cap + expiry trade cap
          13. Stagnant churn guard (no re-enter stagnant exits)
-         14. VWAP trend block (no BUY below VWAP, no SELL above VWAP)
+         14. VWAP guard: trend-fight (BUY<VWAP, SELL>VWAP) + extension-chase
+             (BUY far above VWAP, SELL far below) + fresh-reversal (big score Δ)
          15. Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
          16. Place order → scale SL/target to actual fill price
          17. Place exchange SL-M for instant stop-loss execution
@@ -1101,9 +1147,9 @@ class OrderEngine:
 
             # Block re-entry when score is declining (setup weakening)
             if past_entries:
-                entry_score = abs(trade.get("_entry_score", 0))
+                entry_score = abs(trade.get("_entry_score") or 0)
                 prev_score = max(
-                    abs(p.get("_entry_score", 0) or 0) for p in past_entries
+                    abs(p.get("_entry_score") or 0) for p in past_entries
                 )
                 if entry_score < prev_score and prev_score > 0:
                     self.log.warning(
@@ -1113,21 +1159,40 @@ class OrderEngine:
                     )
                     return False
 
-        # ── RSI contradiction filter ──────────────────────────────
-        # Don't SELL (short) into strong buying pressure (RSI > 70)
-        # or BUY into strong selling pressure (RSI < 30).
+        # ── RSI contradiction filter (symmetric) ──────────────────
+        # Block chasing RSI extremes in either direction:
+        #   SELL blocked when RSI > RSI_SELL_BLOCK_THRESHOLD (default 70)
+        #     — shorting into strong buying pressure.
+        #   BUY blocked when RSI > RSI_BUY_BLOCK_THRESHOLD (default 75)
+        #     — buying an already-extended overbought move.
+        #   BUY blocked when RSI < 30 — buying into strong selling.
+        #   SELL blocked when RSI < 25 — shorting an already-extended oversold move.
         entry_rsi = trade.get("_entry_rsi", 0) or 0
         if entry_rsi > 0:
-            if side == "SELL" and entry_rsi > 70:
+            rsi_sell_max = self.cfg.RSI_SELL_BLOCK_THRESHOLD
+            rsi_buy_max  = self.cfg.RSI_BUY_BLOCK_THRESHOLD
+            if side == "SELL" and entry_rsi > rsi_sell_max:
                 self.log.warning(
-                    f"{symbol}: RSI {entry_rsi:.0f} > 70 — too overbought to "
+                    f"{symbol}: RSI {entry_rsi:.0f} > {rsi_sell_max:.0f} — too overbought to "
                     f"short (strong buying pressure). Skipping."
+                )
+                return False
+            if side == "BUY" and entry_rsi > rsi_buy_max:
+                self.log.warning(
+                    f"{symbol}: RSI {entry_rsi:.0f} > {rsi_buy_max:.0f} — BUY chasing "
+                    f"extended overbought move. Skipping."
                 )
                 return False
             if side == "BUY" and entry_rsi < 30:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} < 30 — too oversold to "
                     f"buy (strong selling pressure). Skipping."
+                )
+                return False
+            if side == "SELL" and entry_rsi < 25:
+                self.log.warning(
+                    f"{symbol}: RSI {entry_rsi:.0f} < 25 — SELL chasing "
+                    f"extended oversold move. Skipping."
                 )
                 return False
 
@@ -1157,18 +1222,28 @@ class OrderEngine:
             )
             return False
 
-        # ── VWAP trend block ──────────────────────────────────────
-        # Don't BUY below VWAP or SELL above VWAP — fighting institutional flow.
-        # Skip during first 45 min (before 10:00) when VWAP has < 3 candles
-        # of data and isn't statistically meaningful yet.
-        if now.hour >= 10:
+        # ── VWAP trend + extension block ──────────────────────────
+        # Two-sided guard:
+        #   1. Trend-fight: don't BUY below VWAP / SELL above VWAP
+        #      (fighting institutional flow).
+        #   2. Extension-chase: don't BUY when already far ABOVE VWAP /
+        #      SELL when already far BELOW VWAP — the move has happened,
+        #      mean-reversion risk is high. Override allowed when score
+        #      magnitude is very strong (VWAP_EXT_SCORE_OVERRIDE).
+        # Skip before 10:15 — VWAP needs at least a full hour of candles
+        # to be stable; early readings swing wildly on low volume.
+        entry_score_abs = abs(trade.get("_entry_score") or 0)
+        if now.hour > 10 or (now.hour == 10 and now.minute >= 15):
             snap_str = trade.get("_indicator_snapshot", "")
             if snap_str:
                 try:
                     import json as _json
                     snap = _json.loads(snap_str)
                     vwap_dev = snap.get("vwap_dev", 0)
+                    ext_cap = self.cfg.VWAP_EXTENSION_BLOCK_PCT
+                    ext_override = self.cfg.VWAP_EXT_SCORE_OVERRIDE
                     if vwap_dev != 0:
+                        # 1. Trend-fight
                         if side == "BUY" and vwap_dev < -0.3:
                             self.log.warning(
                                 f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
@@ -1181,6 +1256,33 @@ class OrderEngine:
                                 f"SELL fights institutional buying pressure. Skipping."
                             )
                             return False
+                        # 2. Extension-chase (skip when score very strong)
+                        if entry_score_abs < ext_override:
+                            if side == "BUY" and vwap_dev > ext_cap:
+                                self.log.warning(
+                                    f"{symbol}: price {vwap_dev:+.1f}% above VWAP — "
+                                    f"BUY chasing extended move (score {entry_score_abs:.1f} < "
+                                    f"{ext_override:.1f} override). Skipping."
+                                )
+                                return False
+                            if side == "SELL" and vwap_dev < -ext_cap:
+                                self.log.warning(
+                                    f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
+                                    f"SELL chasing extended move (score {entry_score_abs:.1f} < "
+                                    f"{ext_override:.1f} override). Skipping."
+                                )
+                                return False
+                        # 3. Fresh-reversal guard: if score just swung hard
+                        # (large |delta|), wait one scan cycle for confirmation.
+                        score_delta = snap.get("score_delta")
+                        if score_delta is not None:
+                            fresh_cap = self.cfg.FRESH_REVERSAL_DELTA_THRESHOLD
+                            if abs(score_delta) >= fresh_cap:
+                                self.log.warning(
+                                    f"{symbol}: score Δ {score_delta:+.1f} >= {fresh_cap:.0f} — "
+                                    f"fresh reversal, waiting one cycle for confirmation. Skipping."
+                                )
+                                return False
                 except Exception:
                     pass
 
@@ -1934,6 +2036,11 @@ class OrderEngine:
         if pos.get("_late_entry_reduced"):
             return
 
+        # Skip if position was just adopted / resumed — give the user's
+        # manual trade a grace window to breathe before bot touches it.
+        if self._in_adoption_grace(pos):
+            return
+
         entry  = pos["entry_price"]
         target = pos["target_price"]
         side   = pos["side"]
@@ -2061,6 +2168,12 @@ class OrderEngine:
             q = quotes.get(key, {})
             current_price = q.get("last_price", 0)
             if current_price <= 0:
+                continue
+
+            # Adopted/resumed positions: give grace window before forced exit.
+            # User just opened this intentionally — bot inheriting doesn't
+            # give bot permission to close immediately.
+            if self._in_adoption_grace(pos):
                 continue
 
             entry = pos["entry_price"]

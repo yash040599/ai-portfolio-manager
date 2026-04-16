@@ -13,8 +13,11 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-15 — LIMIT order rewrite (1-tick buffer + full-timeout
-  polling), volume gate scan-RVol fallback, stagnant 0.5→0.3%.
+  Last sync: 2026-04-17 — Config reorganization: VWAP/RSI/fresh-reversal/adoption-grace/
+  MIN_SL moved out of Expiry section into dedicated Entry Filter sections. Entry-delay
+  semantic fixed: observation window = market_open + delay (not now + delay). VWAP
+  guard raised from 10:00 → 10:15 (more candles = more stable VWAP). Defensive
+  `_entry_score or 0` for declining re-entry.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -100,7 +103,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (19 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption, crash recovery.
+**Shared across both modes:** pre-filter, entry pipeline (21 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery.
 
 ---
 
@@ -171,7 +174,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (19 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (21 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -287,7 +290,7 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 19 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 21 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
@@ -295,7 +298,8 @@ Every trade must pass these 19 checks in order. If any fails, the trade is rejec
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable (Kite API doesn't provide average_volume) |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
-| 3b | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
+| 3b | **Min SL distance floor** | `MIN_SL_DISTANCE_PCT = 0.8`, expiry `1.0` | ATR on high-priced stocks can produce 0.4-0.6% SLs that wick on normal noise. Widens SL to floor and proportionally widens target to preserve R:R |
+| 3c | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | Target compressed. R:R floor per time period ensures compressed R:R is still worth trading |
 | 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.75` | Skip if `\|target − entry\| × qty < Rs.75` (2× round-trip charges) |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
@@ -306,10 +310,12 @@ Every trade must pass these 19 checks in order. If any fails, the trade is rejec
 | 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM. Post-cutoff SELL slots reallocated to BUY (if BUY candidates with score ≥4.0 exist) |
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 | 13 | **Declining re-entry block** | — | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
-| 14 | **RSI contradiction filter** | RSI > 70 / RSI < 30 | Block SELL when RSI > 70 (too much buying pressure to short). Block BUY when RSI < 30 (too much selling pressure to buy) |
+| 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
 | 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5` |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
-| 17 | **VWAP trend block** | VWAP deviation > 0.3% | Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP |
+| 17 | **VWAP trend block** | ±0.3% deviation | After 10:15 AM only (VWAP needs ≥1 hour of candles for stability). Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP (fighting institutional flow) |
+| 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 0.8`, override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | Block BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move). Override allowed when \|score\| ≥ 6.0 |
+| 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
 
 ### R:R Floor System
@@ -381,6 +387,15 @@ After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`
 | Winning with trail | Trail stop handles it — keep running until square-off |
 
 **Note:** This is NOT the full square-off. Renamed from `EOD_EXIT` to `LOSER_EXIT` because it only exits losers. Real square-off is at 3:10 PM (`SQUARE_OFF_HOUR:SQUARE_OFF_MINUTE`).
+
+### Adoption Grace Window
+
+When the bot picks up a position it did not originate (via `load_existing_positions` → `RESUMED`, or `sync_external_positions` → `EXTERNAL`), the position gets a `ADOPTED_POSITION_GRACE_MINUTES` (default 10 min) grace window. During grace:
+
+- **`TIME_DECAY_TARGET` is skipped** — the bot doesn't compress targets on a trade it didn't open.
+- **`LOSER_EXIT` is skipped** — the user deliberately opened this position; the bot shouldn't force-close immediately after inheriting it.
+
+Normal risk management (software SL/target, trailing stop, stagnant exit, square-off) still applies. Grace is measured from the adoption/resume timestamp, not from the user's actual original entry time (which is unknown).
 
 ### Circuit Breaker
 
@@ -468,10 +483,11 @@ On weekly F&O expiry Thursdays, NIFTY stocks see wider swings due to options set
 | Adjustment | Config | Effect |
 |-----------|--------|--------|
 | ATR bump | `EXPIRY_ATR_BUMP = 0.3` | Added to ATR_MULTIPLIER → wider SLs |
-| Position reduction | `EXPIRY_POSITION_REDUCTION = 1` | MAX_POSITIONS reduced by 1 |
+| Min SL floor | `EXPIRY_MIN_SL_DISTANCE_PCT = 1.0` | Tighter floor raised from 0.8% → 1.0% (bigger expiry swings need more room) |
+| Position reduction | `EXPIRY_POSITION_REDUCTION = 1` | MAX_POSITIONS reduced by 1. Skipped when budget < `EXPIRY_POSITION_REDUCTION_MIN_BUDGET` (Rs.1L) — small accounts keep normal slot count for rotation capacity |
 | Score bump | `EXPIRY_SCORE_BUMP = 1.0` | Added to V2_MIN_SCORE → demand stronger signals |
 | Stagnant timer | `EXPIRY_STAGNANT_EXTRA_MINUTES = 15` | Extends stagnant exit timer to reduce churn on fewer slots |
-| Entry delay | `EXPIRY_ENTRY_DELAY_MINUTES = 15` | Longer observation — F&O settlement creates 15-30 min of artificial opening volatility |
+| Entry delay | `EXPIRY_ENTRY_DELAY_MINUTES = 30` | Wait until 9:45 AM on market-open starts (ORB candle complete, F&O settlement calmed). Late-start smart reduction floors at `EXPIRY_ENTRY_DELAY_LATE_FLOOR = 15` min |
 | Trade cap | `EXPIRY_MAX_TRADES_PER_DAY = 5` | Caps total trades on expiry to prevent churn (each cycle costs ~Rs.36) |
 
 ---

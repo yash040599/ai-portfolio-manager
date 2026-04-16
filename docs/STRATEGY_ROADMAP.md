@@ -27,7 +27,7 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (114 items)
+### Completed (121 items)
 
 | # | Improvement | Category |
 |---|------------|----------|
@@ -148,6 +148,14 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 127 | MIN_EXPECTED_PROFIT raised 50 → 75 (2× charges) | Execution |
 | 128 | Stagnant churn guard (no re-enter stagnant exits same direction) | Risk |
 | 129 | Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs) | Risk |
+| **Apr 16 Opus4.7 Review (7)** | | |
+| 130 | RSI contradiction filter symmetric (also block BUY RSI>75, SELL RSI<25) | Risk |
+| 131 | VWAP extension-chase block (BUY >+0.8%, SELL <−0.8%, override at \|score\|≥6) | Risk |
+| 132 | Fresh-reversal guard (skip entry when \|score_delta\|≥8, wait one cycle) | Risk |
+| 133 | Adoption grace window (10 min skip time-decay + loser-exit on RESUMED/EXTERNAL) | Risk |
+| 134 | MIN_SL_DISTANCE_PCT floor (0.8% normal, 1.0% expiry) — preserves R:R by widening target | Risk |
+| 135 | Expiry entry delay 15→30 min (market-open) with 15-min late-start floor | Execution |
+| 136 | Expiry position reduction skipped when budget < Rs.1L (small-account flexibility) | Execution |
 
 ---
 
