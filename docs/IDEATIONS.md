@@ -1,7 +1,21 @@
 # Ideations -- V3 Vision & Future Work
 
-> **Status**: Planning / Research only -- no code changes
+> **Status**: Planning / Research only -- no code changes.
 > **Context**: V2 improvements are tracked in STRATEGY_ROADMAP.md. This file contains V3 architectural changes and future research ideas.
+
+---
+
+## In Plain English — Where V3 Is Going
+
+V2 is "a calculator that picks trades". Every score is computed from fixed formulas a human wrote in code. V3 shifts the bot in three big ways:
+
+1. **The scorer becomes a learner.** Instead of us saying "RSI under 30 = +2 points", a machine-learning model looks at every past trade, figures out what combinations of indicators actually led to profit, and assigns its own weights. The indicators themselves stay the same — only the formula that combines them changes.
+2. **A new data source: options.** Today V2 only reads the stock's own price and volume. Options data tells you what **other traders are betting** — how many people bought insurance (puts) vs. speculation (calls), where the "pain point" is for option sellers, where institutions put their largest bets. This is sentiment data the bot is currently blind to.
+3. **AI gets a new job.** Today Claude's role (in `--ai` mode) is picking stocks from a short list — a math-heavy task. In V3, the pure-math work goes to machine learning, and Claude is promoted to reading **text**: news headlines, earnings announcements, budget-day rhetoric, macro context. Each tool does what it's naturally best at.
+
+None of this breaks V2. V3 is additive — you'd still be able to run V2 (the fast, deterministic, Rs.0/day mode) while V3 experiments in parallel.
+
+Beyond V3, "Future Work" below covers bigger ideas (reinforcement learning, pairs trading, interactive terminal) that need much more data or research before they're worth building.
 
 ---
 
@@ -156,7 +170,7 @@ These require significantly more trade history, new infrastructure, or academic-
 
 ---
 
-### F3. Multi-Asset Signal Correlation
+### F6. Multi-Asset Signal Correlation
 
 **What it is**: Use signals from related instruments to confirm equity trades.
 
@@ -179,8 +193,11 @@ These require significantly more trade history, new infrastructure, or academic-
 | 3 | Claude for News/Sentiment | **V3** | High | Medium | News data source |
 | 4 | Order Book Depth | **V3** | High | Medium | WebSocket (Roadmap #44) ideally |
 | F1 | RL Position Management | **Future** | High | Very High | V3 ML + 1000+ trades |
-| F2 | Pairs Trading | **Future** | Medium | High | Historical cointegration data |
-| F3 | Multi-Asset Signals | **Future** | Medium | High | Multi-asset data feeds |
+| F2 | Interactive Terminal Mode | **Future** | Medium | Medium | Cross-platform key handling |
+| F3 | Options Chain Intelligence (Expiry Days) | **Future** | Medium | Medium | Kite options API |
+| F4 | High-OI Stock Filter (Expiry Days) | **Future** | Low | Medium | Depends on F3 |
+| F5 | Pairs Trading | **Future** | Medium | High | Historical cointegration data |
+| F6 | Multi-Asset Signals | **Future** | Medium | High | Multi-asset data feeds |
 
 ---
 
@@ -194,6 +211,8 @@ These require significantly more trade history, new infrastructure, or academic-
 5. Order book depth (entry timing refinement)
 
 **Future (after V3 is stable)**:
-1. RL position management
-2. Multi-asset correlation
-3. Pairs trading
+1. RL position management (F1)
+2. Interactive terminal mode (F2)
+3. Options-chain intelligence + high-OI filter for expiry days (F3, F4)
+4. Pairs trading (F5)
+5. Multi-asset correlation (F6)

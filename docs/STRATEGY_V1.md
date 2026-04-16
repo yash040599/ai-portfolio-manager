@@ -1,20 +1,30 @@
 # V1 Trading Strategy — Claude AI Intraday Bot (DEPRECATED)
-<!-- Last sync: 2026-04-08 — FINAL. No further changes will be made to V1. -->
+<!-- Last sync: 2026-04-17 — FINAL. No V1-specific changes; document refreshed to
+     reflect shared OrderEngine improvements that V1 inherits passively (new entry
+     filters, adoption grace, MIN_SL floor, entry-delay semantic fix). -->
 
-> **Status: DEPRECATED.** V1 is frozen as of 2026-04-08. It will continue to work
-> with the current codebase but will **not receive any new features, indicators,
-> or strategy improvements**. All future development targets V2 and V2 NoAI.
+> **Status: DEPRECATED.** V1 is frozen as a strategy. No new V1-specific features
+> will be added. It still runs, and it passively inherits every improvement to the
+> shared `OrderEngine` that V2 gets — so bug fixes and new entry filters reach V1
+> automatically, but V1-only tuning or features are not on the roadmap.
 >
-> Use `python main.py --mode trade --v1` to run it. Use V2 (default) or
-> `--noai` for the actively maintained strategies.
->
-> V1 shares the same `OrderEngine` as V2/NoAI, so it inherits all entry-time
-> safety checks, trailing stop, circuit breaker, whipsaw guard, manual trade
-> sync, and fallback candidate support. These shared components may evolve
-> with V2 development — V1 benefits passively but is not tested against
-> new OrderEngine changes.
+> Use `python main.py --mode trade --v1` to run it. Use V2 (default) or `--noai`
+> for the actively developed strategies.
 
 ## Overview
+
+### What V1 does — in plain English
+
+V1 is the **original version** of the bot. It takes a very different approach from V2:
+
+- Instead of computing indicator scores in code, V1 hands Claude (an AI) a raw table of live stock prices and says "you're a professional day-trader, pick 3–5 stocks to trade right now with stop-loss and target prices".
+- Claude reads the prices + basic market context (NIFTY trend, recent wins/losses) and returns its picks as structured JSON.
+- The bot then runs those picks through the same risk management layers V2 uses (stop-loss on the exchange, trailing stop, circuit breaker, square-off at 3:10 PM).
+- Every 20 minutes the bot shows Claude the open positions' profit/loss and asks "keep holding, exit now, or adjust the stop-loss / target?"
+
+So V1 is "AI picks the trades, code enforces the safety rules". V2 reversed this: "code picks the trades, AI is optional and only for ranking". V1 is kept around because it still works and occasionally gives useful second opinions, but every strategy decision in the newer code targets V2.
+
+### Technical summary
 
 V1 is a **Claude-first** intraday trading strategy. Claude AI receives a table of live stock prices from the selected universe (Nifty 50/100/200) and picks trades entirely on its own judgment. Risk management is handled by rule-based systems (ATR-based SL, trailing stops, circuit breaker).
 
@@ -39,10 +49,13 @@ Universe (50-200 stocks)
 ### Phase 2 — Observation Period (9:15–9:20 AM)
 ```
 Wait for market open
-  → Watch prices for ENTRY_DELAY_MINUTES (default: 5 min)
+  → Observation window aligned to market-open + delay
+      (normal days: 5 min → entry at 9:20)
+      (expiry Thursdays: 30 min → entry at 9:45)
   → Only enter stocks with > 0.3% directional move from day open
   → Drop stocks that didn't confirm direction
-  → Smart delay: if bot starts after 9:30, reduces delay to 5 min
+  → Late-start floor: if script started after the window,
+    use EXPIRY_ENTRY_DELAY_LATE_FLOOR (15 min expiry) or 5 min normal
 ```
 
 ### Phase 3 — Position Entry
@@ -101,30 +114,40 @@ Close all remaining open positions at market price
 
 ## Risk Management Layers
 
-V1 shares `OrderEngine` with V2/NoAI — all entry checks and position management are identical.
+V1 shares `OrderEngine` with V2/NoAI — **every entry check and position-management rule listed below is identical across V1, V2, and NoAI.** New guards added to OrderEngine reach V1 automatically; V1 does not need (and does not get) V1-specific versions.
 
 | Layer | Type | Description |
 |-------|------|-------------|
 | ATR-based SL | Rule-based | Dynamic stop-loss: entry ± (ATR × 1.5). Uses wider-of ATR vs Claude SL. Capped at MAX_INTRADAY_SL_PCT (2.5%) |
+| **MIN SL distance floor** | Rule-based | `MIN_SL_DISTANCE_PCT` = 0.8% (1.0% on expiry). High-priced stocks can produce 0.4-0.6% SLs that wick on normal noise — this floor widens SL + target proportionally to preserve R:R. *(Added Apr 16 2026 — V1 inherits automatically.)* |
 | SL-M exchange orders | Rule-based | Stop-loss sits on NSE exchange. Modified on trail, partial exit, and EOD tighten |
 | Trailing stop-loss | Rule-based | At 1.5× initial risk profit, exits 33% of qty and trails SL at 50% of unrealised profit |
 | Time-decay target | Rule-based | After 2 PM, reduce open targets by 25% to avoid holding into close with shrinking upside |
 | Late-entry reduction | Rule-based | 13:00+ → −20% target, 14:00+ → −25% target. Skip if R:R < RR_FLOOR_LATE (1.0:1) after reduction. Time-based R:R floor is the primary gate |
-| Min profit check | Rule-based | Skip trade if expected profit < Rs.50 (charges would eat it) |
+| Min profit check | Rule-based | Skip trade if expected profit < Rs.75 (2× round-trip charges — raised from Rs.50 Apr 16) |
 | Circuit breaker | Rule-based | Day loss > 3% of budget → pause 30 min. Resumes with loss-adjusted budget. Max 2 trips/day |
 | Whipsaw guard | Rule-based | 3 consecutive SL hits → pause new entries for 30 min |
 | Direction diversification | Rule-based | Max N−1 in same direction. Score ≥ 5 bypasses the limit (all slots in dominant direction) |
 | Entry price validation | Rule-based | Reject Claude's entry if it differs >5% from live Zerodha quote |
 | Re-entry limit | Rule-based | Max 2 entries per stock per day (prevents stop-loss chasing) |
+| **Declining re-entry block** | Rule-based | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
 | Budget cap | Rule-based | Max 40% of budget per stock, total capped at MAX_BUDGET_INR (overridable via `--max`) |
-| Observation period | Rule-based | 5-min delay after open, only enter stocks with >0.3% confirmed move |
+| Observation period | Rule-based | Default 5-min delay (30 min on expiry Thursdays). Entry time aligned to market-open + delay. Only enter stocks with >0.3% confirmed move |
+| **RSI contradiction filter (symmetric)** | Rule-based | Block SELL at RSI > 70, BUY at RSI > 75, BUY at RSI < 30, SELL at RSI < 25. Prevents chasing extended moves in either direction |
+| **VWAP trend + extension guard** | Rule-based | Activates after 10:15 AM. Block BUY below VWAP / SELL above VWAP (trend-fight). Block BUY > +0.8% / SELL < −0.8% from VWAP (extension-chase). Override at \|score\| ≥ 6 |
+| **Fresh-reversal guard** | Rule-based | If score just swung hard (\|Δ\| ≥ 8 since last scan), wait one cycle — don't trade the first bar of a violent reversal |
+| **Daily trade cap** | Rule-based | Max 12 trades/day (5 on expiry). Prevents overtrading churn |
+| **Stagnant churn guard** | Rule-based | Don't re-enter the same stock+direction that was exited as stagnant earlier |
+| **Net-of-charges R:R check** | Rule-based | Effective R:R (after round-trip charges) must be ≥ 1.0:1 |
 | Fallback candidates | Rule-based | Entry loop tries backup picks if primary candidates fail sanity checks |
 | Manual trade adoption | Rule-based | Zerodha MIS positions detected every 15 min, adopted with ATR SL/targets |
+| **Adoption grace window** | Rule-based | Adopted / resumed positions skip TIME_DECAY and LOSER_EXIT for the first 10 minutes — software SL, target, trailing, and square-off still apply |
 | NIFTY trend filter | Claude-informed | Market classified as BULLISH/BEARISH/NEUTRAL, biases Claude's picks |
 | Anti-panic exit | Claude prompt rule | Claude told "don't EXIT just because a position shows a loss — only exit if SL is hit or pattern is broken" |
-| Late entry guard | Rule-based | No new positions if < MIN_MINUTES_FOR_ENTRY (60 min) until square-off |
+| Late entry guard | Rule-based | No new positions if < MIN_MINUTES_FOR_ENTRY (45 min) until square-off |
 | Short cutoff | Rule-based | No new shorts after 1 PM (short delivery penalty risk) |
 | Sector concentration | Rule-based | Max 2 positions per sector (12-sector SECTOR_MAP) |
+| **Thursday expiry adjustments** | Rule-based | Wider SL (ATR +0.3), higher score bar (+1.0), longer observation (30 min), min-SL floor 1.0%, trade cap 5/day, position-reduction skipped if budget < Rs.1L |
 | Order API protection | Rule-based | 3 consecutive API failures → stop Claude calls, square off, shutdown |
 | Loss-adjusted sizing | Rule-based | Budget for new trades shrinks by realised losses. Floor at 20% of original |
 | Crash recovery | Rule-based | Resumes monitoring existing positions on restart |
@@ -167,7 +190,8 @@ V1 shares `OrderEngine` with V2/NoAI — all entry checks and position managemen
 
 ---
 
-> **This document is frozen.** Do not add new sections or update parameter
-> values for V1-specific changes. V1 inherits shared OrderEngine changes
-> passively. For the actively maintained strategy, see
+> **This document is frozen for V1-specific strategy.** New entry filters,
+> risk guards, and bug fixes added to the shared `OrderEngine` automatically
+> apply to V1 and are documented above. V1-only prompts, scoring, or review
+> logic will not be changed. For the actively developed strategy, see
 > [STRATEGY_V2.md](STRATEGY_V2.md).

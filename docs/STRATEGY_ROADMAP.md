@@ -27,7 +27,7 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (121 items)
+### Completed (124 items)
 
 | # | Improvement | Category |
 |---|------------|----------|
@@ -156,6 +156,10 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 134 | MIN_SL_DISTANCE_PCT floor (0.8% normal, 1.0% expiry) — preserves R:R by widening target | Risk |
 | 135 | Expiry entry delay 15→30 min (market-open) with 15-min late-start floor | Execution |
 | 136 | Expiry position reduction skipped when budget < Rs.1L (small-account flexibility) | Execution |
+| **Apr 17 Config / Semantics Cleanup (3)** | | |
+| 137 | Entry-delay semantic fix: observation window = `market_open + delay` (was `now + delay`). 9:30 script start with 30-min delay now correctly targets 9:45 entry instead of 10:00. | Execution |
+| 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
+| 139 | Defensive `abs(_entry_score or 0)` in declining re-entry block — explicit `None` no longer crashes | Bug Fix |
 
 ---
 

@@ -67,6 +67,22 @@
 
 ## Overview
 
+### What this bot does — in plain English
+
+Think of the bot as an automated day-trader for the Indian stock market. Every morning:
+
+1. **Before the market opens (9:00 AM)** it looks at ~100 large Indian stocks and scores each one from −24 (strong sell) to +24 (strong buy). The score is built from 14 chart patterns (like "hammer" or "engulfing" candles) and 14 technical indicators (trend, momentum, volume, support/resistance).
+2. **A few minutes after the market opens (9:20 AM)** it picks the 2–7 highest-scoring stocks (count depends on your budget) and places actual orders on Zerodha — buying the strong-positive scores, short-selling the strong-negative ones.
+3. **Throughout the day** it watches prices every 10 seconds and automatically:
+    - Exits at a pre-set loss price (stop-loss) so no trade can hurt too much.
+    - Takes partial profit once a trade is nicely in the green, and slides the stop-loss up so you keep most of the gain even if the price reverses.
+    - Re-checks every 15 minutes whether the setup that triggered the trade still looks good, and tightens the stop-loss if the chart flips against you.
+4. **Before close (3:10 PM)** it closes every position, writes a report with full profit/loss and tax breakdown, and shuts down. All trades are **intraday** — the bot never holds a stock overnight.
+
+Nothing is hand-entered. Your only job is to set a budget and decide whether you want AI (Claude) involved in picking (slower + costs a little) or pure math picking (free + instant).
+
+### Technical summary
+
 V2 is an **intraday equity trading bot** for NSE (India) via Zerodha Kite Connect. It combines a free mathematical pre-filter (14 candlestick patterns + 14 technical indicators) with automatic stock selection by composite score.
 
 **Default mode (NoAI):** Pure technical signals — zero Claude API calls, zero cost, deterministic.
@@ -622,10 +638,28 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `VIX_HIGH_SCORE_BUMP` | 1.0 | Raise score threshold in high VIX |
 | `EXPIRY_ATR_BUMP` | 0.3 | Wider SLs on expiry Thursdays |
 | `EXPIRY_POSITION_REDUCTION` | 1 | Fewer positions on expiry |
-| `EXPIRY_SCORE_BUMP` | 1.0 | Higher score threshold on expiry |\n| `EXPIRY_STAGNANT_EXTRA_MINUTES` | 15 | Extend stagnant timer on expiry days |
+| `EXPIRY_POSITION_REDUCTION_MIN_BUDGET` | Rs.1L | Skip position reduction when budget below this |
+| `EXPIRY_SCORE_BUMP` | 1.0 | Higher score threshold on expiry |
+| `EXPIRY_STAGNANT_EXTRA_MINUTES` | 15 | Extend stagnant timer on expiry days |
+| `EXPIRY_ENTRY_DELAY_MINUTES` | 30 | Wait until 9:45 on expiry (ORB complete) |
+| `EXPIRY_ENTRY_DELAY_LATE_FLOOR` | 15 | Late-start floor on expiry |
+| `EXPIRY_MAX_TRADES_PER_DAY` | 5 | Cap trades on expiry |
+| `EXPIRY_MIN_SL_DISTANCE_PCT` | 1.0% | Override MIN_SL floor on expiry |
 | `FII_DII_ENABLED` | True | Fetch FII/DII flow data |
 | `PREOPEN_ENABLED` | True | Fetch pre-open auction data |
 | `PREOPEN_GAP_SIGNIFICANT_PCT` | 1.0% | Significant gap threshold |
+
+### Entry Filters (every day)
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `MIN_SL_DISTANCE_PCT` | 0.8% | Floor — widens SL + target proportionally to preserve R:R |
+| `RSI_SELL_BLOCK_THRESHOLD` | 70 | Block SELL when RSI > this |
+| `RSI_BUY_BLOCK_THRESHOLD` | 75 | Block BUY when RSI > this |
+| `VWAP_EXTENSION_BLOCK_PCT` | 0.8% | Block entries chasing beyond this VWAP deviation |
+| `VWAP_EXT_SCORE_OVERRIDE` | 6.0 | Skip VWAP extension block when \|score\| ≥ this |
+| `FRESH_REVERSAL_DELTA_THRESHOLD` | 8.0 | Skip entry when \|score_delta\| ≥ this (wait one cycle) |
+| `ADOPTED_POSITION_GRACE_MINUTES` | 10 | Grace window for adopted/resumed positions (skips time-decay + loser-exit) |
 
 ---
 
