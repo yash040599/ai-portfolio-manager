@@ -827,6 +827,68 @@ class Config:
         return warnings
 
     @classmethod
+    def validate_ranges(cls) -> list[str]:
+        """
+        Sanity-checks every numeric config value for a plausible range.
+        Returns list of human-readable error strings — empty means OK.
+        Call at startup; abort if non-empty.
+
+        This catches typos like accidentally setting ATR_MULTIPLIER=0
+        (divides by zero), MAX_BUDGET_INR=-1 (nonsense), etc.
+        """
+        errors = []
+
+        def _pos(name: str, val) -> None:
+            if val is None or val <= 0:
+                errors.append(f"{name} must be > 0 (got {val!r})")
+
+        def _pct(name: str, val, hi: float = 100.0) -> None:
+            if val is None or val < 0 or val > hi:
+                errors.append(f"{name} must be between 0 and {hi} (got {val!r})")
+
+        # Budget + positions
+        _pos("MAX_BUDGET_INR",       cls.MAX_BUDGET_INR)
+        _pos("MIN_BALANCE_TO_TRADE", cls.MIN_BALANCE_TO_TRADE)
+        _pct("MAX_POSITION_PCT",     cls.MAX_POSITION_PCT)
+
+        # SL / target / R:R
+        _pos("ATR_MULTIPLIER",         cls.ATR_MULTIPLIER)
+        _pos("ATR_PERIOD",             cls.ATR_PERIOD)
+        _pos("RR_TARGET_RATIO",        cls.RR_TARGET_RATIO)
+        _pct("DEFAULT_STOP_LOSS_PCT",  cls.DEFAULT_STOP_LOSS_PCT, 10)
+        _pct("DEFAULT_TARGET_PCT",    cls.DEFAULT_TARGET_PCT, 10)
+        _pct("MAX_INTRADAY_SL_PCT",   cls.MAX_INTRADAY_SL_PCT, 10)
+        _pct("MIN_SL_DISTANCE_PCT",   cls.MIN_SL_DISTANCE_PCT, 10)
+        _pct("EXPIRY_MIN_SL_DISTANCE_PCT", cls.EXPIRY_MIN_SL_DISTANCE_PCT, 10)
+        if cls.MIN_SL_DISTANCE_PCT >= cls.MAX_INTRADAY_SL_PCT:
+            errors.append("MIN_SL_DISTANCE_PCT must be < MAX_INTRADAY_SL_PCT")
+
+        # Risk caps
+        _pct("MAX_LOSS_PER_DAY_PCT", cls.MAX_LOSS_PER_DAY_PCT, 20)
+        _pct("TRAIL_STEP_PCT",       cls.TRAIL_STEP_PCT)
+
+        # Timing
+        if not (0 <= cls.MARKET_OPEN_HOUR <= 23):
+            errors.append(f"MARKET_OPEN_HOUR out of range: {cls.MARKET_OPEN_HOUR!r}")
+        if not (0 <= cls.SQUARE_OFF_HOUR <= 23):
+            errors.append(f"SQUARE_OFF_HOUR out of range: {cls.SQUARE_OFF_HOUR!r}")
+        _pos("PRICE_POLL_SECONDS",      cls.PRICE_POLL_SECONDS)
+        _pos("MIN_MINUTES_FOR_ENTRY",   cls.MIN_MINUTES_FOR_ENTRY)
+
+        # Entry filters
+        _pct("RSI_BUY_BLOCK_THRESHOLD",  cls.RSI_BUY_BLOCK_THRESHOLD)
+        _pct("RSI_SELL_BLOCK_THRESHOLD", cls.RSI_SELL_BLOCK_THRESHOLD)
+        _pct("VWAP_EXTENSION_BLOCK_PCT", cls.VWAP_EXTENSION_BLOCK_PCT, 10)
+        _pos("VWAP_EXT_SCORE_OVERRIDE",  cls.VWAP_EXT_SCORE_OVERRIDE)
+        _pos("FRESH_REVERSAL_DELTA_THRESHOLD", cls.FRESH_REVERSAL_DELTA_THRESHOLD)
+
+        # Tax / charges
+        _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)
+        _pct("TAX_CESS_PCT", cls.TAX_CESS_PCT)
+
+        return errors
+
+    @classmethod
     def calculate_charges(
         cls,
         total_buy_turnover:  float,

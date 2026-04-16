@@ -28,7 +28,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ### How to add a new item
 
-1. Pick the next available number (currently 140 and above are free).
+1. Pick the next available number (currently 153 and above are free).
 2. Add it under the right category in **Completed** (one-line description).
 3. If it changes user-visible behaviour, also:
    - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
@@ -41,13 +41,22 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (3 items)
+### Pending (12 items)
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
+| 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
+| 145 | Volatility-adjusted position sizing — qty scaled by ATR, not just budget | MEDIUM | High | Medium |
+| 146 | Impact-cost / depth liquidity check — walk top-5 levels, skip if slippage > 0.2% | LOW | Medium | Low |
+| 147 | Session-time-aware RVol — hourly-bucket baseline, not daily average | LOW | Medium | Medium |
+| 148 | Stale SL-M cleanup on restart — reconcile or cancel orphan SL-M orders | HIGH | High | Low |
+| 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
+| 150 | [Bug] Partial-qty exits can lose 1 share to integer truncation | HIGH | Medium | Low |
+| 151 | [Bug] External partial close misread as full close in reconciliation | HIGH | High | Medium |
+| 152 | [Bug] SL-M placement failure degrades silently to software SL — no loud alert | HIGH | High | Low |
 
 ### Removed (8 items — not worth implementing)
 
@@ -62,7 +71,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (124 items)
+### Completed (128 items)
 
 | # | Improvement | Category |
 |---|------------|----------|
@@ -195,6 +204,11 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 137 | Entry-delay semantic fix: observation window = `market_open + delay` (was `now + delay`). 9:30 script start with 30-min delay now correctly targets 9:45 entry instead of 10:00. | Execution |
 | 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
 | 139 | Defensive `abs(_entry_score or 0)` in declining re-entry block — explicit `None` no longer crashes | Bug Fix |
+| **Apr 17 Financial+SDE Review (4)** | | |
+| 140 | Order-API recovery: `_order_api_broken` now clears on first successful order. A transient Zerodha glitch no longer kills the entire trading day — the bot retries, and the failure counter re-trips only if the API is genuinely down. | Bug Fix |
+| 141 | VWAP guard exception now logs a WARNING (was silent `pass`). Malformed indicator snapshots are visible in logs instead of silently bypassing the VWAP protection. | Bug Fix |
+| 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
+| 143 | Removed sticky early-return on `_order_api_broken` in entry path. Rely on consecutive-failure counter to re-trip if the API is genuinely broken; allows recovery without manual restart. | Bug Fix |
 
 ---
 
@@ -217,4 +231,58 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Gap**: 10-second polling can miss rapid SL/target breaches during news events.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
 - **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
+
+### 144. Bracket Orders (Atomic Entry + SL + Target)
+- **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
+- **Today**: For every trade we submit three separate things — the entry order, then a stop-loss order after the entry fills, then a software-side target watcher. If the bot crashes in between any of these, the position can be left un-protected. If the user manually closes the position in the Kite app, the SL-M can still be alive and mis-trigger later.
+- **Fix**: Use Zerodha Bracket Order (BO). Entry + SL + target are submitted as one linked order. When the entry fills, the exchange itself arms the SL and target; when either fires, the other auto-cancels. One atomic state per trade, no orphans.
+- **Effort**: ~2 weeks. Touches `order_engine`, reconciliation, and crash-recovery logic.
+
+### 145. Volatility-Adjusted Position Sizing
+- **Priority**: MEDIUM (makes risk per trade consistent across calm vs wild stocks)
+- **Today**: `qty = floor(budget_per_slot / price)`. A calm Rs.500 stock and a wild Rs.500 stock get the same qty, but the wild one moves much more — so we are silently risking more rupees on wild stocks.
+- **Fix**: `qty = (budget × risk_pct) / (ATR × ATR_multiplier)`. Calm stocks get more shares, wild stocks get fewer, so every trade risks roughly the same rupees.
+- **Effort**: Medium. Paper-test before live — needs interaction with `MAX_POSITION_PCT` cap checked carefully.
+
+### 146. Impact-Cost / Depth Liquidity Check
+- **Priority**: LOW (only matters once per-slot size grows beyond ~Rs.50K)
+- **Today**: We check bid-ask spread %. If we need 50 shares but only 10 are at best ask, the next 40 fill at worse prices — and we don't notice.
+- **Fix**: Walk top-5 order-book levels, compute weighted-average fill price for our planned qty, calculate `impact_cost = (fill_price − LTP) / LTP × 100`. Skip trade if > 0.2%.
+- **Effort**: Low. We already fetch the depth dict for spread — just need to walk levels.
+
+### 147. Session-Time-Aware RVol Baseline
+- **Priority**: LOW (current RVol is "good enough" for the pre-filter)
+- **Today**: RVol compares today's intraday volume to the 20-day **daily** average. But intraday volume has a U-shape (huge at open, dead 12–13:30, huge at close). Midday, almost every stock looks "quiet" by daily-average math — we may be skipping good trades.
+- **Fix**: Build a 20-day average for each 30-minute bucket of the day. Compare today's 12:30 volume to the historical 12:30 volume.
+- **Effort**: Medium. Needs a new cache of hourly-bucket volume history.
+
+### 148. Stale SL-M Cleanup on Restart
+- **Priority**: HIGH (pure crash-safety; prevents next-day mis-fires)
+- **Today**: After a crash, `load_existing_positions()` rebuilds in-memory positions from Zerodha MIS, but pre-crash SL-M orders are still live on the exchange and we no longer know their order IDs. Price revisiting an old trigger level on the NEXT trading day could fire a stale SL-M against a fresh position.
+- **Fix**: On startup, call `kite.orders()` and either (a) reconcile each open SL-M to a resumed position and re-register its ID, or (b) cancel any SL-M that doesn't correspond to a current position.
+- **Effort**: Low — one new API call wrapper + a small reconciliation loop.
+
+### 149. Sector-Cascade Exit
+- **Priority**: MEDIUM (protects against correlated sector-wide drops)
+- **Today**: If 3 banking positions are all bleeding because the banking sector is dropping 2% in 15 min, each position waits for its own individual SL. By the time the 3rd hits, the 1st has lost much more than necessary.
+- **Fix**: Every scan, roll up per-sector open P&L. If a sector's exposure is ≤ −1% of budget in ≤ 15 min, tighten SLs on **all** positions in that sector to breakeven immediately — don't wait for individual SLs.
+- **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
+
+### 150. [Bug] Partial-Qty Exits Can Lose Shares to Integer Truncation
+- **Priority**: HIGH (silent P&L/inventory bug)
+- **Today**: When we exit 1/3 of a position, we compute `qty_to_exit = total // 3`. For 10 shares this is 3. Next partial becomes `7 // 3 = 2`. Over multiple partial steps we under-exit and leave fractional rounding dust behind — reconciliation then disagrees with broker.
+- **Fix**: Track cumulative `exited_qty` and compute the next partial as `round(target_fraction × original_qty) − already_exited`. Ensures totals add up cleanly and the final partial closes to exactly zero.
+- **Effort**: Low. Localized to `order_engine` partial-exit path; needs unit-level test coverage.
+
+### 151. [Bug] External Partial Close Misread as Full Close
+- **Priority**: HIGH (wrong P&L on reconcile)
+- **Today**: If the user manually closes **half** the position in the Kite app, our reconciliation in `load_existing_positions()` / periodic sync logic can interpret the reduced Zerodha qty as a full close — wipes the in-memory position, logs wrong P&L, and leaves the remaining half un-tracked.
+- **Fix**: Compare Zerodha qty against the bot's tracked qty. If Zerodha qty is `0`, close. If it is `> 0` but `< tracked`, treat it as an external partial close: update tracked qty, log the partial at the broker-average price, keep the remaining position live with its SL-M still valid.
+- **Effort**: Medium. Careful because this interacts with SL-M re-sizing and partial-target state.
+
+### 152. [Bug] SL-M Placement Failure Silently Degrades to Software SL
+- **Priority**: HIGH (user is unaware exchange protection is gone)
+- **Today**: After entry fill, we try to place the SL-M on Zerodha. If that API call fails, we quietly fall back to software-side SL monitoring with just an info log. The user assumes the exchange-side protection is in place — but it isn't. A bot crash at this point leaves the position fully naked.
+- **Fix**: On SL-M failure, log a clear WARNING ("exchange SL unavailable — relying on software SL; restart this trading day is NOT safe for this position"), tag the position with `sl_m_failed=True`, and include it prominently in the periodic status summary. Optionally: auto-retry SL-M placement on the next scan tick.
+- **Effort**: Low. Logging + a flag on the position dict + a line in the status report.
 

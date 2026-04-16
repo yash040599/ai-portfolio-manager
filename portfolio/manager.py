@@ -109,6 +109,17 @@ class PortfolioManager:
             self.log.info("Create or edit the .env file in this folder and re-run.")
             return
 
+        # ── Step 1b: Sanity-check numeric config ranges ───────────
+        # Catches typos like ATR_MULTIPLIER=0 (div-by-zero) or
+        # MAX_LOSS_PER_DAY_PCT=-1 before they corrupt live trades.
+        range_errors = self.cfg.validate_ranges()
+        if range_errors:
+            self.log.section("CONFIGURATION ERROR")
+            for err in range_errors:
+                self.log.error(err)
+            self.log.info("Fix config.py and re-run.")
+            return
+
         # ── Step 2: Login to Zerodha ──────────────────────────────
         # Login early so we can show account details even on holidays.
         self.log.section("ZERODHA LOGIN")

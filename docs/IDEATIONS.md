@@ -5,6 +5,34 @@
 
 ---
 
+## What belongs in this file (and what does NOT)
+
+**This file is strictly for V3-and-beyond ideas. V3 has a specific identity: it is the version where AI earns its keep.**
+
+V2 today runs in NoAI mode by default because — with the current rule-based scoring — Claude did not improve results enough to justify the cost. V3 is the plan to change that. Every V3 idea must be an **AI-centric add-on** that lets the bot make better decisions by learning from data or reading unstructured context (news, earnings, macro narrative) — not something a hand-written formula could do.
+
+### Qualification checklist for adding an idea here
+
+An idea qualifies as a V3 / "Future" ideation if **at least one** is true:
+
+1. It requires machine learning — the bot learns weights/patterns from historical trades instead of using fixed formulas.
+2. It uses an LLM (Claude) for text/narrative understanding — news, earnings transcripts, macro context, sentiment.
+3. It introduces a new data dimension that only makes sense paired with ML or LLM reasoning (options chain, order-book microstructure, multi-asset correlation regimes).
+4. It is genuinely research-grade — needs experimentation, labelled data, or model training before it can be coded.
+
+### If an idea does NOT meet any of the above
+
+It is a **V2 improvement**, even if the work is large. Add it to [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) under **Pending** with priority/impact/effort, and a plain-English explanation in **Pending — Details**. Examples of things that feel "big" but are NOT V3:
+- Order-engine refactors (bracket orders, atomic SL+target)
+- Better position sizing math (volatility-adjusted, ATR-based)
+- Order-book depth checks that follow fixed rules
+- Crash-recovery / reconciliation improvements
+- Rule-based sector or basket exit logic
+
+Size does not make an idea V3 — **AI dependency** does. Keep this file focused so V3 vision does not drown in generic backlog.
+
+---
+
 ## In Plain English — Where V3 Is Going
 
 V2 is "a calculator that picks trades". Every score is computed from fixed formulas a human wrote in code. V3 shifts the bot in three big ways:

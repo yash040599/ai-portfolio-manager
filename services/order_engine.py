@@ -1283,8 +1283,14 @@ class OrderEngine:
                                     f"fresh reversal, waiting one cycle for confirmation. Skipping."
                                 )
                                 return False
-                except Exception:
-                    pass
+                except Exception as e:
+                    # VWAP guard is a safety check — if the snapshot is malformed
+                    # we log it (don't want to silently skip protection) but still
+                    # allow the trade. R:R and other checks remain active.
+                    self.log.warning(
+                        f"{symbol}: VWAP guard skipped — indicator snapshot "
+                        f"parse failed ({type(e).__name__}: {e})"
+                    )
 
         # ── Net-of-charges R:R check ──────────────────────────────
         # Gross R:R may look 1.5:1, but after charges on small positions
@@ -1325,17 +1331,28 @@ class OrderEngine:
                 f"SL: Rs.{sl:.2f} | Target: Rs.{target:.2f} | "
                 f"Cost: Rs.{cost:,.0f}"
             )
-        elif self._order_api_broken:
-            self.log.error(
-                f"Skipping {symbol}: Zerodha order API is broken "
-                f"({self._consecutive_order_failures} consecutive failures)"
-            )
-            return False
         else:
+            # NOTE: we no longer early-return when _order_api_broken is True.
+            # A single transient network glitch should not kill the entire
+            # trading day. Instead, we attempt the order; success clears the
+            # flag, failure re-increments the counter and re-trips if it's
+            # genuinely broken. Exit paths behave the same way.
+            if self._order_api_broken:
+                self.log.warning(
+                    f"Retrying after {self._consecutive_order_failures} prior "
+                    f"failure(s) \u2014 attempting entry for {symbol}"
+                )
             try:
                 order_id = self._place_entry_order(symbol, exchange, qty, side, entry)
-                # Order succeeded — reset failure counter
+                # Order succeeded — reset failure counter and clear broken flag
+                # (allows recovery from transient API glitches without killing the day).
+                if self._consecutive_order_failures > 0 or self._order_api_broken:
+                    self.log.info(
+                        f"Order API recovered after {self._consecutive_order_failures} "
+                        f"failure(s) — resuming normal operation"
+                    )
                 self._consecutive_order_failures = 0
+                self._order_api_broken = False
 
                 # Reconcile actual filled qty (LIMIT orders can partially fill)
                 actual_qty = self.zerodha.get_order_filled_qty(order_id)
@@ -1610,8 +1627,14 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=exit_side, order_type="MARKET",
                 )
-                # Exit order succeeded — reset failure counter
+                # Exit order succeeded — reset failure counter and clear broken flag
+                if self._consecutive_order_failures > 0 or self._order_api_broken:
+                    self.log.info(
+                        f"Order API recovered after {self._consecutive_order_failures} "
+                        f"failure(s) — resuming normal operation"
+                    )
                 self._consecutive_order_failures = 0
+                self._order_api_broken = False
 
                 # Fetch actual fill price from Zerodha
                 fill_price = self.zerodha.get_order_fill_price(exit_order_id)
@@ -1720,7 +1743,9 @@ class OrderEngine:
                     symbol=symbol, exchange=exchange,
                     qty=qty, side=exit_side, order_type="MARKET",
                 )
+                # Partial exit succeeded — reset failure counter and clear broken flag
                 self._consecutive_order_failures = 0
+                self._order_api_broken = False
 
                 # Fetch actual fill price (same pattern as exit_position)
                 fill_price = self.zerodha.get_order_fill_price(order_id)
