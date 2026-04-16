@@ -4,6 +4,41 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 
 ---
 
+## How to Read This Roadmap
+
+This document is the **history log** of every strategy improvement, the **backlog** of pending items, and the **record** of deliberately rejected ideas. Someone new to the project should be able to read this document top-to-bottom and understand what has been built, why, and what is next.
+
+### Sections
+
+1. **Pending** — items still to be built. Each has priority + impact + effort estimates.
+2. **Removed** — items evaluated and rejected. The reason column explains why (saves us from re-proposing them).
+3. **Completed** — everything shipped, grouped by category. The `#` column is the historical item number (don't renumber — it breaks references in commit messages and other docs).
+4. **Pending — Details** — long-form explanations for complex pending items.
+
+### Category legend
+
+| Category | What it means |
+|----------|---------------|
+| **Indicators** | A new signal the bot reads (e.g. RSI, VWAP, MACD — explained in [STRATEGY_V2 Glossary](STRATEGY_V2.md#glossary--every-term-explained)). |
+| **Risk** | A guard that prevents bad trades or limits losses (stop-loss rules, exposure caps, circuit breaker). |
+| **Execution** | How orders are placed, priced, or sequenced (LIMIT vs MARKET, entry timing, target compression). |
+| **Market Intel** | External market context that biases decisions (NIFTY trend, VIX, FII/DII, expiry). |
+| **Infra** | Plumbing — database schema, logging, backups, CLI flags. |
+| **Bug Fix** | A defect corrected, as opposed to a new feature. |
+
+### How to add a new item
+
+1. Pick the next available number (currently 140 and above are free).
+2. Add it under the right category in **Completed** (one-line description).
+3. If it changes user-visible behaviour, also:
+   - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
+   - If it introduces a new technical term, add a glossary entry there.
+   - Bump the completed-count heading.
+4. If the idea is still planned, add it to **Pending** with priority / impact / effort.
+5. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+
+---
+
 ## Status Overview
 
 ### Pending (3 items)

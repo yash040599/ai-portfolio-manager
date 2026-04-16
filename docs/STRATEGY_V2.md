@@ -25,17 +25,18 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Modes at a Glance](#modes-at-a-glance)
-3. [Strategy Flow](#strategy-flow)
+2. [Glossary — Every Term Explained](#glossary--every-term-explained)
+3. [Modes at a Glance](#modes-at-a-glance)
+4. [Strategy Flow](#strategy-flow)
    - [Phase 1 — Pre-Market Scan](#phase-1--pre-market-scan-900-am--free)
    - [Phase 2 — Stock Selection](#phase-2--stock-selection)
    - [Phase 3 — Entry](#phase-3--entry)
    - [Phase 4 — Monitor Loop](#phase-4--monitor-loop-920-am--310-pm)
    - [Phase 5 — Square Off & Report](#phase-5--square-off--report)
-4. [Technical Indicators (14)](#technical-indicators-14)
-5. [Candlestick Patterns (14)](#candlestick-patterns-14)
-6. [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks)
-7. [Risk Management — During Trade](#risk-management--during-trade)
+5. [Technical Indicators (14)](#technical-indicators-14)
+6. [Candlestick Patterns (14)](#candlestick-patterns-14)
+7. [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks)
+8. [Risk Management — During Trade](#risk-management--during-trade)
    - [Exchange SL-M Orders](#exchange-sl-m-orders-use_exchange_sl--true)
    - [Trailing Stop-Loss](#trailing-stop-loss)
    - [Time-Decay Target Reduction](#time-decay-target-reduction)
@@ -45,23 +46,23 @@
    - [Loss-Adjusted Budget](#loss-adjusted-budget)
    - [Stagnant Position Exit (NoAI)](#stagnant-position-exit-noai-only)
    - [Contrary Signal Protection](#contrary-signal-protection)
-8. [Market Intelligence](#market-intelligence)
+9. [Market Intelligence](#market-intelligence)
    - [India VIX Adjustments](#india-vix-adjustments)
    - [VIX Spike Protection](#vix-spike-protection)
    - [NIFTY Regime Tracking](#nifty-regime-tracking)
    - [FII/DII Flow Bias](#fiidii-flow-bias)
    - [Pre-Open Auction Data](#pre-open-auction-data)
    - [Thursday Expiry Adjustments](#thursday-expiry-adjustments)
-9. [Dynamic Position Sizing](#dynamic-position-sizing)
-   - [MAX_POSITIONS Auto-Scaling](#max_positions-auto-scaling)
-   - [Score-Weighted Sizing (NoAI)](#score-weighted-sizing-noai)
-   - [Dynamic Score Threshold (NoAI)](#dynamic-score-threshold-noai)
-10. [Configuration Quick Reference](#configuration-quick-reference)
-11. [Database & Verification](#database--verification)
-12. [Design Decisions & Rationale](#design-decisions--rationale)
-13. [V2 Review Cycle Changes (April 2026)](#v2-review-cycle-changes-april-2026)
-14. [V1 — Deprecated](#v1--deprecated)
-15. [Known Limitations](#known-limitations)
+10. [Dynamic Position Sizing](#dynamic-position-sizing)
+    - [MAX_POSITIONS Auto-Scaling](#max_positions-auto-scaling)
+    - [Score-Weighted Sizing (NoAI)](#score-weighted-sizing-noai)
+    - [Dynamic Score Threshold (NoAI)](#dynamic-score-threshold-noai)
+11. [Configuration Quick Reference](#configuration-quick-reference)
+12. [Database & Verification](#database--verification)
+13. [Design Decisions & Rationale](#design-decisions--rationale)
+14. [V2 Review Cycle Changes (April 2026)](#v2-review-cycle-changes-april-2026)
+15. [V1 — Deprecated](#v1--deprecated)
+16. [Known Limitations](#known-limitations)
 
 ---
 
@@ -100,6 +101,120 @@ python main.py --mode trade --v1
 ```
 
 V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit breaker, crash recovery) and adds: candle pattern detection, 14-indicator scoring, auto-protect on contrary signals, stagnant exit, VIX/expiry adjustments, direction diversification, and fallback candidate promotion.
+
+---
+
+## Glossary — Every Term Explained
+
+This is the single place to look up any unfamiliar term used in the rest of the document. Each entry has: **what it means** in plain English → **how the bot uses it**. If you add a new indicator or concept to the code, add its entry here too.
+
+### 1. Market Basics
+
+| Term | Full form / Plain-English meaning | How the bot uses it |
+|------|-----------------------------------|---------------------|
+| **NSE** | National Stock Exchange of India. Where Indian stocks are traded. | Every trade goes to NSE via Zerodha's API. |
+| **Zerodha / Kite Connect** | Zerodha is an Indian stock broker; Kite Connect is their API. | All order placement, live prices, and historical data come from Kite. |
+| **NIFTY 50 / 100 / 200** | Index of the top 50 / 100 / 200 most-traded Indian stocks. | `SCAN_UNIVERSE` config picks one — the bot only considers stocks from this list. |
+| **Intraday** | A trade you open **and** close on the same day. | Every bot trade is intraday — the bot never holds a stock overnight. |
+| **MIS** | Margin Intraday Square-off. Zerodha's product type for intraday trades (lower margin, auto-closed end of day). | Bot places all orders as `product=MIS`. |
+| **Long** | Buy now, sell later at a higher price to profit. | When composite score is **positive**, bot goes long ("BUY"). |
+| **Short** | Sell first (borrowed shares), buy back later at a lower price to profit. Only allowed in MIS intraday. | When composite score is **negative**, bot goes short ("SELL"). |
+| **Square-off** | Closing an open position (reverse trade). | Bot auto-squares all positions at 3:10 PM (`SQUARE_OFF_HOUR`). |
+| **F&O expiry** | Futures & Options contracts expire every Thursday in India. Causes extra volatility. | Thursday triggers special rules (wider SL, fewer trades, longer observation). |
+
+### 2. Price & Volume
+
+| Term | Full form / Plain-English meaning | How the bot uses it |
+|------|-----------------------------------|---------------------|
+| **OHLC** | Open / High / Low / Close prices of a candle. | Every candle stored in the cache has these 4 values; most indicators read from them. |
+| **LTP** | Last Traded Price — the current live price. | Used for live-quote checks, LIMIT order pricing, SL/target monitoring. |
+| **Tick** | The smallest price increment allowed for a stock (Rs.0.05 for most, Rs.0.50 for high-priced). | LIMIT orders are rounded to the nearest valid tick. |
+| **Bid / Ask** | Highest price a buyer will pay (bid) / lowest a seller will accept (ask). | Fetched from quote depth to compute spread. |
+| **Spread** | `(ask − bid) / LTP × 100`. Cost of instantly entering + exiting. | If spread > `MAX_SPREAD_PCT` (0.3%), skip trade — spread eats profit. |
+| **Volume** | Number of shares traded in a candle. | High volume confirms patterns; low volume warns of weak signal. |
+| **RVol** | Relative Volume = today's volume ÷ 20-period average volume. | `RVol ≥ 0.7` required for entry (low-volume entries often reverse). |
+| **Gap** | Price difference between yesterday's close and today's open. | Gap ≥ `PREOPEN_GAP_SIGNIFICANT_PCT` (1%) with volume signals institutional interest. |
+
+### 3. Order Types
+
+| Term | Plain-English meaning | How the bot uses it |
+|------|----------------------|---------------------|
+| **MARKET order** | "Execute immediately at whatever price is available." Fast, but can get adverse fills. | Used for exits (guaranteed fill) and as LIMIT fallback. |
+| **LIMIT order** | "Only fill at this price or better." Cheaper fills, but may not execute. | Used for entries — LTP ± 1 tick for 8 seconds, then MARKET fallback. |
+| **SL-M order** | Stop-Loss Market. Sits on the exchange; auto-triggers a MARKET order when price breaches the stop. | Every entry has a matching SL-M so exits happen even if the bot disconnects. |
+
+### 4. Risk Terms
+
+| Term | Plain-English meaning | How the bot uses it |
+|------|----------------------|---------------------|
+| **Stop-Loss (SL)** | Pre-set "exit now" price to cap loss. | Every trade has an SL computed from ATR. |
+| **Target** | Pre-set "take profit" price. | Every trade has a target; also compressed late in the day. |
+| **R:R ratio** | Risk-to-Reward. `(target distance) / (SL distance)`. 1.5:1 = you risk Rs.1 to potentially win Rs.1.50. | Minimum R:R floor gates entries (1.3 in morning, 1.0 late). |
+| **Trailing stop** | An SL that moves up as the trade profits, locking in gains. | At 1.5× risk profit, take 33% off the table + move SL to lock 50% of gain. |
+| **Drawdown** | Temporary dip in account value. | Circuit breaker stops trading if daily loss > 3% of budget. |
+| **ATR** | Average True Range. Measures recent price swing size (volatility). | SL = entry ± `1.5 × ATR`; wider for volatile stocks, tighter for calm ones. |
+
+### 5. Candlesticks
+
+A **candle** represents price action over a fixed time window (we use 15-minute candles). It has a **body** (between open and close) and **wicks / shadows** (the high and low extremes).
+
+- **Bullish candle** — close > open (green). Buyers won that window.
+- **Bearish candle** — close < open (red). Sellers won.
+
+A **candlestick pattern** is a specific shape (single-candle or multi-candle) that historically precedes a price move. Example: a *Hammer* has a tiny body near the top and a long lower wick, suggesting sellers pushed price down but buyers stepped in hard.
+
+The bot detects 14 patterns (listed in [§6 Candlestick Patterns](#candlestick-patterns-14)), multiplies strength by volume confirmation, and decays strength with age (fresh = 1.0×, 1 candle old = 0.7×, 2 old = 0.4×).
+
+### 6. Technical Indicators
+
+These are math formulas computed on the last 20–30 candles. Each produces a signal that contributes to the composite score.
+
+| Indicator | Full form | One-line meaning | How the bot uses it |
+|-----------|-----------|------------------|---------------------|
+| **EMA** | Exponential Moving Average | Smoothed average price weighted toward recent candles. | EMA(9) vs EMA(21) crossover = momentum shift. Score ±2 on cross, ±1 on spread. |
+| **RSI** | Relative Strength Index (0–100) | Momentum oscillator. > 70 overbought (likely to pull back), < 30 oversold (likely to bounce). | Score boost near extremes; hard **block** on chasing extremes (BUY at RSI > 75, SELL at RSI > 70, etc.). |
+| **VWAP** | Volume-Weighted Average Price | The "fair value" institutions trade around — average price weighted by volume since market open. | Above VWAP = buyers in control. Bot blocks trading *against* VWAP after 10:15 AM. |
+| **VWAP SD Bands** | Standard-Deviation bands around VWAP | ±1σ and ±2σ bands. Price at ±2σ = stretched, likely mean-revert. | ±2σ = strong signal (±1), ±1σ = moderate (±0.5). |
+| **MACD** | Moving Average Convergence Divergence | Short EMA − long EMA, with a signal line. Histogram shows momentum strength. | Growing histogram confirms trend; shrinking warns of exhaustion. ±0.5 to ±1. |
+| **SuperTrend** | ATR-based trend-following line | Sits above price in downtrend, below in uptrend. Flips = trend change. | Main trend indicator. ±3 on fresh flip, ±1 on continuation. |
+| **ORB** | Opening Range Breakout | The high/low of the day's early candles. Breaking either signals directional move. | Uses 2nd candle (9:30–9:45) to avoid opening auction noise. Score decays through the day. |
+| **Bollinger Bands** | Price channel at ±2σ around 20-period mean | Narrow bands (**squeeze**) signal a big move is coming. | Breakout from a squeeze adds ±0.5 directionally. |
+| **ADX** | Average Directional Index | Measures trend *strength* (not direction). 0–100. | ADX < 20 = weak trend (halve trend scores); > 30 = strong (+0.5 boost). |
+| **StochRSI** | Stochastic of RSI | Faster oscillator — where RSI sits within its own recent range. | Info-only in NoAI; entry-timing signal in Claude prompts (BULLISH_CROSS, OVERSOLD, etc.). |
+| **Fibonacci retracement** | 38.2% / 50% / 61.8% of previous-day range | Levels where price often bounces on pullbacks. | Near support in uptrend = +0.5; near resistance in downtrend = −0.5. |
+| **Prev-Day S&R** | Previous-day High / Low / Close levels | Yesterday's extremes act as today's magnets / barriers. | AT_SUPPORT = +1, AT_RESISTANCE = −1, PIVOT = ±0.5. |
+| **Daily EMA Bias** | 9/21 EMA on daily candles | Higher-timeframe trend context. | ±1 when daily EMA spread > 1% (clear trend). |
+| **Score Momentum** | Δ (current score − previous scan's score) | Is the setup getting stronger or weaker? | Large positive Δ = accelerating (good). **Large \|Δ\| ≥ 8 blocks entry** — fresh reversal, wait one cycle. |
+
+### 7. Market-Wide Context
+
+| Term | Full form / Plain-English meaning | How the bot uses it |
+|------|-----------------------------------|---------------------|
+| **NIFTY trend** | Is the overall market going up, down, or sideways today? | Against-trend signals need \|score\| ≥ 3 (trades with the broader market get priority). |
+| **VIX** | India Volatility Index. Measures expected 30-day NIFTY volatility. | VIX > 20 = fear → reduce positions + raise score bar. VIX spike > 10% intraday → pause entries. |
+| **FII / DII** | Foreign / Domestic Institutional Investors. Big money movers. | Previous day's net buy/sell → morning bias (both buying = bullish, etc.). |
+| **Pre-open auction** | 9:00–9:08 AM session that sets the opening price. | Gap ≥ 1% with high volume flagged as "institutional interest". |
+
+### 8. Position-Lifecycle Terms
+
+| Term | Plain-English meaning | How the bot uses it |
+|------|----------------------|---------------------|
+| **Circuit breaker** | Automatic "stop trading" trigger when daily loss exceeds 3% of budget. | Pauses 30 min, resumes with loss-adjusted budget. Max 2 trips, then day is done. |
+| **Whipsaw** | Getting stopped out repeatedly by rapid reversals. | 3 consecutive SL exits → pause new entries for 30 min. |
+| **Time decay** | The fact that late-day trades have less time to hit targets. | After 2 PM, open targets compressed by 25%. |
+| **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
+| **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only: after 45 min, if progress < 0.3%, exit to free the slot. |
+
+### 9. Bot-Specific Concepts
+
+| Term | Plain-English meaning |
+|------|----------------------|
+| **Composite score** | Sum of all 14 indicator contributions. Range −24 to +24. Sign = direction, magnitude = conviction. |
+| **Pre-filter** | The free computation step that shortlists ~15 candidates from ~100 scanned stocks. |
+| **Fallback candidate** | Stocks beyond the top-N that get promoted if primary picks fail entry checks. |
+| **Auto-protect** | Automatic SL tightening when the 15-min re-scan shows a position's score has flipped against it. |
+| **NoAI mode** | Default mode — pure math picks trades, Rs.0 in API costs. |
+| **Claude AI mode** | Optional `--ai` flag — Claude ranks pre-filtered candidates and reviews open positions. |
 
 ---
 

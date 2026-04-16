@@ -32,6 +32,25 @@ V1 is a **Claude-first** intraday trading strategy. Claude AI receives a table o
 
 ---
 
+## Glossary
+
+V1 uses **the same market, order, and risk terminology as V2**. Rather than duplicate, see the master glossary:
+
+> **→ [STRATEGY_V2.md § Glossary — Every Term Explained](STRATEGY_V2.md#glossary--every-term-explained)**
+
+That section covers NSE / MIS / LTP / OHLC / spread / RVol, every order type (MARKET / LIMIT / SL-M), every risk term (SL / target / R:R / trailing stop / ATR), candlesticks, all technical indicators (EMA, RSI, VWAP, MACD, SuperTrend, Bollinger, ADX, StochRSI, Fibonacci, Prev-Day S&R, Daily EMA, Score Momentum), market-wide context (NIFTY trend, VIX, FII/DII, pre-open), and position-lifecycle terms (circuit breaker, whipsaw, time decay, adopted position, stagnant exit).
+
+### V1-specific terms
+
+| Term | Plain-English meaning | How V1 uses it |
+|------|----------------------|----------------|
+| **Claude prompt** | The structured text sent to Claude describing budget, universe, prices, trend, and rules. Claude reads it and replies with trade picks. | V1 sends one scan prompt at market open, then review prompts every 20 minutes for open positions. |
+| **Rationale** | The free-text reason Claude gives for each pick ("bullish engulfing on HDFCBANK near prev-day support with NIFTY strong"). | Stored alongside each trade for later review. V2 NoAI auto-generates a similar string from indicator values. |
+| **Periodic review** | Every 20 minutes, V1 sends open positions back to Claude asking HOLD / EXIT / ADJUST_SL / ADJUST_TARGET. | Claude can also suggest new trades mid-day. V2 replaces this with the stagnant-exit rule (NoAI) or 30-minute reviews (AI mode). |
+| **Rank/veto role** (V2 concept) | In V2 Claude's job is narrowed to ranking a pre-filtered shortlist. V1 Claude generates picks from raw prices. | V1 = Claude is the scorer; V2 = code is the scorer, Claude is the tiebreaker. |
+
+---
+
 ## Strategy Flow
 
 ### Phase 1 — Pre-Market Scan (9:00 AM)
