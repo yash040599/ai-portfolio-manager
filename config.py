@@ -320,6 +320,13 @@ class Config:
     EXPIRY_POSITION_REDUCTION: int   = 1
     EXPIRY_SCORE_BUMP:         float = 1.0   # was 0.5, raised: fewer slots = higher bar
     EXPIRY_STAGNANT_EXTRA_MINUTES: int = 15  # extend stagnant timer on expiry days
+    EXPIRY_ENTRY_DELAY_MINUTES:    int = 15  # longer observation on expiry (vs 5 min normal)
+    EXPIRY_MAX_TRADES_PER_DAY:     int = 5   # cap total trades on expiry to reduce churn
+
+    # ── Daily Trade Cap ─────────────────────────────────────────
+    # Prevents overtrading churn. Each exit+entry cycle costs ~Rs.36
+    # in fixed charges. Set to 0 for unlimited.
+    MAX_TRADES_PER_DAY: int = 12
 
     # ══════════════════════════════════════════════════════════════
     # V2 — CANDLE STRATEGY SETTINGS (default strategy)
@@ -373,7 +380,8 @@ class Config:
     # distance × qty) is less than this amount in Rs.. Prevents
     # entering trades where brokerage + STT eats all the profit.
     # Round-trip charges for small intraday trades ~Rs.40-50.
-    MIN_EXPECTED_PROFIT: float = 50.0
+    # Set to 2× charges to ensure trades are economically viable.
+    MIN_EXPECTED_PROFIT: float = 75.0
 
     # V2_MIN_SCORE: minimum absolute technical score for a stock to
     # pass the pre-filter. Lower = more candidates for Claude to

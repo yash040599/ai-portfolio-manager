@@ -74,6 +74,10 @@ class OrderEngine:
         self._consecutive_sl_count: int = 0
         self._sl_pause_until: float = 0.0   # time.time() when pause ends
 
+        # Track symbols exited as stagnant — prevents re-entering same
+        # stock in the same direction (churn loop prevention).
+        self._stagnant_exits: set[str] = set()  # "SYMBOL_SIDE" strings
+
         # ── Order failure tracking ────────────────────────────────
         # Consecutive order placement failures (resets on success).
         # When this reaches ORDER_FAILURE_LIMIT, the engine signals
@@ -757,8 +761,12 @@ class OrderEngine:
           9. Short entry cutoff
          10. Max re-entries per stock + declining score block
          11. RSI contradiction filter (no SELL when RSI>70, no BUY when RSI<30)
-         12. Place order → scale SL/target to actual fill price
-         13. Place exchange SL-M for instant stop-loss execution
+         12. Daily trade cap + expiry trade cap
+         13. Stagnant churn guard (no re-enter stagnant exits)
+         14. VWAP trend block (no BUY below VWAP, no SELL above VWAP)
+         15. Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+         16. Place order → scale SL/target to actual fill price
+         17. Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -1120,6 +1128,73 @@ class OrderEngine:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} < 30 — too oversold to "
                     f"buy (strong selling pressure). Skipping."
+                )
+                return False
+
+        # ── Daily trade cap ───────────────────────────────────────
+        # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
+        max_daily = self.cfg.MAX_TRADES_PER_DAY
+        if getattr(self.cfg, '_expiry_applied', False):
+            max_daily = min(max_daily, self.cfg.EXPIRY_MAX_TRADES_PER_DAY)
+        if max_daily > 0:
+            total_trades = len(self.positions)  # open + closed
+            if total_trades >= max_daily:
+                self.log.warning(
+                    f"Daily trade cap reached: {total_trades}/{max_daily} trades — "
+                    f"no more entries today"
+                )
+                return False
+
+        # ── Stagnant churn guard ──────────────────────────────────
+        # Don't re-enter a stock+direction that was exited as stagnant.
+        stagnant_key = f"{symbol}_{side}"
+        if stagnant_key in self._stagnant_exits:
+            self.log.warning(
+                f"{symbol}: already exited as stagnant ({side}) — "
+                f"skipping to avoid churn loop"
+            )
+            return False
+
+        # ── VWAP trend block ──────────────────────────────────────
+        # Don't BUY below VWAP or SELL above VWAP — fighting institutional flow.
+        snap_str = trade.get("_indicator_snapshot", "")
+        if snap_str:
+            try:
+                import json as _json
+                snap = _json.loads(snap_str)
+                vwap_dev = snap.get("vwap_dev", 0)
+                if vwap_dev != 0:
+                    if side == "BUY" and vwap_dev < -0.3:
+                        self.log.warning(
+                            f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
+                            f"BUY fights institutional selling pressure. Skipping."
+                        )
+                        return False
+                    if side == "SELL" and vwap_dev > 0.3:
+                        self.log.warning(
+                            f"{symbol}: price {vwap_dev:+.1f}% above VWAP — "
+                            f"SELL fights institutional buying pressure. Skipping."
+                        )
+                        return False
+            except Exception:
+                pass
+
+        # ── Net-of-charges R:R check ──────────────────────────────
+        # Gross R:R may look 1.5:1, but after charges on small positions
+        # the effective R:R can be much worse. Ensure net profit > 1.0× net risk.
+        if qty > 0 and entry > 0:
+            gross_profit = abs(target - entry) * qty
+            gross_risk = abs(entry - sl) * qty
+            buy_val = entry * qty
+            sell_val = entry * qty  # approximate
+            charges = Config.calculate_charges(buy_val, sell_val, 2)
+            round_trip_charges = charges["total_tax_and_charges"]
+            net_profit = gross_profit - round_trip_charges
+            net_risk = gross_risk + round_trip_charges
+            if net_risk > 0 and net_profit / net_risk < 1.0:
+                self.log.warning(
+                    f"{symbol}: net-of-charges R:R {net_profit / net_risk:.2f}:1 "
+                    f"< 1.0:1 (charges Rs.{round_trip_charges:.0f} eat the edge). Skipping."
                 )
                 return False
 
@@ -1894,6 +1969,13 @@ class OrderEngine:
         # On expiry days (fewer positions), extend timer to reduce churn
         if getattr(self.cfg, '_expiry_applied', False):
             stagnant_mins += self.cfg.EXPIRY_STAGNANT_EXTRA_MINUTES
+        # Midday lull (12:00-1:30) — positions aren't dead, just in
+        # low-liquidity period. Extend timer by 15 min to avoid
+        # false stagnant exits during the lull.
+        now_hour = now_ist().hour
+        now_min = now_ist().minute
+        if now_hour == 12 or (now_hour == 13 and now_min <= 30):
+            stagnant_mins += 15
         min_move_pct  = self.cfg.STAGNANT_EXIT_MIN_MOVE_PCT
         if stagnant_mins <= 0:
             return 0
@@ -1944,6 +2026,7 @@ class OrderEngine:
                     f"P&L: Rs.{pnl:+,.2f}"
                 )
                 self.exit_position(pos, current_price, "STAGNANT_EXIT")
+                self._stagnant_exits.add(f"{pos['symbol']}_{side}")
                 closed += 1
 
         return closed

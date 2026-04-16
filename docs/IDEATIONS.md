@@ -119,9 +119,34 @@ These require significantly more trade history, new infrastructure, or academic-
 
 **Why future**: Thread safety concerns, cross-platform key handling complexity.
 
+### F3. Options Chain Intelligence (Expiry Days)
+
+**What it is**: Use Zerodha Kite options chain data to improve Thursday expiry-day decisions.
+
+**Signals**:
+- **Put-Call Ratio (PCR)**: Volume of puts / calls. PCR > 1.2 = bearish. PCR < 0.5 = bullish. Contrarian at extremes.
+- **Max Pain**: Strike price where maximum options expire worthless. NIFTY gravitates toward max pain on expiry. If NIFTY is far from max pain, direction trades are riskier.
+- **OI Buildup**: Rising OI + rising price = strong trend. Rising OI + falling price = bearish pressure.
+
+**Data source**: Kite Connect instruments API + quotes for option strikes. Need to fetch ~40-60 strikes for NIFTY CE+PE.
+
+**Usage**: On Thursday, compute max-pain and PCR before first scan. If NIFTY is within 0.5% of max-pain → reduce positions further or skip trading. If PCR is extreme → bias direction accordingly.
+
+**Why future**: New data pipeline (options module), only relevant 1 day/week. Higher ROI to fix other gaps first.
+
+### F4. High-OI Stock Filter (Expiry Days)
+
+**What it is**: On expiry Thursdays, stocks with massive open interest in near-strike options get "pinned" — price oscillates near the strike as option writers defend their positions. This creates fake breakouts that trap directional traders.
+
+**Data source**: Same Kite options API. Check individual stock F&O OI levels.
+
+**Filter**: If a stock has OI > threshold at a strike within 1% of current price → skip on expiry day. Only ~30 of NIFTY100 have active F&O, so the filter is narrow.
+
+**Why future**: Requires determining what OI level counts as "high" (needs historical context). Dependent on F3 options module.
+
 ---
 
-### F3. Pairs Trading / Statistical Arbitrage
+### F5. Pairs Trading / Statistical Arbitrage
 
 **What it is**: Trade the spread between two correlated stocks. When the spread widens beyond historical norms, go long the underperformer and short the outperformer.
 

@@ -1068,6 +1068,12 @@ class PortfolioManager:
         self.cfg.MAX_POSITIONS = max(1, self.cfg.MAX_POSITIONS - reduce_pos)
         self.cfg.V2_MIN_SCORE += bump_score
 
+        # Override entry delay for expiry — longer observation to avoid
+        # F&O settlement-driven opening volatility (first 15-30 min).
+        if self.cfg.EXPIRY_ENTRY_DELAY_MINUTES > self.cfg.ENTRY_DELAY_MINUTES:
+            self._pre_expiry_entry_delay = self.cfg.ENTRY_DELAY_MINUTES
+            self.cfg.ENTRY_DELAY_MINUTES = self.cfg.EXPIRY_ENTRY_DELAY_MINUTES
+
         self.log.info(
             f"📅 Thursday F&O expiry: ATR multiplier → {self.cfg.ATR_MULTIPLIER:.1f}, "
             f"max positions → {self.cfg.MAX_POSITIONS}, "

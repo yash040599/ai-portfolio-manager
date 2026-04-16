@@ -100,7 +100,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (15 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption, crash recovery.
+**Shared across both modes:** pre-filter, entry pipeline (19 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption, crash recovery.
 
 ---
 
@@ -171,7 +171,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (15 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (19 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -287,7 +287,7 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 15 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 19 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
@@ -297,7 +297,7 @@ Every trade must pass these 15 checks in order. If any fails, the trade is rejec
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
 | 3b | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | Target compressed. R:R floor per time period ensures compressed R:R is still worth trading |
-| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.50` | Skip if `\|target − entry\| × qty < Rs.50` |
+| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.75` | Skip if `\|target − entry\| × qty < Rs.75` (2× round-trip charges) |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
 | 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
 | 8 | **Duplicate guard** | — | No two positions in same stock |
@@ -307,6 +307,10 @@ Every trade must pass these 15 checks in order. If any fails, the trade is rejec
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 | 13 | **Declining re-entry block** | — | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
 | 14 | **RSI contradiction filter** | RSI > 70 / RSI < 30 | Block SELL when RSI > 70 (too much buying pressure to short). Block BUY when RSI < 30 (too much selling pressure to buy) |
+| 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5` |
+| 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
+| 17 | **VWAP trend block** | VWAP deviation > 0.3% | Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP |
+| 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
 
 ### R:R Floor System
 
@@ -467,6 +471,8 @@ On weekly F&O expiry Thursdays, NIFTY stocks see wider swings due to options set
 | Position reduction | `EXPIRY_POSITION_REDUCTION = 1` | MAX_POSITIONS reduced by 1 |
 | Score bump | `EXPIRY_SCORE_BUMP = 1.0` | Added to V2_MIN_SCORE → demand stronger signals |
 | Stagnant timer | `EXPIRY_STAGNANT_EXTRA_MINUTES = 15` | Extends stagnant exit timer to reduce churn on fewer slots |
+| Entry delay | `EXPIRY_ENTRY_DELAY_MINUTES = 15` | Longer observation — F&O settlement creates 15-30 min of artificial opening volatility |
+| Trade cap | `EXPIRY_MAX_TRADES_PER_DAY = 5` | Caps total trades on expiry to prevent churn (each cycle costs ~Rs.36) |
 
 ---
 

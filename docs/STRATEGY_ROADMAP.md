@@ -27,7 +27,7 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (106 items)
+### Completed (114 items)
 
 | # | Improvement | Category |
 |---|------------|----------|
@@ -139,6 +139,15 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | **Observability (2)** | | |
 | 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
 | 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
+| **Strategy Gap Fixes (8)** | | |
+| 122 | Expiry entry delay (15 min vs 5 min normal) | Risk |
+| 123 | Expiry max trades cap (5/day) | Risk |
+| 124 | Daily trade cap (12/day) to prevent churn | Risk |
+| 125 | VWAP trend block (no BUY below VWAP, no SELL above VWAP) | Risk |
+| 126 | Midday lull stagnant timer extension (12:00-1:30 +15 min) | Execution |
+| 127 | MIN_EXPECTED_PROFIT raised 50 → 75 (2× charges) | Execution |
+| 128 | Stagnant churn guard (no re-enter stagnant exits same direction) | Risk |
+| 129 | Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs) | Risk |
 
 ---
 
