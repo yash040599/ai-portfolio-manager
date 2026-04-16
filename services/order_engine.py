@@ -1133,14 +1133,16 @@ class OrderEngine:
 
         # ── Daily trade cap ───────────────────────────────────────
         # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
+        # Intentionally counts EXTERNAL/adopted positions too — manual
+        # trades on Zerodha still use slots and add to daily churn.
         max_daily = self.cfg.MAX_TRADES_PER_DAY
         if getattr(self.cfg, '_expiry_applied', False):
             max_daily = min(max_daily, self.cfg.EXPIRY_MAX_TRADES_PER_DAY)
         if max_daily > 0:
-            total_trades = len(self.positions)  # open + closed
+            total_trades = len(self.positions)  # open + closed + external
             if total_trades >= max_daily:
                 self.log.warning(
-                    f"Daily trade cap reached: {total_trades}/{max_daily} trades — "
+                    f"{symbol}: daily trade cap reached ({total_trades}/{max_daily}) — "
                     f"no more entries today"
                 )
                 return False
@@ -1157,27 +1159,30 @@ class OrderEngine:
 
         # ── VWAP trend block ──────────────────────────────────────
         # Don't BUY below VWAP or SELL above VWAP — fighting institutional flow.
-        snap_str = trade.get("_indicator_snapshot", "")
-        if snap_str:
-            try:
-                import json as _json
-                snap = _json.loads(snap_str)
-                vwap_dev = snap.get("vwap_dev", 0)
-                if vwap_dev != 0:
-                    if side == "BUY" and vwap_dev < -0.3:
-                        self.log.warning(
-                            f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
-                            f"BUY fights institutional selling pressure. Skipping."
-                        )
-                        return False
-                    if side == "SELL" and vwap_dev > 0.3:
-                        self.log.warning(
-                            f"{symbol}: price {vwap_dev:+.1f}% above VWAP — "
-                            f"SELL fights institutional buying pressure. Skipping."
-                        )
-                        return False
-            except Exception:
-                pass
+        # Skip during first 45 min (before 10:00) when VWAP has < 3 candles
+        # of data and isn't statistically meaningful yet.
+        if now.hour >= 10:
+            snap_str = trade.get("_indicator_snapshot", "")
+            if snap_str:
+                try:
+                    import json as _json
+                    snap = _json.loads(snap_str)
+                    vwap_dev = snap.get("vwap_dev", 0)
+                    if vwap_dev != 0:
+                        if side == "BUY" and vwap_dev < -0.3:
+                            self.log.warning(
+                                f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
+                                f"BUY fights institutional selling pressure. Skipping."
+                            )
+                            return False
+                        if side == "SELL" and vwap_dev > 0.3:
+                            self.log.warning(
+                                f"{symbol}: price {vwap_dev:+.1f}% above VWAP — "
+                                f"SELL fights institutional buying pressure. Skipping."
+                            )
+                            return False
+                except Exception:
+                    pass
 
         # ── Net-of-charges R:R check ──────────────────────────────
         # Gross R:R may look 1.5:1, but after charges on small positions
