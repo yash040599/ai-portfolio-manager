@@ -100,7 +100,7 @@ V2 inherits all risk management from V1 (ATR-based SL, trailing stops, circuit b
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (12 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption, crash recovery.
+**Shared across both modes:** pre-filter, entry pipeline (15 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption, crash recovery.
 
 ---
 
@@ -171,7 +171,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (12 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (15 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -287,13 +287,13 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 12 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 15 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
-| 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable |
+| 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable (Kite API doesn't provide average_volume) |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
 | 3b | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | Target compressed. R:R floor per time period ensures compressed R:R is still worth trading |
@@ -303,8 +303,10 @@ Every trade must pass these 12 checks in order. If any fails, the trade is rejec
 | 8 | **Duplicate guard** | — | No two positions in same stock |
 | 9 | **Sector concentration** | Max 2 per sector | 12 sectors in SECTOR_MAP |
 | 10 | **Direction diversification** | Dynamic (score-aware) | Score ≥5: all slots in same dir allowed. Score <5: max `N−1` in same direction. Prevents forcing weak counter-trend trades on trending days |
-| 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM |
+| 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM. Post-cutoff SELL slots reallocated to BUY (if BUY candidates with score ≥4.0 exist) |
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
+| 13 | **Declining re-entry block** | — | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
+| 14 | **RSI contradiction filter** | RSI > 70 / RSI < 30 | Block SELL when RSI > 70 (too much buying pressure to short). Block BUY when RSI < 30 (too much selling pressure to buy) |
 
 ### R:R Floor System
 
@@ -463,7 +465,8 @@ On weekly F&O expiry Thursdays, NIFTY stocks see wider swings due to options set
 |-----------|--------|--------|
 | ATR bump | `EXPIRY_ATR_BUMP = 0.3` | Added to ATR_MULTIPLIER → wider SLs |
 | Position reduction | `EXPIRY_POSITION_REDUCTION = 1` | MAX_POSITIONS reduced by 1 |
-| Score bump | `EXPIRY_SCORE_BUMP = 0.5` | Added to V2_MIN_SCORE → demand stronger signals |
+| Score bump | `EXPIRY_SCORE_BUMP = 1.0` | Added to V2_MIN_SCORE → demand stronger signals |
+| Stagnant timer | `EXPIRY_STAGNANT_EXTRA_MINUTES = 15` | Extends stagnant exit timer to reduce churn on fewer slots |
 
 ---
 
@@ -597,7 +600,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `VIX_HIGH_SCORE_BUMP` | 1.0 | Raise score threshold in high VIX |
 | `EXPIRY_ATR_BUMP` | 0.3 | Wider SLs on expiry Thursdays |
 | `EXPIRY_POSITION_REDUCTION` | 1 | Fewer positions on expiry |
-| `EXPIRY_SCORE_BUMP` | 0.5 | Higher score threshold on expiry |
+| `EXPIRY_SCORE_BUMP` | 1.0 | Higher score threshold on expiry |\n| `EXPIRY_STAGNANT_EXTRA_MINUTES` | 15 | Extend stagnant timer on expiry days |
 | `FII_DII_ENABLED` | True | Fetch FII/DII flow data |
 | `PREOPEN_ENABLED` | True | Fetch pre-open auction data |
 | `PREOPEN_GAP_SIGNIFICANT_PCT` | 1.0% | Significant gap threshold |

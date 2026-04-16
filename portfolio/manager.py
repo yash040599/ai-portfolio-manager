@@ -1053,6 +1053,7 @@ class PortfolioManager:
         if today.weekday() != 3:  # 3 = Thursday
             return
         self._expiry_applied = True
+        self.cfg._expiry_applied = True  # expose to order_engine for stagnant timer
 
         bump_atr   = self.cfg.EXPIRY_ATR_BUMP
         reduce_pos = self.cfg.EXPIRY_POSITION_REDUCTION

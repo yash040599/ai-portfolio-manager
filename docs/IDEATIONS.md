@@ -96,9 +96,32 @@ These require significantly more trade history, new infrastructure, or academic-
 
 **Why future**: Requires a simulation environment, reward shaping, thousands of trades for training, and V3 ML model must exist first.
 
+### F2. Interactive Terminal Mode
+
+**What it is**: Keyboard listener in the monitor loop allowing real-time user commands during trading.
+
+**Design**:
+- Use `msvcrt` (Windows) / `select` (Linux) for non-blocking key reads in the poll loop
+- Commands:
+  | Key/Command | Action |
+  |---|---|
+  | `r` or `Enter` | Trigger immediate rescan (skip waiting for next interval) |
+  | `s` | Show current status summary (positions, P&L, next scan time) |
+  | `q` | Graceful shutdown (square off + EOD) |
+  | `c <KEY> <VALUE>` | Change config at runtime (e.g. `c MAX_POSITIONS 4`) |
+  | `p` | Pause new entries (toggle) |
+
+**Considerations**:
+- Must not block the monitor loop — keyboard polling, not a prompt
+- Config changes need a safe subset (position limits, SL%, timeouts — not things that break mid-session)
+- Must play nicely with ANSI status line overwriting
+- Start with just `r` key for manual rescan (highest value, lowest risk), add rest incrementally
+
+**Why future**: Thread safety concerns, cross-platform key handling complexity.
+
 ---
 
-### F2. Pairs Trading / Statistical Arbitrage
+### F3. Pairs Trading / Statistical Arbitrage
 
 **What it is**: Trade the spread between two correlated stocks. When the spread widens beyond historical norms, go long the underperformer and short the outperformer.
 

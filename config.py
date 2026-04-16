@@ -318,7 +318,8 @@ class Config:
     # EXPIRY_SCORE_BUMP: added to V2_MIN_SCORE (demand stronger signals).
     EXPIRY_ATR_BUMP:           float = 0.3
     EXPIRY_POSITION_REDUCTION: int   = 1
-    EXPIRY_SCORE_BUMP:         float = 0.5
+    EXPIRY_SCORE_BUMP:         float = 1.0   # was 0.5, raised: fewer slots = higher bar
+    EXPIRY_STAGNANT_EXTRA_MINUTES: int = 15  # extend stagnant timer on expiry days
 
     # ══════════════════════════════════════════════════════════════
     # V2 — CANDLE STRATEGY SETTINGS (default strategy)

@@ -153,6 +153,17 @@ def fill_fy(fy_start: int) -> int:
         _cross_check_day_charges(date_str, positions, day_charges)
         external_counter: dict[str, int] = {}
 
+        # Skip this date entirely if Zerodha sheet-verified rows (ZV_)
+        # already exist. The sheet is the authoritative source — re-inserting
+        # bot rows alongside ZV_ rows creates duplicates with wrong aggregates.
+        has_sheet_rows = conn.execute(
+            "SELECT 1 FROM intraday_tax_ledger "
+            "WHERE date=? AND order_id LIKE 'ZV_%' LIMIT 1",
+            (date_str,),
+        ).fetchone()
+        if has_sheet_rows:
+            continue
+
         for pos in positions:
             if pos.get("status") != "CLOSED":
                 continue

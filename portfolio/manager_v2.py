@@ -793,6 +793,11 @@ class PortfolioManagerV2(PortfolioManager):
                     self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
                 self._last_candle_scan = time.time()
+                next_candle = now_ist() + datetime.timedelta(seconds=candle_rescan_interval)
+                self.log.info(
+                    f"Next candle re-scan: {next_candle.strftime('%H:%M:%S')} "
+                    f"({self.cfg.V2_CANDLE_RESCAN_MINUTES}min)"
+                )
 
             # ── Periodic NIFTY regime re-check (free) ─────────────
             nifty_recheck_interval = self.cfg.NIFTY_RECHECK_MINUTES * 60
@@ -871,6 +876,11 @@ class PortfolioManagerV2(PortfolioManager):
                         else:
                             self.log.info("Periodic opportunity scan: no new trades found")
                     self._last_opportunity_scan = time.time()
+                    next_opp = now_ist() + datetime.timedelta(seconds=opp_rescan_interval)
+                    self.log.info(
+                        f"Next opportunity scan: {next_opp.strftime('%H:%M:%S')} "
+                        f"({self.cfg.OPPORTUNITY_RESCAN_MINUTES}min)"
+                    )
 
             # ── Claude review (with candle context) ───────────────
             elapsed = time.time() - last_review_time

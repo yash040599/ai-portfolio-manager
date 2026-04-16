@@ -747,15 +747,18 @@ class OrderEngine:
         Entry pipeline (each step can reject the trade):
           1. Validate entry price vs live Zerodha quote
           2. Bid-ask spread check (illiquid stocks)
+          2b. Volume confirmation (RVol gate with scan-time fallback)
           3. ATR-based SL/target (pure ATR when available, config fallback otherwise)
           4. Late-entry target reduction (13:00 / 14:00 cutoffs)
           5. R:R floor check (time-based: morning 1.3, afternoon 1.2, late 1.0 + adaptive relaxation)
           6. Minimum profit check (must cover round-trip charges)
           7. Slippage simulation (dry-run only)
           8. Budget / max positions / duplicate / sector / direction guards
-          9. Short entry cutoff / max re-entries per stock
-         10. Place order → scale SL/target to actual fill price
-         11. Place exchange SL-M for instant stop-loss execution
+          9. Short entry cutoff
+         10. Max re-entries per stock + declining score block
+         11. RSI contradiction filter (no SELL when RSI>70, no BUY when RSI<30)
+         12. Place order → scale SL/target to actual fill price
+         13. Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -1078,13 +1081,45 @@ class OrderEngine:
         # ── Max re-entries per stock check ────────────────────────
         max_reentries = self.cfg.MAX_REENTRIES_PER_STOCK
         if max_reentries > 0:
-            past_entries = sum(
-                1 for p in self.positions if p["symbol"] == symbol
-            )
-            if past_entries >= max_reentries:
+            past_entries = [
+                p for p in self.positions if p["symbol"] == symbol
+            ]
+            if len(past_entries) >= max_reentries:
                 self.log.warning(
-                    f"Cannot enter {symbol}: already traded {past_entries} "
+                    f"Cannot enter {symbol}: already traded {len(past_entries)} "
                     f"time(s) today (max {max_reentries}). Skipping re-entry."
+                )
+                return False
+
+            # Block re-entry when score is declining (setup weakening)
+            if past_entries:
+                entry_score = abs(trade.get("_entry_score", 0))
+                prev_score = max(
+                    abs(p.get("_entry_score", 0) or 0) for p in past_entries
+                )
+                if entry_score < prev_score and prev_score > 0:
+                    self.log.warning(
+                        f"{symbol}: re-entry score {entry_score:.1f} < "
+                        f"previous {prev_score:.1f} (setup weakening) — "
+                        f"skipping declining re-entry"
+                    )
+                    return False
+
+        # ── RSI contradiction filter ──────────────────────────────
+        # Don't SELL (short) into strong buying pressure (RSI > 70)
+        # or BUY into strong selling pressure (RSI < 30).
+        entry_rsi = trade.get("_entry_rsi", 0) or 0
+        if entry_rsi > 0:
+            if side == "SELL" and entry_rsi > 70:
+                self.log.warning(
+                    f"{symbol}: RSI {entry_rsi:.0f} > 70 — too overbought to "
+                    f"short (strong buying pressure). Skipping."
+                )
+                return False
+            if side == "BUY" and entry_rsi < 30:
+                self.log.warning(
+                    f"{symbol}: RSI {entry_rsi:.0f} < 30 — too oversold to "
+                    f"buy (strong selling pressure). Skipping."
                 )
                 return False
 
@@ -1856,6 +1891,9 @@ class OrderEngine:
         Returns the number of positions closed.
         """
         stagnant_mins = self.cfg.STAGNANT_EXIT_MINUTES
+        # On expiry days (fewer positions), extend timer to reduce churn
+        if getattr(self.cfg, '_expiry_applied', False):
+            stagnant_mins += self.cfg.EXPIRY_STAGNANT_EXTRA_MINUTES
         min_move_pct  = self.cfg.STAGNANT_EXIT_MIN_MOVE_PCT
         if stagnant_mins <= 0:
             return 0

@@ -27,7 +27,7 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (96 items)
+### Completed (106 items)
 
 | # | Improvement | Category |
 |---|------------|----------|
@@ -127,6 +127,18 @@ Research-backed improvements for the V2 intraday trading bot. Sources: Investope
 | 105–106 | Late-entry R:R floor + tier 2 reduction 35→25% | Bug Fix |
 | 108 | Direction filter fallback fix | Bug Fix |
 | 109 | R:R mid-day retry guard (morning excluded) | Bug Fix |
+| 112 | Dynamic tick size for LIMIT orders (was hardcoded 0.05) | Bug Fix |
+| 113 | Defensive tick rounding in place_order() | Bug Fix |
+| 114 | fill_intraday_ledger skip dates with ZV_ rows (prevent VM/local dup) | Bug Fix |
+| **Strategy Improvements (5)** | | |
+| 115 | RSI contradiction filter (no SELL RSI>70, no BUY RSI<30) | Risk |
+| 116 | Declining re-entry block (score delta < 0 → skip) | Risk |
+| 117 | Post-1pm SELL slot → BUY reallocation (score ≥ 4.0 guard) | Execution |
+| 118 | Expiry-day stagnant timer extension (+15 min) | Execution |
+| 119 | Expiry score bump raised 0.5 → 1.0 | Risk |
+| **Observability (2)** | | |
+| 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
+| 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
 
 ---
 

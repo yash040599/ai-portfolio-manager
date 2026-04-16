@@ -744,6 +744,29 @@ class StockScannerV2(StockScanner):
         buy_slots = max(0, buy_limit - open_buys)
         sell_slots = max(0, sell_limit - open_sells)
 
+        # ── Post short-cutoff: reallocate SELL slots to BUY ──────
+        # After SHORT_ENTRY_CUTOFF_HOUR, no shorts can be placed.
+        # Rather than waste those slots, give them to BUY side —
+        # but only if decent BUY candidates exist (score ≥ 4.0).
+        short_cutoff = self.cfg.SHORT_ENTRY_CUTOFF_HOUR
+        if now_ist().hour >= short_cutoff and sell_slots > 0:
+            strong_buys = [c for c in buy_candidates if c["combined_score"] >= 4.0]
+            if strong_buys:
+                reallocated = sell_slots
+                buy_slots += sell_slots
+                sell_slots = 0
+                self.log.info(
+                    f"Post {short_cutoff}:00 short cutoff: reallocated "
+                    f"{reallocated} SELL slot(s) → BUY "
+                    f"({len(strong_buys)} BUY candidates with score ≥ 4.0)"
+                )
+            else:
+                sell_slots = 0
+                self.log.info(
+                    f"Post {short_cutoff}:00 short cutoff: dropped {sell_slots} "
+                    f"SELL slot(s) (no BUY candidates with score ≥ 4.0)"
+                )
+
         # Separate candidates into primary (within slot limits) and
         # fallback (extra candidates in the same direction).  Previous
         # logic hard-clipped at slot count, killing all fallbacks.  Now
