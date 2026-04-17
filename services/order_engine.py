@@ -276,11 +276,11 @@ class OrderEngine:
                              "Loaded from existing Zerodha position")
 
         # Roadmap #148 — reconcile orphan SL-M orders
-        # After loading positions we may have live SL-M orders on the
-        # exchange from the pre-crash session. Attach the ones that
-        # match current positions; cancel the ones that don't.
-        if loaded > 0:
-            self._reconcile_orphan_sl_m()
+        # ALWAYS run reconcile, even when loaded == 0. Scenario: on
+        # restart Zerodha has no open positions (they closed before
+        # crash) but a stray SL-M is still live on the exchange — it
+        # would fire later and open an unintended REVERSE position.
+        self._reconcile_orphan_sl_m()
 
         return loaded
 
@@ -295,14 +295,16 @@ class OrderEngine:
         Called after load_existing_positions (crash recovery) and after
         sync_external_positions (adoption). For each live SL-M order on
         Zerodha:
-          (a) If a tracked OPEN position matches on (symbol, exit_side, qty)
-              and has no _sl_order_id, attach the order id — reuse the
-              existing broker-side stop.
-          (b) If no tracked position matches and the order was placed
-              TODAY, cancel it — it's an orphan from a prior session.
-          (c) If no position matches but order is from an earlier day
-              (shouldn't normally happen because MIS auto-expires, but
-              defensive), leave it alone and log loud warning.
+          (a) If a tracked OPEN position matches on (symbol, exit_side)
+              with the same qty → attach the order id (reuse broker stop).
+          (b) If (symbol, exit_side) matches but qty differs → attach AND
+              resize the broker-side SL-M to the tracked qty. Never cancel
+              on qty-only mismatch — that would leave the position
+              unprotected between cancel and any subsequent re-place.
+          (c) If no position matches the symbol+side and the order was
+              placed TODAY → cancel it (orphan from a prior crash).
+          (d) Stray order from an earlier day → log loud warning, don't
+              touch (shouldn't happen because MIS auto-expires overnight).
 
         Fail-safe: any API failure is logged and skipped — never raises.
         """
@@ -333,43 +335,85 @@ class OrderEngine:
 
         today_str = now_ist().strftime("%Y-%m-%d")
         attached = 0
+        resized = 0
         cancelled = 0
         stray = 0
 
-        # Build lookup: (symbol, exit_side, qty) -> position
+        # Build lookup: (symbol, exit_side) -> position (qty-agnostic so
+        # a crashed/partial resize doesn't leave the position unprotected)
         pos_lookup: dict[tuple, dict] = {}
         for p in self.open_positions():
             if p.get("_sl_order_id"):
                 continue  # already has an SL-M attached
             exit_side = "SELL" if p["side"] == "BUY" else "BUY"
-            pos_lookup[(p["symbol"], exit_side, p["qty"])] = p
+            pos_lookup[(p["symbol"], exit_side)] = p
 
         for o in live_sl_orders:
             sym     = o.get("tradingsymbol", "")
             txn     = o.get("transaction_type", "")  # BUY / SELL of the SL-M (= exit side)
             qty     = int(o.get("quantity", 0) or 0)
             oid     = o.get("order_id", "")
-            trig    = o.get("trigger_price", 0)
+            trig    = float(o.get("trigger_price") or 0)
             ts_str  = str(o.get("order_timestamp", ""))[:10]  # YYYY-MM-DD
 
-            key = (sym, txn, qty)
+            key = (sym, txn)
             p = pos_lookup.get(key)
             if p is not None:
-                # Attach — reuse the existing broker-side stop
+                # Attach first — this always-succeeds in-memory op ensures
+                # the position is NEVER left unprotected even if the
+                # subsequent resize fails.
                 p["_sl_order_id"] = oid
                 self._pending_order_ids.add(oid)
                 del pos_lookup[key]
-                attached += 1
-                self.log.success(
-                    f"SL-M reconcile: attached order {oid} "
-                    f"({txn} {qty}x {sym} @ trigger Rs.{trig:.2f}) "
-                    f"to open {p['side']} position"
-                )
-                self._log_action("SL_M_ATTACH", sym, txn, qty, trig,
-                                 f"Reconciled orphan SL-M {oid}")
+
+                if qty == p["qty"]:
+                    attached += 1
+                    self.log.success(
+                        f"SL-M reconcile: attached order {oid} "
+                        f"({txn} {qty}x {sym} @ trigger Rs.{trig:.2f}) "
+                        f"to open {p['side']} position"
+                    )
+                    self._log_action("SL_M_ATTACH", sym, txn, qty, trig,
+                                     f"Reconciled orphan SL-M {oid}")
+                else:
+                    # Qty drift (e.g. partial taken before crash, or mid-
+                    # resize crash). Resize the broker-side order to match
+                    # tracked qty. _replace_exchange_sl cancels the current
+                    # order and places a new one at p["qty"]. NOTE: it
+                    # swallows failures internally (no exception), so we
+                    # must verify by checking _sl_order_id afterwards.
+                    self.log.warning(
+                        f"SL-M reconcile: order {oid} qty {qty} != "
+                        f"tracked qty {p['qty']} for {sym} — resizing"
+                    )
+                    try:
+                        self._replace_exchange_sl(p, p["stop_loss"])
+                    except Exception as e:
+                        self.log.error(
+                            f"SL-M reconcile: resize raised for {sym} "
+                            f"(order {oid}): {e}"
+                        )
+
+                    new_oid = p.get("_sl_order_id")
+                    if new_oid and new_oid != oid:
+                        resized += 1
+                        self._log_action("SL_M_RESIZE", sym, txn, p["qty"], trig,
+                                         f"Reconciled + resized SL-M (was qty {qty})")
+                    else:
+                        # Replacement cancelled the old order but failed to
+                        # place a new one. Position is now UNPROTECTED.
+                        # _replace_exchange_sl already cleared _sl_order_id.
+                        self.log.error(
+                            f"SL-M RECONCILE CRITICAL: {sym} resize failed — "
+                            f"old order {oid} was cancelled, new order NOT "
+                            f"placed. POSITION IS UNPROTECTED. Software SL "
+                            f"is the only defence. REVIEW IMMEDIATELY."
+                        )
+                        self._log_action("SL_M_UNPROTECTED", sym, txn, p["qty"], trig,
+                                         f"Resize failed — software SL only")
                 continue
 
-            # Not matched to any position
+            # Not matched to any position on (symbol, side)
             if ts_str and ts_str == today_str:
                 # Orphan from this trading day — safe to cancel
                 try:
@@ -396,10 +440,10 @@ class OrderEngine:
                     f"NOT cancelled automatically. Review manually."
                 )
 
-        if attached or cancelled or stray:
+        if attached or resized or cancelled or stray:
             self.log.info(
                 f"SL-M reconcile summary: {attached} attached, "
-                f"{cancelled} cancelled, {stray} stray"
+                f"{resized} resized, {cancelled} cancelled, {stray} stray"
             )
 
     # ================================================================
@@ -668,9 +712,10 @@ class OrderEngine:
         # BUG FIX: clearing at end causes stale entries in rapid successive calls
 
         # Roadmap #148 — reconcile orphan SL-M orders after any external
-        # position adoption (user may have placed manual SL-M from Kite)
-        if loaded > 0:
-            self._reconcile_orphan_sl_m()
+        # position adoption (user may have placed manual SL-M from Kite).
+        # Run unconditionally: a user may place a stray SL-M from Kite
+        # even when the bot adopted zero positions.
+        self._reconcile_orphan_sl_m()
 
         return loaded
 
@@ -1273,28 +1318,32 @@ class OrderEngine:
         # single SL hit on the latter wipes out 5 winners on the former.
         # We never INCREASE qty — only cap it so risk ≤ RISK_PER_TRADE_PCT
         # of budget. Price-based qty remains the upper bound.
-        if self.cfg.ATR_SIZING_ENABLED and atr and atr > 0 and qty > 0:
+        #
+        # NOTE: sized by ACTUAL sl_distance (|entry-sl|), not by
+        # ATR×multiplier. If the SL was overridden to a candle low the
+        # actual rupee risk is what matters — the ATR path is just the
+        # common case.
+        sl_distance = abs(entry - sl)
+        if self.cfg.ATR_SIZING_ENABLED and sl_distance > 0 and qty > 0:
             risk_rupees = self._budget * self.cfg.RISK_PER_TRADE_PCT / 100
-            sl_distance = abs(entry - sl)
-            if sl_distance > 0:
-                risk_qty = int(risk_rupees / sl_distance)
-                if risk_qty < 1:
-                    # Even 1 share would exceed risk budget — this is a
-                    # very volatile or very high-priced stock. Skip.
-                    self.log.warning(
-                        f"{symbol}: 1 share has risk Rs.{sl_distance:.2f} > "
-                        f"risk budget Rs.{risk_rupees:.0f} per trade. Skipping "
-                        f"(ATR sizing). Disable ATR_SIZING_ENABLED to override."
-                    )
-                    return False
-                if risk_qty < qty:
-                    self.log.info(
-                        f"  ✓ {symbol}: ATR sizing — qty reduced {qty} → "
-                        f"{risk_qty} (risk Rs.{risk_qty * sl_distance:.0f} of "
-                        f"Rs.{risk_rupees:.0f} budget per trade)"
-                    )
-                    qty = risk_qty
-                    trade["qty"] = qty
+            risk_qty = int(risk_rupees / sl_distance)
+            if risk_qty < 1:
+                # Even 1 share would exceed risk budget — this is a
+                # very volatile or very high-priced stock. Skip.
+                self.log.warning(
+                    f"{symbol}: 1 share has risk Rs.{sl_distance:.2f} > "
+                    f"risk budget Rs.{risk_rupees:.0f} per trade. Skipping "
+                    f"(ATR sizing). Disable ATR_SIZING_ENABLED to override."
+                )
+                return False
+            if risk_qty < qty:
+                self.log.info(
+                    f"  ✓ {symbol}: ATR sizing — qty reduced {qty} → "
+                    f"{risk_qty} (risk Rs.{risk_qty * sl_distance:.0f} of "
+                    f"Rs.{risk_rupees:.0f} budget per trade)"
+                )
+                qty = risk_qty
+                trade["qty"] = qty
 
         # ── R:R safety floor (time-aware + adaptive) ─────────────
         # One unified check. Floor depends on time of day:

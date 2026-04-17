@@ -576,9 +576,9 @@ class Config:
     #   every trade risks roughly the same amount.
     # RISK_PER_TRADE_PCT: fraction of total budget risked per trade.
     #   risk_rupees = budget × RISK_PER_TRADE_PCT / 100.
-    #   qty = risk_rupees / (ATR_MULTIPLIER × ATR)
-    #   Final qty = min(price-based cap, risk-based qty) — never
-    #   exceeds the existing per-position budget cap, only reduces it.
+    #   risk_qty    = risk_rupees / sl_distance   (sl_distance = |entry − sl|)
+    #   Final qty   = min(price-based cap, risk_qty) — never exceeds the
+    #   existing per-position budget cap, only reduces it.
     ATR_SIZING_ENABLED:      bool  = True
     RISK_PER_TRADE_PCT:      float = 0.5
 
