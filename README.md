@@ -23,9 +23,9 @@ python main.py --mode analyze
 A fully automated intraday trading bot. Default mode is **NoAI** (pure technical signals, zero Claude calls). The core loop:
 
 1. **Pre-market scan** — fetches candles for every stock in `SCAN_UNIVERSE`, applies price range filter (`SCAN_MIN_PRICE` / `SCAN_MAX_PRICE`), runs candlestick pattern detectors + technical indicators (EMA, RSI, VWAP, SuperTrend, MACD, Fibonacci, VWAP Bands, ADX, StochRSI, and more), applies sector momentum filter, computes score momentum (Δ from previous scan), auto-selects best candidates by score
-2. **Execution** — enters positions using LIMIT orders at LTP + 1 tick buffer (tick size per instrument from Zerodha — Rs.0.05 or Rs.0.50) with full-timeout polling and MARKET fallback (configurable), ATR-based dynamic stop-losses (pure ATR, no merge with config defaults) with a min-distance floor (0.8% normal, 1.0% expiry) so high-priced stocks don't get wicked out on normal noise, validates entry prices against live Zerodha quotes, checks bid-ask spreads and order-book impact cost (top-5 level walk, skips paper-thin books), volume confirmation (RVol gate with scan-time fallback), time-based R:R floor (morning 1.3:1, afternoon 1.2:1, late 1.0:1 — relaxes after failed scans, gives up after repeated failures), 22-check pre-entry pipeline (RSI symmetric block, VWAP trend + extension + fresh-reversal guards, daily trade cap, stagnant-churn guard, net-of-charges R:R), and tries fallback candidates if primary picks fail entry checks
+2. **Execution** — enters positions using LIMIT orders at LTP + 1 tick buffer (tick size per instrument from Zerodha — Rs.0.05 or Rs.0.50) with full-timeout polling and MARKET fallback (configurable), ATR-based dynamic stop-losses (pure ATR, no merge with config defaults) with a min-distance floor (0.8% normal, 1.0% expiry) so high-priced stocks don't get wicked out on normal noise, validates entry prices against live Zerodha quotes, checks bid-ask spreads and order-book impact cost (top-5 level walk, skips paper-thin books), volume confirmation (RVol gate with scan-time fallback), time-based R:R floor (morning 1.3:1, afternoon 1.2:1, late 1.0:1 — relaxes after failed scans, gives up after repeated failures), 26-check pre-entry pipeline (RSI symmetric block, VWAP trend + extension + fresh-reversal guards, daily trade cap, stagnant-churn guard, per-symbol re-entry cooldown, lunch-lull skip, daily-loss soft-stop, net-of-charges R:R, charge-aware target multiple), and tries fallback candidates if primary picks fail entry checks
 3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, runs stagnant position exit (+15 min during 12:00-1:30 midday lull)
-4. **Risk management** — circuit breaker on daily loss, whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, manual trade adoption with 10-min grace window (skips time-decay + loser-exit while user-opened positions settle), Thursday expiry adjustments (30-min entry delay, tighter trade cap, wider SL floor)
+4. **Risk management** — circuit breaker on daily loss (3% hard) + soft-stop hysteresis (1.5% blocks new entries), whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, manual trade adoption with 10-min grace window (skips time-decay + loser-exit while user-opened positions settle), Thursday expiry adjustments (30-min entry delay, tighter trade cap, wider SL floor), and **dynamic budget-regime gates** (TINY/SMALL/NORMAL/LARGE account tiers automatically tighten ADX threshold, trade cap, and min-score on smaller accounts)
 5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API
 
 With `--ai` flag, Claude AI handles stock selection from pre-filtered candidates and periodic position reviews.
@@ -575,7 +575,12 @@ NoAI mode eliminates Claude API costs entirely.
 
 - **Dry-run mode** — no real orders, simulated P&L with time-of-day slippage modelling
 - **Circuit breaker** — stops trading on daily loss threshold, resumes after cooldown
+- **Daily-loss soft-stop** — at 1.5% day loss, blocks new entries while still managing existing positions (hard CB still closes all at 3%)
 - **Whipsaw guard** — pauses entries after consecutive SL hits
+- **Per-symbol re-entry cooldown** — 30 min block on same SYMBOL_SIDE after any exit (churn-loop breaker)
+- **Lunch-lull skip** — rejects new entries 11:30-12:15 IST unless score is exceptionally strong
+- **Charge-aware target** — rejects trades where gross target profit < 2× round-trip charges
+- **Budget-regime gates** — ADX threshold / trade cap / min-score auto-tighten on small accounts
 - **Budget cap & loss-adjusted sizing** — never exceeds budget; reduces size after losses
 - **ATR-based dynamic stop-losses** — data-driven SL/target with structural-level protection and hard caps
 - **Crash recovery** — resumes monitoring orphaned positions after restart
@@ -588,7 +593,7 @@ NoAI mode eliminates Claude API costs entirely.
 - **Existing holdings are READ-ONLY** — only trades with the managed budget pool
 - **Config hints** — log messages tell you which config to change when an action is skipped
 
-All thresholds are configurable in `config.py`. For the complete risk management architecture, see **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)**.
+All thresholds are configurable in `config.py`. For the complete risk management architecture and the plain-English decision timeline (start of day → EOD), see **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md)**.
 
 ---
 
