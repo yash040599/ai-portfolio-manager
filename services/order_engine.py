@@ -323,11 +323,18 @@ class OrderEngine:
         # Only care about live SL-M orders (still capable of firing)
         live_states = {"OPEN", "TRIGGER PENDING"}
         sl_types = {"SL-M", "SL"}
+        # Exclude orders the bot already tracks. Without this filter, a
+        # periodic reconcile would see our own freshly-placed SL-M on the
+        # exchange, fail to find its position in pos_lookup (because
+        # positions with _sl_order_id are skipped), and cancel it as an
+        # "orphan today" — wiping out every valid broker-side stop on
+        # every sync cycle.
         live_sl_orders = [
             o for o in orders
             if (o.get("status") in live_states
                 and o.get("order_type") in sl_types
-                and o.get("product") == "MIS")
+                and o.get("product") == "MIS"
+                and o.get("order_id") not in self._pending_order_ids)
         ]
 
         if not live_sl_orders:
@@ -487,6 +494,21 @@ class OrderEngine:
 
         net_positions = positions_data.get("net", [])
         loaded = 0
+
+        # ── Defensive guard: empty response with tracked open positions ──
+        # A temporary Zerodha API glitch can return net=[] while positions
+        # are actually still open. Without this guard, every open position
+        # would be marked EXTERNAL_CLOSE (software SL cancelled, monitoring
+        # stopped) and left unprotected until 3:20 auto-square-off. Only
+        # trust an empty response if we don't have anything open.
+        open_tracked_count = sum(1 for p in self.positions if p["status"] == "OPEN")
+        if not net_positions and open_tracked_count > 0:
+            self.log.warning(
+                f"sync_external_positions: Zerodha returned empty positions "
+                f"but bot tracks {open_tracked_count} OPEN position(s). "
+                f"Likely API glitch — skipping close-detection this cycle."
+            )
+            return 0
 
         # BUG FIX: Track (symbol, side) not just symbol
         # Prevents duplicate detection when bot has SELL and user has BUY

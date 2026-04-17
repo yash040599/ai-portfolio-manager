@@ -1160,6 +1160,12 @@ class StockScannerV2(StockScanner):
                 tech = c["technical"]
                 t["_entry_score"] = c["combined_score"]
                 t["_entry_rsi"] = tech["rsi"]["rsi"]
+                # Roadmap #157 — ADX + DI fields used by the order engine's
+                # entry gate. Must be set here too (not just in the PENDING
+                # scanner path) so AI-picked trades go through the same gate.
+                t["_entry_adx"]      = tech.get("adx", {}).get("adx", 0)
+                t["_entry_plus_di"]  = tech.get("adx", {}).get("plus_di", 0)
+                t["_entry_minus_di"] = tech.get("adx", {}).get("minus_di", 0)
                 t["_indicator_snapshot"] = self._build_indicator_snapshot(tech, c)
 
     # ================================================================
