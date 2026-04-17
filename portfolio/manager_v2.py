@@ -947,6 +947,66 @@ class PortfolioManagerV2(PortfolioManager):
     # AUTO-PROTECT: TIGHTEN SL ON CONTRARY CANDLE SIGNALS
     # ================================================================
 
+    def _compute_protective_sl(
+        self,
+        side: str,
+        entry: float,
+        current_price: float,
+        old_sl: float,
+    ):
+        """
+        Compute a tightened protective SL for candle-protect and
+        regime-shift, with a safety cushion.
+
+        Rules:
+          - In profit → lock 50% of current profit (candidate).
+          - Break-even / loss → candidate is the entry price.
+          - Candidate is then clamped so the new SL sits at least
+            CANDLE_PROTECT_MIN_CUSHION_PCT away from the live price
+            (for BUY: SL ≤ price − cushion; for SELL: SL ≥ price + cushion).
+          - Returns None if the result would not be tighter than old_sl
+            (never loosen the stop).
+
+        BUG FIX (2026-04-17): Previously when a contrary signal arrived
+        on a break-even / loss position, the new SL was set to exact
+        entry. If current price was already against entry, the tightened
+        SL fired immediately on the next tick — triggering the
+        INDIGO SL-M double-book bug. The cushion keeps the SL at arm's
+        length from the live price so noise doesn't hit it.
+        """
+        cushion_pct = max(
+            0.5 * self.cfg.DEFAULT_STOP_LOSS_PCT,
+            self.cfg.CANDLE_PROTECT_MIN_CUSHION_PCT,
+        ) / 100
+        cushion = round(current_price * cushion_pct, 2)
+
+        if side == "BUY":
+            profit = current_price - entry
+            if profit > 0:
+                candidate = round(entry + profit * 0.5, 2)
+            else:
+                candidate = round(entry, 2)
+            # SL must stay at least `cushion` below live price
+            max_allowed = round(current_price - cushion, 2)
+            new_sl = min(candidate, max_allowed)
+            # Only apply if strictly tighter (higher) than existing SL
+            if new_sl <= old_sl:
+                return None
+            return new_sl
+        else:  # SELL
+            profit = entry - current_price
+            if profit > 0:
+                candidate = round(entry - profit * 0.5, 2)
+            else:
+                candidate = round(entry, 2)
+            # SL must stay at least `cushion` above live price
+            min_allowed = round(current_price + cushion, 2)
+            new_sl = max(candidate, min_allowed)
+            # Only apply if strictly tighter (lower) than existing SL
+            if new_sl >= old_sl:
+                return None
+            return new_sl
+
     def _auto_protect_on_contrary_signal(
         self,
         pos: dict,
@@ -989,27 +1049,9 @@ class PortfolioManagerV2(PortfolioManager):
             return
 
         # Calculate new protective SL
-        if side == "BUY":
-            profit = current_price - entry
-            if profit > 0:
-                # In profit — lock 50%
-                new_sl = round(entry + profit * 0.5, 2)
-            else:
-                # At loss — move SL to breakeven (entry)
-                new_sl = entry
-
-            # SL must only move UP for BUY (never loosen)
-            if new_sl <= old_sl:
-                return
-        else:
-            profit = entry - current_price
-            if profit > 0:
-                new_sl = round(entry - profit * 0.5, 2)
-            else:
-                new_sl = entry
-
-            if new_sl >= old_sl:
-                return
+        new_sl = self._compute_protective_sl(side, entry, current_price, old_sl)
+        if new_sl is None:
+            return
 
         # Apply the tighter SL
         pos["stop_loss"] = new_sl
@@ -1062,20 +1104,12 @@ class PortfolioManagerV2(PortfolioManager):
                 continue
 
             if side == "BUY":
-                profit = current_price - entry
-                if profit > 0:
-                    new_sl = round(entry + profit * 0.5, 2)
-                else:
-                    new_sl = entry
-                if new_sl <= old_sl:
+                new_sl = self._compute_protective_sl(side, entry, current_price, old_sl)
+                if new_sl is None:
                     continue
             else:
-                profit = entry - current_price
-                if profit > 0:
-                    new_sl = round(entry - profit * 0.5, 2)
-                else:
-                    new_sl = entry
-                if new_sl >= old_sl:
+                new_sl = self._compute_protective_sl(side, entry, current_price, old_sl)
+                if new_sl is None:
                     continue
 
             pos["stop_loss"] = new_sl

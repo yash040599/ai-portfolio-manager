@@ -524,8 +524,33 @@ class Config:
     #     0.3% (2026-04-15): Only exit truly dead positions. A stock that
     #       moved 0.3% toward target in 45 min is progressing. Below 0.3%
     #       means near-zero movement — likely going nowhere.
+    #     2026-04-17: STAGNANT_EXIT_MIN_MOVE_PCT retired in favour of
+    #       directional split. Was firing on slow-positive trades
+    #       (RECLTD +0.26%, TATAPOWER +0.25%) — we were locking in
+    #       sub-charge profits and paying Rs.15-20 round-trip to
+    #       re-enter elsewhere. Now only exits if ADVERSE (clearly
+    #       losing) or DEAD-FLAT (|move| near zero). Slow-positive
+    #       trades are allowed to continue toward target.
     STAGNANT_EXIT_MINUTES:      int   = 45
-    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3
+    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3   # retained for backwards compat; unused
+    # Adverse threshold: fire stagnant-exit if move_pct is below this
+    # negative number (i.e., losing by more than this %). Previously the
+    # single 0.3% cutoff lumped slow-positive trades into this bucket.
+    STAGNANT_ADVERSE_PCT:       float = 0.2
+    # Dead-flat band: fire stagnant-exit if |move_pct| is below this
+    # (truly going nowhere — neither up nor down in a meaningful way).
+    STAGNANT_DEAD_FLAT_PCT:     float = 0.1
+
+    # ── Candle-Protect / Regime-Shift SL Cushion ──────────────────
+    # CANDLE_PROTECT_MIN_CUSHION_PCT: minimum gap (as % of current
+    #   price) between the tightened SL and current market price.
+    #   Previously when a contrary signal fired on a break-even/loss
+    #   position, SL collapsed to exact entry — which, if current
+    #   price was already against entry, triggered an instant stop
+    #   (the INDIGO 2026-04-17 SL-M double-book bug). This cushion
+    #   prevents that collapse by keeping SL at least this % away
+    #   from the live price, and at least this % from entry.
+    CANDLE_PROTECT_MIN_CUSHION_PCT: float = 0.3
 
     # ── Loss-Adjusted Position Sizing ─────────────────────────────
     # LOSS_SIZING_ENABLED: if True, reduce position sizes after

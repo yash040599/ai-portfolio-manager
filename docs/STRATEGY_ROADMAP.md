@@ -42,7 +42,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (10 items)
+### Pending (12 items)
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
@@ -56,6 +56,8 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
 | 150 | [Bug] Partial-qty exits can lose 1 share to integer truncation | HIGH | Medium | Low |
 | 151 | [Bug] External partial close misread as full close in reconciliation | HIGH | High | Medium |
+| 157 | ADX + directional entry confirm — reject entries when ADX < threshold or DI crossover disagrees with side | MEDIUM | Medium | Medium |
+| 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
 
 ### Removed (8 items — not worth implementing)
 
@@ -70,7 +72,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (131 items)
+### Completed (134 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -207,6 +209,9 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 143 | Removed sticky early-return on `_order_api_broken` in entry path. Rely on consecutive-failure counter to re-trip if the API is genuinely broken; allows recovery without manual restart. | Bug Fix |
 | 152 | SL-M placement failure now raises an ERROR-level loud alert (was a subtle WARNING). The position is flagged `_sl_m_failed=True` and the log clearly states "exchange-side protection is NOT in place; restart on a later trading day is NOT safe for this position". User can no longer run naked positions without seeing it. | Bug Fix |
 | 153 | **Stale SL-M double-booking fix (CRITICAL).** When candle-protect or regime-protect tightened the software SL below the exchange SL-M trigger, the software stop fired first — but `exit_position()` was assuming the exchange SL-M had already filled. It asked `get_order_filled_qty() or qty` (and `0 or qty == qty`), treated that as a full fill, placed no real exit order, and let the position stay live on Zerodha. Reconciliation then re-adopted the same short and triggered SL again — booking the loss twice. Fix: (a) new `get_order_status()` in zerodha_client; (b) `exit_position()` STOP_LOSS branch now verifies status == COMPLETE before trusting the SL-M, else cancels the stale order and places a market exit; (c) `_candle_protect()` and `_regime_shift_protect()` in manager_v2 now call `engine._update_exchange_sl()` so the broker-side order stays in sync with the software SL. | Bug Fix |
+| 154 | **Candle-protect / regime-shift SL cushion.** Previously when a contrary signal hit a break-even or losing position, the tightened SL collapsed to exact entry. If the live price was already against entry (the typical case for a contrary signal!), the new SL fired on the very next tick — the INDIGO 2026-04-17 chain-reaction bug. Fix: new `_compute_protective_sl()` helper in manager_v2. SL is now clamped to stay at least `CANDLE_PROTECT_MIN_CUSHION_PCT` away from the live price AND from entry. Applied to both `_auto_protect_on_contrary_signal` and `_regime_shift_protect`. | Bug Fix |
+| 155 | **Reconciled-day safeguard.** `import_zerodha_taxpnl.py` used to overwrite trades that had been manually reconciled (e.g. when the intraday Tax P&L sheet lagged reality for the current day). Fix: trading-day JSONs get a sticky `_reconciled: true` flag when the user reconciles. Three writers (`import_zerodha_taxpnl`, `performance_tracker.record_trades`, `report_writer.save_trading_day`) now honour the flag — they still cross-check sheet vs DB and print warnings on mismatch, but never delete/replace the authoritative rows. Also fixed a side-fixer bug that was flipping BUY↔SELL on protected days. | Bug Fix |
+| 156 | **Directional stagnant-exit.** Stagnant-exit previously fired whenever `move_pct < STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%). This lumped slow-positive trades (RECLTD +0.26%, TATAPOWER +0.25% on 2026-04-17) in with adverse/flat trades — locking in a sub-charge profit and wasting another Rs.15-20 round-trip to re-enter. Fix: new `STAGNANT_ADVERSE_PCT` (0.2%) and `STAGNANT_DEAD_FLAT_PCT` (0.1%) thresholds. Stagnant-exit now fires only if the trade is clearly adverse OR genuinely dead-flat. Slow-positive trades are allowed to continue toward target. | Execution |
 
 ---
 
@@ -271,4 +276,16 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Today**: If the user manually closes **half** the position in the Kite app, our reconciliation in `load_existing_positions()` / periodic sync logic can interpret the reduced Zerodha qty as a full close — wipes the in-memory position, logs wrong P&L, and leaves the remaining half un-tracked.
 - **Fix**: Compare Zerodha qty against the bot's tracked qty. If Zerodha qty is `0`, close. If it is `> 0` but `< tracked`, treat it as an external partial close: update tracked qty, log the partial at the broker-average price, keep the remaining position live with its SL-M still valid.
 - **Effort**: Medium. Careful because this interacts with SL-M re-sizing and partial-target state.
+
+### 157. ADX + Directional Entry Confirmation
+- **Priority**: MEDIUM (cuts whipsaw losses)
+- **Today**: Entry relies on combined_score + VWAP + pattern confirmations. We compute ADX for observation but don't gate entries on it. On chop days (NIFTY ±0.2% range, ADX < 18), entries fire and then immediately hit stagnant-exit or candle-protect — every one of those loses charges (~Rs.40 round-trip) and adds nothing.
+- **Fix**: At entry, require either (a) ADX ≥ 18 **and** DI crossover aligned with `side`, or (b) score ≥ late-entry R:R floor (for very-high-conviction trades) to override. Also consider per-sector ADX so we don't reject trades on a single index reading.
+- **Effort**: Medium. ADX already computed in `technical_indicators`; need the gate, a config constant, and careful tuning to avoid starving the bot on quiet days.
+
+### 158. Regime-Shift Opportunity Window
+- **Priority**: LOW (small but non-zero alpha)
+- **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
+- **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
+- **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
 

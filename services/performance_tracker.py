@@ -15,6 +15,7 @@
 
 import os
 import sqlite3
+import json
 import datetime
 
 from config      import Config, now_ist
@@ -125,6 +126,23 @@ class PerformanceTracker:
     # RECORD TRADES
     # ================================================================
 
+    @staticmethod
+    def _is_today_reconciled(date_str: str) -> bool:
+        """Return True if today's trading_data_DD.json has _reconciled=true."""
+        try:
+            d = datetime.date.fromisoformat(date_str)
+            path = os.path.join(
+                "reports", "trading",
+                str(d.year), f"{d.month:02d}",
+                f"trading_data_{d.day:02d}.json",
+            )
+            if not os.path.exists(path):
+                return False
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f).get("_reconciled") is True
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+
     def record_trades(
         self,
         positions: list[dict],
@@ -133,12 +151,27 @@ class PerformanceTracker:
         """
         Stores all closed positions from today's session into the DB.
         Skips positions that are still open.
+
+        Safeguard: if today's trading_data_DD.json is flagged
+        "_reconciled": true (human manually reconciled after a bug),
+        skip writing entirely — the running bot's in-memory state may
+        still contain phantom positions whose entry_time differs from
+        the corrected DB rows, which would slip past the (date, symbol,
+        side, entry_time) dedup index and re-pollute the trades table.
         """
         today = str(now_ist().date())
         closed = [p for p in positions if p.get("status") == "CLOSED"]
 
         if not closed:
             self.log.info("No closed trades to record")
+            return
+
+        if self._is_today_reconciled(today):
+            self.log.warning(
+                f"Skipping record_trades: {today} is flagged _reconciled "
+                f"in trading_data JSON (manual fix in progress). "
+                f"Restart the bot after reconciliation to resume DB writes."
+            )
             return
 
         with self._connect() as conn:

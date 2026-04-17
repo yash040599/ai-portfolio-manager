@@ -546,6 +546,11 @@ class ReportWriter:
         session_count = 1
         prev_claude_cost = 0.0
         curr_claude_cost = pnl.get("charges", {}).get("claude_api_cost", 0.0)
+        # Sticky reconcile flags — preserved across session saves so that
+        # a human's manual fix (marked _reconciled=true) is not silently
+        # dropped when a later session rewrites the JSON.
+        preserved_reconciled: bool = False
+        preserved_reconcile_note: str | None = None
         if os.path.exists(json_path):
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
@@ -555,6 +560,8 @@ class ReportWriter:
                 prev_trade_log = existing.get("trade_log", [])
                 session_count  = existing.get("sessions", 1) + 1
                 prev_claude_cost = existing.get("pnl", {}).get("charges", {}).get("claude_api_cost", 0.0)
+                preserved_reconciled = bool(existing.get("_reconciled"))
+                preserved_reconcile_note = existing.get("_reconciled_note")
 
                 # Add session separator to trade log
                 separator_entry = {
@@ -729,25 +736,33 @@ class ReportWriter:
             f.write("\n")
 
         # ── JSON data dump ────────────────────────────────────────
+        payload = {
+            "date":             str(today),
+            "mode":             "dry_run" if dry_run else "live",
+            "sessions":         session_count,
+            "market_condition": market_condition,
+            "config": {
+                "claude_plan":  self.cfg.CLAUDE_PLAN,
+                "zerodha_plan": self.cfg.ZERODHA_PLAN,
+                "budget":       budget,
+                "universe":     self.cfg.SCAN_UNIVERSE,
+                "max_positions": self.cfg.MAX_POSITIONS,
+                "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
+                "target_pct":    self.cfg.DEFAULT_TARGET_PCT,
+            },
+            "positions":  positions,
+            "trade_log":  trade_log,
+            "pnl":        pnl,
+        }
+        # Preserve sticky reconcile flags across session rewrites so
+        # downstream scripts (import_zerodha_taxpnl, performance_tracker)
+        # keep honouring the manual fix.
+        if preserved_reconciled:
+            payload["_reconciled"] = True
+            if preserved_reconcile_note:
+                payload["_reconciled_note"] = preserved_reconcile_note
         with open(json_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "date":             str(today),
-                "mode":             "dry_run" if dry_run else "live",
-                "sessions":         session_count,
-                "market_condition": market_condition,
-                "config": {
-                    "claude_plan":  self.cfg.CLAUDE_PLAN,
-                    "zerodha_plan": self.cfg.ZERODHA_PLAN,
-                    "budget":       budget,
-                    "universe":     self.cfg.SCAN_UNIVERSE,
-                    "max_positions": self.cfg.MAX_POSITIONS,
-                    "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
-                    "target_pct":    self.cfg.DEFAULT_TARGET_PCT,
-                },
-                "positions":  positions,
-                "trade_log":  trade_log,
-                "pnl":        pnl,
-            }, f, indent=2, default=str)
+            json.dump(payload, f, indent=2, default=str)
 
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")

@@ -548,17 +548,29 @@ Normal risk management (software SL/target, trailing stop, stagnant exit, square
 
 ### Stagnant Position Exit (NoAI Only)
 
-Replaces Claude's position reviews. After `STAGNANT_EXIT_MINUTES` (45 min), if a position hasn't moved ≥ `STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%) toward its target, auto-exit to free the slot for a stronger setup.
+Replaces Claude's position reviews. After `STAGNANT_EXIT_MINUTES` (45 min) — extended by +15 min in the 12:00-13:30 midday lull and on expiry days — evaluate each open position and exit only if one of the following is true:
 
-Decision history: 0.5% was too aggressive with 1.2% target — exited positions at +0.3-0.4% profit as "stagnant" even though they were progressing toward target. Reduced to 0.3% (April 15 live data: 4 profitable trades preserved vs old threshold).
+- **Adverse**: `move_pct < -STAGNANT_ADVERSE_PCT` (default 0.2%) — trade is meaningfully losing.
+- **Dead-flat**: `|move_pct| < STAGNANT_DEAD_FLAT_PCT` (default 0.1%) — trade is going nowhere.
+
+A **slow-positive** trade (e.g., +0.25%) is allowed to continue toward target. Exiting it would lock in a sub-charge profit and waste another ~Rs.15-20 round-trip entering a replacement.
+
+Decision history:
+- 0.5% (original): Too aggressive with 1.2% target.
+- 0.3% (2026-04-15): Still exited slow-positive winners (RECLTD +0.26%, ONGC +0.42%).
+- Directional (2026-04-17): Split into adverse/dead-flat thresholds. Retired the single `STAGNANT_EXIT_MIN_MOVE_PCT` gate.
 
 In `--ai` mode, Claude reviews every 30 min instead and can recommend HOLD / EXIT / ADJUST_SL / ADJUST_TARGET with qualitative reasoning.
 
 ### Contrary Signal Protection
 
 Every 15 min (`V2_CANDLE_RESCAN_MINUTES`), re-run candle pattern analysis on open positions. If a position's 15-min composite score flips to ±4 or stronger in the **opposite** direction:
-- If in profit: tighten SL to lock 50% of unrealised gains
-- If at breakeven or losing: tighten SL to breakeven (entry ± 0.1%)
+- If in profit: tighten SL to lock 50% of unrealised gains.
+- If at breakeven or losing: tighten SL toward entry, **but never closer than `CANDLE_PROTECT_MIN_CUSHION_PCT`** (default 0.3%) from the live price.
+
+The cushion matters: on a contrary signal the live price is already moving against us, so setting the new SL to exact entry would trigger on the very next tick. The cushion keeps the stop at arm's length from noise. The same rule applies to regime-shift-protect.
+
+Both the software SL and the exchange SL-M trigger are updated together (see bug-fix #153).
 
 This is automatic in both modes. In `--ai` mode, Claude additionally sees the patterns and can act on weaker contrary signals.
 
@@ -740,7 +752,10 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `CONSECUTIVE_SL_PAUSE_COUNT` | 3 | SLs before whipsaw pause |
 | `CONSECUTIVE_SL_PAUSE_MINUTES` | 30 | Whipsaw pause duration |
 | `STAGNANT_EXIT_MINUTES` | 45 | Stagnant exit (NoAI only) |
-| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | Min move to avoid stagnant exit (was 0.5%, reduced Apr 15) |
+| `STAGNANT_ADVERSE_PCT` | 0.2% | Stagnant-exit fires if trade is losing more than this |
+| `STAGNANT_DEAD_FLAT_PCT` | 0.1% | Stagnant-exit fires if |move| is inside this band (truly flat) |
+| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | **Retired** — replaced by the two thresholds above |
+| `CANDLE_PROTECT_MIN_CUSHION_PCT` | 0.3% | Minimum gap between tightened SL and live price (candle/regime protect) |
 | `LOSS_SIZING_ENABLED` | True | Loss-adjusted sizing |
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Loss threshold for score bump (NoAI) |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Score increase after losses (NoAI) |

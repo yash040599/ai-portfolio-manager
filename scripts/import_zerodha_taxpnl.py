@@ -31,6 +31,40 @@ from config import now_ist
 ZERODHA_DIR = os.path.join(PROJECT_ROOT, "data", "ZerodhaTaxPL")
 
 
+# ── Protected-date helpers ────────────────────────────────────────
+# A day is "protected" (skipped by all writers here) if:
+#   1. It is today — Zerodha Tax P&L is only finalized T+1, so any
+#      same-day data in the sheet is partial/stale.
+#   2. Its trading_data_DD.json has "_reconciled": true — meaning a
+#      human manually reconciled that day after a bug, and automated
+#      overwrites from the sheet or the trades DB must not clobber it.
+
+def _reconciled_dates() -> set[str]:
+    """Scan all trading_data_*.json for _reconciled=true entries."""
+    out: set[str] = set()
+    base = os.path.join(PROJECT_ROOT, "reports", "trading")
+    if not os.path.isdir(base):
+        return out
+    for root, _dirs, files in os.walk(base):
+        for fn in files:
+            if not (fn.startswith("trading_data_") and fn.endswith(".json")):
+                continue
+            p = os.path.join(root, fn)
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    d = json.load(f)
+                if d.get("_reconciled") is True and d.get("date"):
+                    out.add(d["date"])
+            except (json.JSONDecodeError, OSError):
+                continue
+    return out
+
+
+def _protected_dates() -> set[str]:
+    """Dates that must never be auto-overwritten from the Zerodha sheet."""
+    return _reconciled_dates() | {now_ist().strftime("%Y-%m-%d")}
+
+
 # ── xlsx parsing ──────────────────────────────────────────────────
 
 def _to_date_str(val) -> str:
@@ -126,14 +160,24 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
     Verify / correct intraday_tax_ledger against Zerodha data.
     Groups by (date, symbol) and compares aggregate P&L.
 
-    Skips today's date — Zerodha Tax P&L is only finalized T+1,
-    so same-day data may be incomplete/partial.
+    Protected-date policy:
+      * Today — skipped entirely (sheet not finalized until T+1).
+      * Reconciled dates (JSON flagged "_reconciled": true) — STILL checked:
+        matching rows get sheet_verified='verified' marked, charges synced
+        from Zerodha actuals. Mismatches only print a warning; we NEVER
+        delete/replace reconciled rows, because the human fix is
+        authoritative (e.g., pre-bug Zerodha sheet may disagree with the
+        post-reconcile truth).
 
-    Returns {"verified": n, "corrected": n, "inserted": n, "skipped_today": n}.
+    Returns {"verified": n, "corrected": n, "inserted": n,
+             "skipped_today": n, "reconciled_verified": n,
+             "reconciled_mismatch": n}.
     """
     today_str = now_ist().strftime("%Y-%m-%d")
+    reconciled = _reconciled_dates()
+    protected = reconciled | {today_str}  # only used by the side-fixer loop
 
-    # Group Zerodha by (exit_date, symbol)
+    # Group Zerodha by (exit_date, symbol) — skip only today
     z_groups: dict[tuple, list] = {}
     skipped_today = 0
     for t in zerodha_trades:
@@ -142,6 +186,11 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
             continue
         key = (t["exit_date"], t["symbol"])
         z_groups.setdefault(key, []).append(t)
+
+    # Only these dates are represented in the Zerodha sheet. We must NEVER
+    # touch DB rows for dates the sheet doesn't cover — the sheet is
+    # partial by nature (user may export FY-to-date excluding recent days).
+    z_dates: set[str] = {date for (date, _sym) in z_groups.keys()}
 
     # Group DB by (date, symbol)
     db_rows = conn.execute(
@@ -152,10 +201,16 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
         key = (r["date"], r["symbol"])
         db_groups.setdefault(key, []).append(r)
 
-    stats = {"verified": 0, "corrected": 0, "inserted": 0, "skipped_today": skipped_today}
+    stats = {
+        "verified": 0, "corrected": 0, "inserted": 0,
+        "skipped_today": skipped_today,
+        "reconciled_verified": 0,
+        "reconciled_mismatch": 0,
+    }
 
     for key, z_trades in z_groups.items():
         date, symbol = key
+        is_reconciled = date in reconciled
         z_total_pnl = sum(t["profit"] for t in z_trades)
         z_total_qty = sum(t["qty"] for t in z_trades)
 
@@ -214,41 +269,80 @@ def _verify_intraday(conn, zerodha_trades: list[dict]) -> dict:
                                 r["id"],
                             ),
                         )
-                    stats["verified"] += len(db_rows_g)
+                    if is_reconciled:
+                        stats["reconciled_verified"] += len(db_rows_g)
+                    else:
+                        stats["verified"] += len(db_rows_g)
             else:
-                # Mismatch — replace with Zerodha data
-                for r in db_rows_g:
-                    conn.execute(
-                        "DELETE FROM intraday_tax_ledger WHERE id=?",
-                        (r["id"],),
-                    )
+                if is_reconciled:
+                    # Do NOT overwrite a human-reconciled day. Just warn.
+                    stats["reconciled_mismatch"] += 1
+                    print(f"    ! {symbol} on {date}: sheet disagrees with "
+                          f"reconciled data (sheet P&L {z_total_pnl:+.2f} vs "
+                          f"DB {db_total_pnl:+.2f}) — NOT overwriting "
+                          f"(_reconciled=true). Review manually.")
+                else:
+                    # Mismatch — replace with Zerodha data
+                    for r in db_rows_g:
+                        conn.execute(
+                            "DELETE FROM intraday_tax_ledger WHERE id=?",
+                            (r["id"],),
+                        )
+                    for i, t in enumerate(z_trades):
+                        _insert_zerodha_intraday(conn, t, i)
+                    stats["corrected"] += len(z_trades)
+                    print(f"    * Corrected {symbol} on {date}: "
+                          f"P&L {db_total_pnl:+.2f} -> {z_total_pnl:+.2f}")
+        else:
+            if is_reconciled:
+                # Sheet has a row that reconciled JSON doesn't — warn, don't insert.
+                stats["reconciled_mismatch"] += 1
+                print(f"    ! {symbol} on {date}: sheet has a trade but "
+                      f"reconciled DB does not — NOT inserting "
+                      f"(_reconciled=true). Review manually.")
+            else:
+                # Only in Zerodha — insert
                 for i, t in enumerate(z_trades):
                     _insert_zerodha_intraday(conn, t, i)
-                stats["corrected"] += len(z_trades)
-                print(f"    * Corrected {symbol} on {date}: "
-                      f"P&L {db_total_pnl:+.2f} -> {z_total_pnl:+.2f}")
-        else:
-            # Only in Zerodha — insert
-            for i, t in enumerate(z_trades):
-                _insert_zerodha_intraday(conn, t, i)
-            stats["inserted"] += len(z_trades)
+                stats["inserted"] += len(z_trades)
 
     conn.commit()
 
     # ── Fix sides and entry/exit for all rows ─────────────────
     # Ensure side matches the trades table and entry/exit are set
     # from the correct perspective using the stored buy_value/sell_value.
+    #
+    # SCOPE RULES:
+    #   * Only touch dates that are actually present in the Zerodha sheet
+    #     (`z_dates`). If the user exports a sheet that stops at Apr 16,
+    #     we must not rewrite Apr 17 rows just because they exist in the
+    #     DB — the sheet has no opinion on them.
+    #   * Also exclude protected dates (today + any _reconciled JSON).
+    #     A protected date can have transient phantom rows in the trades
+    #     table that would poison the (date, symbol, qty) -> side lookup.
+    allowed_dates = z_dates - protected
     fixed = 0
-    all_ledger = conn.execute(
-        "SELECT id, date, symbol, side, qty, entry_price, exit_price, "
-        "       buy_value, sell_value "
-        "FROM intraday_tax_ledger"
-    ).fetchall()
+    if not allowed_dates:
+        all_ledger = []
+        all_trades = []
+    else:
+        placeholders = ",".join("?" for _ in allowed_dates)
+        params = tuple(allowed_dates)
+        all_ledger = conn.execute(
+            f"SELECT id, date, symbol, side, qty, entry_price, exit_price, "
+            f"       buy_value, sell_value "
+            f"FROM intraday_tax_ledger "
+            f"WHERE date IN ({placeholders})",
+            params,
+        ).fetchall()
 
-    # Build a lookup of trade sides: (date, symbol, qty) → side
-    all_trades = conn.execute(
-        "SELECT symbol, side, qty, date FROM trades"
-    ).fetchall()
+        # Build a lookup of trade sides: (date, symbol, qty) → side
+        # — only from dates the sheet covers AND that aren't protected.
+        all_trades = conn.execute(
+            f"SELECT symbol, side, qty, date FROM trades "
+            f"WHERE date IN ({placeholders})",
+            params,
+        ).fetchall()
     trade_sides: dict[tuple, str] = {}
     for tr in all_trades:
         key = (tr["date"], tr["symbol"], tr["qty"])
@@ -421,19 +515,29 @@ def _update_trading_reports(zerodha_trades: list[dict], conn) -> dict:
       (already reconciled with Zerodha live data).
     - Charges come from Zerodha Tax P&L actuals.
     - Skips today's date (sheet data not finalized until T+1).
+    - Skips any date whose JSON is flagged "_reconciled": true
+      (human already fixed it — do not auto-overwrite).
 
-    Returns {"updated": [dates], "skipped": [dates]}.
+    Returns {"updated": [dates], "skipped": [dates], "reconciled": [dates]}.
     """
     today_str = now_ist().strftime("%Y-%m-%d")
+    reconciled = _reconciled_dates()
 
-    # Group Zerodha trades by exit_date, excluding today
+    # Group Zerodha trades by exit_date, excluding today and reconciled
     by_date: dict[str, list] = {}
+    skipped_reconciled: list[str] = []
     for t in zerodha_trades:
         if t["exit_date"] == today_str:
             continue
+        if t["exit_date"] in reconciled:
+            if t["exit_date"] not in skipped_reconciled:
+                skipped_reconciled.append(t["exit_date"])
+            continue
         by_date.setdefault(t["exit_date"], []).append(t)
 
-    stats: dict[str, list] = {"updated": [], "skipped": []}
+    stats: dict[str, list] = {
+        "updated": [], "skipped": [], "reconciled": skipped_reconciled,
+    }
 
     for date_str, z_trades in sorted(by_date.items()):
         d = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -769,13 +873,20 @@ def _process_xlsx(xlsx_path: str):
               + (f"  |  Sides fixed: {stats['sides_fixed']}"
                  if stats.get('sides_fixed') else "")
               + (f"  |  Skipped today: {stats['skipped_today']}"
-                 if stats.get('skipped_today') else ""))
+                 if stats.get('skipped_today') else "")
+              + (f"  |  Reconciled verified: {stats['reconciled_verified']}"
+                 if stats.get('reconciled_verified') else "")
+              + (f"  |  Reconciled mismatches: {stats['reconciled_mismatch']}"
+                 if stats.get('reconciled_mismatch') else ""))
 
         # ── Update JSON / TXT trading reports ─────────────────
         print(f"\n  Updating trading reports ...")
         report_stats = _update_trading_reports(intraday, conn)
         if report_stats["updated"]:
             print(f"  ok Reports updated for: {', '.join(report_stats['updated'])}")
+        if report_stats.get("reconciled"):
+            print(f"  -- Skipped reconciled (manual fix, not overwritten): "
+                  f"{', '.join(report_stats['reconciled'])}")
         if report_stats["skipped"]:
             print(f"  -- No report files for: {', '.join(report_stats['skipped'])}")
 

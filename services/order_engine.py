@@ -2241,7 +2241,8 @@ class OrderEngine:
         now_min = now_ist().minute
         if now_hour == 12 or (now_hour == 13 and now_min <= 30):
             stagnant_mins += 15
-        min_move_pct  = self.cfg.STAGNANT_EXIT_MIN_MOVE_PCT
+        adverse_pct   = self.cfg.STAGNANT_ADVERSE_PCT
+        dead_flat_pct = self.cfg.STAGNANT_DEAD_FLAT_PCT
         if stagnant_mins <= 0:
             return 0
 
@@ -2281,18 +2282,28 @@ class OrderEngine:
             else:
                 move_pct = (entry - current_price) / entry * 100
 
-            # If barely moved (or moved against us), exit
-            if move_pct < min_move_pct:
-                pnl = (current_price - entry) * pos["qty"] if side == "BUY" \
-                    else (entry - current_price) * pos["qty"]
-                self.log.warning(
-                    f"STAGNANT EXIT: {pos['symbol']} {side} — open {elapsed:.0f} min, "
-                    f"moved only {move_pct:+.2f}% (need {min_move_pct}%) | "
-                    f"P&L: Rs.{pnl:+,.2f}"
-                )
-                self.exit_position(pos, current_price, "STAGNANT_EXIT")
-                self._stagnant_exits.add(f"{pos['symbol']}_{side}")
-                closed += 1
+            # Directional stagnant-exit (2026-04-17): only exit if the
+            # trade is clearly going wrong (adverse) or truly dead (flat
+            # in a tight band near entry). A slow-positive trade is
+            # progressing toward target and should be allowed to run —
+            # forcing it out locks in a sub-charge profit AND costs
+            # another round-trip in charges on the replacement trade.
+            is_adverse   = move_pct < -adverse_pct
+            is_dead_flat = abs(move_pct) < dead_flat_pct
+
+            if not (is_adverse or is_dead_flat):
+                continue  # slow-positive — let it breathe
+
+            reason_tag = "adverse" if is_adverse else "dead-flat"
+            pnl = (current_price - entry) * pos["qty"] if side == "BUY" \
+                else (entry - current_price) * pos["qty"]
+            self.log.warning(
+                f"STAGNANT EXIT: {pos['symbol']} {side} — open {elapsed:.0f} min, "
+                f"moved {move_pct:+.2f}% ({reason_tag}) | P&L: Rs.{pnl:+,.2f}"
+            )
+            self.exit_position(pos, current_price, "STAGNANT_EXIT")
+            self._stagnant_exits.add(f"{pos['symbol']}_{side}")
+            closed += 1
 
         return closed
 
