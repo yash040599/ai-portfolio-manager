@@ -552,6 +552,36 @@ class Config:
     #   from the live price, and at least this % from entry.
     CANDLE_PROTECT_MIN_CUSHION_PCT: float = 0.3
 
+    # ── ADX + DI Entry Gate (Roadmap #157) ────────────────────────
+    # ADX_ENTRY_GATE_ENABLED: require minimum ADX and directional
+    #   alignment (DI) before entering a new trade. Kills chop-day
+    #   churn — on days when NIFTY is range-bound and ADX sits
+    #   below ~18, entries keep firing and immediately get stopped
+    #   out or force-exited, burning ~Rs.40 round-trip each.
+    # ADX_MIN_THRESHOLD: minimum ADX value for an entry (below this
+    #   is considered "no trend" — the setup may still work but the
+    #   odds are meaningfully worse).
+    # ADX_OVERRIDE_SCORE: |combined_score| threshold that overrides
+    #   the ADX gate. A very strong signal can override a weak ADX
+    #   reading — trend may be *about* to emerge.
+    ADX_ENTRY_GATE_ENABLED:  bool  = True
+    ADX_MIN_THRESHOLD:       float = 18.0
+    ADX_OVERRIDE_SCORE:      float = 7.0
+
+    # ── ATR-Based Position Sizing (Roadmap #145) ──────────────────
+    # ATR_SIZING_ENABLED: compute qty based on per-trade risk budget
+    #   and stock volatility instead of pure price-based allocation.
+    #   Without this, a low-ATR stock and a high-ATR stock get the
+    #   same rupee exposure but 5× different rupee risk. With it,
+    #   every trade risks roughly the same amount.
+    # RISK_PER_TRADE_PCT: fraction of total budget risked per trade.
+    #   risk_rupees = budget × RISK_PER_TRADE_PCT / 100.
+    #   qty = risk_rupees / (ATR_MULTIPLIER × ATR)
+    #   Final qty = min(price-based cap, risk-based qty) — never
+    #   exceeds the existing per-position budget cap, only reduces it.
+    ATR_SIZING_ENABLED:      bool  = True
+    RISK_PER_TRADE_PCT:      float = 0.5
+
     # ── Loss-Adjusted Position Sizing ─────────────────────────────
     # LOSS_SIZING_ENABLED: if True, reduce position sizes after
     #   realising losses. Budget for new trades shrinks by day's

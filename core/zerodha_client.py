@@ -731,6 +731,26 @@ class ZerodhaClient:
         except Exception:
             return None
 
+    def get_orders(self) -> list[dict]:
+        """
+        Fetches all orders placed today (pending, completed, cancelled, rejected).
+        Used by startup reconciliation to find orphan SL-M orders.
+
+        Returns a list of order dicts. Each dict has at minimum:
+          order_id, tradingsymbol, exchange, transaction_type (BUY/SELL),
+          quantity, order_type (MARKET/LIMIT/SL/SL-M), product (MIS/CNC),
+          status (OPEN, TRIGGER PENDING, COMPLETE, CANCELLED, REJECTED),
+          trigger_price, price, average_price, order_timestamp.
+
+        Returns [] on API failure (never raises) so startup can continue.
+        """
+        self._require_login()
+        try:
+            return list(self._kite.orders() or [])
+        except Exception as e:
+            self.log.warning(f"get_orders() failed: {e}")
+            return []
+
     # ================================================================
     # END-OF-DAY TRADE RECONCILIATION
     # ================================================================

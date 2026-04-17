@@ -42,7 +42,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (12 items)
+### Pending (7 items)
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
@@ -50,13 +50,8 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
-| 145 | Volatility-adjusted position sizing — qty scaled by ATR, not just budget | MEDIUM | High | Medium |
 | 147 | Session-time-aware RVol — hourly-bucket baseline, not daily average | LOW | Medium | Medium |
-| 148 | Stale SL-M cleanup on restart — reconcile or cancel orphan SL-M orders | HIGH | High | Low |
 | 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
-| 150 | [Bug] Partial-qty exits can lose 1 share to integer truncation | HIGH | Medium | Low |
-| 151 | [Bug] External partial close misread as full close in reconciliation | HIGH | High | Medium |
-| 157 | ADX + directional entry confirm — reject entries when ADX < threshold or DI crossover disagrees with side | MEDIUM | Medium | Medium |
 | 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
 
 ### Removed (8 items — not worth implementing)
@@ -72,7 +67,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (134 items)
+### Completed (139 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -212,6 +207,11 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 154 | **Candle-protect / regime-shift SL cushion.** Previously when a contrary signal hit a break-even or losing position, the tightened SL collapsed to exact entry. If the live price was already against entry (the typical case for a contrary signal!), the new SL fired on the very next tick — the INDIGO 2026-04-17 chain-reaction bug. Fix: new `_compute_protective_sl()` helper in manager_v2. SL is now clamped to stay at least `CANDLE_PROTECT_MIN_CUSHION_PCT` away from the live price AND from entry. Applied to both `_auto_protect_on_contrary_signal` and `_regime_shift_protect`. | Bug Fix |
 | 155 | **Reconciled-day safeguard.** `import_zerodha_taxpnl.py` used to overwrite trades that had been manually reconciled (e.g. when the intraday Tax P&L sheet lagged reality for the current day). Fix: trading-day JSONs get a sticky `_reconciled: true` flag when the user reconciles. Three writers (`import_zerodha_taxpnl`, `performance_tracker.record_trades`, `report_writer.save_trading_day`) now honour the flag — they still cross-check sheet vs DB and print warnings on mismatch, but never delete/replace the authoritative rows. Also fixed a side-fixer bug that was flipping BUY↔SELL on protected days. | Bug Fix |
 | 156 | **Directional stagnant-exit.** Stagnant-exit previously fired whenever `move_pct < STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%). This lumped slow-positive trades (RECLTD +0.26%, TATAPOWER +0.25% on 2026-04-17) in with adverse/flat trades — locking in a sub-charge profit and wasting another Rs.15-20 round-trip to re-enter. Fix: new `STAGNANT_ADVERSE_PCT` (0.2%) and `STAGNANT_DEAD_FLAT_PCT` (0.1%) thresholds. Stagnant-exit now fires only if the trade is clearly adverse OR genuinely dead-flat. Slow-positive trades are allowed to continue toward target. | Execution |
+| 148 | **Stale SL-M cleanup on restart.** After a crash `load_existing_positions()` rebuilt positions from Zerodha MIS but never reconciled pending SL-M orders. Result: orphan SL-M orders could fire against fresh positions, or the bot would place a fresh software SL while a hidden live SL-M still existed — two exit orders racing. Fix: new `zerodha.get_orders()` wrapper and `_reconcile_orphan_sl_m()` helper run after `load_existing_positions` and `sync_external_positions`. For each live SL-M: attach to a matching tracked position (register order id, add to `_pending_order_ids`), or cancel if it's a today-orphan with no matching position, or preserve and loudly warn if it's from another day. DRY_RUN short-circuits; API failures are swallowed so startup never crashes. | Bug Fix |
+| 150 | **Partial-qty exit truncation.** `_place_exit_order` for partial-profit taking requested `partial_qty` via MARKET but only returned the fill price; caller set `pos["qty"] = remaining_qty` assuming full fill. On illiquid MARKET fills (actual partial fill) the position qty drifted from the live share count, and the resized exchange SL-M was off by the unfilled shares. Fix: `_place_exit_order` now returns `(fill_price, actual_filled_qty)` using `get_order_filled_qty()`. Caller subtracts actual filled qty, logs a WARN if less than requested, skips SL-M resize when nothing filled. DRY_RUN returns the requested qty (no behavior change). | Bug Fix |
+| 151 | **External partial close detection.** Previously `sync_external_positions()` compared only symbol-set membership. If the user closed *half* on Kite, the symbol was still present on Zerodha → bot silently kept tracking the old qty, broker-side SL-M still sized for the original qty. Fix: new per-(symbol, side) qty map. When Zerodha qty < tracked qty, reduce pos["qty"] to match, log `EXTERNAL_PARTIAL` with estimated slice P&L, and resize the exchange SL-M (`_replace_exchange_sl`). On resize failure we roll back pos["qty"] so state stays consistent. External qty *increases* are still ignored (safe default — user adding shares outside bot's view should not auto-grow tracked size). | Bug Fix |
+| 157 | **ADX + DI directional entry gate.** Entries used combined_score + VWAP + patterns but never gated on ADX/DI. On chop days (range-bound NIFTY, ADX < ~18), trades fired and immediately hit stagnant-exit or candle-protect, burning ~Rs.40 round-trip each. Fix: in `enter_trade`, after RSI checks, require either (a) ADX ≥ `ADX_MIN_THRESHOLD` (18) AND DI aligned with side (+DI > −DI for BUY, reverse for SELL), or (b) `|score| ≥ ADX_OVERRIDE_SCORE` (7) for high-conviction overrides. ADX is passed through from scanner via new `_entry_adx / _entry_plus_di / _entry_minus_di` fields. Fails open when ADX is missing. Kill-switch: `ADX_ENTRY_GATE_ENABLED=False`. | Execution |
+| 145 | **ATR-based position sizing.** Old formula `qty = budget_per_slot / price` gave equal rupee exposure to every stock — a Rs.500 stock with Rs.1 SL risked Rs.50, while a Rs.2000 stock with Rs.20 SL risked Rs.500 on the same qty. Single SL on high-ATR name ate 5 winners on low-ATR names. Fix: after ATR/SL is computed in `enter_trade`, compute `risk_rupees = budget × RISK_PER_TRADE_PCT (0.5%)` and `risk_qty = risk_rupees / sl_distance`. Final qty = `min(price_qty, risk_qty)` — only REDUCES, never increases. If 1 share exceeds the per-trade risk budget, trade is rejected (too volatile for the account size). ATR missing → falls through to price-based sizing unchanged. Kill-switch: `ATR_SIZING_ENABLED=False`. | Execution |
 
 ---
 
@@ -242,10 +242,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Effort**: ~2 weeks. Touches `order_engine`, reconciliation, and crash-recovery logic.
 
 ### 145. Volatility-Adjusted Position Sizing
-- **Priority**: MEDIUM (makes risk per trade consistent across calm vs wild stocks)
-- **Today**: `qty = floor(budget_per_slot / price)`. A calm Rs.500 stock and a wild Rs.500 stock get the same qty, but the wild one moves much more — so we are silently risking more rupees on wild stocks.
-- **Fix**: `qty = (budget × risk_pct) / (ATR × ATR_multiplier)`. Calm stocks get more shares, wild stocks get fewer, so every trade risks roughly the same rupees.
-- **Effort**: Medium. Paper-test before live — needs interaction with `MAX_POSITION_PCT` cap checked carefully.
+- **Status**: ✅ Completed (see #145 in Completed table).
 
 ### 147. Session-Time-Aware RVol Baseline
 - **Priority**: LOW (current RVol is "good enough" for the pre-filter)
@@ -254,10 +251,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Effort**: Medium. Needs a new cache of hourly-bucket volume history.
 
 ### 148. Stale SL-M Cleanup on Restart
-- **Priority**: HIGH (pure crash-safety; prevents next-day mis-fires)
-- **Today**: After a crash, `load_existing_positions()` rebuilds in-memory positions from Zerodha MIS, but pre-crash SL-M orders are still live on the exchange and we no longer know their order IDs. Price revisiting an old trigger level on the NEXT trading day could fire a stale SL-M against a fresh position.
-- **Fix**: On startup, call `kite.orders()` and either (a) reconcile each open SL-M to a resumed position and re-register its ID, or (b) cancel any SL-M that doesn't correspond to a current position.
-- **Effort**: Low — one new API call wrapper + a small reconciliation loop.
+- **Status**: ✅ Completed (see #148 in Completed table).
 
 ### 149. Sector-Cascade Exit
 - **Priority**: MEDIUM (protects against correlated sector-wide drops)
@@ -266,22 +260,13 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
 
 ### 150. [Bug] Partial-Qty Exits Can Lose Shares to Integer Truncation
-- **Priority**: HIGH (silent P&L/inventory bug)
-- **Today**: When we exit 1/3 of a position, we compute `qty_to_exit = total // 3`. For 10 shares this is 3. Next partial becomes `7 // 3 = 2`. Over multiple partial steps we under-exit and leave fractional rounding dust behind — reconciliation then disagrees with broker.
-- **Fix**: Track cumulative `exited_qty` and compute the next partial as `round(target_fraction × original_qty) − already_exited`. Ensures totals add up cleanly and the final partial closes to exactly zero.
-- **Effort**: Low. Localized to `order_engine` partial-exit path; needs unit-level test coverage.
+- **Status**: ✅ Completed (see #150 in Completed table).
 
 ### 151. [Bug] External Partial Close Misread as Full Close
-- **Priority**: HIGH (wrong P&L on reconcile)
-- **Today**: If the user manually closes **half** the position in the Kite app, our reconciliation in `load_existing_positions()` / periodic sync logic can interpret the reduced Zerodha qty as a full close — wipes the in-memory position, logs wrong P&L, and leaves the remaining half un-tracked.
-- **Fix**: Compare Zerodha qty against the bot's tracked qty. If Zerodha qty is `0`, close. If it is `> 0` but `< tracked`, treat it as an external partial close: update tracked qty, log the partial at the broker-average price, keep the remaining position live with its SL-M still valid.
-- **Effort**: Medium. Careful because this interacts with SL-M re-sizing and partial-target state.
+- **Status**: ✅ Completed (see #151 in Completed table).
 
 ### 157. ADX + Directional Entry Confirmation
-- **Priority**: MEDIUM (cuts whipsaw losses)
-- **Today**: Entry relies on combined_score + VWAP + pattern confirmations. We compute ADX for observation but don't gate entries on it. On chop days (NIFTY ±0.2% range, ADX < 18), entries fire and then immediately hit stagnant-exit or candle-protect — every one of those loses charges (~Rs.40 round-trip) and adds nothing.
-- **Fix**: At entry, require either (a) ADX ≥ 18 **and** DI crossover aligned with `side`, or (b) score ≥ late-entry R:R floor (for very-high-conviction trades) to override. Also consider per-sector ADX so we don't reject trades on a single index reading.
-- **Effort**: Medium. ADX already computed in `technical_indicators`; need the gate, a config constant, and careful tuning to avoid starving the bot on quiet days.
+- **Status**: ✅ Completed (see #157 in Completed table).
 
 ### 158. Regime-Shift Opportunity Window
 - **Priority**: LOW (small but non-zero alpha)

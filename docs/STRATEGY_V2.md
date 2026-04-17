@@ -756,6 +756,11 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `STAGNANT_DEAD_FLAT_PCT` | 0.1% | Stagnant-exit fires if |move| is inside this band (truly flat) |
 | `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | **Retired** — replaced by the two thresholds above |
 | `CANDLE_PROTECT_MIN_CUSHION_PCT` | 0.3% | Minimum gap between tightened SL and live price (candle/regime protect) |
+| `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157) |
+| `ADX_MIN_THRESHOLD` | 18.0 | Minimum ADX for entry (chop filter) |
+| `ADX_OVERRIDE_SCORE` | 7.0 | `|score|` threshold that overrides a weak ADX reading |
+| `ATR_SIZING_ENABLED` | True | Kill-switch for ATR-based position sizing (#145) |
+| `RISK_PER_TRADE_PCT` | 0.5% | Fraction of budget risked per trade when ATR sizing is active |
 | `LOSS_SIZING_ENABLED` | True | Loss-adjusted sizing |
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Loss threshold for score bump (NoAI) |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Score increase after losses (NoAI) |

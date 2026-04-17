@@ -275,7 +275,132 @@ class OrderEngine:
             self._log_action("RESUME", symbol, side, abs_qty, avg_price,
                              "Loaded from existing Zerodha position")
 
+        # Roadmap #148 — reconcile orphan SL-M orders
+        # After loading positions we may have live SL-M orders on the
+        # exchange from the pre-crash session. Attach the ones that
+        # match current positions; cancel the ones that don't.
+        if loaded > 0:
+            self._reconcile_orphan_sl_m()
+
         return loaded
+
+    # ================================================================
+    # STALE SL-M RECONCILIATION — #148
+    # ================================================================
+
+    def _reconcile_orphan_sl_m(self) -> None:
+        """
+        Reconcile pending SL-M orders against in-memory positions.
+
+        Called after load_existing_positions (crash recovery) and after
+        sync_external_positions (adoption). For each live SL-M order on
+        Zerodha:
+          (a) If a tracked OPEN position matches on (symbol, exit_side, qty)
+              and has no _sl_order_id, attach the order id — reuse the
+              existing broker-side stop.
+          (b) If no tracked position matches and the order was placed
+              TODAY, cancel it — it's an orphan from a prior session.
+          (c) If no position matches but order is from an earlier day
+              (shouldn't normally happen because MIS auto-expires, but
+              defensive), leave it alone and log loud warning.
+
+        Fail-safe: any API failure is logged and skipped — never raises.
+        """
+        if self.cfg.DRY_RUN:
+            return
+
+        try:
+            orders = self.zerodha.get_orders()
+        except Exception as e:
+            self.log.warning(f"SL-M reconcile: get_orders() failed: {e}")
+            return
+
+        if not orders:
+            return
+
+        # Only care about live SL-M orders (still capable of firing)
+        live_states = {"OPEN", "TRIGGER PENDING"}
+        sl_types = {"SL-M", "SL"}
+        live_sl_orders = [
+            o for o in orders
+            if (o.get("status") in live_states
+                and o.get("order_type") in sl_types
+                and o.get("product") == "MIS")
+        ]
+
+        if not live_sl_orders:
+            return
+
+        today_str = now_ist().strftime("%Y-%m-%d")
+        attached = 0
+        cancelled = 0
+        stray = 0
+
+        # Build lookup: (symbol, exit_side, qty) -> position
+        pos_lookup: dict[tuple, dict] = {}
+        for p in self.open_positions():
+            if p.get("_sl_order_id"):
+                continue  # already has an SL-M attached
+            exit_side = "SELL" if p["side"] == "BUY" else "BUY"
+            pos_lookup[(p["symbol"], exit_side, p["qty"])] = p
+
+        for o in live_sl_orders:
+            sym     = o.get("tradingsymbol", "")
+            txn     = o.get("transaction_type", "")  # BUY / SELL of the SL-M (= exit side)
+            qty     = int(o.get("quantity", 0) or 0)
+            oid     = o.get("order_id", "")
+            trig    = o.get("trigger_price", 0)
+            ts_str  = str(o.get("order_timestamp", ""))[:10]  # YYYY-MM-DD
+
+            key = (sym, txn, qty)
+            p = pos_lookup.get(key)
+            if p is not None:
+                # Attach — reuse the existing broker-side stop
+                p["_sl_order_id"] = oid
+                self._pending_order_ids.add(oid)
+                del pos_lookup[key]
+                attached += 1
+                self.log.success(
+                    f"SL-M reconcile: attached order {oid} "
+                    f"({txn} {qty}x {sym} @ trigger Rs.{trig:.2f}) "
+                    f"to open {p['side']} position"
+                )
+                self._log_action("SL_M_ATTACH", sym, txn, qty, trig,
+                                 f"Reconciled orphan SL-M {oid}")
+                continue
+
+            # Not matched to any position
+            if ts_str and ts_str == today_str:
+                # Orphan from this trading day — safe to cancel
+                try:
+                    self.zerodha.cancel_order(oid)
+                    cancelled += 1
+                    self.log.warning(
+                        f"SL-M reconcile: cancelled orphan order {oid} "
+                        f"({txn} {qty}x {sym} @ trigger Rs.{trig:.2f}) — "
+                        f"no matching open position"
+                    )
+                    self._log_action("SL_M_CANCEL", sym, txn, qty, trig,
+                                     f"Orphan SL-M cancelled (no matching position)")
+                except Exception as e:
+                    self.log.error(
+                        f"SL-M reconcile: failed to cancel orphan {oid}: {e}"
+                    )
+            else:
+                # Stray from a different day (MIS should auto-cancel overnight,
+                # but if Zerodha left it we refuse to touch it — too risky)
+                stray += 1
+                self.log.error(
+                    f"SL-M reconcile: STRAY order {oid} "
+                    f"({txn} {qty}x {sym}) from {ts_str or 'unknown date'} — "
+                    f"NOT cancelled automatically. Review manually."
+                )
+
+        if attached or cancelled or stray:
+            self.log.info(
+                f"SL-M reconcile summary: {attached} attached, "
+                f"{cancelled} cancelled, {stray} stray"
+            )
 
     # ================================================================
     # SYNC — DETECT EXTERNALLY OPENED POSITIONS
@@ -394,12 +519,27 @@ class OrderEngine:
             for pos in net_positions
             if pos.get("product") == "MIS" and pos.get("quantity", 0) != 0
         }
+        # Roadmap #151 — map (symbol, bot-side) to current Zerodha abs qty
+        # so we can detect PARTIAL external closes (user closes half on Kite).
+        # Key is (symbol, side_in_bot_terms) because a long (qty>0) matches
+        # bot's BUY side and a short (qty<0) matches bot's SELL side.
+        zerodha_qty_by_side: dict[tuple, int] = {}
+        for pos in net_positions:
+            if pos.get("product") != "MIS":
+                continue
+            zq = pos.get("quantity", 0)
+            if zq == 0:
+                continue
+            z_side = "BUY" if zq > 0 else "SELL"
+            zerodha_qty_by_side[(pos.get("tradingsymbol", ""), z_side)] = abs(zq)
+
         for p in self.positions:
-            if (
-                p["status"] == "OPEN"
-                and p["symbol"] not in zerodha_open
-                and (p["symbol"], p["side"], p["qty"]) not in self._bot_closed_positions
-            ):
+            if p["status"] != "OPEN":
+                continue
+
+            # ── Full external close detection ───────────────────────
+            if (p["symbol"] not in zerodha_open
+                    and (p["symbol"], p["side"], p["qty"]) not in self._bot_closed_positions):
                 # This is a position the bot doesn't know about and it's NOT
                 # in bot_closed_positions, so it looks like a user close.
                 # Fetch exit price from Zerodha's day position data with multiple fallbacks
@@ -464,10 +604,73 @@ class OrderEngine:
                 )
                 self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
                                  p["qty"], exit_price, "User closed via Zerodha app")
-        
+                continue
+
+            # ── Partial external close detection (Roadmap #151) ─────
+            # Position still present on Zerodha but with REDUCED qty.
+            # User closed part of the position via Kite; reduce our
+            # tracked qty and resize the exchange SL-M.
+            z_qty = zerodha_qty_by_side.get((p["symbol"], p["side"]))
+            if z_qty is None or z_qty >= p["qty"]:
+                continue  # either fully gone (handled above) or still same/larger
+
+            closed_qty = p["qty"] - z_qty
+            # Estimate exit price from day position data (same fallbacks
+            # as full-close path) for P&L attribution of the closed slice.
+            partial_exit_price = None
+            for zp in net_positions:
+                if zp.get("tradingsymbol") == p["symbol"] and zp.get("product") == "MIS":
+                    if p["side"] == "BUY":
+                        partial_exit_price = zp.get("sell_price") or zp.get("last_price")
+                    else:
+                        partial_exit_price = zp.get("buy_price") or zp.get("last_price")
+                    break
+            if not partial_exit_price:
+                partial_exit_price = p["entry_price"]  # safe fallback
+                self.log.warning(
+                    f"EXTERNAL_PARTIAL {p['symbol']}: could not determine "
+                    f"exit price — using entry price for closed slice P&L"
+                )
+            partial_exit_price = round(partial_exit_price, 2)
+
+            if p["side"] == "BUY":
+                slice_pnl = round((partial_exit_price - p["entry_price"]) * closed_qty, 2)
+            else:
+                slice_pnl = round((p["entry_price"] - partial_exit_price) * closed_qty, 2)
+
+            # Resize exchange SL-M to match the new qty BEFORE updating
+            # pos["qty"] — if replacement fails we leave state unchanged.
+            old_qty = p["qty"]
+            p["qty"] = z_qty
+            try:
+                self._replace_exchange_sl(p, p["stop_loss"])
+                self.log.info(
+                    f"EXTERNAL_PARTIAL {p['symbol']} {p['side']}: user closed "
+                    f"{closed_qty}/{old_qty} shares on Kite @ "
+                    f"Rs.{partial_exit_price:.2f} | slice P&L Rs.{slice_pnl:+,.2f} | "
+                    f"remaining {z_qty} shares tracked with resized SL-M"
+                )
+                self._log_action("EXTERNAL_PARTIAL", p["symbol"], p["side"],
+                                 closed_qty, partial_exit_price,
+                                 f"User closed {closed_qty}/{old_qty} on Kite")
+                # Accumulate partial P&L so final close reports full picture
+                p["_partial_pnl"] = round(p.get("_partial_pnl", 0) + slice_pnl, 2)
+                p["_partial_qty"] = p.get("_partial_qty", 0) + closed_qty
+            except Exception as e:
+                p["qty"] = old_qty  # rollback
+                self.log.error(
+                    f"EXTERNAL_PARTIAL {p['symbol']}: SL-M resize failed ({e}) — "
+                    f"rolled back to qty {old_qty}. Review manually."
+                )
+
         # NOTE: _bot_closed_positions already cleared at function START
         # Do NOT clear here — it needs to persist until next sync() call
         # BUG FIX: clearing at end causes stale entries in rapid successive calls
+
+        # Roadmap #148 — reconcile orphan SL-M orders after any external
+        # position adoption (user may have placed manual SL-M from Kite)
+        if loaded > 0:
+            self._reconcile_orphan_sl_m()
 
         return loaded
 
@@ -1062,6 +1265,37 @@ class OrderEngine:
             # Mark position so time-decay doesn't stack on top
             trade["_late_entry_reduced"] = True
 
+        # ── ATR-based position sizing (Roadmap #145) ──────────────
+        # Reduce qty for high-volatility stocks so every trade risks
+        # approximately the same rupee amount. If a low-ATR stock gets
+        # 50 shares with a Rs.1 stop (= Rs.50 risk) while a high-ATR
+        # stock gets 50 shares with a Rs.5 stop (= Rs.250 risk), a
+        # single SL hit on the latter wipes out 5 winners on the former.
+        # We never INCREASE qty — only cap it so risk ≤ RISK_PER_TRADE_PCT
+        # of budget. Price-based qty remains the upper bound.
+        if self.cfg.ATR_SIZING_ENABLED and atr and atr > 0 and qty > 0:
+            risk_rupees = self._budget * self.cfg.RISK_PER_TRADE_PCT / 100
+            sl_distance = abs(entry - sl)
+            if sl_distance > 0:
+                risk_qty = int(risk_rupees / sl_distance)
+                if risk_qty < 1:
+                    # Even 1 share would exceed risk budget — this is a
+                    # very volatile or very high-priced stock. Skip.
+                    self.log.warning(
+                        f"{symbol}: 1 share has risk Rs.{sl_distance:.2f} > "
+                        f"risk budget Rs.{risk_rupees:.0f} per trade. Skipping "
+                        f"(ATR sizing). Disable ATR_SIZING_ENABLED to override."
+                    )
+                    return False
+                if risk_qty < qty:
+                    self.log.info(
+                        f"  ✓ {symbol}: ATR sizing — qty reduced {qty} → "
+                        f"{risk_qty} (risk Rs.{risk_qty * sl_distance:.0f} of "
+                        f"Rs.{risk_rupees:.0f} budget per trade)"
+                    )
+                    qty = risk_qty
+                    trade["qty"] = qty
+
         # ── R:R safety floor (time-aware + adaptive) ─────────────
         # One unified check. Floor depends on time of day:
         #   Morning (<1 PM): RR_FLOOR_MORNING (1.3)
@@ -1269,6 +1503,47 @@ class OrderEngine:
                     f"extended oversold move. Skipping."
                 )
                 return False
+
+        # ── ADX + DI directional gate (Roadmap #157) ──────────────
+        # Reject entries on chop days (ADX below threshold) UNLESS the
+        # combined score is strong enough to override (big conviction).
+        # Also reject when DI direction disagrees with the trade side —
+        # e.g. trying to BUY while -DI > +DI means sellers are dominant.
+        # Fails open when ADX is missing (treat as pass).
+        if self.cfg.ADX_ENTRY_GATE_ENABLED:
+            entry_adx = trade.get("_entry_adx", 0) or 0
+            plus_di   = trade.get("_entry_plus_di", 0) or 0
+            minus_di  = trade.get("_entry_minus_di", 0) or 0
+            score_abs = abs(trade.get("_entry_score", 0) or 0)
+            override  = score_abs >= self.cfg.ADX_OVERRIDE_SCORE
+
+            if entry_adx > 0:  # only enforce if ADX was measured
+                if entry_adx < self.cfg.ADX_MIN_THRESHOLD and not override:
+                    self.log.warning(
+                        f"{symbol}: ADX {entry_adx:.1f} < {self.cfg.ADX_MIN_THRESHOLD} "
+                        f"(chop) and |score| {score_abs:.1f} < "
+                        f"{self.cfg.ADX_OVERRIDE_SCORE} override — skipping. "
+                        f"Entry likely to churn out."
+                    )
+                    return False
+                # Directional disagreement (only meaningful when both DI present)
+                if plus_di > 0 and minus_di > 0 and not override:
+                    if side == "BUY" and minus_di > plus_di:
+                        self.log.warning(
+                            f"{symbol}: BUY but -DI {minus_di:.1f} > +DI {plus_di:.1f} "
+                            f"(sellers dominant). Skipping."
+                        )
+                        return False
+                    if side == "SELL" and plus_di > minus_di:
+                        self.log.warning(
+                            f"{symbol}: SELL but +DI {plus_di:.1f} > -DI {minus_di:.1f} "
+                            f"(buyers dominant). Skipping."
+                        )
+                        return False
+                self.log.info(
+                    f"  ✓ {symbol}: ADX gate OK — ADX {entry_adx:.1f}, "
+                    f"+DI {plus_di:.1f} / -DI {minus_di:.1f}"
+                )
 
         # ── Daily trade cap ───────────────────────────────────────
         # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
@@ -1846,13 +2121,17 @@ class OrderEngine:
         price: float,
         qty: int,
         reason: str,
-    ) -> float | None:
+    ) -> tuple[float, int] | None:
         """
         Exits a subset of shares from an open position (for partial
         profit taking). Does NOT mark the position as CLOSED — the
         remaining shares stay open. Updates the trade log.
 
-        Returns the actual fill price on success, None on failure.
+        Returns (actual_fill_price, actual_filled_qty) on success,
+        None on failure. The caller MUST use actual_filled_qty when
+        adjusting pos["qty"] — a MARKET order on an illiquid stock can
+        partial-fill, and the caller would otherwise under-track the
+        live share count (Roadmap #150).
         """
         symbol   = position["symbol"]
         exchange = position["exchange"]
@@ -1865,33 +2144,51 @@ class OrderEngine:
                 f"{tag} PARTIAL EXIT {exit_side} {qty}x {symbol} @ Rs.{price:.2f} | "
                 f"Reason: {reason}"
             )
-        else:
-            try:
-                order_id = self.zerodha.place_order(
-                    symbol=symbol, exchange=exchange,
-                    qty=qty, side=exit_side, order_type="MARKET",
-                )
-                # Partial exit succeeded — reset failure counter and clear broken flag
-                self._consecutive_order_failures = 0
-                self._order_api_broken = False
+            self._log_action(reason, symbol, exit_side, qty, price,
+                             f"Partial exit {qty} shares")
+            return price, qty
 
-                # Fetch actual fill price (same pattern as exit_position)
-                fill_price = self.zerodha.get_order_fill_price(order_id)
-                if fill_price:
-                    price = fill_price
-            except Exception as e:
-                self._consecutive_order_failures += 1
+        try:
+            order_id = self.zerodha.place_order(
+                symbol=symbol, exchange=exchange,
+                qty=qty, side=exit_side, order_type="MARKET",
+            )
+            # Partial exit succeeded — reset failure counter and clear broken flag
+            self._consecutive_order_failures = 0
+            self._order_api_broken = False
+
+            # Fetch actual fill price AND actual filled qty
+            fill_price = self.zerodha.get_order_fill_price(order_id)
+            if fill_price:
+                price = fill_price
+            filled_qty = self.zerodha.get_order_filled_qty(order_id)
+            if filled_qty is None or filled_qty <= 0:
+                # Could not determine fills — assume zero to be safe
                 self.log.error(
-                    f"Partial exit order FAILED for {symbol}: {e} — "
-                    f"position qty NOT adjusted"
+                    f"Partial exit {symbol}: order {order_id} placed but "
+                    f"could not determine filled qty. Treating as 0 filled — "
+                    f"position qty NOT reduced. Review manually."
                 )
-                if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
-                    self._order_api_broken = True
                 return None
+            if filled_qty < qty:
+                self.log.warning(
+                    f"Partial exit {symbol}: requested {qty} shares but only "
+                    f"{filled_qty} filled (illiquid MARKET fill). Position qty "
+                    f"will be reduced by actual filled amount."
+                )
+        except Exception as e:
+            self._consecutive_order_failures += 1
+            self.log.error(
+                f"Partial exit order FAILED for {symbol}: {e} — "
+                f"position qty NOT adjusted"
+            )
+            if self._consecutive_order_failures >= self.ORDER_FAILURE_LIMIT:
+                self._order_api_broken = True
+            return None
 
-        self._log_action(reason, symbol, exit_side, qty, price,
-                         f"Partial exit {qty} shares")
-        return price
+        self._log_action(reason, symbol, exit_side, filled_qty, price,
+                         f"Partial exit {filled_qty}/{qty} shares")
+        return price, filled_qty
 
     # ================================================================
     # MONITOR — CHECK SL/TARGET HITS
@@ -2041,17 +2338,21 @@ class OrderEngine:
                 )
 
                 # Place the partial exit order
-                fill = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
-                if fill is not None:
-                    # Recalculate P&L with actual fill price
-                    partial_pnl = round((fill - entry) * partial_qty, 2)
-                    pos["qty"] = remaining_qty
+                result = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
+                if result is not None:
+                    fill, actual_qty = result
+                    # Recalculate P&L with actual fill price AND actual qty
+                    # (Roadmap #150: MARKET can partial-fill on illiquid stocks)
+                    partial_pnl = round((fill - entry) * actual_qty, 2)
+                    pos["qty"] = pos["qty"] - actual_qty
                     pos["_partial_taken"] = True
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
-                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
+                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + actual_qty
                     pos["_partial_exit_price"] = fill
-                    # Update exchange SL-M for reduced qty
-                    self._replace_exchange_sl(pos, pos["stop_loss"])
+                    # Update exchange SL-M for reduced qty — only if we
+                    # actually reduced the position (actual_qty > 0)
+                    if actual_qty > 0 and pos["qty"] > 0:
+                        self._replace_exchange_sl(pos, pos["stop_loss"])
 
             # New SL = entry + trail_pct of current profit
             new_sl = round(entry + profit * trail_pct, 2)
@@ -2084,16 +2385,19 @@ class OrderEngine:
                     f"(locking Rs.{partial_pnl:,.2f} profit)"
                 )
 
-                fill = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
-                if fill is not None:
-                    partial_pnl = round((entry - fill) * partial_qty, 2)
-                    pos["qty"] = remaining_qty
+                result = self._place_exit_order(pos, current_price, partial_qty, "PARTIAL_PROFIT")
+                if result is not None:
+                    fill, actual_qty = result
+                    partial_pnl = round((entry - fill) * actual_qty, 2)
+                    pos["qty"] = pos["qty"] - actual_qty
                     pos["_partial_taken"] = True
                     pos["_partial_pnl"] = round(pos.get("_partial_pnl", 0) + partial_pnl, 2)
-                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + partial_qty
+                    pos["_partial_qty"] = pos.get("_partial_qty", 0) + actual_qty
                     pos["_partial_exit_price"] = fill
-                    # Update exchange SL-M for reduced qty
-                    self._replace_exchange_sl(pos, pos["stop_loss"])
+                    # Update exchange SL-M for reduced qty — only if we
+                    # actually reduced the position (Roadmap #150)
+                    if actual_qty > 0 and pos["qty"] > 0:
+                        self._replace_exchange_sl(pos, pos["stop_loss"])
 
             new_sl = round(entry - profit * trail_pct, 2)
 
