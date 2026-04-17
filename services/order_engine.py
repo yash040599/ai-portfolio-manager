@@ -1645,40 +1645,80 @@ class OrderEngine:
         # ── Handle exchange SL-M order ────────────────────────────
         if sl_order_id and not self.cfg.DRY_RUN:
             if reason == "STOP_LOSS":
-                # SL-M on exchange should have triggered. Verify fill qty
-                # matches position qty — SL-M can partially fill if
-                # insufficient liquidity at trigger price.
-                sl_filled_qty = qty  # default: assume full fill
+                # CRITICAL BUG FIX (Apr 17 2026): Do NOT assume the exchange
+                # SL-M has already triggered just because our software SL
+                # fired. When candle-protect / regime-shift / loser-tighten
+                # move the software SL TIGHTER than the exchange SL-M trigger,
+                # the software stop fires first and the exchange SL-M is
+                # still pending on the book. Previously we asked
+                # `get_order_filled_qty() or qty`, and `0 or qty == qty` made
+                # the bot believe the order had fully filled even when it was
+                # still TRIGGER PENDING. Result: no real exit was placed, the
+                # position stayed open on Zerodha, and P&L was double-booked
+                # when reconciliation later re-adopted the still-live short.
+                # Now we check the ACTUAL order status first.
+                order_status = None
                 try:
-                    sl_filled_qty = self.zerodha.get_order_filled_qty(sl_order_id) or qty
-                except Exception:
-                    pass  # API unavailable — assume full fill
-
-                if sl_filled_qty >= qty:
-                    self.log.info(
-                        f"SL-M {sl_order_id} triggered for {symbol} — "
-                        f"full fill confirmed ({sl_filled_qty} shares)"
-                    )
-                else:
-                    # Partial fill — place market exit for remaining shares
-                    remaining = qty - sl_filled_qty
+                    order_status = self.zerodha.get_order_status(sl_order_id)
+                except Exception as e:
                     self.log.warning(
-                        f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares. "
-                        f"Placing MARKET exit for remaining {remaining} shares."
+                        f"Could not read SL-M status for {symbol}: {e} — "
+                        f"treating as untriggered, will place market exit"
+                    )
+
+                if order_status == "COMPLETE":
+                    # Exchange SL-M actually fired. Confirm qty filled.
+                    sl_filled_qty = 0
+                    try:
+                        sl_filled_qty = self.zerodha.get_order_filled_qty(sl_order_id) or 0
+                    except Exception:
+                        sl_filled_qty = qty  # API blip after COMPLETE — safe to trust
+
+                    if sl_filled_qty >= qty:
+                        self.log.info(
+                            f"SL-M {sl_order_id} triggered for {symbol} — "
+                            f"full fill confirmed ({sl_filled_qty} shares)"
+                        )
+                    else:
+                        # Partial fill — place market exit for remaining shares
+                        remaining = qty - sl_filled_qty
+                        self.log.warning(
+                            f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares. "
+                            f"Placing MARKET exit for remaining {remaining} shares."
+                        )
+                        try:
+                            self.zerodha.place_order(
+                                symbol=symbol, exchange=exchange,
+                                qty=remaining, side=exit_side, order_type="MARKET",
+                            )
+                        except Exception as e:
+                            self.log.error(
+                                f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
+                                f"MANUAL INTERVENTION NEEDED"
+                            )
+                    self._pending_order_ids.discard(sl_order_id)
+                    position["_sl_order_id"] = None
+                    sl_m_handled = True
+                else:
+                    # SL-M did NOT fire on exchange (status likely TRIGGER PENDING
+                    # or OPEN — software SL was tighter). Cancel the stale SL-M
+                    # and place our own market exit so the position actually closes.
+                    self.log.warning(
+                        f"SOFTWARE SL fired for {symbol} but exchange SL-M "
+                        f"{sl_order_id} status={order_status!r} (not COMPLETE). "
+                        f"Cancelling stale SL-M and placing MARKET exit."
                     )
                     try:
-                        self.zerodha.place_order(
-                            symbol=symbol, exchange=exchange,
-                            qty=remaining, side=exit_side, order_type="MARKET",
-                        )
+                        self.zerodha.cancel_order(sl_order_id)
                     except Exception as e:
-                        self.log.error(
-                            f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
-                            f"MANUAL INTERVENTION NEEDED"
+                        self.log.warning(
+                            f"Failed to cancel stale SL-M {sl_order_id} for {symbol}: {e} — "
+                            f"proceeding with market exit anyway"
                         )
-                self._pending_order_ids.discard(sl_order_id)
-                position["_sl_order_id"] = None
-                sl_m_handled = True
+                    self._pending_order_ids.discard(sl_order_id)
+                    position["_sl_order_id"] = None
+                    # Intentionally DO NOT set sl_m_handled=True — let the
+                    # normal exit path below place the market order.
             else:
                 # Non-SL exit (target, review, square-off) — cancel
                 # the pending SL-M before placing our own exit order.

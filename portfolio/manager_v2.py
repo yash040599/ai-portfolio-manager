@@ -1013,6 +1013,14 @@ class PortfolioManagerV2(PortfolioManager):
 
         # Apply the tighter SL
         pos["stop_loss"] = new_sl
+        # BUG FIX (Apr 17 2026): Also move the exchange SL-M trigger so the
+        # broker-side order matches the software SL. Without this, the
+        # software SL fires first (because it is tighter), but the exchange
+        # SL-M is still pending — the exit_position() STOP_LOSS path then
+        # had a bug where it assumed the exchange order had already filled,
+        # causing the position to stay live on Zerodha and get re-adopted
+        # with double-booked P&L.
+        self.engine._update_exchange_sl(pos, new_sl)
         patterns = ", ".join(analysis["pattern_summary"]["patterns"][:3])
         self.log.warning(
             f"⚠ CANDLE PROTECT {symbol}: contrary signal (score {score:+.1f}, "
@@ -1071,6 +1079,8 @@ class PortfolioManagerV2(PortfolioManager):
                     continue
 
             pos["stop_loss"] = new_sl
+            # BUG FIX (Apr 17 2026): Keep exchange SL-M in sync with software SL.
+            self.engine._update_exchange_sl(pos, new_sl)
             self.log.warning(
                 f"⚠ REGIME PROTECT {symbol} {side}: market turned {regime} "
                 f"→ SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"

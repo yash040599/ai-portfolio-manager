@@ -715,6 +715,22 @@ class ZerodhaClient:
         except Exception:
             return None
 
+    def get_order_status(self, order_id: str) -> str | None:
+        """
+        Returns the current status string for an order, e.g. "COMPLETE",
+        "OPEN", "TRIGGER PENDING", "CANCELLED", "REJECTED", or None on failure.
+        Uses Kite's order_history() which returns all status transitions —
+        we read the latest (terminal) status.
+        """
+        self._require_login()
+        try:
+            history = self._kite.order_history(order_id)
+            if history:
+                return history[-1].get("status")
+            return None
+        except Exception:
+            return None
+
     # ================================================================
     # END-OF-DAY TRADE RECONCILIATION
     # ================================================================

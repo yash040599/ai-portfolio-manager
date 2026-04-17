@@ -28,7 +28,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ### How to add a new item
 
-1. Pick the next available number (currently 153 and above are free).
+1. Pick the next available number (currently 154 and above are free).
 2. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
 3. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
 4. Bump the count in the category sub-heading and the top-line Completed count.
@@ -70,7 +70,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (130 items)
+### Completed (131 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -183,7 +183,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
 | 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
 | 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
-| **Bug Fixes (28)** | | |
+| **Bug Fixes (29)** | | |
 | 69 | SL sanity check after entry price override | Bug Fix |
 | 70 | SL-M partial fill verification | Bug Fix |
 | 71 | Fill price SL cap re-validation | Bug Fix |
@@ -206,6 +206,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 141 | VWAP guard exception now logs a WARNING (was silent `pass`). Malformed indicator snapshots are visible in logs instead of silently bypassing the VWAP protection. | Bug Fix |
 | 143 | Removed sticky early-return on `_order_api_broken` in entry path. Rely on consecutive-failure counter to re-trip if the API is genuinely broken; allows recovery without manual restart. | Bug Fix |
 | 152 | SL-M placement failure now raises an ERROR-level loud alert (was a subtle WARNING). The position is flagged `_sl_m_failed=True` and the log clearly states "exchange-side protection is NOT in place; restart on a later trading day is NOT safe for this position". User can no longer run naked positions without seeing it. | Bug Fix |
+| 153 | **Stale SL-M double-booking fix (CRITICAL).** When candle-protect or regime-protect tightened the software SL below the exchange SL-M trigger, the software stop fired first — but `exit_position()` was assuming the exchange SL-M had already filled. It asked `get_order_filled_qty() or qty` (and `0 or qty == qty`), treated that as a full fill, placed no real exit order, and let the position stay live on Zerodha. Reconciliation then re-adopted the same short and triggered SL again — booking the loss twice. Fix: (a) new `get_order_status()` in zerodha_client; (b) `exit_position()` STOP_LOSS branch now verifies status == COMPLETE before trusting the SL-M, else cancels the stale order and places a market exit; (c) `_candle_protect()` and `_regime_shift_protect()` in manager_v2 now call `engine._update_exchange_sl()` so the broker-side order stays in sync with the software SL. | Bug Fix |
 
 ---
 
