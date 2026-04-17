@@ -78,6 +78,11 @@ class OrderEngine:
         # stock in the same direction (churn loop prevention).
         self._stagnant_exits: set[str] = set()  # "SYMBOL_SIDE" strings
 
+        # Per-symbol re-entry cooldown (Roadmap #161). Keyed by
+        # "SYMBOL_SIDE", value is exit timestamp. Checked in enter_trade
+        # to block re-entry in the same direction within the cooldown window.
+        self._last_exit_time: dict[str, datetime.datetime] = {}
+
         # ── Order failure tracking ────────────────────────────────
         # Consecutive order placement failures (resets on success).
         # When this reaches ORDER_FAILURE_LIMIT, the engine signals
@@ -191,6 +196,16 @@ class OrderEngine:
                     f"(budget Rs.{amount:,.0f})"
                 )
                 self.cfg.MAX_POSITIONS = new_max
+
+        # Announce the budget regime and its effective gates so every
+        # run's log header records which knob values are actually in play.
+        if self.cfg.BUDGET_REGIME_ENABLED:
+            self.log.info(
+                f"Budget regime: {self.budget_regime()} (Rs.{amount:,.0f}) → "
+                f"ADX≥{self.effective_adx_threshold():.1f}, "
+                f"trade-cap {self.effective_trade_cap()}, "
+                f"min-score {self.effective_min_score():.1f}"
+            )
 
     def is_order_api_broken(self) -> bool:
         """
@@ -664,6 +679,8 @@ class OrderEngine:
                 p["exit_reason"] = "EXTERNAL_CLOSE"
                 p["exit_time"] = now_ist().strftime("%H:%M:%S")
                 p["pnl"] = round(pnl, 2)
+                # Record exit time for per-symbol re-entry cooldown (Roadmap #161).
+                self._last_exit_time[f"{p['symbol']}_{p['side']}"] = now_ist()
                 self.log.info(
                     f"{origin} position closed by user: {p['side']} {p['qty']}x "
                     f"{p['symbol']} @ Rs.{exit_price:.2f} | P&L: Rs.{pnl:+,.2f}"
@@ -1126,6 +1143,40 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = now_ist()
+
+        # ── Lunch-lull entry skip (Roadmap #164) ──────────────────
+        # Indian markets are lowest-volume + lowest-ADX during lunch.
+        # Skip new entries in the window unless score is strong enough
+        # to justify the reduced edge. Kill-switch: LUNCH_LULL_ENABLED=False.
+        if self.is_lunch_lull(now):
+            score_abs = abs(trade.get("_entry_score", 0) or 0)
+            override  = self.cfg.LUNCH_LULL_SCORE_OVERRIDE
+            if score_abs < override:
+                self.log.warning(
+                    f"{symbol}: lunch-lull window "
+                    f"{self.cfg.LUNCH_LULL_START_HOUR:02d}:"
+                    f"{self.cfg.LUNCH_LULL_START_MINUTE:02d}-"
+                    f"{self.cfg.LUNCH_LULL_END_HOUR:02d}:"
+                    f"{self.cfg.LUNCH_LULL_END_MINUTE:02d} — |score| "
+                    f"{score_abs:.1f} < {override:.1f} override. Skipping."
+                )
+                return False
+            self.log.info(
+                f"  ✓ {symbol}: lunch-lull bypass — |score| {score_abs:.1f} "
+                f"≥ {override:.1f} override"
+            )
+
+        # ── Daily-loss soft stop (Roadmap #163) ───────────────────
+        # Stop taking NEW entries once day P&L crosses the soft threshold.
+        # Existing positions continue to be managed; hard circuit breaker
+        # still closes all at MAX_LOSS_PER_DAY_PCT.
+        if self.is_soft_stopped():
+            self.log.warning(
+                f"{symbol}: soft-stop active — day P&L Rs.{self.day_pnl():,.2f} "
+                f"≤ -{self.cfg.DAILY_LOSS_SOFT_STOP_PCT}% of budget. "
+                f"No new entries (existing positions still managed)."
+            )
+            return False
 
         # ── Validate entry price against live quote ───────────────
         # Claude can hallucinate prices. Always use Zerodha as source of truth.
@@ -1621,12 +1672,13 @@ class OrderEngine:
             override  = score_abs >= self.cfg.ADX_OVERRIDE_SCORE
 
             if entry_adx > 0:  # only enforce if ADX was measured
-                if entry_adx < self.cfg.ADX_MIN_THRESHOLD and not override:
+                adx_threshold = self.effective_adx_threshold()
+                if entry_adx < adx_threshold and not override:
                     self.log.warning(
-                        f"{symbol}: ADX {entry_adx:.1f} < {self.cfg.ADX_MIN_THRESHOLD} "
-                        f"(chop) and |score| {score_abs:.1f} < "
-                        f"{self.cfg.ADX_OVERRIDE_SCORE} override — skipping. "
-                        f"Entry likely to churn out."
+                        f"{symbol}: ADX {entry_adx:.1f} < {adx_threshold:.1f} "
+                        f"(chop, regime={self.budget_regime()}) and |score| "
+                        f"{score_abs:.1f} < {self.cfg.ADX_OVERRIDE_SCORE} override "
+                        f"— skipping. Entry likely to churn out."
                     )
                     return False
                 # Directional disagreement (only meaningful when both DI present)
@@ -1652,7 +1704,9 @@ class OrderEngine:
         # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
         # Intentionally counts EXTERNAL/adopted positions too — manual
         # trades on Zerodha still use slots and add to daily churn.
-        max_daily = self.cfg.MAX_TRADES_PER_DAY
+        # Regime-adjusted (Roadmap #165): tighter for small accounts,
+        # looser for large ones.
+        max_daily = self.effective_trade_cap()
         if getattr(self.cfg, '_expiry_applied', False):
             max_daily = min(max_daily, self.cfg.EXPIRY_MAX_TRADES_PER_DAY)
         if max_daily > 0:
@@ -1673,6 +1727,28 @@ class OrderEngine:
                 f"skipping to avoid churn loop"
             )
             return False
+
+        # ── Per-symbol re-entry cooldown (Roadmap #161) ───────────
+        # Block re-entry in the same direction for RE_ENTRY_COOLDOWN_MINUTES
+        # after ANY exit (SL, target, external, stagnant). Stops the
+        # "re-enter immediately on same signal" loop. Opposite direction
+        # (reversal setups) is still allowed. Very strong score bypasses.
+        if self.is_in_re_entry_cooldown(symbol, side, now):
+            score_abs = abs(trade.get("_entry_score", 0) or 0)
+            override  = self.cfg.RE_ENTRY_SCORE_OVERRIDE
+            last = self._last_exit_time.get(f"{symbol}_{side}")
+            mins_ago = (now - last).total_seconds() / 60 if last else 0
+            if score_abs < override:
+                self.log.warning(
+                    f"{symbol}: re-entry cooldown — exited {mins_ago:.1f} min ago "
+                    f"(window {self.cfg.RE_ENTRY_COOLDOWN_MINUTES} min), "
+                    f"|score| {score_abs:.1f} < {override:.1f} override. Skipping."
+                )
+                return False
+            self.log.info(
+                f"  ✓ {symbol}: re-entry cooldown bypass — exited {mins_ago:.1f} min ago, "
+                f"|score| {score_abs:.1f} ≥ {override:.1f} override"
+            )
 
         # ── VWAP trend + extension block ──────────────────────────
         # Two-sided guard:
@@ -1763,11 +1839,26 @@ class OrderEngine:
                 )
                 return False
 
+            # ── Charge-aware minimum target (Roadmap #162) ────────
+            # Even if net R:R passes, reject when gross target profit
+            # doesn't clear round-trip charges by a comfortable margin.
+            # Prevents tiny-target trades where a Rs.4 charge on Rs.10
+            # expected profit leaves Rs.6 for all the slippage + risk.
+            multiple = float(self.cfg.MIN_PROFIT_CHARGE_MULTIPLE)
+            if multiple > 0 and gross_profit < round_trip_charges * multiple:
+                self.log.warning(
+                    f"{symbol}: gross target profit Rs.{gross_profit:.2f} < "
+                    f"{multiple:.1f}× round-trip charges Rs.{round_trip_charges:.2f} "
+                    f"— target too thin after costs. Skipping."
+                )
+                return False
+
         # ── All pre-trade checks passed ───────────────────────────
         sl_pct_final = abs(entry - sl) / entry * 100
         tgt_pct_final = abs(target - entry) / entry * 100
+        regime_tag = f" [regime={self.budget_regime()}]" if self.cfg.BUDGET_REGIME_ENABLED else ""
         self.log.info(
-            f"  ✓ {symbol}: ALL CHECKS PASSED — {side} {qty}x @ Rs.{entry:.2f} | "
+            f"  ✓ {symbol}: ALL CHECKS PASSED{regime_tag} — {side} {qty}x @ Rs.{entry:.2f} | "
             f"SL Rs.{sl:.2f} ({sl_pct_final:.1f}%) | Target Rs.{target:.2f} ({tgt_pct_final:.1f}%) | "
             f"Cost Rs.{entry * qty:,.0f}"
         )
@@ -2205,6 +2296,9 @@ class OrderEngine:
         # Track that bot closed this position — prevents sync_external_positions()
         # from misidentifying it as a user close
         self._bot_closed_positions.add((symbol, side, qty))
+
+        # Record exit time for per-symbol re-entry cooldown (Roadmap #161).
+        self._last_exit_time[f"{symbol}_{side}"] = now
         
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
@@ -3050,6 +3144,81 @@ class OrderEngine:
             self._consecutive_sl_count = 0
             return False
         return True
+
+    # ================================================================
+    # BUDGET-REGIME HELPERS (Roadmap #165)
+    # ================================================================
+
+    def budget_regime(self) -> str:
+        """Current budget regime — "TINY" / "SMALL" / "NORMAL" / "LARGE"."""
+        return Config.budget_regime(self._budget)
+
+    def effective_adx_threshold(self) -> float:
+        """Base ADX_MIN_THRESHOLD with regime delta applied."""
+        base = float(self.cfg.ADX_MIN_THRESHOLD)
+        if not self.cfg.BUDGET_REGIME_ENABLED:
+            return base
+        delta = self.cfg.BUDGET_ADX_THRESHOLD_DELTA.get(self.budget_regime(), 0.0)
+        return max(0.0, base + float(delta))
+
+    def effective_trade_cap(self) -> int:
+        """MAX_TRADES_PER_DAY with regime delta applied (floor at 1)."""
+        base = int(self.cfg.MAX_TRADES_PER_DAY)
+        if base <= 0 or not self.cfg.BUDGET_REGIME_ENABLED:
+            return base
+        delta = self.cfg.BUDGET_TRADE_CAP_DELTA.get(self.budget_regime(), 0)
+        return max(1, base + int(delta))
+
+    def effective_min_score(self) -> float:
+        """V2_MIN_SCORE with regime delta applied."""
+        base = float(self.cfg.V2_MIN_SCORE)
+        if not self.cfg.BUDGET_REGIME_ENABLED:
+            return base
+        delta = self.cfg.BUDGET_MIN_SCORE_DELTA.get(self.budget_regime(), 0.0)
+        return max(0.0, base + float(delta))
+
+    # ================================================================
+    # CHURN-REDUCTION GATE HELPERS (Roadmap #161-164)
+    # ================================================================
+
+    def is_lunch_lull(self, now=None) -> bool:
+        """True if current time falls inside the configured lunch-lull window."""
+        if not self.cfg.LUNCH_LULL_ENABLED:
+            return False
+        t = now or now_ist()
+        start = (self.cfg.LUNCH_LULL_START_HOUR, self.cfg.LUNCH_LULL_START_MINUTE)
+        end   = (self.cfg.LUNCH_LULL_END_HOUR,   self.cfg.LUNCH_LULL_END_MINUTE)
+        cur   = (t.hour, t.minute)
+        return start <= cur < end
+
+    def is_in_re_entry_cooldown(self, symbol: str, side: str, now=None) -> bool:
+        """True if same symbol+side was exited within RE_ENTRY_COOLDOWN_MINUTES."""
+        if not self.cfg.RE_ENTRY_COOLDOWN_ENABLED:
+            return False
+        mins = int(self.cfg.RE_ENTRY_COOLDOWN_MINUTES)
+        if mins <= 0:
+            return False
+        last = self._last_exit_time.get(f"{symbol}_{side}")
+        if last is None:
+            return False
+        t = now or now_ist()
+        delta_sec = (t - last).total_seconds()
+        return 0 <= delta_sec < mins * 60
+
+    def is_soft_stopped(self) -> bool:
+        """True if day loss has breached the soft-stop threshold (Roadmap #163).
+
+        Unlike the hard circuit breaker, soft-stop only blocks NEW entries —
+        existing positions continue to be managed. Always returns False when
+        DAILY_LOSS_SOFT_STOP_PCT <= 0 (kill-switch).
+        """
+        soft_pct = float(self.cfg.DAILY_LOSS_SOFT_STOP_PCT)
+        if soft_pct <= 0:
+            return False
+        budget = self._budget
+        if budget <= 0:
+            return False
+        return self.day_pnl() <= -budget * soft_pct / 100
 
     # ================================================================
     # P&L AND COST CALCULATIONS

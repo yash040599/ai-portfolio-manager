@@ -582,6 +582,88 @@ class Config:
     ATR_SIZING_ENABLED:      bool  = True
     RISK_PER_TRADE_PCT:      float = 0.5
 
+    # ── Per-Symbol Re-Entry Cooldown (Roadmap #161) ───────────────
+    # RE_ENTRY_COOLDOWN_ENABLED: after ANY exit of a symbol (SL, target,
+    #   stagnant, external), block re-entry in the SAME direction for
+    #   RE_ENTRY_COOLDOWN_MINUTES. Stops the "re-enter immediately on
+    #   same signal" loop that burns Rs.40 round-trip each time.
+    #   Opposite direction is still allowed (reversal setups).
+    # RE_ENTRY_COOLDOWN_MINUTES: block window after any exit.
+    # RE_ENTRY_SCORE_OVERRIDE: very strong score overrides cooldown.
+    RE_ENTRY_COOLDOWN_ENABLED:  bool  = True
+    RE_ENTRY_COOLDOWN_MINUTES:  int   = 30
+    RE_ENTRY_SCORE_OVERRIDE:    float = 7.0
+
+    # ── Charge-Aware Minimum Target (Roadmap #162) ────────────────
+    # MIN_PROFIT_CHARGE_MULTIPLE: reject trades where expected gross
+    #   profit at target is less than round-trip charges × this multiple.
+    #   A Rs.2000 stock with Rs.5 SL + Rs.6.5 target on 1 share ≈ Rs.4
+    #   round-trip charges, leaving Rs.2.5 net — not worth the risk.
+    #   Setting 2.0 means target must yield ≥ 2× round-trip charges of
+    #   net profit (so at least 1× of charges as cushion).
+    # Kill-switch: MIN_PROFIT_CHARGE_MULTIPLE <= 0 disables.
+    MIN_PROFIT_CHARGE_MULTIPLE: float = 2.0
+
+    # ── Daily Loss Soft-Stop Hysteresis (Roadmap #163) ────────────
+    # DAILY_LOSS_SOFT_STOP_PCT: when day P&L ≤ -this% of budget, stop
+    #   taking NEW entries but keep monitoring existing positions.
+    #   Hard circuit breaker at MAX_LOSS_PER_DAY_PCT still closes all.
+    #   This gives a hysteresis band — prevents "open loser → hit SL
+    #   → open another loser" pattern, but doesn't force exits that
+    #   might recover in a green afternoon.
+    # Set to 0 to disable (no soft stop, only hard CB).
+    DAILY_LOSS_SOFT_STOP_PCT: float = 1.5
+
+    # ── Lunch-Lull Entry Skip (Roadmap #164) ──────────────────────
+    # Indian markets are lowest-volume and lowest-ADX during lunch.
+    # Most churn trades fire in this window.
+    # LUNCH_LULL_ENABLED: skip new entries during lunch lull.
+    # LUNCH_LULL_START_HOUR / MINUTE: window start (11:30).
+    # LUNCH_LULL_END_HOUR / MINUTE:   window end   (12:15).
+    # LUNCH_LULL_SCORE_OVERRIDE: very strong signals bypass.
+    LUNCH_LULL_ENABLED:         bool  = True
+    LUNCH_LULL_START_HOUR:      int   = 11
+    LUNCH_LULL_START_MINUTE:    int   = 30
+    LUNCH_LULL_END_HOUR:        int   = 12
+    LUNCH_LULL_END_MINUTE:      int   = 15
+    LUNCH_LULL_SCORE_OVERRIDE:  float = 6.0
+
+    # ══════════════════════════════════════════════════════════════
+    # BUDGET REGIME — DYNAMIC CONFIG BY ACCOUNT SIZE (Roadmap #165)
+    # ══════════════════════════════════════════════════════════════
+    # Different account sizes need different gate tightness.
+    # At Rs.20k budget, a Rs.40 charge is 0.2% — one losing trade
+    # wipes out two winners. At Rs.500k budget, the same charge is
+    # 0.008% — noise. Rather than re-tuning every constant when we
+    # bump the budget, these tiers scale the gates automatically.
+    #
+    # Regime is determined at startup from self._budget:
+    #   TINY   : < BUDGET_TIER_SMALL      (default < Rs.30k)
+    #   SMALL  : < BUDGET_TIER_NORMAL     (default < Rs.1L)
+    #   NORMAL : < BUDGET_TIER_LARGE      (default < Rs.5L)
+    #   LARGE  : >= BUDGET_TIER_LARGE     (≥ Rs.5L)
+    #
+    # BUDGET_REGIME_ENABLED: master kill-switch. When False, all
+    #   regime-adjusted gates fall back to the base cfg value.
+    BUDGET_REGIME_ENABLED: bool = True
+    BUDGET_TIER_SMALL:     float = 30_000.0
+    BUDGET_TIER_NORMAL:    float = 100_000.0
+    BUDGET_TIER_LARGE:     float = 500_000.0
+
+    # Regime-specific deltas applied on top of base cfg values.
+    # Positive delta = stricter gate. Looked up via regime name.
+    # ADX threshold bump (base 18): tiny = +2 (demand ADX ≥ 20),
+    #   small = +1, normal = 0, large = -1 (can trade weaker trends).
+    BUDGET_ADX_THRESHOLD_DELTA = {"TINY": 2.0, "SMALL": 1.0, "NORMAL": 0.0, "LARGE": -1.0}
+
+    # Trade-cap bump (base MAX_TRADES_PER_DAY = 12):
+    #   tiny = -4 (max 8), small = -2 (max 10), normal = 0, large = +3.
+    BUDGET_TRADE_CAP_DELTA = {"TINY": -4, "SMALL": -2, "NORMAL": 0, "LARGE": 3}
+
+    # MIN_SCORE bump (base V2_MIN_SCORE = 2.0):
+    #   tiny = +1.0, small = +0.5, normal = 0, large = 0.
+    BUDGET_MIN_SCORE_DELTA = {"TINY": 1.0, "SMALL": 0.5, "NORMAL": 0.0, "LARGE": 0.0}
+
     # ── Loss-Adjusted Position Sizing ─────────────────────────────
     # LOSS_SIZING_ENABLED: if True, reduce position sizes after
     #   realising losses. Budget for new trades shrinks by day's
@@ -859,6 +941,23 @@ class Config:
             return 6
         else:
             return 7
+
+    @classmethod
+    def budget_regime(cls, budget: float) -> str:
+        """Return budget regime name — "TINY", "SMALL", "NORMAL", or "LARGE".
+
+        Used by gate helpers to apply regime-specific deltas (ADX threshold,
+        trade cap, min score) based on account size. See Roadmap #165.
+        """
+        if not cls.BUDGET_REGIME_ENABLED:
+            return "NORMAL"
+        if budget < cls.BUDGET_TIER_SMALL:
+            return "TINY"
+        if budget < cls.BUDGET_TIER_NORMAL:
+            return "SMALL"
+        if budget < cls.BUDGET_TIER_LARGE:
+            return "NORMAL"
+        return "LARGE"
 
     @classmethod
     def validate(cls, require_claude: bool = True) -> list[str]:

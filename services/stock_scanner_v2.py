@@ -694,6 +694,21 @@ class StockScannerV2(StockScanner):
                     f"to {min_score_override:.1f}"
                 )
 
+        # Budget-regime score bump (Roadmap #165): tighter score floor
+        # for small accounts where each losing trade hurts more.
+        if self.cfg.BUDGET_REGIME_ENABLED:
+            regime = Config.budget_regime(self._budget)
+            delta = self.cfg.BUDGET_MIN_SCORE_DELTA.get(regime, 0.0)
+            if delta > 0:
+                base = min_score_override if min_score_override is not None else self.cfg.V2_MIN_SCORE
+                regime_score = base + float(delta)
+                if min_score_override is None or regime_score > min_score_override:
+                    min_score_override = regime_score
+                    self.log.info(
+                        f"Budget-regime ({regime}): MIN_SCORE raised by "
+                        f"+{delta:.1f} → {regime_score:.1f}"
+                    )
+
         # Step 1: Math-based pre-filter
         candidates = self._prefilter_universe(quotes, nifty_trend, min_score_override)
         if not candidates:

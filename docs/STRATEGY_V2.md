@@ -13,11 +13,13 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-04-17 — Config reorganization: VWAP/RSI/fresh-reversal/adoption-grace/
-  MIN_SL moved out of Expiry section into dedicated Entry Filter sections. Entry-delay
-  semantic fixed: observation window = market_open + delay (not now + delay). VWAP
-  guard raised from 10:00 → 10:15 (more candles = more stable VWAP). Defensive
-  `_entry_score or 0` for declining re-entry.
+  Last sync: 2026-04-18 — Churn-reduction + dynamic budget regime (Roadmap #161-165).
+  Added: per-symbol re-entry cooldown (30 min), charge-aware target multiple (2×),
+  daily-loss soft-stop hysteresis (1.5%), lunch-lull entry skip (11:30-12:15),
+  budget-regime gate deltas (TINY/SMALL/NORMAL/LARGE adjust ADX threshold,
+  trade cap, min-score). New "Decision Timeline — Plain English" section at top
+  of Strategy Flow walks through every decision from 9:00 AM to EOD with example
+  log lines. Pre-trade check count: 22 → 26.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -28,6 +30,7 @@
 2. [Glossary — Every Term Explained](#glossary--every-term-explained)
 3. [Modes at a Glance](#modes-at-a-glance)
 4. [Strategy Flow](#strategy-flow)
+   - [**Decision Timeline — Plain English**](#decision-timeline--plain-english-start-of-day--eod)
    - [Phase 1 — Pre-Market Scan](#phase-1--pre-market-scan-900-am--free)
    - [Phase 2 — Stock Selection](#phase-2--stock-selection)
    - [Phase 3 — Entry](#phase-3--entry)
@@ -235,11 +238,140 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (21 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery.
+**Shared across both modes:** pre-filter, entry pipeline (26 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), budget-regime gate deltas (#165).
 
 ---
 
 ## Strategy Flow
+
+### Decision Timeline — Plain English (Start of Day → EOD)
+
+This section walks through **every decision** the bot makes during one trading day. Each decision has the same format: *when* it happens, *what question* is asked, and *what happens next*. The AI callouts are marked 🤖 — those only fire in `--ai` mode.
+
+> **Reading this:** If you want to trace a specific log line, ctrl-F the quoted phrase in brackets — every decision below corresponds to a real log message.
+
+#### 🕘 8:55–9:00 AM — Warm-up
+
+1. **Load session.** Log line: `"Budget regime: NORMAL (Rs.1,00,000) → ADX≥18.0, trade-cap 12, min-score 2.0"`. Tells you which regime gates are active (TINY / SMALL / NORMAL / LARGE) based on your Zerodha funds. [See §Budget Regime (#165)]
+2. **Validate API keys** (Zerodha always, Claude only when `--ai`).
+3. **Check if today is expiry** — if yes, stagnant-exit timer + score floor + SL bumps are applied. Log line: `"Expiry adjustments applied"`.
+
+#### 🕤 9:00–9:15 AM — Pre-market scan (FREE, no orders yet)
+
+4. **Scan ~100 NIFTY stocks.** For each stock, compute the composite score from 14 indicators + 14 candle patterns. Total range: −24 to +24.
+5. **Hard filter** by price band, sector cap (2/sector), NIFTY trend alignment, and `V2_MIN_SCORE` (regime-adjusted). Example: on a TINY budget, min-score becomes 3.0 instead of 2.0 — weaker setups are silently dropped at the scanner level.
+6. **Rank and shortlist top 15.** Log: `"NoAI scan: 15 candidates passed pre-filter"`.
+
+#### 🕤 9:15 AM — Entry window opens
+
+7. **Wait for `ENTRY_DELAY_MINUTES` (default 5)** past market open (9:15 IST). Prevents trading the opening auction noise.
+8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
+9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
+
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 26 checks, in order)
+
+For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
+
+> **Quick-rejection gates (cheap to evaluate, run first):**
+>
+> - 🆕 **Lunch lull?** Is it 11:30–12:15 and `|score| < 6`? → Skip. Example log: `"TATAMOTORS: lunch-lull window 11:30-12:15 — |score| 4.2 < 6.0 override. Skipping."` (Roadmap #164)
+> - 🆕 **Soft-stop?** Has day P&L dropped ≥ 1.5% below budget? → Block all new entries (but existing positions keep running; hard CB at 3% still closes everything). Log: `"soft-stop active — day P&L Rs.-1,650.00 ≤ -1.5%. No new entries."` (#163)
+>
+> **Price sanity gates:**
+>
+> - **Stale price?** If Claude/plan price differs from live Zerodha price by >5%, override with live. Log: `"Entry price override: ..."`.
+> - **Wide spread?** Bid-ask gap > 0.3% → skip illiquid.
+> - **Thin book?** Top-5 depth won't fill our qty without >0.2% slippage → skip.
+> - **Low volume?** RVol < 0.7× average → skip.
+>
+> **Sizing & target gates:**
+>
+> - **Compute ATR SL/target.** If ATR available: SL = entry ± 1.5·ATR, target = entry ± 1.5·ATR·R:R. Otherwise fall back to config defaults. SL is then clamped to `MIN_SL_DISTANCE_PCT` (0.8%) floor so tight SLs don't wick on noise.
+> - **Late-entry reduction.** After 1 PM target compressed −20%, after 2 PM −25%.
+> - **R:R floor check.** Morning needs ≥ 1.3:1, afternoon 1.2:1, late 1.0:1. Adaptive relaxation after 3 scans with 0 entries.
+> - **Min profit.** `|target − entry| × qty ≥ Rs.75`.
+>
+> **Portfolio-state gates:**
+>
+> - **Budget OK?** Position cost ≤ 40% of budget.
+> - **Max positions?** Dynamic (2–7 from budget tier).
+> - **Duplicate, sector (2/sector), direction (score-aware)** — any of these → skip.
+> - **Short cutoff.** No new shorts after 1 PM.
+> - **Max re-entries.** Per stock per day ≤ 2. Also rejects if new `|score| < previous |score|` (setup weakening).
+> - **RSI extremes.** Block SELL at RSI > 70, BUY at RSI > 75, BUY at RSI < 30, SELL at RSI < 25.
+> - **Daily trade cap.** Total trades (bot + external) ≥ regime-adjusted cap → stop.
+> - **Stagnant churn guard.** Same stock+direction already exited as stagnant today → skip.
+> - 🆕 **Per-symbol re-entry cooldown.** Same `SYMBOL_SIDE` exited in last 30 min → skip unless `|score| ≥ 7.0`. Opposite direction allowed (reversal setup). Example: `"RELIANCE: re-entry cooldown — exited 12.3 min ago (window 30 min), |score| 3.5 < 7.0 override. Skipping."` (#161)
+>
+> **Trend alignment gates:**
+>
+> - **ADX gate.** ADX ≥ regime-adjusted threshold (TINY 20, NORMAL 18, LARGE 17) AND DI aligned (+DI > −DI for BUY). Log: `"NATIONALUM: ADX 14.2 < 18.0 (chop, regime=NORMAL) and |score| 2.8 < 7.0 override — skipping."` (#157, #165)
+> - **VWAP guard** (after 10:15): don't BUY below VWAP, don't SELL above, don't chase >0.8% extensions.
+> - **Fresh reversal.** If score just flipped by ≥ 8 points, wait one more cycle for confirmation.
+>
+> **Charge-aware gates:**
+>
+> - **Net R:R ≥ 1.0:1** after round-trip charges. A gross 1.5:1 often becomes 0.9:1 on small qty.
+> - 🆕 **Gross target ≥ 2× round-trip charges** (Roadmap #162). Prevents the "Rs.10 target, Rs.4 charge → Rs.6 net" trap. Log: `"IRCTC: gross target profit Rs.12.00 < 2.0× round-trip charges Rs.8.50 — target too thin after costs. Skipping."`
+>
+> **Acceptance:** When every check above returns "yes", you see `"✓ {symbol}: ALL CHECKS PASSED [regime=NORMAL] — BUY 5x @ Rs.1,234.50 | SL Rs.1,221.00 (1.1%) | Target Rs.1,255.00 (1.7%) | Cost Rs.6,173"`. The bot then places the LIMIT entry, waits up to 8s, falls back to MARKET if unfilled, and finally places the exchange SL-M.
+
+#### 🔁 9:20 AM – 2:45 PM — Monitor loop
+
+Every 10 seconds (5s when price is near SL/target), for each open position, the bot asks:
+
+10. **Hit SL?** → Cancel SL-M, exit at market, log `"STOP_LOSS"`. Sets cooldown timestamp (Roadmap #161).
+11. **Hit target?** → Same as SL but `"TARGET_HIT"` and feeds into consecutive-SL reset.
+12. **Trailing stop trigger?** At 1.5× risk profit, book 33% qty + move SL to lock 50% of gain. Logged as `"TRAIL_PARTIAL"` + `"TRAIL_SL_MOVE"`.
+13. **Time-decay check.** After 1 PM: compress open target by 20%; after 2 PM: 25%. Adopted positions get a 10-min grace window.
+
+**Every 15 minutes** (background):
+
+14. **Zerodha sync.** Detect manually-opened MIS trades (adopt with ATR SL/target + full management) and manually-closed ones (log `EXTERNAL_CLOSE`, cancel our SL-M, stamp cooldown). Partial closes resize tracked qty + broker SL-M. Empty-`net` glitch guard: skip the cycle if API returns empty while we track ≥1 open position (Roadmap #160).
+15. **Re-score + candle protect.** Re-run candle patterns + indicators on each open position. If the contrary score ≥ ±4, tighten SL toward breakeven — with a `CANDLE_PROTECT_MIN_CUSHION_PCT` (0.3%) buffer so the new SL never lands at or past the live price (Roadmap #154).
+16. **NIFTY regime check.** If NIFTY flips against an open position, same tightening.
+17. 🤖 **(AI mode every 30 min)** Claude reviews open positions with fresh 5-min candle snapshot. Can say HOLD / TIGHTEN_SL / EXIT / MOVE_TO_BREAKEVEN.
+
+**Every 30 minutes** (if free slots):
+
+18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 26-check pipeline as above.) In AI mode Claude ranks the new shortlist.
+
+**Every 30 minutes** (NoAI only):
+
+19. **Stagnant exit.** Positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156).
+
+**At any time:**
+
+20. **Circuit breaker** (hard). Day P&L < -3% of budget (measured since last baseline reset) → close ALL positions, pause 30 min, resume with loss-adjusted budget. Max 2 trips/day.
+21. **Whipsaw pause.** 3 consecutive SL hits → pause new entries for 30 min.
+
+#### 🕝 2:45 PM — Late-day loser exit
+
+22. **Loser exit.** Any open position with P&L < 0 → exit at market. Breakeven positions get SL tightened to entry ±0.1%. Winners with active trails keep running.
+
+#### 🕒 3:10 PM — Forced square off
+
+23. **Square off all.** Cancel any pending SL-M, exit every remaining position at MARKET.
+
+#### 🕓 3:20 PM onward — Reports
+
+24. **Write `trading_data_{date}.json`** + `trading_report_{date}.txt` to [reports/trading/{year}/{month}/](reports/trading/).
+25. **Import trades** to `data/trades.db` for future Claude context (AI mode) + tax ledger.
+26. **Backup.** `scripts/backup_data.py --ssh --all-local` (manual, user-run).
+
+### Where AI Steps In (AI-mode summary)
+
+Only three decisions change in `--ai` mode — everything else is identical:
+
+| Step | NoAI | AI mode |
+|------|------|---------|
+| **Rank top-15 candidates (9:15 AM)** | Sort by `|score|`, take top N | Claude ranks + vetoes with qualitative analysis |
+| **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
+| **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
+
+Every entry/exit gate (all 26 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+
+---
 
 ### Phase 1 — Pre-Market Scan (9:00 AM) — FREE
 
@@ -306,7 +438,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (21 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (26 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -422,10 +554,12 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 22 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 26 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
+| 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (6.0). Boundary-exclusive on the right |
+| 0b | **Daily-loss soft stop** (#163) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5` | Reject new entries when day P&L ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2a | **Impact-cost / depth check** | `MAX_IMPACT_COST_PCT = 0.2` | Walk top-5 order-book levels on the side we'd hit (asks for BUY, bids for SELL); compute weighted-average fill for our full qty. Skip if slippage vs LTP > 0.2%, or if visible top-5 depth < our qty. Fail-open (log warning, let trade through) when depth data is missing/malformed. Catches paper-thin top-of-book traps that spread-only misses |
@@ -444,12 +578,14 @@ Every trade must pass these 22 checks in order. If any fails, the trade is rejec
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 | 13 | **Declining re-entry block** | — | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
 | 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
-| 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5` |
+| 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
+| 16a | **Per-symbol re-entry cooldown** (#161) | `RE_ENTRY_COOLDOWN_MINUTES = 30` | Block re-entry of same SYMBOL_SIDE within 30 min after ANY exit (SL / target / stagnant / external). Opposite direction still allowed. Override at \|score\| ≥ `RE_ENTRY_SCORE_OVERRIDE` (7.0) |
 | 17 | **VWAP trend block** | ±0.3% deviation | After 10:15 AM only (VWAP needs ≥1 hour of candles for stability). Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP (fighting institutional flow) |
 | 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 0.8`, override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | Block BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move). Override allowed when \|score\| ≥ 6.0 |
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
+| 18a | **Charge-aware target multiple** (#162) | `MIN_PROFIT_CHARGE_MULTIPLE = 2.0` | After net R:R passes, reject when gross target profit < 2× round-trip charges. Ensures at least 1× charges as cushion for slippage |
 
 ### R:R Floor System
 
@@ -764,6 +900,20 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `LOSS_SIZING_ENABLED` | True | Loss-adjusted sizing |
 | `LOSS_SCORE_BUMP_PCT` | 1.5% | Loss threshold for score bump (NoAI) |
 | `LOSS_SCORE_BUMP_AMOUNT` | 1.5 | Score increase after losses (NoAI) |
+| `RE_ENTRY_COOLDOWN_ENABLED` | True | Kill-switch for per-symbol re-entry cooldown (#161) |
+| `RE_ENTRY_COOLDOWN_MINUTES` | 30 | Block re-entry of same SYMBOL_SIDE within this window after any exit |
+| `RE_ENTRY_SCORE_OVERRIDE` | 7.0 | `|score|` that bypasses the cooldown |
+| `MIN_PROFIT_CHARGE_MULTIPLE` | 2.0 | Gross target profit must be ≥ this × round-trip charges (#162). Set 0 to disable |
+| `DAILY_LOSS_SOFT_STOP_PCT` | 1.5% | Soft-stop new entries when day loss crosses this; existing positions still managed (#163). Set 0 to disable |
+| `LUNCH_LULL_ENABLED` | True | Kill-switch for lunch-lull entry skip (#164) |
+| `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
+| `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
+| `LUNCH_LULL_SCORE_OVERRIDE` | 6.0 | `|score|` that bypasses the lunch skip |
+| `BUDGET_REGIME_ENABLED` | True | Master kill-switch for regime-adjusted gates (#165) |
+| `BUDGET_TIER_SMALL` / `_NORMAL` / `_LARGE` | 30k / 1L / 5L | Regime boundaries |
+| `BUDGET_ADX_THRESHOLD_DELTA` | {TINY: +2, SMALL: +1, NORMAL: 0, LARGE: -1} | Regime delta on `ADX_MIN_THRESHOLD` |
+| `BUDGET_TRADE_CAP_DELTA` | {TINY: -4, SMALL: -2, NORMAL: 0, LARGE: +3} | Regime delta on `MAX_TRADES_PER_DAY` (floor at 1) |
+| `BUDGET_MIN_SCORE_DELTA` | {TINY: +1.0, SMALL: +0.5, NORMAL: 0, LARGE: 0} | Regime delta on `V2_MIN_SCORE` (stacks with LOSS bump; max wins) |
 
 ### VIX / Expiry
 
