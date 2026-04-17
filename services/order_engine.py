@@ -682,30 +682,62 @@ class OrderEngine:
             else:
                 slice_pnl = round((p["entry_price"] - partial_exit_price) * closed_qty, 2)
 
-            # Resize exchange SL-M to match the new qty BEFORE updating
-            # pos["qty"] — if replacement fails we leave state unchanged.
+            # Update tracked qty to the REAL remaining qty on Zerodha —
+            # we cannot roll this back even if the SL-M resize fails,
+            # because the user really did close closed_qty shares.
+            # Rolling back qty would cause the bot to try to SL-exit
+            # shares that no longer exist.
             old_qty = p["qty"]
             p["qty"] = z_qty
+            old_sl_oid = p.get("_sl_order_id")
+
+            # Resize exchange SL-M to match the new qty. _replace_exchange_sl
+            # swallows exceptions internally, so we verify by inspecting
+            # _sl_order_id afterwards rather than relying on try/except.
             try:
                 self._replace_exchange_sl(p, p["stop_loss"])
+            except Exception as e:
+                self.log.error(
+                    f"EXTERNAL_PARTIAL {p['symbol']}: resize raised: {e}"
+                )
+
+            new_sl_oid = p.get("_sl_order_id")
+            resize_ok = bool(new_sl_oid) and new_sl_oid != old_sl_oid
+
+            if resize_ok or old_sl_oid is None:
+                # Either resize landed a fresh oid, or there was no
+                # broker SL to begin with (software SL only).
+                protection_note = (
+                    f"resized SL-M active @ {new_sl_oid}"
+                    if resize_ok else "software SL only (no broker SL was attached)"
+                )
                 self.log.info(
                     f"EXTERNAL_PARTIAL {p['symbol']} {p['side']}: user closed "
                     f"{closed_qty}/{old_qty} shares on Kite @ "
                     f"Rs.{partial_exit_price:.2f} | slice P&L Rs.{slice_pnl:+,.2f} | "
-                    f"remaining {z_qty} shares tracked with resized SL-M"
+                    f"remaining {z_qty} shares — {protection_note}"
                 )
                 self._log_action("EXTERNAL_PARTIAL", p["symbol"], p["side"],
                                  closed_qty, partial_exit_price,
                                  f"User closed {closed_qty}/{old_qty} on Kite")
-                # Accumulate partial P&L so final close reports full picture
-                p["_partial_pnl"] = round(p.get("_partial_pnl", 0) + slice_pnl, 2)
-                p["_partial_qty"] = p.get("_partial_qty", 0) + closed_qty
-            except Exception as e:
-                p["qty"] = old_qty  # rollback
+            else:
+                # Cancel landed but replacement failed — position has
+                # NO broker-side SL. Software SL will still fire on
+                # stop breach so we're not totally naked, but broker
+                # protection is gone. Log LOUD.
                 self.log.error(
-                    f"EXTERNAL_PARTIAL {p['symbol']}: SL-M resize failed ({e}) — "
-                    f"rolled back to qty {old_qty}. Review manually."
+                    f"EXTERNAL_PARTIAL CRITICAL {p['symbol']}: user closed "
+                    f"{closed_qty}/{old_qty} shares, but SL-M resize failed — "
+                    f"broker SL is GONE (software SL is only defence). "
+                    f"Remaining {z_qty} shares tracked, review manually."
                 )
+                self._log_action("EXTERNAL_PARTIAL_UNPROTECTED", p["symbol"], p["side"],
+                                 closed_qty, partial_exit_price,
+                                 f"User closed {closed_qty}/{old_qty}; broker SL lost")
+
+            # Accumulate partial P&L so final close reports full picture
+            p["_partial_pnl"] = round(p.get("_partial_pnl", 0) + slice_pnl, 2)
+            p["_partial_qty"] = p.get("_partial_qty", 0) + closed_qty
 
         # NOTE: _bot_closed_positions already cleared at function START
         # Do NOT clear here — it needs to persist until next sync() call
