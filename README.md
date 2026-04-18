@@ -57,6 +57,10 @@ python main.py --mode trade --noai
 # Budget cap — limit today's capital to Rs.30,000
 python main.py --mode trade --max 30000
 
+# Stock universe override — pick NIFTY 50 / 100 / 150 / 200 for the run
+python main.py --mode trade --nifty 150
+python main.py --mode trade --ai --nifty 100
+
 # V1 legacy (retired — sends raw prices to Claude)
 python main.py --mode trade --v1
 
@@ -204,7 +208,7 @@ Open `config.py` and review the key settings. Everything is commented — the ma
 | Setting | Default | What it controls |
 |---------|---------|-----------------|
 | `MAX_BUDGET_INR` | `20,000` | Maximum capital the bot can deploy per day |
-| `SCAN_UNIVERSE` | `NIFTY100` | Stock pool: NIFTY50, NIFTY100, NIFTY200, or CUSTOM |
+| `SCAN_UNIVERSE` | `NIFTY100` | Stock pool: NIFTY50, NIFTY100, NIFTY150, NIFTY200, or CUSTOM (overridable per-run via `--nifty 50\|100\|150\|200`) |
 | `MAX_POSITIONS` | `3` | Max simultaneous trades |
 | `DRY_RUN` | `False` | Simulate trades without placing real orders (use `--dryrun` flag) |
 | `CLAUDE_PLAN` | `pro` | Claude model tier: free, pro, or max |

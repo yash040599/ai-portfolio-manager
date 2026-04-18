@@ -34,9 +34,16 @@ from core.claude_client import ClaudeClient
 # ================================================================
 # NIFTY INDEX CONSTITUENTS
 # ================================================================
-# These lists are used when SCAN_UNIVERSE is set to NIFTY50/100/200.
+# These lists are used when SCAN_UNIVERSE is set to NIFTY50/100/150/200.
 # Update periodically — NSE rebalances indices every 6 months.
 # Last updated: April 2026.
+#
+# Layout is incremental — each tier adds exactly 50 more symbols
+# on top of the previous tier:
+#   NIFTY50  = NIFTY50
+#   NIFTY100 = NIFTY50 + NIFTY100_EXTRA   (next 50 large caps)
+#   NIFTY150 = NIFTY100 + NIFTY150_EXTRA  (next 50 mid caps)
+#   NIFTY200 = NIFTY150 + NIFTY200_EXTRA  (next 50 mid caps)
 # ================================================================
 
 NIFTY50 = [
@@ -52,7 +59,7 @@ NIFTY50 = [
     "TITAN", "TMPV", "TRENT", "ULTRACEMCO", "WIPRO",
 ]
 
-# Nifty 100 = Nifty 50 + Next 50 large caps
+# Nifty 100 = Nifty 50 + Next 50 large caps (50 symbols)
 NIFTY100_EXTRA = [
     "ABB", "ADANIENSOL", "ADANIGREEN", "ADANIPOWER", "AMBUJACEM",
     "BAJAJHLDNG", "BANKBARODA", "BOSCHLTD", "BPCL", "BRITANNIA",
@@ -66,15 +73,33 @@ NIFTY100_EXTRA = [
     "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "ZYDUSLIFE",
 ]
 
-# Nifty 200 adds mid-caps — only a representative subset here.
-# For full Nifty 200, consider loading from an API or CSV.
+# Nifty 150 = Nifty 100 + Next 50 mid caps (50 symbols)
+# These are the top mid-cap names beyond the Nifty 100.
+NIFTY150_EXTRA = [
+    "ABCAPITAL", "ACC", "ALKEM", "APLAPOLLO", "ASHOKLEY",
+    "ASTRAL", "AUBANK", "AUROPHARMA", "BALKRISIND", "BANDHANBNK",
+    "BANKINDIA", "BATAINDIA", "BDL", "BHARATFORG", "BHEL",
+    "BIOCON", "BSE", "CAMS", "COFORGE", "COLPAL",
+    "CONCOR", "COROMANDEL", "CRISIL", "DABUR", "DALBHARAT",
+    "DELHIVERY", "DIXON", "ESCORTS", "EXIDEIND", "FEDERALBNK",
+    "FORTIS", "GLENMARK", "GMRAIRPORT", "GODREJPROP", "HINDPETRO",
+    "IDEA", "IDFCFIRSTB", "IGL", "INDIANB", "INDUSTOWER",
+    "IPCALAB", "IRCTC", "KPITTECH", "LICHSGFIN", "LUPIN",
+    "MANKIND", "MARICO", "MFSL", "MPHASIS", "MRF",
+]
+
+# Nifty 200 = Nifty 150 + Next 50 mid caps (50 symbols)
 NIFTY200_EXTRA = [
-    "AUROPHARMA", "BALKRISIND", "BHARATFORG", "BIOCON", "CANFINHOME",
-    "CONCOR", "ESCORTS", "FEDERALBNK", "GMRINFRA", "IDFCFIRSTB",
-    "INDUSTOWER", "JUBLFOOD", "LICHSGFIN", "MFSL", "MRF",
-    "NAUKRI", "NAVINFLUOR", "NMDC", "OBEROIRLTY", "OFSS",
-    "PAGEIND", "PETRONET", "PIIND", "POLYCAB", "SAIL",
-    "TATACOMM", "TORNTPOWER", "VOLTAS", "YESBANK",
+    "NAUKRI", "NHPC", "NMDC", "NYKAA", "OBEROIRLTY",
+    "OFSS", "OIL", "PAGEIND", "PATANJALI", "PAYTM",
+    "PERSISTENT", "PETRONET", "PHOENIXLTD", "PIIND", "POLICYBZR",
+    "POLYCAB", "POONAWALLA", "PRESTIGE", "RAMCOCEM", "RVNL",
+    "SAIL", "SBICARD", "SCHAEFFLER", "SJVN", "SONACOMS",
+    "SRF", "SUNDARMFIN", "SUNTV", "SUPREMEIND", "SUZLON",
+    "SYNGENE", "TATACHEM", "TATACOMM", "TATAELXSI", "TATATECH",
+    "TIINDIA", "TORNTPOWER", "TRIDENT", "UBL", "UPL",
+    "VOLTAS", "WHIRLPOOL", "YESBANK", "ZEEL", "ABFRL",
+    "APOLLOTYRE", "BERGEPAINT", "CYIENT", "JKCEMENT", "JUBLFOOD",
 ]
 
 
@@ -143,8 +168,15 @@ class StockScanner:
             return list(NIFTY50)
         elif universe == "NIFTY100":
             return list(NIFTY50) + list(NIFTY100_EXTRA)
+        elif universe in ("NIFTY150", "NIFTYMIDCAP150", "MIDCAP150"):
+            return list(NIFTY50) + list(NIFTY100_EXTRA) + list(NIFTY150_EXTRA)
         elif universe == "NIFTY200":
-            return list(NIFTY50) + list(NIFTY100_EXTRA) + list(NIFTY200_EXTRA)
+            return (
+                list(NIFTY50)
+                + list(NIFTY100_EXTRA)
+                + list(NIFTY150_EXTRA)
+                + list(NIFTY200_EXTRA)
+            )
         elif universe == "CUSTOM":
             return list(self.cfg.CUSTOM_WATCHLIST)
         else:

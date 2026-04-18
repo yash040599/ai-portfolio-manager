@@ -117,7 +117,7 @@ This is the single place to look up any unfamiliar term used in the rest of the 
 |------|-----------------------------------|---------------------|
 | **NSE** | National Stock Exchange of India. Where Indian stocks are traded. | Every trade goes to NSE via Zerodha's API. |
 | **Zerodha / Kite Connect** | Zerodha is an Indian stock broker; Kite Connect is their API. | All order placement, live prices, and historical data come from Kite. |
-| **NIFTY 50 / 100 / 200** | Index of the top 50 / 100 / 200 most-traded Indian stocks. | `SCAN_UNIVERSE` config picks one — the bot only considers stocks from this list. |
+| **NIFTY 50 / 100 / 150 / 200** | Index tiers of top Indian stocks (each tier adds 50 more names: 50 large → 100 large → 150 incl. mid → 200 incl. wider mid caps). | `SCAN_UNIVERSE` config picks one — the bot only considers stocks from this list. Override per-run with `--nifty 50\|100\|150\|200`. |
 | **Intraday** | A trade you open **and** close on the same day. | Every bot trade is intraday — the bot never holds a stock overnight. |
 | **MIS** | Margin Intraday Square-off. Zerodha's product type for intraday trades (lower margin, auto-closed end of day). | Bot places all orders as `product=MIS`. |
 | **Long** | Buy now, sell later at a higher price to profit. | When composite score is **positive**, bot goes long ("BUY"). |
@@ -870,7 +870,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `V2_CANDLE_RESCAN_MINUTES` | 15 | Candle re-scan frequency |
 | `SUPERTREND_PERIOD` | 7 | Intraday-optimised (default 10 too slow) |
 | `SUPERTREND_MULTIPLIER` | 2.0 | Tighter bands (default 3.0 too wide) |
-| `SCAN_UNIVERSE` | "NIFTY100" | Stock universe |
+| `SCAN_UNIVERSE` | "NIFTY100" | Stock universe (NIFTY50/100/150/200/CUSTOM, overridable via `--nifty` CLI flag) |
 | `SCAN_MIN_PRICE` | Rs.100 | Skip penny stocks with wide spreads |
 | `SCAN_MAX_PRICE` | 0 (auto) | 0 = budget × MAX_POSITION_PCT; skip stocks too expensive to size |
 

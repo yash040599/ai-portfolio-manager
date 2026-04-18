@@ -173,6 +173,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 38 | Improved slippage model for dry run | Infra |
 | 43 | Real-time trade verification script | Infra |
 | 75 | --max budget CLI flag | Infra |
+| 75 | --nifty universe CLI flag (50/100/150/200) | Infra |
 | 79 | Per-trade charge calculation (tax ledger) | Infra |
 | 80 | EXTERNAL position unique order_id | Infra |
 | 81 | Sheet import updates charges on P&L match | Infra |

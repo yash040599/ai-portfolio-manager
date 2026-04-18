@@ -125,15 +125,17 @@ class Config:
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
-    # Options: "NIFTY50" | "NIFTY100" | "NIFTY200" | "CUSTOM"
+    # Options: "NIFTY50" | "NIFTY100" | "NIFTY150" | "NIFTY200" | "CUSTOM"
     #
     # NIFTY50  → top 50 liquid stocks, tight spreads, safest
-    # NIFTY100 → more variety, slightly wider spreads
-    # NIFTY200 → widest pool, some less liquid mid-caps
+    # NIFTY100 → top 50 + next 50 large caps
+    # NIFTY150 → NIFTY100 + next 50 mid caps
+    # NIFTY200 → NIFTY150 + next 50 mid caps (widest pool, less liquid tail)
     # CUSTOM   → uses CUSTOM_WATCHLIST below (your hand-picked list)
     #
     # For Rs.10K budget, NIFTY50 is recommended — most liquid, lowest
     # impact cost, tightest bid-ask spreads for intraday.
+    # Override per-run with: --nifty 50 | --nifty 100 | --nifty 150 | --nifty 200
     SCAN_UNIVERSE: str = "NIFTY100"
 
     # Only used when SCAN_UNIVERSE = "CUSTOM".

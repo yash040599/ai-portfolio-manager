@@ -14,6 +14,8 @@
 #   python main.py --mode trade --ai --dryrun     ← full V2+Claude run, no real orders
 #   python main.py --mode trade --v1              ← V1 legacy trading (retired)
 #   python main.py --mode trade --v1 --dryrun     ← V1 dry run
+#   python main.py --mode trade --nifty 150       ← scan NIFTY100 + next 50 mid caps
+#   python main.py --mode trade --nifty 100       ← scan Nifty 100 (override config)
 #
 # --test   shows the strategy analysis pipeline without Claude or trades.
 #          Useful for seeing how the bot analyses stocks, what scores
@@ -77,6 +79,27 @@ def main():
             print("\n  Error: --max requires a numeric amount (e.g. --max 30000)")
             sys.exit(1)
 
+    # Parse --nifty universe override (e.g. --nifty 50 / 100 / 150 / 200)
+    nifty_universe = None
+    if "--nifty" in sys.argv:
+        try:
+            raw = sys.argv[sys.argv.index("--nifty") + 1].strip().lower()
+        except (IndexError, ValueError):
+            print("\n  Error: --nifty requires a value (50, 100, 150, or 200)")
+            sys.exit(1)
+        mapping = {
+            "50":  "NIFTY50",
+            "100": "NIFTY100",
+            "150": "NIFTY150",
+            "200": "NIFTY200",
+        }
+        if raw not in mapping:
+            print(f"\n  Error: invalid --nifty value '{raw}'.")
+            print("  We only support 50, 100, 150 or 200 as of now.")
+            print("  Usage: --nifty 50 | --nifty 100 | --nifty 150 | --nifty 200")
+            sys.exit(1)
+        nifty_universe = mapping[raw]
+
     if use_v1 and use_v2:
         print("\n  Error: --v1 and --v2 are mutually exclusive.")
         sys.exit(1)
@@ -98,6 +121,7 @@ def main():
         print("  trade --ai --test          — show V2+Claude strategy analysis (no cost)")
         print("  trade --noai               — same as default (explicit NoAI)")
         print("  trade --max 30000          — limit today's budget to Rs.30,000")
+        print("  trade --nifty 50|100|150|200  — override scan universe (each tier adds 50 more)")
         print()
         print("  trade --v1                 — V1 legacy trading (retired)")
         print("  trade --v1 --dryrun        — V1 dry run")
@@ -118,6 +142,11 @@ def main():
         if max_budget is not None:
             Config.MAX_BUDGET_INR = max_budget
             print(f"\n  Budget cap set to Rs.{max_budget:,} (via --max)\n")
+
+        # Set scan universe override from --nifty flag
+        if nifty_universe is not None:
+            Config.SCAN_UNIVERSE = nifty_universe
+            print(f"  Scan universe set to {nifty_universe} (via --nifty)\n")
 
         if use_v1:
             # V1 DEPRECATED — frozen as of 2026-04-08, no new features.
