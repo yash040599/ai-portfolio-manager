@@ -40,17 +40,22 @@ def ensure_tables(conn):
     """Create tables if they don't exist (mirrors performance_tracker.py)."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS trades (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            date             TEXT    NOT NULL,
-            symbol           TEXT    NOT NULL,
-            side             TEXT    NOT NULL,
-            entry_price      REAL    NOT NULL,
-            exit_price       REAL,
-            qty              INTEGER NOT NULL,
-            pnl              REAL    DEFAULT 0,
-            exit_reason      TEXT,
-            claude_confidence TEXT,
-            market_condition TEXT
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            date               TEXT    NOT NULL,
+            symbol             TEXT    NOT NULL,
+            side               TEXT    NOT NULL,
+            entry_price        REAL    NOT NULL,
+            exit_price         REAL,
+            qty                INTEGER NOT NULL,
+            pnl                REAL    DEFAULT 0,
+            exit_reason        TEXT,
+            claude_confidence  TEXT,
+            market_condition   TEXT,
+            entry_score        REAL,
+            entry_rsi          REAL,
+            entry_time         TEXT,
+            exit_time          TEXT,
+            indicator_snapshot TEXT
         )
     """)
     conn.execute("""

@@ -24,7 +24,15 @@ from dotenv import load_dotenv
 import anthropic
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
+from config import Config  # noqa: E402  (after sys.path tweak)
+
+# Roadmap #170: single source of truth for Claude model. Reads the
+# active plan's Sonnet alias used by the live analyser, so model
+# upgrades happen in config.py only.
+CLAUDE_MODEL = Config.claude()["model"]
 
 
 def parse_target_range(target_str: str) -> tuple[str, str]:
@@ -120,7 +128,7 @@ def main():
         print(f"❌ File not found: {json_path}")
         sys.exit(1)
 
-    with open(json_path, "r") as f:
+    with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     analyses = data.get("analyses", [])
@@ -142,7 +150,7 @@ def main():
     prompt = build_claude_prompt(analyses)
 
     response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model=CLAUDE_MODEL,
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -267,7 +275,7 @@ def main():
             f"REVIEW TEXT:\n{portfolio_review}"
         )
         rec_response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=CLAUDE_MODEL,
             max_tokens=2048,
             messages=[{"role": "user", "content": rec_prompt}],
         )

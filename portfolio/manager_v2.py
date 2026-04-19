@@ -327,7 +327,14 @@ class PortfolioManagerV2(PortfolioManager):
             print(f"  Auto-selected: {len(auto_picks)} trades\n")
 
             for i, r in enumerate(auto_picks, 1):
-                side = "BUY" if r["combined_score"] > 0 else "SELL"
+                cs = r["combined_score"]
+                if cs > 0:
+                    side = "BUY"
+                elif cs < 0:
+                    side = "SELL"
+                else:
+                    # Roadmap #169: zero score has no direction — skip from preview.
+                    continue
                 sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
                 tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
                 price = r["current_price"]

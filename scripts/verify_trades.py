@@ -44,8 +44,12 @@ def _trading_file_paths(d: datetime.date) -> tuple[str, str]:
 def _show_status():
     """Show verification status for all trading dates."""
     import glob
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    # Reconfigure stdout to handle unicode glyphs (✓ ✗) on Windows cp1252.
+    # Use reconfigure() (Python 3.7+) to preserve the original stream object.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        pass
     pattern = os.path.join(REPORTS_DIR, "**", "trading_data_*.json")
     files = sorted(glob.glob(pattern, recursive=True))
     if not files:

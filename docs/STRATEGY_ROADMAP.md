@@ -28,31 +28,37 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ### How to add a new item
 
-1. Pick the next available number (currently 154 and above are free).
+1. Pick the next available number (currently 171 and above are free).
 2. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
 3. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
 4. Bump the count in the category sub-heading and the top-line Completed count.
 5. If it changes user-visible behaviour, also:
    - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
    - If it introduces a new technical term, add a glossary entry there.
-6. If the idea is still planned, add it to **Pending** with priority / impact / effort.
-7. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+6. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
+7. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
+8. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
 
 ---
 
 ## Status Overview
 
-### Pending (7 items)
+### Pending (10 items)
+
+Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
+| 166 | Unrealised-MTM-aware circuit breaker — include open-position MTM in `day_pnl()` so CB fires before five bleeders all hit individual SLs | MEDIUM | High | Low |
+| 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
+| 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
+| 167 | Earnings/results-day blackout — skip stocks with corporate results announced today (Q1–Q4 season abnormal moves) | MEDIUM | Medium | Medium |
+| 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
+| 168 | Intraday equity-peak drawdown stop — pause new entries when day P&L drops X% from intraday high (give-back protection) | LOW | Medium | Low |
+| 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
+| 147 | Session-time-aware RVol — hourly-bucket baseline, not daily average | LOW | Medium | Medium |
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
-| 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
-| 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
-| 147 | Session-time-aware RVol — hourly-bucket baseline, not daily average | LOW | Medium | Medium |
-| 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
-| 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
 
 ### Removed (8 items — not worth implementing)
 
@@ -67,7 +73,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (145 items)
+### Completed (147 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -181,7 +187,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
 | 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
 | 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
-| **Bug Fixes (29)** | | |
+| **Bug Fixes (31)** | | |
 | 69 | SL sanity check after entry price override | Bug Fix |
 | 70 | SL-M partial fill verification | Bug Fix |
 | 71 | Fill price SL cap re-validation | Bug Fix |
@@ -219,10 +225,62 @@ This document is the **history log** of every strategy improvement, the **backlo
 | 163 | **Daily-loss soft-stop hysteresis.** Only one loss threshold existed: the hard `MAX_LOSS_PER_DAY_PCT` (3%) circuit breaker, which closes ALL positions. This forced binary behaviour — trade freely or exit everything — so a typical -1.5% drawdown kept the bot opening fresh losers hoping to recover. Fix: new `DAILY_LOSS_SOFT_STOP_PCT` (default 1.5%). When day P&L ≤ -soft, `enter_trade` rejects NEW entries but existing positions continue to be managed. Hard CB still fires at 3%. Kill-switch: `DAILY_LOSS_SOFT_STOP_PCT = 0`. | Risk |
 | 164 | **Lunch-lull entry skip.** 11:30-12:15 IST is the lowest-volume, lowest-ADX window on NSE — most bot churn trades fire here and immediately hit stagnant-exit or candle-protect. Fix: new `is_lunch_lull()` helper. `enter_trade` rejects new entries inside the window unless `abs(score) ≥ LUNCH_LULL_SCORE_OVERRIDE` (default 6.0). Window is boundary-exclusive on the right (12:15 is NOT lull). Configurable start/end hour+minute. Kill-switch: `LUNCH_LULL_ENABLED=False`. | Execution |
 | 165 | **Dynamic budget-regime config.** Small accounts (<Rs.30k) need tighter gates — one losing trade hurts much more than on a Rs.5L account. Rather than re-tuning every constant when budget scales, regimes now apply deltas: TINY (<30k), SMALL (<1L), NORMAL (<5L), LARGE (≥5L). ADX threshold shifts `{+2, +1, 0, -1}`, trade cap `{-4, -2, 0, +3}`, MIN_SCORE `{+1.0, +0.5, 0, 0}`. New `Config.budget_regime()` + `OrderEngine.effective_*()` helpers; `enter_trade`'s ADX and trade-cap reads use them. Scanner's existing `min_score_override` logic takes the max of LOSS_SCORE_BUMP and regime delta. Kill-switch: `BUDGET_REGIME_ENABLED=False` → all reads fall back to base config. | Risk |
+| 169 | **Defensive `score == 0` entry skip.** Three call sites in `stock_scanner_v2.py` and `portfolio/manager_v2.py` used `side = "BUY" if score > 0 else "SELL"`, which would force-short any zero-score candidate. `V2_MIN_SCORE` (≥2.0) prefilter normally blocks zeros, but a future tweak that lowered the floor (or a regime delta pushing it to zero) would expose the bug. Fix: explicit `if score > 0: BUY elif score < 0: SELL else: skip` at all three sites. Skips log a WARNING (scanner direction-split) so future regressions are visible. No behavioural change today — zero-score candidates have always been blocked upstream. | Bug Fix |
+| 170 | **Centralised Claude model in `generate_sheet.py`.** Script hard-coded `claude-sonnet-4-20250514` (a snapshot id) in two `messages.create()` calls. When Anthropic deprecated that snapshot, the post-trade sheet generator silently broke even though the live analyser kept working off `Config._CLAUDE_RULES`. Fix: read `Config.claude()["model"]` once at import-time into `CLAUDE_MODEL`, use that everywhere. Single source of truth across the bot and all scripts. | Bug Fix |
 
 ---
 
 ## Pending — Details
+
+In priority order, matching the Pending table above.
+
+### 166. Unrealised-MTM-Aware Circuit Breaker
+- **Priority**: MEDIUM
+- **Today**: `OrderEngine.check_circuit_breaker()` uses `day_pnl()`, which sums only **CLOSED** positions plus already-booked partial profits on still-open positions. Open-position MTM is excluded. Five positions each bleeding -1.5% MTM = -7.5% real exposure, but CB at 3% will not fire until SLs actually hit — by which time real loss can far exceed the 3% cap. Soft-stop (#163) has the same blind spot.
+- **Fix**: Add `unrealised_pnl(quotes)` (already exists) into both `check_circuit_breaker()` and `_check_daily_loss_soft_stop()` via a new `effective_day_pnl(quotes)` helper. Pass the live quote dict in from the monitor loop. Behaviour stays identical when there are no open positions.
+- **Effort**: Low. ~30 lines, single helper, kill-switch via new `MTM_AWARE_CB_ENABLED`.
+
+### 144. Bracket Orders (Atomic Entry + SL + Target)
+- **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
+- **Today**: For every trade we submit three separate things — the entry order, then a stop-loss order after the entry fills, then a software-side target watcher. If the bot crashes in between any of these, the position can be left un-protected. If the user manually closes the position in the Kite app, the SL-M can still be alive and mis-trigger later.
+- **Fix**: Use Zerodha Bracket Order (BO). Entry + SL + target are submitted as one linked order. When the entry fills, the exchange itself arms the SL and target; when either fires, the other auto-cancels. One atomic state per trade, no orphans.
+- **Effort**: ~2 weeks. Touches `order_engine`, reconciliation, and crash-recovery logic.
+
+### 44. WebSocket Tick Data
+- **Priority**: MEDIUM (implement when polling latency causes measurable slippage)
+- **Today**: 10-second polling can miss rapid SL/target breaches during news events.
+- **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
+- **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
+
+### 167. Earnings / Results-Day Blackout
+- **Priority**: MEDIUM
+- **Today**: NSE quarterly results clusters (mid-Jan, mid-Apr, mid-Jul, mid-Oct) routinely produce ±5–10% one-day moves on individual stocks the day of (or after) the announcement. The bot has no awareness of which stock reports today — it can size into INFY 30 minutes before the company drops Q-results. ATR is meaningless on those days.
+- **Fix**: Maintain `EARNINGS_BLACKOUT` (date → list of symbols), populated either manually each quarter or scraped from BSE corporate-actions feed. Scanner drops symbols whose blackout date ∈ {today, today−1} (post-announcement gap day also dangerous). Possibly extend to −1 day for known volatile names.
+- **Effort**: Medium. Data source + config + scanner filter. ~50 lines.
+
+### 149. Sector-Cascade Exit
+- **Priority**: MEDIUM (protects against correlated sector-wide drops)
+- **Today**: If 3 banking positions are all bleeding because the banking sector is dropping 2% in 15 min, each position waits for its own individual SL. By the time the 3rd hits, the 1st has lost much more than necessary.
+- **Fix**: Every scan, roll up per-sector open P&L. If a sector's exposure is ≤ −1% of budget in ≤ 15 min, tighten SLs on **all** positions in that sector to breakeven immediately — don't wait for individual SLs.
+- **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
+
+### 168. Intraday Equity-Peak Drawdown Stop
+- **Priority**: LOW
+- **Today**: Soft-stop (#163) and CB both measure loss vs the day's starting budget. If the bot is +2% by 11 AM and gives it all back to +0.2% by 1 PM, neither fires — the give-back is invisible to the loss gates because total day P&L never went negative. Pro intraday desks track equity high-water mark and pause new entries on a defined drawdown from peak.
+- **Fix**: Track `_intraday_peak_pnl = max(_intraday_peak_pnl, day_pnl())` each scan. If `(_intraday_peak_pnl - day_pnl()) / budget > PEAK_DRAWDOWN_STOP_PCT` (default 1.5%), block new entries for the rest of the day (existing positions managed normally). Same hysteresis pattern as #163.
+- **Effort**: Low. ~25 lines + config + kill-switch.
+
+### 158. Regime-Shift Opportunity Window
+- **Priority**: LOW (small but non-zero alpha)
+- **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
+- **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
+- **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
+
+### 147. Session-Time-Aware RVol Baseline
+- **Priority**: LOW (current RVol is "good enough" for the pre-filter)
+- **Today**: RVol compares today's intraday volume to the 20-day **daily** average. But intraday volume has a U-shape (huge at open, dead 12–13:30, huge at close). Midday, almost every stock looks "quiet" by daily-average math — we may be skipping good trades.
+- **Fix**: Build a 20-day average for each 30-minute bucket of the day. Compare today's 12:30 volume to the historical 12:30 volume.
+- **Effort**: Medium. Needs a new cache of hourly-bucket volume history.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)
@@ -231,53 +289,15 @@ This document is the **history log** of every strategy improvement, the **backlo
 - **Source**: Every professional quant desk backtests before going live.
 - **Note**: We have 80+ live trades with full indicator snapshots in SQLite. Use `python scripts/view_performance.py --summary` to identify patterns before building a full framework.
 
+### 169. Defensive `score == 0` Entry Skip
+- **Status**: ✅ Completed (see #169 in Completed table).
+
+### 170. Move Claude Model String Out of `generate_sheet.py`
+- **Status**: ✅ Completed (see #170 in Completed table).
+
 ### 41. Holiday-Shifted Expiry Detection
 - **Priority**: LOW (~3 days/year edge case)
-- **Gap**: Thursday expiry detection uses `weekday == 3`. When Thursday is an NSE holiday, expiry shifts to Wednesday.
-- **Fix**: Maintain a list of actual expiry dates from NSE published calendar alongside the holiday list.
-
-### 44. WebSocket Tick Data
-- **Priority**: MEDIUM (implement when polling latency causes measurable slippage)
-- **Gap**: 10-second polling can miss rapid SL/target breaches during news events.
-- **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
-- **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
-
-### 144. Bracket Orders (Atomic Entry + SL + Target)
-- **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
-- **Today**: For every trade we submit three separate things — the entry order, then a stop-loss order after the entry fills, then a software-side target watcher. If the bot crashes in between any of these, the position can be left un-protected. If the user manually closes the position in the Kite app, the SL-M can still be alive and mis-trigger later.
-- **Fix**: Use Zerodha Bracket Order (BO). Entry + SL + target are submitted as one linked order. When the entry fills, the exchange itself arms the SL and target; when either fires, the other auto-cancels. One atomic state per trade, no orphans.
-- **Effort**: ~2 weeks. Touches `order_engine`, reconciliation, and crash-recovery logic.
-
-### 145. Volatility-Adjusted Position Sizing
-- **Status**: ✅ Completed (see #145 in Completed table).
-
-### 147. Session-Time-Aware RVol Baseline
-- **Priority**: LOW (current RVol is "good enough" for the pre-filter)
-- **Today**: RVol compares today's intraday volume to the 20-day **daily** average. But intraday volume has a U-shape (huge at open, dead 12–13:30, huge at close). Midday, almost every stock looks "quiet" by daily-average math — we may be skipping good trades.
-- **Fix**: Build a 20-day average for each 30-minute bucket of the day. Compare today's 12:30 volume to the historical 12:30 volume.
-- **Effort**: Medium. Needs a new cache of hourly-bucket volume history.
-
-### 148. Stale SL-M Cleanup on Restart
-- **Status**: ✅ Completed (see #148 in Completed table).
-
-### 149. Sector-Cascade Exit
-- **Priority**: MEDIUM (protects against correlated sector-wide drops)
-- **Today**: If 3 banking positions are all bleeding because the banking sector is dropping 2% in 15 min, each position waits for its own individual SL. By the time the 3rd hits, the 1st has lost much more than necessary.
-- **Fix**: Every scan, roll up per-sector open P&L. If a sector's exposure is ≤ −1% of budget in ≤ 15 min, tighten SLs on **all** positions in that sector to breakeven immediately — don't wait for individual SLs.
-- **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
-
-### 150. [Bug] Partial-Qty Exits Can Lose Shares to Integer Truncation
-- **Status**: ✅ Completed (see #150 in Completed table).
-
-### 151. [Bug] External Partial Close Misread as Full Close
-- **Status**: ✅ Completed (see #151 in Completed table).
-
-### 157. ADX + Directional Entry Confirmation
-- **Status**: ✅ Completed (see #157 in Completed table).
-
-### 158. Regime-Shift Opportunity Window
-- **Priority**: LOW (small but non-zero alpha)
-- **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
-- **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
-- **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
+- **Gap**: Thursday expiry detection uses `weekday == 3`. When Thursday is an NSE holiday, expiry shifts to Wednesday. The bot then trades expiry-day volatility with non-expiry SL/score/position settings.
+- **Fix**: Maintain a list of actual expiry dates from NSE published calendar alongside the holiday list. `manager._apply_expiry_day_adjustments()` reads that list instead of `weekday == 3`.
+- **Effort**: Low. Config list + one helper.
 

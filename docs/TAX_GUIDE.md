@@ -186,13 +186,17 @@ Interest under Section 234C applies if you miss these deadlines.
 ## 9. Practical Filing Checklist
 
 1. **Download Tax P&L** from Zerodha Console at financial year end
-2. **Run our tax ledger script:** `python scripts/generate_tax_ledger.py`
-   — generates a clean per-trade table with all charges for ITR filing
-3. **Check AIS** on income tax portal — verify transactions match
-4. **File ITR-3** — declare intraday under Schedule BP → Speculative Business Income
-5. **Declare expenses** — brokerage, STT, exchange charges, Claude API costs, etc.
-6. **Pay advance tax** quarterly if tax liability > Rs.10,000/year
-7. **Consult a CA** — ITR-3 with balance sheet/P&L is more complex than ITR-1/2
+2. **Build the intraday ledger:** `python scripts/fill_intraday_ledger.py`
+   — populates `intraday_tax_ledger` from live trading JSONs (charges + P&L per trade)
+3. **Reconcile against Zerodha:** `python scripts/import_zerodha_taxpnl.py --fy <YYYY>`
+   — verifies/corrects ledger using the official Tax P&L sheet, populates `capital_gains_ledger`
+4. **Get the FY summary:** `python scripts/tax_summary.py --fy <YYYY>`
+   — totals turnover, charges, intraday + capital gains for ITR filing
+5. **Check AIS** on income tax portal — verify transactions match
+6. **File ITR-3** — declare intraday under Schedule BP → Speculative Business Income
+7. **Declare expenses** — brokerage, STT, exchange charges, Claude API costs, etc.
+8. **Pay advance tax** quarterly if tax liability > Rs.10,000/year
+9. **Consult a CA** — ITR-3 with balance sheet/P&L is more complex than ITR-1/2
 
 ---
 
@@ -205,8 +209,8 @@ These are tracked automatically in every daily trading report:
 | Date-wise P&L | `reports/trading/YYYY/MM/trading_data_DD.json` |
 | Per-trade entry/exit/P&L | Same JSON → `positions` array |
 | Brokerage & charges breakdown | Same JSON → `pnl.charges` |
-| Cumulative FY ledger | `python scripts/generate_tax_ledger.py` |
-| Trade database | `data/trades.db` → `trades` table |
+| Cumulative FY ledger | `python scripts/tax_summary.py --fy <YYYY>` |
+| Trade database | `data/trades.db` → `trades`, `intraday_tax_ledger`, `capital_gains_ledger` |
 
 ---
 

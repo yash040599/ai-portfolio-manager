@@ -792,7 +792,19 @@ class StockScannerV2(StockScanner):
         _used_buy = 0
         _used_sell = 0
         for c in candidates:
-            side = "BUY" if c["combined_score"] > 0 else "SELL"
+            cs = c["combined_score"]
+            if cs > 0:
+                side = "BUY"
+            elif cs < 0:
+                side = "SELL"
+            else:
+                # Roadmap #169: score == 0 has no directional bias.
+                # V2_MIN_SCORE prefilter normally blocks zeros; defensive skip
+                # keeps a future config tweak from accidentally force-shorting.
+                self.log.warning(
+                    f"  Skipping {c.get('symbol', '?')} — combined_score is 0 (no direction)"
+                )
+                continue
             if side == "BUY":
                 if _used_buy < buy_slots:
                     _used_buy += 1
@@ -867,7 +879,13 @@ class StockScannerV2(StockScanner):
                 continue
 
             score = c["combined_score"]
-            side = "BUY" if score > 0 else "SELL"
+            if score > 0:
+                side = "BUY"
+            elif score < 0:
+                side = "SELL"
+            else:
+                # Roadmap #169: score == 0 has no directional bias — skip.
+                continue
 
             # Default SL/target (ATR will override in enter_trade)
             sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
