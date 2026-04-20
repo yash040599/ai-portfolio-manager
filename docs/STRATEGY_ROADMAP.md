@@ -43,13 +43,12 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (11 items)
+### Pending (10 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
-| 173 | Adoption grace on `check_loser_exit` SL-tightening — the function correctly skips force-EXIT for adopted positions inside the grace window, but the breakeven SL-tightening branch (entry ± 0.1%) doesn't honour the same guard. Means: a user manually opens a position at 15:25, bot adopts it, by 15:28 if it's near breakeven the bot moves the broker-side SL closer to entry without the user expecting it. Fix: add the same `_in_adoption_grace(pos): continue` guard before the elif branch. ~2 lines, low risk. | LOW | Low | Low |
 | 166 | Unrealised-MTM-aware circuit breaker — include open-position MTM in `day_pnl()` so CB fires before five bleeders all hit individual SLs | MEDIUM | High | Low |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
@@ -236,12 +235,6 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 ## Pending — Details
 
 In priority order, matching the Pending table above.
-
-### 173. Adoption Grace on `check_loser_exit` SL-Tightening
-- **Priority**: LOW (small UX bug; doesn't lose money, but mutates a user-opened position without the same grace courtesy that the EXIT path already has)
-- **Today**: `check_loser_exit()` skips the force-EXIT path for adopted positions inside the grace window (`if self._in_adoption_grace(pos): continue` early in the loop). But the BREAKEVEN SL-tightening `elif` branch isn't gated by the same check. So if the bot adopts a manual position at 15:25 and price is hovering near entry at 15:28, it tightens the broker-side SL to entry ± 0.1% — the user wasn't expecting the bot to touch SL inside the grace window.
-- **Fix**: Add the same `if self._in_adoption_grace(pos): continue` (or a guard around the elif) just before the breakeven branch. ~2 lines.
-- **Effort**: Trivial.
 
 ### 166. Unrealised-MTM-Aware Circuit Breaker
 - **Priority**: MEDIUM

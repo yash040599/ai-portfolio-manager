@@ -207,7 +207,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **Whipsaw** | Getting stopped out repeatedly by rapid reversals. | 3 consecutive SL exits → pause new entries for 30 min. |
 | **Time decay** | The fact that late-day trades have less time to hit targets. | After 2 PM, open targets compressed by 25%. |
 | **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
-| **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only: after 45 min, if progress < 0.3%, exit to free the slot. |
+| **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <25%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
 
 ### 9. Bot-Specific Concepts
 
@@ -338,7 +338,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 **Every 30 minutes** (NoAI only):
 
-19. **Stagnant exit.** Positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156).
+19. **Stagnant exit (two-tier).** **Tier 1** — positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156). **Tier 2** (Roadmap #172) — positions open ≥ 90 min that have covered < 25% of the entry→target distance → same exit + blacklist (`drift X% to target` reason tag). Tier 2 only runs if Tier 1 didn't already fire on this position.
 
 **At any time:**
 
@@ -454,7 +454,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 | Every 15 min | NIFTY trend recheck (regime shift detection) | Free |
 | Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (`--ai`) / Free (NoAI) |
 | Every 30 min (`--ai` only) | Claude reviews open positions with fresh 5-min candle data + StochRSI + 15-min composite score | 1 Claude call |
-| Every 30 min (NoAI only) | Stagnant position check: exit positions open > 45 min that haven't moved > 0.5% toward target | Free |
+| Every 30 min (NoAI only) | Stagnant position check (two-tier): at 45 min exit if adverse/dead-flat; at 90 min exit if <25% progress to target | Free |
 
 **On position close (any mode):** If free slots exist, 2-minute cooldown then partial re-scan to fill empty slots.
 
