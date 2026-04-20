@@ -73,6 +73,20 @@ These ideas look reasonable on paper but rest on too few data points to justify 
 
 These items are intentionally NOT in the main Pending table or Pending — Details list. Implementing them now would be guessing; we already have the data-collection path (every entry logs score / RVol / sector / NIFTY trend), so the right move is to wait.
 
+**Instructions for Copilot (and any future reviewer):**
+
+Whenever you review this roadmap (during a code review, end-of-day analysis, weekly retro, or when the user asks "what's next?"), you MUST:
+
+1. **Check the trade ledger** for each item in this section. Use `scripts/view_trades.py`, `scripts/view_performance.py`, or query `data/trades.db` directly to count the relevant trades since the item was added.
+2. **Compare actual trade count vs the trigger** stated in the "Trigger to revisit" column. The trigger is a hard gate — do not eyeball it.
+3. **If the trigger has been met**, compute the metric the trigger asks for (hit-rate gap, R-multiple gap, etc.) and **proactively raise it with the user**. Use this exact format:
+
+   > 🔔 **Awaiting-data item #NNN is ready for review.** We now have `<actual count>` trades (trigger was `<minimum>`). Measured `<metric>` is `<value>` vs threshold `<target>`. Recommendation: **promote to Pending / move to Removed** because `<one-line reason grounded in the numbers>`. Should I implement it?
+
+4. **Do NOT silently implement** an awaiting-data item even if you believe the data supports it. The user must explicitly approve the promotion. The whole point of this section is to force evidence-based decisions instead of speculative coding.
+5. **If the trigger has NOT been met**, do nothing — do not nag, do not partially implement, do not lower the threshold. Just note the current count in your review summary so progress is visible (e.g. "#175: 4 / 10 lunch-lull entries collected").
+6. **If new evidence makes an item obviously wrong** (e.g. lunch-lull 6.0-6.9 trades outperform 7.0+), say so and propose moving it to **Removed** with the reason.
+
 ### Removed (8 items — not worth implementing)
 
 | # | Item | Reason |
