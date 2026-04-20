@@ -1585,6 +1585,13 @@ class PortfolioManager:
         self.engine.set_budget(self._budget)
         self.scanner.set_budget(self._budget)
 
+        # Roadmap #171: seed engine's live-funds reading so the budget
+        # check respects margin already blocked by user's manual MIS
+        # positions from the start (don't wait for the first mid-day
+        # rescan). No-op in dry-run.
+        if not self.cfg.DRY_RUN:
+            self.engine.refresh_budget()
+
     # ================================================================
     # TIMING HELPERS
     # ================================================================

@@ -511,10 +511,10 @@ class Config:
     MIN_BUDGET_UTILISATION_PCT: float = 0.0
 
     # ── Stagnant Position Exit (NoAI) ─────────────────────────────
-    # STAGNANT_EXIT_MINUTES: after this many minutes, if a position
-    #   hasn't moved toward target by at least STAGNANT_EXIT_MIN_MOVE_PCT,
-    #   exit it to free the slot for a better trade. Only in NoAI mode
-    #   (V2 has Claude reviews for this). Set to 0 to disable.
+    # STAGNANT_EXIT_MINUTES: after this many minutes, evaluate the
+    #   position with the directional adverse / dead-flat thresholds
+    #   below. Only in NoAI mode (V2 has Claude reviews for this).
+    #   Set to 0 to disable.
     #
     #   DECISION HISTORY:
     #     0.5% (original): Too aggressive with 1.2% target — exited
@@ -526,22 +526,36 @@ class Config:
     #     0.3% (2026-04-15): Only exit truly dead positions. A stock that
     #       moved 0.3% toward target in 45 min is progressing. Below 0.3%
     #       means near-zero movement — likely going nowhere.
-    #     2026-04-17: STAGNANT_EXIT_MIN_MOVE_PCT retired in favour of
-    #       directional split. Was firing on slow-positive trades
-    #       (RECLTD +0.26%, TATAPOWER +0.25%) — we were locking in
-    #       sub-charge profits and paying Rs.15-20 round-trip to
-    #       re-enter elsewhere. Now only exits if ADVERSE (clearly
-    #       losing) or DEAD-FLAT (|move| near zero). Slow-positive
-    #       trades are allowed to continue toward target.
+    #     2026-04-17: Single STAGNANT_EXIT_MIN_MOVE_PCT retired in favour
+    #       of directional split (adverse / dead-flat). Was firing on
+    #       slow-positive trades (RECLTD +0.26%, TATAPOWER +0.25%) — we
+    #       were locking in sub-charge profits and paying Rs.15-20
+    #       round-trip to re-enter elsewhere. Now only exits if ADVERSE
+    #       (clearly losing) or DEAD-FLAT (|move| near zero).
+    #     2026-04-20: Removed the leftover STAGNANT_EXIT_MIN_MOVE_PCT
+    #       field entirely (was kept as a "backwards compat" no-op for
+    #       3 days but read by nothing). Added second-tier hard-max
+    #       check (#172) — see block below.
     STAGNANT_EXIT_MINUTES:      int   = 45
-    STAGNANT_EXIT_MIN_MOVE_PCT: float = 0.3   # retained for backwards compat; unused
     # Adverse threshold: fire stagnant-exit if move_pct is below this
-    # negative number (i.e., losing by more than this %). Previously the
-    # single 0.3% cutoff lumped slow-positive trades into this bucket.
+    # negative number (i.e., losing by more than this %).
     STAGNANT_ADVERSE_PCT:       float = 0.2
     # Dead-flat band: fire stagnant-exit if |move_pct| is below this
     # (truly going nowhere — neither up nor down in a meaningful way).
     STAGNANT_DEAD_FLAT_PCT:     float = 0.1
+
+    # ── Stagnant-Drift Hard-Max (#172, Tier 2) ─────────────────
+    # Second-tier checkpoint that uses progress-to-target rather than
+    # absolute move-band. Catches drifters that survived the 45-min
+    # directional check by sitting just outside the dead-flat band on
+    # the snapshot tick. See STAGNANT_EXIT_MINUTES decision history
+    # (entry dated 2026-04-20) for the UNITDSPR motivating case.
+    STAGNANT_HARD_MAX_ENABLED:    bool  = True
+    STAGNANT_HARD_MAX_MINUTES:    int   = 90
+    # If progress_pct toward target is below this after HARD_MAX_MINUTES,
+    # exit. progress_pct = move_toward_target / (target - entry) * 100.
+    # 25 means "covered less than a quarter of the entry→target distance".
+    STAGNANT_MIN_PROGRESS_PCT:    float = 25.0
 
     # ── Candle-Protect / Regime-Shift SL Cushion ──────────────────
     # CANDLE_PROTECT_MIN_CUSHION_PCT: minimum gap (as % of current

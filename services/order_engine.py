@@ -60,7 +60,16 @@ class OrderEngine:
 
         # Dynamic budget — set by PortfolioManager after fetching Zerodha funds.
         # Falls back to MAX_BUDGET_INR if not set.
+        # Semantics: TOTAL deployable cap (does NOT shrink with margin used).
+        # Used by loss_adjusted_budget() and as the ceiling for exposure.
         self._budget: float = float(config.MAX_BUDGET_INR)
+
+        # Live-mode available funds from Zerodha (already reflects margin
+        # blocked by open positions). Refreshed by refresh_budget(). None
+        # in dry-run or before first refresh — callers must handle that.
+        # Roadmap #171: keep separate from _budget to avoid double-counting
+        # exposure (Zerodha already subtracted it once).
+        self._available_funds: float | None = None
 
         # Running order counter for dry-run IDs
         self._dry_run_counter: int = 0
@@ -188,6 +197,9 @@ class OrderEngine:
     def set_budget(self, amount: float):
         """Sets the trading budget and adjusts MAX_POSITIONS dynamically."""
         self._budget = amount
+        # Roadmap #171: clear any stale live-funds reading from a prior
+        # session so the next refresh_budget() call repopulates it.
+        self._available_funds = None
         if hasattr(self.cfg, 'dynamic_max_positions'):
             new_max = self.cfg.dynamic_max_positions(amount)
             if new_max != self.cfg.MAX_POSITIONS:
@@ -792,23 +804,42 @@ class OrderEngine:
 
     def refresh_budget(self) -> float:
         """
-        Re-queries Zerodha for actual available funds and updates the
-        budget. Called before re-scans to account for margin used by
-        external trades.
+        Re-queries Zerodha for actual available funds and stores it in
+        ``_available_funds``. Called before re-scans so the next entry
+        check sees the latest deployable cash.
 
-        Returns updated budget.
+        Roadmap #171: this used to overwrite ``_budget`` (the total cap),
+        which then double-counted exposure in the budget check
+        (`exposure + cost > _budget` where `_budget` had already been
+        reduced by margin used). Now `_budget` stays as the configured
+        cap and `_available_funds` carries the live-margin truth.
+
+        Returns the latest available funds (or current ``_budget`` if
+        unavailable / dry-run) for backwards compatibility.
         """
         if self.cfg.DRY_RUN:
             return self._budget
 
         try:
-            available = self.zerodha.get_available_funds()
-            max_budget = float(self.cfg.MAX_BUDGET_INR)
-            self._budget = min(available, max_budget)
-        except Exception:
-            pass  # keep existing budget on failure
+            self._available_funds = self.zerodha.get_available_funds()
+        except Exception as e:
+            # Keep last-known _available_funds so the budget check still
+            # has a live-margin reference. Surface the failure so the
+            # operator knows the bot is operating on stale broker data.
+            if self._available_funds is not None:
+                self.log.warning(
+                    f"refresh_budget: Zerodha funds fetch failed — {e}. "
+                    f"Using last-known available funds "
+                    f"Rs.{self._available_funds:,.2f}"
+                )
+            else:
+                self.log.warning(
+                    f"refresh_budget: Zerodha funds fetch failed — {e}. "
+                    f"No prior available-funds reading; budget check will "
+                    f"fall back to configured cap minus exposure."
+                )
 
-        return self._budget
+        return self._available_funds if self._available_funds is not None else self._budget
 
     # ================================================================
     # ATR CALCULATION
@@ -1504,10 +1535,22 @@ class OrderEngine:
         # ── Budget check before entering ──────────────────────────
         # If qty doesn't fit, reduce to what fits (preserves trade conviction).
         # Only reject if even 1 share exceeds remaining budget.
+        #
+        # Roadmap #171: live mode must use the LOWER of:
+        #   (a) configured cap minus current exposure  — respects MAX_BUDGET
+        #       and loss-sizing
+        #   (b) Zerodha available funds                — already reflects
+        #       margin blocked by open positions; do NOT subtract exposure
+        #       again or we double-count it (the bug that blocked TRENT
+        #       on 2026-04-20).
         cost = entry * qty
         current_exposure = self._total_open_exposure()
-        if current_exposure + cost > self._budget:
-            remaining = self._budget - current_exposure
+        cap_remaining = self.loss_adjusted_budget() - current_exposure
+        if not self.cfg.DRY_RUN and self._available_funds is not None:
+            remaining = min(cap_remaining, self._available_funds)
+        else:
+            remaining = cap_remaining
+        if cost > remaining:
             max_qty = int(remaining / entry) if entry > 0 else 0
             if max_qty >= 1:
                 self.log.warning(
@@ -2723,9 +2766,20 @@ class OrderEngine:
 
     def check_stagnant_positions(self, quotes: dict) -> int:
         """
-        Exits positions that have been open for STAGNANT_EXIT_MINUTES
-        without moving at least STAGNANT_EXIT_MIN_MOVE_PCT toward
-        their target. Frees slots for better trades.
+        Two-tier stagnant-position exit:
+
+        Tier 1 (45 min directional, default):
+          Fires when the trade is clearly adverse (move_pct < -ADVERSE_PCT)
+          OR truly dead-flat (|move_pct| < DEAD_FLAT_PCT). Slow-positive
+          trades are allowed to continue toward target.
+
+        Tier 2 (90 min progress-to-target, #172):
+          Fires when the trade has covered less than
+          STAGNANT_MIN_PROGRESS_PCT of the entry→target distance.
+          Catches drifters that survived Tier 1 by sitting just outside
+          the dead-flat band on the snapshot tick (UNITDSPR 2026-04-20:
+          183 min for +0.03%). Skipped if Tier 1 already exited the
+          symbol on this run.
 
         Only useful in NoAI mode (Claude reviews handle this in V1/V2).
 
@@ -2792,10 +2846,42 @@ class OrderEngine:
             is_adverse   = move_pct < -adverse_pct
             is_dead_flat = abs(move_pct) < dead_flat_pct
 
-            if not (is_adverse or is_dead_flat):
-                continue  # slow-positive — let it breathe
+            reason_tag = None
+            if is_adverse:
+                reason_tag = "adverse"
+            elif is_dead_flat:
+                reason_tag = "dead-flat"
+            else:
+                # Tier 2 (#172): hard-max progress check. A slow-positive
+                # trade that's barely budged toward target after 90 min
+                # is a drifter — band-based check missed it because price
+                # straddled the dead-flat band on the snapshot tick.
+                # progress_pct uses target distance, not absolute move,
+                # so it scales with the trade's own R:R (1.0% target vs
+                # 4% expiry-day target both judged on equal footing).
+                if (self.cfg.STAGNANT_HARD_MAX_ENABLED
+                        and elapsed >= self.cfg.STAGNANT_HARD_MAX_MINUTES):
+                    target = pos.get("target_price") or 0
+                    target_dist = abs(target - entry)
+                    if target <= 0 or target_dist <= 0:
+                        # Malformed position (no target / target == entry).
+                        # Skip Tier-2 — Tier-1 already had its chance and
+                        # LOSER_EXIT will catch this at 14:45 if it's
+                        # still losing.
+                        continue
+                    # Signed move toward target: +ve = progressing,
+                    # -ve = went backwards past entry. Clamp upper at
+                    # 100 (target reached) and lower at -100 to keep
+                    # the log readable on extreme cases.
+                    progress_pct = max(-100.0, min(100.0,
+                        (move_pct / (target_dist / entry * 100)) * 100
+                    ))
+                    if progress_pct < self.cfg.STAGNANT_MIN_PROGRESS_PCT:
+                        reason_tag = f"drift {progress_pct:+.0f}% to target"
 
-            reason_tag = "adverse" if is_adverse else "dead-flat"
+            if reason_tag is None:
+                continue  # trade is progressing (or just outside both gates) — let it breathe
+
             pnl = (current_price - entry) * pos["qty"] if side == "BUY" \
                 else (entry - current_price) * pos["qty"]
             self.log.warning(
@@ -3426,8 +3512,16 @@ class OrderEngine:
         return [p for p in self.positions if p["status"] == "CLOSED"]
 
     def budget_remaining(self) -> float:
-        """How much of the budget is not currently allocated (loss-adjusted)."""
-        return self.loss_adjusted_budget() - self._total_open_exposure()
+        """How much of the budget is not currently allocated (loss-adjusted).
+
+        Roadmap #171: in live mode, also clamp to Zerodha's available
+        funds — Claude prompts and budget displays must reflect what
+        the broker will actually permit.
+        """
+        cap_remaining = self.loss_adjusted_budget() - self._total_open_exposure()
+        if not self.cfg.DRY_RUN and self._available_funds is not None:
+            return min(cap_remaining, self._available_funds)
+        return cap_remaining
 
     def print_position_status(self, quotes: dict):
         """

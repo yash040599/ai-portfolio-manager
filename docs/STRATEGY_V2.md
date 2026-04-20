@@ -684,17 +684,22 @@ Normal risk management (software SL/target, trailing stop, stagnant exit, square
 
 ### Stagnant Position Exit (NoAI Only)
 
-Replaces Claude's position reviews. After `STAGNANT_EXIT_MINUTES` (45 min) — extended by +15 min in the 12:00-13:30 midday lull and on expiry days — evaluate each open position and exit only if one of the following is true:
+Replaces Claude's position reviews. Two checkpoints — a directional check at `STAGNANT_EXIT_MINUTES` (45 min, extended +15 min in the 12:00-13:30 midday lull and on expiry days) and a hard-max progress check at `STAGNANT_HARD_MAX_MINUTES` (90 min). Either can fire; both can be disabled.
 
+**Tier 1 — directional (45 min):**
 - **Adverse**: `move_pct < -STAGNANT_ADVERSE_PCT` (default 0.2%) — trade is meaningfully losing.
 - **Dead-flat**: `|move_pct| < STAGNANT_DEAD_FLAT_PCT` (default 0.1%) — trade is going nowhere.
 
 A **slow-positive** trade (e.g., +0.25%) is allowed to continue toward target. Exiting it would lock in a sub-charge profit and waste another ~Rs.15-20 round-trip entering a replacement.
 
+**Tier 2 — progress-to-target hard-max (#172, 90 min):**
+Exits when `progress_pct < STAGNANT_MIN_PROGRESS_PCT` (default 25%), where `progress_pct = move_toward_target / (target - entry) * 100`. Catches drifters that survived Tier 1 by sitting just outside the dead-flat band on the snapshot tick (UNITDSPR 2026-04-20: 183 min for +0.03%). Target-relative so it scales naturally with the trade's own R:R — a 1.0% target trade is judged the same way as a 4% expiry-day target trade.
+
 Decision history:
 - 0.5% (original): Too aggressive with 1.2% target.
 - 0.3% (2026-04-15): Still exited slow-positive winners (RECLTD +0.26%, ONGC +0.42%).
 - Directional (2026-04-17): Split into adverse/dead-flat thresholds. Retired the single `STAGNANT_EXIT_MIN_MOVE_PCT` gate.
+- Two-tier (2026-04-20, #172): Added 90-min progress-to-target hard-max to catch drifters that the band check missed.
 
 In `--ai` mode, Claude reviews every 30 min instead and can recommend HOLD / EXIT / ADJUST_SL / ADJUST_TARGET with qualitative reasoning.
 
@@ -842,7 +847,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `TRAIL_STEP_PCT` | 50% | Trail lock % of unrealised profit |
 | `TARGET_DECAY_PCT` | 25% | After 2 PM target reduction |
 | `TARGET_DECAY_AFTER_HOUR` | 14 | 2:00 PM IST |
-| `MIN_EXPECTED_PROFIT` | Rs.50 | Min viable profit (charges ~Rs.40-50) |
+| `MIN_EXPECTED_PROFIT` | Rs.75 | Min viable profit (2× round-trip charges, ~Rs.40-50) |
 | `USE_EXCHANGE_SL` | True | SL-M on NSE |
 | `USE_LIMIT_ORDERS` | True | LIMIT at LTP + 1 tick buffer for entries |
 | `LIMIT_ORDER_TIMEOUT` | 8s | Wait for LIMIT fill before cancel |
@@ -890,7 +895,9 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `STAGNANT_EXIT_MINUTES` | 45 | Stagnant exit (NoAI only) |
 | `STAGNANT_ADVERSE_PCT` | 0.2% | Stagnant-exit fires if trade is losing more than this |
 | `STAGNANT_DEAD_FLAT_PCT` | 0.1% | Stagnant-exit fires if |move| is inside this band (truly flat) |
-| `STAGNANT_EXIT_MIN_MOVE_PCT` | 0.3% | **Retired** — replaced by the two thresholds above |
+| `STAGNANT_HARD_MAX_ENABLED` | True | Kill-switch for the Tier-2 progress-to-target check (#172) |
+| `STAGNANT_HARD_MAX_MINUTES` | 90 | Tier-2 checkpoint (catches drifters Tier-1 missed) |
+| `STAGNANT_MIN_PROGRESS_PCT` | 25% | Exit at Tier-2 if progress toward target is below this |
 | `CANDLE_PROTECT_MIN_CUSHION_PCT` | 0.3% | Minimum gap between tightened SL and live price (candle/regime protect) |
 | `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157) |
 | `ADX_MIN_THRESHOLD` | 18.0 | Minimum ADX for entry (chop filter) |
@@ -994,7 +1001,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | **ORB 2nd candle** | 1st candle (9:15-9:30) includes auction noise. 2nd candle (9:30-9:45) is first market-driven range. |
 | **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
 | **Short cutoff 1 PM** | Short delivery penalties Rs.500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
-| **Min profit Rs.50** | Round-trip charges ~Rs.40-50. Trades below this threshold are guaranteed losers after costs. |
+| **Min profit Rs.75** | Round-trip charges ~Rs.40-50. Threshold = 2× charges ensures cushion for slippage; raised from Rs.50 after 2026-04 review found razor-thin trades still slipped to net loss. |
 | **DEFAULT_TARGET 1.2%** | Was 1.5%. 26/63 trades hit SQUARE_OFF (target never reached). 1.2% more achievable for NSE intraday. |
 | **NoAI as default** | Zero cost, instant execution, deterministic. Claude adds marginal value for position reviews but costs Rs.20-40/day. |
 | **Stagnant exit 45 min** | Replaces Claude reviews in NoAI. Dead positions waste slots — exit them to try stronger setups. |
