@@ -1099,13 +1099,36 @@ class PortfolioManager:
         """
         On weekly F&O expiry Thursdays, NIFTY stocks see wider swings.
         Dynamically widen SLs, reduce position count, and raise min score.
-        NOTE: When Thursday is an NSE holiday, expiry shifts to Wednesday.
-        That edge case (~2-3 days/year) is not handled yet.
+
+        When Thursday is an NSE holiday (Holi, Eid, etc., ~3 days/year),
+        expiry shifts to the prior trading day (normally Wednesday).
+        Roadmap #41 — gated by `HOLIDAY_SHIFTED_EXPIRY_ENABLED`.
         """
         if getattr(self, '_expiry_applied', False):
             return
         today = now_ist()
-        if today.weekday() != 3:  # 3 = Thursday
+        wd = today.weekday()  # 0=Mon ... 6=Sun
+        is_expiry = (wd == 3)  # normal Thursday
+        if (
+            not is_expiry
+            and wd == 2  # Wednesday
+            and getattr(self.cfg, 'HOLIDAY_SHIFTED_EXPIRY_ENABLED', True)
+        ):
+            # Tomorrow's Thursday in YYYY-MM-DD
+            tomorrow_str = (
+                today.date() + datetime.timedelta(days=1)
+            ).strftime('%Y-%m-%d')
+            # Year-aware lookup so calendar rollover (e.g. 2026-12-31 →
+            # 2027-01-01) doesn't silently fail-open. Falls back to empty.
+            attr = f'NSE_HOLIDAYS_{tomorrow_str[:4]}'
+            holidays = getattr(self.cfg, attr, []) or []
+            if tomorrow_str in holidays:
+                is_expiry = True
+                self.log.info(
+                    f"  Expiry shifted to today (Wednesday) \u2014 Thursday "
+                    f"{tomorrow_str} is an NSE holiday."
+                )
+        if not is_expiry:
             return
         self._expiry_applied = True
         self.cfg._expiry_applied = True  # expose to order_engine for stagnant timer

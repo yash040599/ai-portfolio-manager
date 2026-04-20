@@ -111,6 +111,11 @@ class OrderEngine:
         # Cancelled at market close to prevent stale trigger orders.
         self._pending_order_ids: set[str] = set()
 
+        # ── Peak-drawdown tracking (#168) ──────────────────────────
+        # Ratchets up via max(peak, day_pnl()) on every is_peak_drawdown_stopped()
+        # call. Fresh per OrderEngine instance — reset implicitly by daily restart.
+        self._intraday_peak_pnl: float = 0.0
+
         # ── Adaptive R:R tracking ─────────────────────────────────
         # Counts scans that produced 0 entries (all candidates failed
         # R:R or other checks). After N failures, R:R floor relaxes.
@@ -1143,40 +1148,41 @@ class OrderEngine:
         Returns True if the order was placed/logged successfully.
 
         Entry pipeline (each step can reject the trade). Counted at
-        30 distinct gates — keep this list and STRATEGY_V2.md in sync.
+        31 distinct gates — keep this list and STRATEGY_V2.md in sync.
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
           2.  Daily-loss soft-stop (#163) — block new entries at -1.5% realized
-          3.  Validate entry price vs live Zerodha quote
-          4.  Circuit-limit (UC/LC) entry guard (#180) — reject BUY when within 1% of +20% upper circuit, SELL within 1% of -20% lower circuit
-          5.  Bid-ask spread check (illiquid stocks)
-          6.  Volume confirmation (RVol gate with scan-time fallback)
-          7.  Impact-cost check (#146) — depth-weighted slippage
-          8.  ATR-based SL/target (pure ATR when available, config fallback)
-          9.  Late-entry target reduction (13:00 / 14:00 cutoffs)
-         10.  R:R floor check (time-based, adaptive relaxation)
-         11.  Minimum profit check (must cover round-trip charges)
-         12.  Charge-aware target floor (#162) — gross target ≥ 2× charges
-         13.  Slippage simulation (dry-run only)
-         14.  Budget cap
-         15.  Max positions cap
-         16.  Duplicate position guard (no two open on same symbol+side)
-         17.  Sector cap (max 2 per sector)
-         18.  Direction diversification (max same-side concurrent)
-         19.  Short entry cutoff
-         20.  Max re-entries per stock + declining score block
-         21.  Per-symbol re-entry cooldown (#161) — 30 min same-side
-         22.  RSI > BUY ceiling (default 75)
-         23.  RSI > SELL ceiling (default 70)
-         24.  RSI < 30 BUY floor / RSI < 25 SELL floor
-         25.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
-         26.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
-         27.  Daily trade cap + expiry trade cap (#124)
-         28.  Stagnant churn guard (no re-enter stagnant exits)
-         29.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
-         30.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+          3.  Peak-drawdown stop (#168) — block when day P&L gives back ≥1.5% from intraday peak
+          4.  Validate entry price vs live Zerodha quote
+          5.  Circuit-limit (UC/LC) entry guard (#180) — reject BUY when within 1% of +20% upper circuit, SELL within 1% of -20% lower circuit
+          6.  Bid-ask spread check (illiquid stocks)
+          7.  Volume confirmation (RVol gate with scan-time fallback)
+          8.  Impact-cost check (#146) — depth-weighted slippage
+          9.  ATR-based SL/target (pure ATR when available, config fallback)
+         10.  Late-entry target reduction (13:00 / 14:00 cutoffs)
+         11.  R:R floor check (time-based, adaptive relaxation)
+         12.  Minimum profit check (must cover round-trip charges)
+         13.  Charge-aware target floor (#162) — gross target ≥ 2× charges
+         14.  Slippage simulation (dry-run only)
+         15.  Budget cap
+         16.  Max positions cap
+         17.  Duplicate position guard (no two open on same symbol+side)
+         18.  Sector cap (max 2 per sector)
+         19.  Direction diversification (max same-side concurrent)
+         20.  Short entry cutoff
+         21.  Max re-entries per stock + declining score block
+         22.  Per-symbol re-entry cooldown (#161) — 30 min same-side
+         23.  RSI > BUY ceiling (default 75)
+         24.  RSI > SELL ceiling (default 70)
+         25.  RSI < 30 BUY floor / RSI < 25 SELL floor
+         26.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
+         27.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
+         28.  Daily trade cap + expiry trade cap (#124)
+         29.  Stagnant churn guard (no re-enter stagnant exits)
+         30.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
+         31.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
          --- order placement ---
-         31.  Place order → scale SL/target to actual fill price
-         32.  Place exchange SL-M for instant stop-loss execution
+         32.  Place order → scale SL/target to actual fill price
+         33.  Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -1219,6 +1225,22 @@ class OrderEngine:
             self.log.warning(
                 f"{symbol}: soft-stop active — day P&L Rs.{self.day_pnl():,.2f} "
                 f"≤ -{self.cfg.DAILY_LOSS_SOFT_STOP_PCT}% of budget. "
+                f"No new entries (existing positions still managed)."
+            )
+            return False
+
+        # ── Intraday equity-peak drawdown stop (Roadmap #168) ──────
+        # Pause new entries once day P&L has given back PEAK_DRAWDOWN_STOP_PCT
+        # of budget from its intraday high. Catches the "+2% by 11 AM,
+        # bleed back to flat by 13:00" pattern that soft-stop misses.
+        # Existing positions managed normally.
+        if self.is_peak_drawdown_stopped():
+            peak = getattr(self, "_intraday_peak_pnl", 0.0)
+            give_back = peak - self.day_pnl()
+            self.log.warning(
+                f"{symbol}: peak-drawdown stop active — day P&L gave back "
+                f"Rs.{give_back:,.2f} from peak Rs.{peak:,.2f} "
+                f"(≥ {self.cfg.PEAK_DRAWDOWN_STOP_PCT}% of budget). "
                 f"No new entries (existing positions still managed)."
             )
             return False
@@ -3395,6 +3417,35 @@ class OrderEngine:
         if budget <= 0:
             return False
         return self.day_pnl() <= -budget * soft_pct / 100
+
+    def is_peak_drawdown_stopped(self) -> bool:
+        """True if day P&L has given back too much from its intraday peak (Roadmap #168).
+
+        Tracks `_intraday_peak_pnl = max(peak, day_pnl())` on every call.
+        Triggers when give-back from peak exceeds PEAK_DRAWDOWN_STOP_PCT of
+        budget AND the peak itself was above PEAK_DRAWDOWN_MIN_PEAK_PCT (so
+        we don't trip on tiny early-morning swings).
+
+        Like soft-stop, only blocks NEW entries — existing positions
+        continue to be managed. Once tripped the state is sticky for the
+        session because peak only ratchets up; if pnl recovers above peak,
+        peak rises with it and the gap closes naturally. Returns False when
+        PEAK_DRAWDOWN_STOP_PCT <= 0 (kill-switch).
+        """
+        stop_pct = float(self.cfg.PEAK_DRAWDOWN_STOP_PCT)
+        if stop_pct <= 0:
+            return False
+        budget = self._budget
+        if budget <= 0:
+            return False
+        pnl = self.day_pnl()
+        peak = max(getattr(self, "_intraday_peak_pnl", 0.0), pnl)
+        self._intraday_peak_pnl = peak
+        min_peak_rs = budget * float(self.cfg.PEAK_DRAWDOWN_MIN_PEAK_PCT) / 100
+        if peak < min_peak_rs:
+            return False
+        give_back = peak - pnl
+        return give_back >= budget * stop_pct / 100
 
     # ================================================================
     # P&L AND COST CALCULATIONS

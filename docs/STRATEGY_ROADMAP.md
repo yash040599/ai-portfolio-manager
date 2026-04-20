@@ -47,7 +47,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (11 items)
+### Pending (9 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
@@ -59,11 +59,9 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
 | 167 | Earnings/results-day blackout — skip stocks with corporate results announced today (Q1–Q4 season abnormal moves) | MEDIUM | Medium | Medium |
 | 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
-| 168 | Intraday equity-peak drawdown stop — pause new entries when day P&L drops X% from intraday high (give-back protection) | LOW | Medium | Low |
 | 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
 | 147 | Session-time-aware RVol — hourly-bucket baseline, not daily average | LOW | Medium | Medium |
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
-| 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 
 ### Pending — Awaiting Trade Data (7 items)
 
@@ -108,7 +106,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (154 items)
+### Completed (156 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -135,7 +133,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (33)** | | |
+| **Risk Management (34)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -155,6 +153,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 119 | Expiry score bump raised 0.5 → 1.0 | Risk |
 | 122 | Expiry entry delay (15 min vs 5 min normal) | Risk |
 | 123 | Expiry max trades cap (5/day) | Risk |
+| 41  | Holiday-shifted expiry detection — when Thursday is an NSE holiday (Holi, Eid, etc., ~3 days/year), expiry-day adjustments fire on Wednesday instead. `_apply_expiry_day_adjustments()` checks `tomorrow ∈ NSE_HOLIDAYS_2026` on Wednesdays. Kill-switch `HOLIDAY_SHIFTED_EXPIRY_ENABLED`. | Risk |
 | 124 | Daily trade cap (12/day) to prevent churn | Risk |
 | 125 | VWAP trend block (no BUY below VWAP, no SELL above VWAP) | Risk |
 | 128 | Stagnant churn guard (no re-enter stagnant exits same direction) | Risk |
@@ -167,6 +166,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
 | 146 | Impact-cost / depth liquidity check — before entry, walk top-5 order-book levels and compute the weighted-average fill price for our full qty. Skip trade if slippage vs LTP exceeds `MAX_IMPACT_COST_PCT` (default 0.2%). Also skips when visible depth across top-5 is smaller than our qty. Fail-open on missing/malformed depth (logs a warning, lets trade through). Catches paper-thin book traps that spread-only checks miss. | Risk |
 | 180 | Circuit-limit (UC/LC) entry guard — reject BUY when intraday move ≥ +19% (within 1% of upper circuit) and SELL when ≤ -19% (within 1% of lower circuit). Near the ±20% freeze the order book becomes one-sided: SL-M sits dead, MIS auto-square at 15:20 takes whatever distressed price exists, and post-freeze unwinds slip 5-15 Rs/share. `CIRCUIT_LIMIT_BUFFER_PCT = 1.0`, kill-switch `CIRCUIT_LIMIT_GUARD_ENABLED`. Fail-open when `prev_close` missing in the live quote. | Risk |
+| 168 | Intraday equity-peak drawdown stop — tracks `_intraday_peak_pnl = max(peak, day_pnl())` each entry attempt; blocks new entries when give-back from peak exceeds `PEAK_DRAWDOWN_STOP_PCT` (default 1.5%) of budget AND peak itself is above `PEAK_DRAWDOWN_MIN_PEAK_PCT` (default 0.5%) so tiny early swings don't trip the gate. Catches the "+2% by 11 AM, bleed to flat by 13:00" pattern that soft-stop (#163) misses entirely (day P&L never crosses zero). Same hysteresis pattern as soft-stop — only blocks entries, never forces exits. Kill-switch `PEAK_DRAWDOWN_STOP_PCT <= 0`. | Risk |
 | **Execution (36)** | | |
 | 10 | Partial profit taking (1/3 at 1.5R, trail 50%) | Execution |
 | 11 | Periodic opportunity scanning (30 min, free slots) | Execution |
@@ -312,10 +312,7 @@ In priority order, matching the Pending table above.
 - **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
 
 ### 168. Intraday Equity-Peak Drawdown Stop
-- **Priority**: LOW
-- **Today**: Soft-stop (#163) and CB both measure loss vs the day's starting budget. If the bot is +2% by 11 AM and gives it all back to +0.2% by 1 PM, neither fires — the give-back is invisible to the loss gates because total day P&L never went negative. Pro intraday desks track equity high-water mark and pause new entries on a defined drawdown from peak.
-- **Fix**: Track `_intraday_peak_pnl = max(_intraday_peak_pnl, day_pnl())` each scan. If `(_intraday_peak_pnl - day_pnl()) / budget > PEAK_DRAWDOWN_STOP_PCT` (default 1.5%), block new entries for the rest of the day (existing positions managed normally). Same hysteresis pattern as #163.
-- **Effort**: Low. ~25 lines + config + kill-switch.
+- **Status**: ✅ Completed (see #168 in Completed table).
 
 ### 158. Regime-Shift Opportunity Window
 - **Priority**: LOW (small but non-zero alpha)
@@ -343,8 +340,5 @@ In priority order, matching the Pending table above.
 - **Status**: ✅ Completed (see #170 in Completed table).
 
 ### 41. Holiday-Shifted Expiry Detection
-- **Priority**: LOW (~3 days/year edge case)
-- **Gap**: Thursday expiry detection uses `weekday == 3`. When Thursday is an NSE holiday, expiry shifts to Wednesday. The bot then trades expiry-day volatility with non-expiry SL/score/position settings.
-- **Fix**: Maintain a list of actual expiry dates from NSE published calendar alongside the holiday list. `manager._apply_expiry_day_adjustments()` reads that list instead of `weekday == 3`.
-- **Effort**: Low. Config list + one helper.
+- **Status**: ✅ Completed (see #41 in Completed table).
 

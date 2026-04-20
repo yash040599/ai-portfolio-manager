@@ -424,6 +424,17 @@ class Config:
     GAP_COHERENCE_GATE_ENABLED:  bool  = True
     GAP_COHERENCE_OVERRIDE_SCORE: float = 7.5
 
+    # ── Holiday-Shifted Expiry Detection (Roadmap #41) ──────────
+    # NSE weekly F&O expiry is Thursday. When Thursday is a market
+    # holiday (Holi, Eid, Republic Day falling on Thu, etc.), the
+    # exchange shifts expiry to the prior trading day — normally
+    # Wednesday. ~3 days/year. Without this detection the bot uses
+    # normal Wednesday gates and misses expiry-day wider SLs / score
+    # bumps / trade-cap reductions.
+    # Kill-switch: HOLIDAY_SHIFTED_EXPIRY_ENABLED = False reverts to
+    # pure-Thursday detection.
+    HOLIDAY_SHIFTED_EXPIRY_ENABLED: bool = True
+
     # ── Circuit-Limit (UC/LC) Entry Guard (Roadmap #180) ─────────
     # Indian equities have a daily ±20% price band ("upper / lower
     # circuit"). Within ~1% of that band the order book becomes
@@ -726,6 +737,29 @@ class Config:
     #   might recover in a green afternoon.
     # Set to 0 to disable (no soft stop, only hard CB).
     DAILY_LOSS_SOFT_STOP_PCT: float = 1.5
+
+    # ── Intraday Equity-Peak Drawdown Stop (Roadmap #168) ───────
+    # Soft-stop (#163) and hard CB both measure loss vs the day's
+    # starting budget. If the bot is +2% by 11 AM and gives it all
+    # back to +0.2% by 1 PM, neither fires — total day P&L never
+    # went negative. Pro intraday desks track the equity high-water
+    # mark and pause new entries on a defined drawdown from peak.
+    #
+    # Tracks `_intraday_peak_pnl = max(peak, day_pnl())` each scan.
+    # When `(peak - day_pnl) / budget > PEAK_DRAWDOWN_STOP_PCT` block
+    # NEW entries for the rest of the session. Existing positions
+    # continue to be managed normally.
+    #
+    # PEAK_DRAWDOWN_STOP_PCT: % of budget that the day P&L must
+    #   give back from its intraday peak to trigger the stop.
+    #   Default 1.5% mirrors the soft-stop sensitivity.
+    # PEAK_DRAWDOWN_MIN_PEAK_PCT: only arm the gate after the day
+    #   P&L peak has been above this threshold (default 0.5% of
+    #   budget). Prevents triggering on tiny early-morning swings
+    #   when peak is essentially noise.
+    # Set PEAK_DRAWDOWN_STOP_PCT <= 0 to disable.
+    PEAK_DRAWDOWN_STOP_PCT:     float = 1.5
+    PEAK_DRAWDOWN_MIN_PEAK_PCT: float = 0.5
 
     # ── Lunch-Lull Entry Skip (Roadmap #164) ──────────────────────
     # Indian markets are lowest-volume and lowest-ADX during lunch.

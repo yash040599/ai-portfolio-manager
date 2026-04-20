@@ -246,7 +246,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (30 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments, NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), budget-regime gate deltas (#165).
+**Shared across both modes:** pre-filter, entry pipeline (31 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
 
 ---
 
@@ -276,7 +276,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 30 checks, in order)
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 31 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -381,7 +381,7 @@ Only three decisions change in `--ai` mode — everything else is identical:
 | **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
 | **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
 
-Every entry/exit gate (all 30 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+Every entry/exit gate (all 31 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
 
 ---
 
@@ -450,7 +450,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (30 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (31 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -568,12 +568,13 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 30 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 31 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
 | 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (6.0). Boundary-exclusive on the right |
 | 0b | **Daily-loss soft stop** (#163) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5` | Reject new entries when day P&L ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
+| 0c | **Peak-drawdown stop** (#168) | `PEAK_DRAWDOWN_STOP_PCT = 1.5`, `PEAK_DRAWDOWN_MIN_PEAK_PCT = 0.5` | Tracks intraday equity high-water mark. Reject new entries when (peak − current day P&L) ≥ 1.5% of budget AND peak itself was ≥ 0.5% of budget (so tiny early swings don't trip). Catches the "+2% by 11 AM, give it back by 13:00" pattern that soft-stop misses (day P&L never crosses zero). Existing positions still managed |
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2a | **Impact-cost / depth check** | `MAX_IMPACT_COST_PCT = 0.2` | Walk top-5 order-book levels on the side we'd hit (asks for BUY, bids for SELL); compute weighted-average fill for our full qty. Skip if slippage vs LTP > 0.2%, or if visible top-5 depth < our qty. Fail-open (log warning, let trade through) when depth data is missing/malformed. Catches paper-thin top-of-book traps that spread-only misses |
