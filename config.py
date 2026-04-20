@@ -424,6 +424,23 @@ class Config:
     GAP_COHERENCE_GATE_ENABLED:  bool  = True
     GAP_COHERENCE_OVERRIDE_SCORE: float = 7.5
 
+    # ── Circuit-Limit (UC/LC) Entry Guard (Roadmap #180) ─────────
+    # Indian equities have a daily ±20% price band ("upper / lower
+    # circuit"). Within ~1% of that band the order book becomes
+    # one-sided: at UC there are zero asks below the freeze price, at
+    # LC zero bids above. SL-M orders cannot fill, MIS positions get
+    # auto-squared at 15:20 at whatever desperate price exists, and
+    # post-freeze unwinds routinely slip 5-15 Rs/share.
+    #
+    # Gate: reject BUY when current move >= +(20 - buffer)% from prev
+    # close, and SELL when current move <= -(20 - buffer)%. Fail-open
+    # if prev_close (ohlc.close) is unavailable in the live quote.
+    #
+    # Buffer of 1.0% leaves ~50 paise of room on a Rs.500 stock for
+    # normal noise without admitting a near-freeze entry.
+    CIRCUIT_LIMIT_GUARD_ENABLED: bool  = True
+    CIRCUIT_LIMIT_BUFFER_PCT:    float = 1.0
+
     # ── Post-Trade Rejection Audit (read-only, EOD) ───────────────
     # After Step 11 (Zerodha trade verification), the manager parses
     # today's portfolio.log for every entry that was SKIPPED by the

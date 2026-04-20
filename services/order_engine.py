@@ -1143,39 +1143,40 @@ class OrderEngine:
         Returns True if the order was placed/logged successfully.
 
         Entry pipeline (each step can reject the trade). Counted at
-        29 distinct gates — keep this list and STRATEGY_V2.md in sync.
+        30 distinct gates — keep this list and STRATEGY_V2.md in sync.
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
           2.  Daily-loss soft-stop (#163) — block new entries at -1.5% realized
           3.  Validate entry price vs live Zerodha quote
-          4.  Bid-ask spread check (illiquid stocks)
-          5.  Volume confirmation (RVol gate with scan-time fallback)
-          6.  Impact-cost check (#146) — depth-weighted slippage
-          7.  ATR-based SL/target (pure ATR when available, config fallback)
-          8.  Late-entry target reduction (13:00 / 14:00 cutoffs)
-          9.  R:R floor check (time-based, adaptive relaxation)
-         10.  Minimum profit check (must cover round-trip charges)
-         11.  Charge-aware target floor (#162) — gross target ≥ 2× charges
-         12.  Slippage simulation (dry-run only)
-         13.  Budget cap
-         14.  Max positions cap
-         15.  Duplicate position guard (no two open on same symbol+side)
-         16.  Sector cap (max 2 per sector)
-         17.  Direction diversification (max same-side concurrent)
-         18.  Short entry cutoff
-         19.  Max re-entries per stock + declining score block
-         20.  Per-symbol re-entry cooldown (#161) — 30 min same-side
-         21.  RSI > BUY ceiling (default 75)
-         22.  RSI > SELL ceiling (default 70)
-         23.  RSI < 30 BUY floor / RSI < 25 SELL floor
-         24.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
-         25.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
-         26.  Daily trade cap + expiry trade cap (#124)
-         27.  Stagnant churn guard (no re-enter stagnant exits)
-         28.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
-         29.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+          4.  Circuit-limit (UC/LC) entry guard (#180) — reject BUY when within 1% of +20% upper circuit, SELL within 1% of -20% lower circuit
+          5.  Bid-ask spread check (illiquid stocks)
+          6.  Volume confirmation (RVol gate with scan-time fallback)
+          7.  Impact-cost check (#146) — depth-weighted slippage
+          8.  ATR-based SL/target (pure ATR when available, config fallback)
+          9.  Late-entry target reduction (13:00 / 14:00 cutoffs)
+         10.  R:R floor check (time-based, adaptive relaxation)
+         11.  Minimum profit check (must cover round-trip charges)
+         12.  Charge-aware target floor (#162) — gross target ≥ 2× charges
+         13.  Slippage simulation (dry-run only)
+         14.  Budget cap
+         15.  Max positions cap
+         16.  Duplicate position guard (no two open on same symbol+side)
+         17.  Sector cap (max 2 per sector)
+         18.  Direction diversification (max same-side concurrent)
+         19.  Short entry cutoff
+         20.  Max re-entries per stock + declining score block
+         21.  Per-symbol re-entry cooldown (#161) — 30 min same-side
+         22.  RSI > BUY ceiling (default 75)
+         23.  RSI > SELL ceiling (default 70)
+         24.  RSI < 30 BUY floor / RSI < 25 SELL floor
+         25.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
+         26.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
+         27.  Daily trade cap + expiry trade cap (#124)
+         28.  Stagnant churn guard (no re-enter stagnant exits)
+         29.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
+         30.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
          --- order placement ---
-         30.  Place order → scale SL/target to actual fill price
-         31.  Place exchange SL-M for instant stop-loss execution
+         31.  Place order → scale SL/target to actual fill price
+         32.  Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -1250,6 +1251,40 @@ class OrderEngine:
                     f"  ✓ {symbol}: price validated — plan Rs.{entry:.2f}, "
                     f"live Rs.{live_price:.2f} ({deviation*100:.1f}% off)"
                 )
+
+        # ── Circuit-limit (UC/LC) entry guard (Roadmap #180) ──────
+        # Refuse entries within CIRCUIT_LIMIT_BUFFER_PCT of the ±20%
+        # daily price band. Near the freeze, exits cannot fill (one
+        # side of the order book is empty); SL-M sits dead and MIS
+        # auto-square at 15:20 takes whatever distressed price exists.
+        # Fail-open if prev_close missing.
+        if (
+            self.cfg.CIRCUIT_LIMIT_GUARD_ENABLED
+            and live_price > 0
+        ):
+            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
+            prev_close = (quote_data.get("ohlc", {}) or {}).get("close", 0)
+            if prev_close > 0:
+                move_pct = (live_price - prev_close) / prev_close * 100
+                limit_pct = 20.0 - self.cfg.CIRCUIT_LIMIT_BUFFER_PCT
+                if side == "BUY" and move_pct >= limit_pct:
+                    self.log.warning(
+                        f"{symbol}: BUY blocked — move {move_pct:+.2f}% from "
+                        f"prev close Rs.{prev_close:.2f} is within "
+                        f"{self.cfg.CIRCUIT_LIMIT_BUFFER_PCT:.1f}% of upper "
+                        f"circuit (+20%). Liquidity dries near freeze; "
+                        f"exits unreliable. Skipping."
+                    )
+                    return False
+                if side == "SELL" and move_pct <= -limit_pct:
+                    self.log.warning(
+                        f"{symbol}: SELL blocked — move {move_pct:+.2f}% from "
+                        f"prev close Rs.{prev_close:.2f} is within "
+                        f"{self.cfg.CIRCUIT_LIMIT_BUFFER_PCT:.1f}% of lower "
+                        f"circuit (-20%). Liquidity dries near freeze; "
+                        f"exits unreliable. Skipping."
+                    )
+                    return False
 
         # ── Bid-ask spread check ──────────────────────────────────
         max_spread = self.cfg.MAX_SPREAD_PCT

@@ -47,13 +47,12 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (12 items)
+### Pending (11 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
-| 180 | Circuit-limit (UC/LC) entry guard — reject BUY when stock already > +19% intraday move (near 20% upper circuit) and SELL when < -19%; liquidity dries up at circuit, exits hang | HIGH | High | Low |
 | 181 | India VIX intraday-spike pause — when `(VIX_now - VIX_open)/VIX_open ≥ 10%` OR `VIX_now ≥ 25`, pause new entries 15 min; existing positions managed normally | MEDIUM | High | Low |
 | 166 | Unrealised-MTM-aware circuit breaker — include open-position MTM in `day_pnl()` so CB fires before five bleeders all hit individual SLs | MEDIUM | High | Low |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
@@ -109,7 +108,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (153 items)
+### Completed (154 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -136,7 +135,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (32)** | | |
+| **Risk Management (33)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -167,6 +166,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 134 | MIN_SL_DISTANCE_PCT floor (0.8% normal, 1.0% expiry) — preserves R:R by widening target | Risk |
 | 138 | VWAP trend/extension guard activation raised from 10:00 → 10:15 (VWAP needs ≥1 hour of candles for stability) | Risk |
 | 146 | Impact-cost / depth liquidity check — before entry, walk top-5 order-book levels and compute the weighted-average fill price for our full qty. Skip trade if slippage vs LTP exceeds `MAX_IMPACT_COST_PCT` (default 0.2%). Also skips when visible depth across top-5 is smaller than our qty. Fail-open on missing/malformed depth (logs a warning, lets trade through). Catches paper-thin book traps that spread-only checks miss. | Risk |
+| 180 | Circuit-limit (UC/LC) entry guard — reject BUY when intraday move ≥ +19% (within 1% of upper circuit) and SELL when ≤ -19% (within 1% of lower circuit). Near the ±20% freeze the order book becomes one-sided: SL-M sits dead, MIS auto-square at 15:20 takes whatever distressed price exists, and post-freeze unwinds slip 5-15 Rs/share. `CIRCUIT_LIMIT_BUFFER_PCT = 1.0`, kill-switch `CIRCUIT_LIMIT_GUARD_ENABLED`. Fail-open when `prev_close` missing in the live quote. | Risk |
 | **Execution (36)** | | |
 | 10 | Partial profit taking (1/3 at 1.5R, trail 50%) | Execution |
 | 11 | Periodic opportunity scanning (30 min, free slots) | Execution |
@@ -274,12 +274,6 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 ## Pending — Details
 
 In priority order, matching the Pending table above.
-
-### 180. Circuit-Limit (UC/LC) Entry Guard
-- **Priority**: HIGH
-- **Today**: We don't check how close a stock already is to its 20% circuit before entering. A BUY on a stock already up +19.2% intraday means the order book has only ~0.8% of upside before the upper circuit freezes the tape; SL placement and exit liquidity both collapse near the circuit. Same risk symmetric for SELL near lower circuit.
-- **Fix**: Compute `move_pct = (ltp - prev_close) / prev_close * 100` from the live quote. New `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` config. Reject BUY when `move_pct >= (20 - buffer)` and SELL when `move_pct <= -(20 - buffer)`. Fail-open if `prev_close` missing. Add to entry pipeline before R:R check.
-- **Effort**: Low. ~20 lines, single config attrib, kill-switch via `CIRCUIT_LIMIT_GUARD_ENABLED`.
 
 ### 181. India VIX Intraday Spike Pause
 - **Priority**: MEDIUM
