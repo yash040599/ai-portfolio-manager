@@ -424,6 +424,21 @@ class Config:
     GAP_COHERENCE_GATE_ENABLED:  bool  = True
     GAP_COHERENCE_OVERRIDE_SCORE: float = 7.5
 
+    # ── Post-Trade Rejection Audit (read-only, EOD) ───────────────
+    # After Step 11 (Zerodha trade verification), the manager parses
+    # today's portfolio.log for every entry that was SKIPPED by the
+    # order engine (R:R, RVol, ADX, lunch-lull, gap-coherence, etc),
+    # fetches each rejected stock's 15:30 close from Zerodha, and
+    # prints a verdict table:
+    #   AVOIDED_LOSS / AVOIDED_MILD  — gate saved us money
+    #   MISSED_PROFIT / MISSED_MILD  — gate may be too strict
+    #   NEUTRAL                      — within ±0.5% drift
+    # Output is logged live AND appended to the trading report
+    # under <!-- REJECTION_AUDIT_BEGIN/END --> markers (idempotent
+    # — re-running the audit replaces the old block, never duplicates).
+    # This is purely a review aid; never changes positions.
+    REJECTION_AUDIT_ENABLED:     bool  = True
+
     # ── Adopted / External Position Handling ─────────────────────
     # When the bot picks up a position it did not originate
     # (load_existing_positions → RESUMED, sync_external_positions

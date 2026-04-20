@@ -319,6 +319,29 @@ class PortfolioManager:
             except Exception as e:
                 self.log.warning(f"Trade verification failed: {e} — run manually with: python scripts/verify_trades.py")
 
+        # ── Step 12: Rejection audit (post-trade review aid) ──────
+        # Parses today's rejection log lines, fetches close prices,
+        # prints a verdict table, and appends it to the trading
+        # report. Read-only — never touches positions or the engine.
+        # Disabled in DRY_RUN (no real Zerodha session) and when the
+        # config kill-switch REJECTION_AUDIT_ENABLED is False.
+        if (not self.cfg.DRY_RUN
+                and getattr(self.cfg, "REJECTION_AUDIT_ENABLED", True)):
+            try:
+                from scripts.rejection_audit import run_audit
+                self.log.info("Running rejection audit (post-trade review)...")
+                run_audit(
+                    append_report=True,
+                    print_to_stdout=True,
+                    log=self.log,
+                    budget=self._budget or None,
+                )
+            except Exception as e:
+                self.log.warning(
+                    f"Rejection audit failed: {e} — run manually with: "
+                    f"python scripts/rejection_audit.py --append-report"
+                )
+
     # ================================================================
     # PRE-MARKET SCAN
     # ================================================================

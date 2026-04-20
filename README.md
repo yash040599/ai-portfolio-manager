@@ -26,7 +26,7 @@ A fully automated intraday trading bot. Default mode is **NoAI** (pure technical
 2. **Execution** — enters positions using LIMIT orders at LTP + 1 tick buffer (tick size per instrument from Zerodha — Rs.0.05 or Rs.0.50) with full-timeout polling and MARKET fallback (configurable), ATR-based dynamic stop-losses (pure ATR, no merge with config defaults) with a min-distance floor (0.8% normal, 1.0% expiry) so high-priced stocks don't get wicked out on normal noise, validates entry prices against live Zerodha quotes, checks bid-ask spreads and order-book impact cost (top-5 level walk, skips paper-thin books), volume confirmation (RVol gate with scan-time fallback), time-based R:R floor (morning 1.3:1, afternoon 1.2:1, late 1.0:1 — relaxes after failed scans, gives up after repeated failures), 26-check pre-entry pipeline (RSI symmetric block, VWAP trend + extension + fresh-reversal guards, daily trade cap, stagnant-churn guard, per-symbol re-entry cooldown, lunch-lull skip, daily-loss soft-stop, net-of-charges R:R, charge-aware target multiple), and tries fallback candidates if primary picks fail entry checks
 3. **Monitoring** — polls prices with adaptive frequency, auto-trails SL, takes partial profits, runs stagnant position exit (+15 min during 12:00-1:30 midday lull)
 4. **Risk management** — circuit breaker on daily loss (3% hard) + soft-stop hysteresis (1.5% blocks new entries), whipsaw guard, sector caps, regime-shift protection, India VIX monitoring, crash recovery, manual trade adoption with 10-min grace window (skips time-decay + loser-exit while user-opened positions settle), Thursday expiry adjustments (30-min entry delay, tighter trade cap, wider SL floor), and **dynamic budget-regime gates** (TINY/SMALL/NORMAL/LARGE account tiers automatically tighten ADX threshold, trade cap, and min-score on smaller accounts)
-5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API
+5. **EOD** — squares off all positions, generates P&L report with full tax breakdown, auto-verifies trades against Zerodha API, and runs the post-trade rejection audit (verdict on every skipped entry)
 
 With `--ai` flag, Claude AI handles stock selection from pre-filtered candidates and periodic position reviews.
 
@@ -284,6 +284,7 @@ ai-portfolio-manager/
 │   ├── tax_db.py                   # Shared DB helpers for all tax scripts (migration, FY utils)
 │   ├── fill_intraday_ledger.py     # Fill intraday_tax_ledger from live JSONs (auto-runs after each trade day)
 │   ├── verify_trades.py            # Same-day trade verification via Zerodha API (no xlsx needed)
+│   ├── rejection_audit.py           # Post-trade audit — verdicts every skipped entry vs 15:30 close (auto-runs at EOD)
 │   ├── import_zerodha_taxpnl.py    # Import Zerodha Tax P&L xlsx — verify intraday + import capital gains
 │   ├── view_intraday_ledger.py     # View intraday trades with verified/unverified status
 │   ├── view_capital_gains_ledger.py # View capital gains trades (short-term / long-term)
@@ -470,6 +471,7 @@ All data is stored in **SQLite** — `data/trades.db` (auto-created) for trades 
 | `python scripts/generate_sheet.py` | Generate TSV spreadsheet from portfolio report (1 Claude call) |
 | `python scripts/view_candle_cache.py` | View candle cache — symbols, date ranges, OHLCV data |
 | `python scripts/verify_trades.py` | Verify trades against Zerodha API — corrects prices in reports + trades table |
+| `python scripts/rejection_audit.py --append-report` | Post-trade rejection audit — verdicts every skipped entry (`AVOIDED_LOSS` / `MISSED_PROFIT` / `NEUTRAL`) using 15:30 close. Auto-runs at EOD; CLI for back-fill: `--date YYYY-MM-DD` |
 | `python scripts/import_reports_to_db.py` | One-time import of existing JSON reports into DB |
 
 All scripts support `--help` for usage details.

@@ -1107,9 +1107,20 @@ class PortfolioManagerV2(PortfolioManager):
         # Profitable winners are the trailing-stop's responsibility —
         # one bad candle shouldn't dump a position that's already paid
         # ≥1R. Use the position's recorded initial risk when available.
+        # Defensive fallback: if initial_sl/stop_loss were lost (e.g. a
+        # restart that didn't fully rehydrate the position), still skip
+        # any position that's currently in profit. Without this guard
+        # `initial_risk` collapses to 0 and ANY profitable position with
+        # a reversal pattern would be exited — defeating the purpose
+        # of the 1R skip.
         initial_sl = pos.get("initial_sl") or pos.get("stop_loss") or entry
         initial_risk = abs(entry - initial_sl) * qty
-        if initial_risk > 0 and pnl >= initial_risk:
+        if initial_risk > 0:
+            if pnl >= initial_risk:
+                return False
+        elif pnl > 0:
+            # No risk reference available — be conservative and skip
+            # any in-profit position rather than risk dumping a winner.
             return False
 
         confirming_match = sorted(pattern_set & (

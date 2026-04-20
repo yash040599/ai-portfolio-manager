@@ -1,4 +1,4 @@
-# Strategy Roadmap
+﻿# Strategy Roadmap
 
 Research-backed improvements for the V2 intraday trading bot. Sources: Investopedia, Zerodha Varsity, Toby Crabel (ORB), institutional intraday practices, and real trade data analysis (80+ live trades, April 2026).
 
@@ -29,17 +29,19 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ### How to add a new item
 
-1. Pick the next available number (currently 171 and above are free).
-2. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
-3. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
-4. Bump the count in the category sub-heading and the top-line Completed count.
-5. If it changes user-visible behaviour, also:
+0. **Check first that the item does not already exist.** Search this file (Ctrl+F or `grep`) for keywords from the proposed change — in **Pending**, **Pending — Awaiting Trade Data**, **Completed**, AND **Removed**. If a similar idea is already present, update the existing row instead of creating a duplicate. Adding the same idea twice under different numbers wastes review time and corrupts the counts.
+1. **Verify the gap is real against the current code, not against memory.** Open the file you intend to fix and confirm the assumed condition (config value, threshold, missing logic) actually matches what you observed. Many "gaps" turn out to be false alarms once the actual config / log / snapshot values are checked. Cite the exact line numbers in the entry's description.
+2. Pick the next available number (currently 180 and above are free).
+3. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
+4. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
+5. Bump the count in the category sub-heading and the top-line Completed count.
+6. If it changes user-visible behaviour, also:
    - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
    - If it introduces a new technical term, add a glossary entry there.
-6. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
-7. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
-8. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
-9. If the idea is plausible but rests on too few real trades to justify shipping, add it to **Pending — Awaiting Trade Data** with a clear, measurable promotion trigger (sample size + threshold). Do NOT add it to the main Pending table until that trigger fires.
+7. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
+8. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
+9. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+10. If the idea is plausible but rests on too few real trades to justify shipping, add it to **Pending — Awaiting Trade Data** with a clear, measurable promotion trigger (sample size + threshold). Do NOT add it to the main Pending table until that trigger fires.
 
 ---
 
@@ -62,7 +64,7 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 
-### Pending — Awaiting Trade Data (2 items)
+### Pending — Awaiting Trade Data (4 items)
 
 These ideas look reasonable on paper but rest on too few data points to justify shipping. Each lists the **minimum sample size** that would let us promote it to the main Pending list (or move it to Removed). Until then, **do not implement** — collect the trades first, then re-evaluate.
 
@@ -70,6 +72,8 @@ These ideas look reasonable on paper but rest on too few data points to justify 
 |---|------|--------------------|
 | 175 | **Lunch-lull score floor raise** (6.0 → 7.0, or `RVol ≥ 1.5x`). Today the lunch-lull bypass admits any candidate with `\|score\| ≥ 6.0`. HDFCBANK 2026-04-20 entered at exactly 6.0 with `RVol 1.2x` and lost Rs.155. Raising the floor would have skipped it, but a single trade is not a population. | After **≥ 10 lunch-lull entries** (11:30-12:15 IST), compare hit-rate / R-multiple of those scoring 6.0-6.9 vs 7.0+. If 6.0-6.9 underperforms 7.0+ by ≥ 30% on hit-rate, promote to main Pending and tighten `LUNCH_LULL_SCORE_OVERRIDE` to 7.0. |
 | 176 | **Bank/financial sector NIFTY-alignment filter.** Banks (HDFCBANK, ICICIBANK, SBIN, AXISBANK, KOTAKBANK) have ~1.0+ beta to NIFTY (financials are ~36% of the index weight). A BUY on a bank when NIFTY is trending DOWN bets against the index's own gravity (inverse for SELL when NIFTY is up). Today only one data point (HDFCBANK 2026-04-20). | After **≥ 20 bank-direction trades** (BANKING/FINANCE sector, both directions), compare hit-rate when entry direction is NIFTY-aligned vs contra-NIFTY. If contra-NIFTY underperforms aligned by ≥ 25% hit-rate, promote and add a per-sector NIFTY-alignment gate before entry. |
+| 178 | **`RSI_BUY_BLOCK_THRESHOLD` lowered (75 → 70).** Today's UNITDSPR entered BUY at RSI 69.6 with score 6.2, sat 3 hours bleeding flat, and exited LOSER_EXIT at +Rs.6 net. The current RSI-contradiction gate ([order_engine.py:1685](../services/order_engine.py)) blocks BUY only at RSI > 75 — anything 70-75 sails through even though it is statistically overbought. Initially misdiagnosed as a VWAP-extension gate issue (`VWAP_EXT_SCORE_OVERRIDE` 6.0→7.0); UNITDSPR's actual `vwap_dev` was +0.45% (well below the 0.8% extension cap) so that gate never fired. The real root cause is the RSI ceiling. Single data point. | After **≥ 10 BUY entries with RSI 70-75** (or **≥ 10 SELL entries with RSI 25-30** for the symmetric SELL ceiling), compare hit-rate vs entries with RSI < 70 (or > 30). If 70-75 underperforms by ≥ 30% hit-rate or generates ≥ 2× more LOSER_EXIT outcomes, promote and lower `RSI_BUY_BLOCK_THRESHOLD` to 70 (mirror `RSI_SELL_BLOCK_THRESHOLD` 25→30). |
+| 179 | **Per-window entry-burst cap.** Today opened 3 positions in 17 seconds (RECLTD 10:12:29, ABB 10:12:31, ENRIN 10:12:46) — all worked, but if 10:13 had reversed, all three would have gone red simultaneously and possibly tripped the soft-stop within minutes. No structural cap exists on entry pace. | After **≥ 5 trading days with ≥ 2 sub-60s entry bursts**, measure (a) drawdown when bursts occurred vs day average, (b) correlation of burst-entries' exit P&L (do they win/lose together?). If burst days show ≥ 1.5× the typical drawdown OR burst-entries are ≥ 70% correlated in outcome, promote and add `MAX_ENTRIES_PER_60S = 2`. |
 
 These items are intentionally NOT in the main Pending table or Pending — Details list. Implementing them now would be guessing; we already have the data-collection path (every entry logs score / RVol / sector / NIFTY trend), so the right move is to wait.
 
@@ -100,7 +104,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (151 items)
+### Completed (153 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -201,7 +205,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 42 | Pre-open auction data (9:08 gap detection) | Market Intel |
 | 76 | Smart direction diversification (score-aware) | Market Intel |
 | 78 | FII/DII flow bias (pre-market intelligence) | Market Intel |
-| **Infrastructure (11)** | | |
+| **Infrastructure (12)** | | |
 | 25 | Trade journaling + performance analytics | Infra |
 | 38 | Improved slippage model for dry run | Infra |
 | 43 | Real-time trade verification script | Infra |
@@ -214,6 +218,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 120 | Next scan timestamps in monitor logs (candle + opportunity) | Infra |
 | 121 | round_to_tick made public API, Kite avg_volume gap documented | Infra |
 | 142 | `Config.validate_ranges()` — sanity-checks every numeric config value at startup. Catches typos like `ATR_MULTIPLIER=0` (div-by-zero), `MAX_LOSS_PER_DAY_PCT=-1`, `MIN_SL_DISTANCE_PCT >= MAX_INTRADAY_SL_PCT` before they corrupt live trades. | Infra |
+| 177 | **Post-trade rejection audit.** Every entry the order engine SKIPPED (R:R, RVol, ADX, lunch-lull, gap-coherence, charge-floor, etc.) was previously fire-and-forget — the WARNING line went to the log and was never reviewed. After yesterday's HDFCBANK/UNITDSPR analysis showed 17 of today's 39 rejections actually saved real money (Rs.3,529 avoided losses vs Rs.377 missed profit), turned this into a recurring EOD review aid. New `scripts/rejection_audit.py` parses `logs/portfolio.log` for the date, fetches each rejected stock's 15:30 close from Zerodha (5-min candles, rate-limited), and computes a verdict per symbol: `AVOIDED_LOSS` / `AVOIDED_MILD` (gate saved money), `MISSED_PROFIT` / `MISSED_MILD` (gate may be too strict), or `NEUTRAL` (±0.5% drift). Per-symbol P&L assumes 1 hypothetical slot at `budget / max_positions`. Manager Step 12 calls `run_audit()` after Step 11 verification — output is logged live AND appended to `trading_report_DD.txt` between `<!-- REJECTION_AUDIT_BEGIN/END -->` markers (idempotent — re-runs replace, never duplicate). Read-only: never touches positions or the engine. Disabled in DRY_RUN; kill-switch `REJECTION_AUDIT_ENABLED=False`. CLI for back-fill: `python scripts/rejection_audit.py --date YYYY-MM-DD --append-report`. | Infra |
 | **Bug Fixes (32)** | | |
 | 69 | SL sanity check after entry price override | Bug Fix |
 | 70 | SL-M partial fill verification | Bug Fix |

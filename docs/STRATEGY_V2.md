@@ -342,7 +342,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 **Every 30 minutes** (if free slots):
 
-18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 26-check pipeline as above.) In AI mode Claude ranks the new shortlist.
+18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 29-check pipeline as above.) In AI mode Claude ranks the new shortlist.
 
 **Every 30 minutes** (NoAI only):
 
@@ -367,7 +367,9 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 24. **Write `trading_data_{date}.json`** + `trading_report_{date}.txt` to [reports/trading/{year}/{month}/](reports/trading/).
 25. **Import trades** to `data/trades.db` for future Claude context (AI mode) + tax ledger.
-26. **Backup.** `scripts/backup_data.py --ssh --all-local` (manual, user-run).
+26. **Verify** every trade against Zerodha's order book (`scripts/verify_trades.py` invoked automatically) — corrects any avg-price drift and patches the tax ledger.
+27. **Rejection audit** (`scripts/rejection_audit.py` invoked automatically). Parses today's portfolio.log for every entry the order engine SKIPPED (R:R, RVol, ADX, lunch-lull, gap-coherence, charge-floor, etc.), fetches each rejected stock's 15:30 close from Zerodha, and prints a verdict table per symbol — `AVOIDED_LOSS`, `MISSED_PROFIT`, or `NEUTRAL` — with hypothetical P&L assuming a 1-slot entry. Output is logged live AND appended to `trading_report_DD.txt` between `<!-- REJECTION_AUDIT_BEGIN/END -->` markers (idempotent). Read-only review aid; never touches positions. Disabled in DRY_RUN; kill-switch `REJECTION_AUDIT_ENABLED=False`.
+28. **Backup.** `scripts/backup_data.py --ssh` (manual, user-run).
 
 ### Where AI Steps In (AI-mode summary)
 
@@ -379,7 +381,7 @@ Only three decisions change in `--ai` mode — everything else is identical:
 | **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
 | **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
 
-Every entry/exit gate (all 26 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+Every entry/exit gate (all 29 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
 
 ---
 
@@ -477,6 +479,8 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 - Generate `trading_data_{date}.json` + `trading_report_{date}.txt`
 - Record trades to `data/trades.db` (for Claude learning context)
 - Fill intraday tax ledger via `fill_intraday_ledger.py`
+- Verify trades against Zerodha (`verify_trades.py`) — same-day price/charges sync
+- **Rejection audit** (`rejection_audit.py`) — parses skipped-entry logs, fetches close prices, prints verdict table (`AVOIDED_LOSS` / `MISSED_PROFIT` / `NEUTRAL`) and appends to the trading report. Review aid only.
 
 ---
 
@@ -1022,6 +1026,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | Script | Purpose |
 |--------|---------|
 | `python scripts/verify_trades.py` | Same-day API verification — corrects prices, recomputes charges, and syncs reports + intraday_tax_ledger + trades table |
+| `python scripts/rejection_audit.py --append-report` | Post-trade rejection audit — parses today's `portfolio.log`, fetches close prices for every skipped entry, prints verdict table (`AVOIDED_LOSS` / `MISSED_PROFIT` / `NEUTRAL`), appends to trading report. Auto-invoked at EOD; CLI for back-fill: `--date YYYY-MM-DD` |
 | `python scripts/import_zerodha_taxpnl.py` | Quarterly xlsx verification — imports intraday + capital gains |
 | `python scripts/backup_data.py --ssh` | Two-way sync with private Git repo (row-level SQLite merge) |
 
