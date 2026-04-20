@@ -207,7 +207,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **Whipsaw** | Getting stopped out repeatedly by rapid reversals. | 3 consecutive SL exits → pause new entries for 30 min. |
 | **Time decay** | The fact that late-day trades have less time to hit targets. | After 2 PM, open targets compressed by 25%. |
 | **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
-| **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <25%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
+| **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <20%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
 
 ### 9. Bot-Specific Concepts
 
@@ -338,7 +338,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 **Every 30 minutes** (NoAI only):
 
-19. **Stagnant exit (two-tier).** **Tier 1** — positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156). **Tier 2** (Roadmap #172) — positions open ≥ 90 min that have covered < 25% of the entry→target distance → same exit + blacklist (`drift X% to target` reason tag). Tier 2 only runs if Tier 1 didn't already fire on this position.
+19. **Stagnant exit (two-tier).** **Tier 1** — positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156). **Tier 2** (Roadmap #172) — positions open ≥ 90 min that have covered < 20% of the entry→target distance → same exit + blacklist (`drift X% to target` reason tag). Tier 2 only runs if Tier 1 didn't already fire on this position.
 
 **At any time:**
 
@@ -454,7 +454,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 | Every 15 min | NIFTY trend recheck (regime shift detection) | Free |
 | Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (`--ai`) / Free (NoAI) |
 | Every 30 min (`--ai` only) | Claude reviews open positions with fresh 5-min candle data + StochRSI + 15-min composite score | 1 Claude call |
-| Every 30 min (NoAI only) | Stagnant position check (two-tier): at 45 min exit if adverse/dead-flat; at 90 min exit if <25% progress to target | Free |
+| Every 30 min (NoAI only) | Stagnant position check (two-tier): at 45 min exit if adverse/dead-flat; at 90 min exit if <20% progress to target | Free |
 
 **On position close (any mode):** If free slots exist, 2-minute cooldown then partial re-scan to fill empty slots.
 
@@ -693,7 +693,7 @@ Replaces Claude's position reviews. Two checkpoints — a directional check at `
 A **slow-positive** trade (e.g., +0.25%) is allowed to continue toward target. Exiting it would lock in a sub-charge profit and waste another ~Rs.15-20 round-trip entering a replacement.
 
 **Tier 2 — progress-to-target hard-max (#172, 90 min):**
-Exits when `progress_pct < STAGNANT_MIN_PROGRESS_PCT` (default 25%), where `progress_pct = move_toward_target / (target - entry) * 100`. Catches drifters that survived Tier 1 by sitting just outside the dead-flat band on the snapshot tick (UNITDSPR 2026-04-20: 183 min for +0.03%). Target-relative so it scales naturally with the trade's own R:R — a 1.0% target trade is judged the same way as a 4% expiry-day target trade.
+Exits when `progress_pct < STAGNANT_MIN_PROGRESS_PCT` (default 20%), where `progress_pct = move_toward_target / (target - entry) * 100`. Catches drifters that survived Tier 1 by sitting just outside the dead-flat band on the snapshot tick (UNITDSPR 2026-04-20: 183 min for +0.03%). Target-relative so it scales naturally with the trade's own R:R — a 1.0% target trade is judged the same way as a 4% expiry-day target trade.
 
 Decision history:
 - 0.5% (original): Too aggressive with 1.2% target.
@@ -884,7 +884,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | `PRICE_POLL_SECONDS` | 10 | Quote poll interval (halved near SL/target) |
-| `CLAUDE_REVIEW_MINUTES` | 30 | Claude review interval (`--ai` only) |
+| `POSITION_REVIEW_MINUTES` | 30 | Position-review cadence — drives Claude review (`--ai`) AND NoAI stagnant-exit check |
 | `OPPORTUNITY_RESCAN_MINUTES` | 30 | Re-scan for free slots |
 | `NIFTY_RECHECK_MINUTES` | 15 | NIFTY regime recheck |
 | `MAX_LOSS_PER_DAY_PCT` | 3% | Circuit breaker threshold |
@@ -897,7 +897,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `STAGNANT_DEAD_FLAT_PCT` | 0.1% | Stagnant-exit fires if |move| is inside this band (truly flat) |
 | `STAGNANT_HARD_MAX_ENABLED` | True | Kill-switch for the Tier-2 progress-to-target check (#172) |
 | `STAGNANT_HARD_MAX_MINUTES` | 90 | Tier-2 checkpoint (catches drifters Tier-1 missed) |
-| `STAGNANT_MIN_PROGRESS_PCT` | 25% | Exit at Tier-2 if progress toward target is below this |
+| `STAGNANT_MIN_PROGRESS_PCT` | 20% | Exit at Tier-2 if progress toward target is below this |
 | `CANDLE_PROTECT_MIN_CUSHION_PCT` | 0.3% | Minimum gap between tightened SL and live price (candle/regime protect) |
 | `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157) |
 | `ADX_MIN_THRESHOLD` | 18.0 | Minimum ADX for entry (chop filter) |
@@ -1036,7 +1036,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 
 | Change | Detail | File |
 |--------|--------|------|
-| **CLAUDE_REVIEW_MINUTES 20→30** | 20 min cut winners short. 30 min gives trades room. | `config.py` |
+| **POSITION_REVIEW_MINUTES 20→30** | 20 min cut winners short. 30 min gives trades room. Same knob now also gates NoAI stagnant-exit cadence (renamed from CLAUDE_REVIEW_MINUTES on 2026-04-20). | `config.py` |
 | **Claude scan prompt: rank/veto role** | Explicit: rank and filter, don't generate. | `stock_scanner_v2.py` |
 | **StochRSI in Claude prompt** | Interpretation guide + 14-item confluence checklist. | `stock_scanner_v2.py` |
 | **15-min data in review prompt** | Reviews see both 5-min granular + 15-min composite score. | `stock_scanner_v2.py` |

@@ -14,7 +14,7 @@
 #   6. Enters positions at market open
 #   7. Monitors prices in a loop:
 #      - Every PRICE_POLL_SECONDS: check SL/target hits (rule-based, free)
-#      - Every CLAUDE_REVIEW_MINUTES: Claude reviews positions (paid)
+#      - Every POSITION_REVIEW_MINUTES: Claude reviews positions (paid)
 #   8. At SQUARE_OFF time (3:10 PM): closes all positions
 #   9. Generates full P&L report with taxes and charges
 #
@@ -710,7 +710,7 @@ class PortfolioManager:
         Two independent timers:
           1. Price polling (every PRICE_POLL_SECONDS) — checks SL/target
              hits using rule-based logic. No Claude API calls.
-          2. Claude review (every CLAUDE_REVIEW_MINUTES) — asks Claude
+          2. Claude review (every POSITION_REVIEW_MINUTES) — asks Claude
              to re-evaluate positions and suggest adjustments.
 
         The loop exits when:
@@ -722,11 +722,11 @@ class PortfolioManager:
         self.log.section("MONITORING — Live price tracking")
         self.log.info(
             f"Price poll: every {self.cfg.PRICE_POLL_SECONDS}s | "
-            f"Claude review: every {self.cfg.CLAUDE_REVIEW_MINUTES}min"
+            f"Claude review: every {self.cfg.POSITION_REVIEW_MINUTES}min"
         )
 
         poll_interval    = self.cfg.PRICE_POLL_SECONDS
-        review_interval  = self.cfg.CLAUDE_REVIEW_MINUTES * 60  # convert to seconds
+        review_interval  = self.cfg.POSITION_REVIEW_MINUTES * 60  # convert to seconds
         last_review_time = time.time()
         self._last_external_sync = time.time()
 
@@ -1813,7 +1813,7 @@ class PortfolioManager:
         print(f"  Universe       : {self.cfg.SCAN_UNIVERSE}")
         print(f"  Claude model   : {plan['model']}")
         print(f"  Price poll     : every {self.cfg.PRICE_POLL_SECONDS}s")
-        print(f"  Claude review  : every {self.cfg.CLAUDE_REVIEW_MINUTES}min")
+        print(f"  Claude review  : every {self.cfg.POSITION_REVIEW_MINUTES}min")
         print(f"  Stop-loss      : {self.cfg.DEFAULT_STOP_LOSS_PCT}%")
         print(f"  Target         : {self.cfg.DEFAULT_TARGET_PCT}%")
         print(f"  Trailing SL    : after {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}R, lock {self.cfg.TRAIL_STEP_PCT}% profit")

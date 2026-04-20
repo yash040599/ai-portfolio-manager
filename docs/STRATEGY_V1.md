@@ -109,7 +109,7 @@ Every 15 minutes:
   → Sync with Zerodha to detect manually-opened MIS positions
   → Adopted positions get ATR-based SL/targets, managed by bot
 
-Every 20 minutes (CLAUDE_REVIEW_MINUTES):
+Every 30 minutes (POSITION_REVIEW_MINUTES):
   → Show Claude: open positions with P&L, R-multiples, closed trades
   → Claude recommends: HOLD / EXIT / ADJUST_SL / ADJUST_TARGET
   → Claude can also suggest NEW trades (with budget constraints)

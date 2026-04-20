@@ -520,7 +520,7 @@ class PortfolioManagerV2(PortfolioManager):
 
         base_poll = self.cfg.PRICE_POLL_SECONDS
         fast_poll = max(5, base_poll // 2)  # halve interval, min 5s
-        review_interval = self.cfg.CLAUDE_REVIEW_MINUTES * 60
+        review_interval = self.cfg.POSITION_REVIEW_MINUTES * 60
         candle_rescan_interval = self.cfg.V2_CANDLE_RESCAN_MINUTES * 60
 
         if self._noai:
@@ -532,7 +532,7 @@ class PortfolioManagerV2(PortfolioManager):
         else:
             self.log.info(
                 f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
-                f"Claude review: every {self.cfg.CLAUDE_REVIEW_MINUTES}min | "
+                f"Claude review: every {self.cfg.POSITION_REVIEW_MINUTES}min | "
                 f"Candle rescan: every {self.cfg.V2_CANDLE_RESCAN_MINUTES}min"
             )
 

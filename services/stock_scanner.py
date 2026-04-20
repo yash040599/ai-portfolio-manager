@@ -241,7 +241,7 @@ class StockScanner:
     ) -> list[dict]:
         """
         Periodic Claude review of open positions + market conditions.
-        Called every CLAUDE_REVIEW_MINUTES during trading hours.
+        Called every POSITION_REVIEW_MINUTES during trading hours.
 
         Claude can recommend:
           - HOLD:  keep position, adjust SL/target

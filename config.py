@@ -109,19 +109,27 @@ class Config:
     #   Kite rate limit: ~3 calls/sec. 30s is very safe.
     #   Range: 10–60 recommended.
     #
-    # CLAUDE_REVIEW_MINUTES: how often Claude re-evaluates open positions.
-    #   Lower = more adaptive, but costs more in Claude API credits.
-    #   Each review call ≈ Rs.2-4 on Pro plan.
-    #   30 min = ~12 calls/day ≈ Rs.25-50/day in Claude costs.
-    #   15 min = ~24 calls/day ≈ Rs.50-100/day. Only if budget is large.
+    # POSITION_REVIEW_MINUTES: how often the bot re-evaluates open
+    #   positions. Drives BOTH modes:
+    #     --ai mode: Claude review interval (each call ~Rs.2-4 on Pro).
+    #       30 min = ~12 calls/day = ~Rs.25-50/day.
+    #     NoAI mode: stagnant-position-exit check interval (free).
+    #       Tier 1 + Tier 2 evaluation runs on this cadence.
+    #   Lower = more adaptive but, in --ai mode, more API spend.
     #
     #   DECISION HISTORY:
-    #     20 min (original): Claude cut winners short (32% win rate on
-    #       REVIEW_EXIT). Over-reviewing causes premature exits.
+    #     20 min (original, called CLAUDE_REVIEW_MINUTES): Claude cut
+    #       winners short (32% win rate on REVIEW_EXIT). Over-reviewing
+    #       caused premature exits.
     #     30 min (2026-04-09): Increased to give trades more room.
     #       Trades need time to play out before re-evaluation.
+    #     2026-04-20: Renamed CLAUDE_REVIEW_MINUTES →
+    #       POSITION_REVIEW_MINUTES because the constant also governs
+    #       NoAI's stagnant-exit interval. The old name implied a
+    #       Claude-only knob, which masked the fact that lowering it
+    #       made NoAI churn faster too.
     PRICE_POLL_SECONDS:     int = 10
-    CLAUDE_REVIEW_MINUTES:  int = 30
+    POSITION_REVIEW_MINUTES: int = 30
 
     # ── Stock Universe ────────────────────────────────────────────
     # Which stocks Claude can pick from for intraday trades.
@@ -554,8 +562,18 @@ class Config:
     STAGNANT_HARD_MAX_MINUTES:    int   = 90
     # If progress_pct toward target is below this after HARD_MAX_MINUTES,
     # exit. progress_pct = move_toward_target / (target - entry) * 100.
-    # 25 means "covered less than a quarter of the entry→target distance".
-    STAGNANT_MIN_PROGRESS_PCT:    float = 25.0
+    # 20 means "covered less than a fifth of the entry→target distance".
+    #
+    #   DECISION HISTORY:
+    #     25.0 (initial #172, 2026-04-20 morning): Initial conservative
+    #       value to limit false-positive exits on slow-but-progressing
+    #       trades.
+    #     20.0 (2026-04-20 EOD): Lowered after re-review. At 90 min
+    #       (~50% of typical session-remaining), 25% progress required
+    #       linear projection of target hit by ~5:45 PM (past close).
+    #       20% projects to ~4:30 PM — the bare-minimum pace needed
+    #       to plausibly hit target before square-off.
+    STAGNANT_MIN_PROGRESS_PCT:    float = 20.0
 
     # ── Candle-Protect / Regime-Shift SL Cushion ──────────────────
     # CANDLE_PROTECT_MIN_CUSHION_PCT: minimum gap (as % of current
