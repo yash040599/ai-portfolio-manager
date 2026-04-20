@@ -31,7 +31,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 0. **Check first that the item does not already exist.** Search this file (Ctrl+F or `grep`) for keywords from the proposed change — in **Pending**, **Pending — Awaiting Trade Data**, **Completed**, AND **Removed**. If a similar idea is already present, update the existing row instead of creating a duplicate. Adding the same idea twice under different numbers wastes review time and corrupts the counts.
 1. **Verify the gap is real against the current code, not against memory.** Open the file you intend to fix and confirm the assumed condition (config value, threshold, missing logic) actually matches what you observed. Many "gaps" turn out to be false alarms once the actual config / log / snapshot values are checked. Cite the exact line numbers in the entry's description.
-2. Pick the next available number (currently 180 and above are free).
+2. Pick the next available number (currently 185 and above are free).
 3. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
 4. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
 5. Bump the count in the category sub-heading and the top-line Completed count.
@@ -47,12 +47,14 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (10 items)
+### Pending (12 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
+| 180 | Circuit-limit (UC/LC) entry guard — reject BUY when stock already > +19% intraday move (near 20% upper circuit) and SELL when < -19%; liquidity dries up at circuit, exits hang | HIGH | High | Low |
+| 181 | India VIX intraday-spike pause — when `(VIX_now - VIX_open)/VIX_open ≥ 10%` OR `VIX_now ≥ 25`, pause new entries 15 min; existing positions managed normally | MEDIUM | High | Low |
 | 166 | Unrealised-MTM-aware circuit breaker — include open-position MTM in `day_pnl()` so CB fires before five bleeders all hit individual SLs | MEDIUM | High | Low |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
@@ -64,7 +66,7 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 
-### Pending — Awaiting Trade Data (4 items)
+### Pending — Awaiting Trade Data (7 items)
 
 These ideas look reasonable on paper but rest on too few data points to justify shipping. Each lists the **minimum sample size** that would let us promote it to the main Pending list (or move it to Removed). Until then, **do not implement** — collect the trades first, then re-evaluate.
 
@@ -74,6 +76,9 @@ These ideas look reasonable on paper but rest on too few data points to justify 
 | 176 | **Bank/financial sector NIFTY-alignment filter.** Banks (HDFCBANK, ICICIBANK, SBIN, AXISBANK, KOTAKBANK) have ~1.0+ beta to NIFTY (financials are ~36% of the index weight). A BUY on a bank when NIFTY is trending DOWN bets against the index's own gravity (inverse for SELL when NIFTY is up). Today only one data point (HDFCBANK 2026-04-20). | After **≥ 20 bank-direction trades** (BANKING/FINANCE sector, both directions), compare hit-rate when entry direction is NIFTY-aligned vs contra-NIFTY. If contra-NIFTY underperforms aligned by ≥ 25% hit-rate, promote and add a per-sector NIFTY-alignment gate before entry. |
 | 178 | **`RSI_BUY_BLOCK_THRESHOLD` lowered (75 → 70).** Today's UNITDSPR entered BUY at RSI 69.6 with score 6.2, sat 3 hours bleeding flat, and exited LOSER_EXIT at +Rs.6 net. The current RSI-contradiction gate ([order_engine.py:1685](../services/order_engine.py)) blocks BUY only at RSI > 75 — anything 70-75 sails through even though it is statistically overbought. Initially misdiagnosed as a VWAP-extension gate issue (`VWAP_EXT_SCORE_OVERRIDE` 6.0→7.0); UNITDSPR's actual `vwap_dev` was +0.45% (well below the 0.8% extension cap) so that gate never fired. The real root cause is the RSI ceiling. Single data point. | After **≥ 10 BUY entries with RSI 70-75** (or **≥ 10 SELL entries with RSI 25-30** for the symmetric SELL ceiling), compare hit-rate vs entries with RSI < 70 (or > 30). If 70-75 underperforms by ≥ 30% hit-rate or generates ≥ 2× more LOSER_EXIT outcomes, promote and lower `RSI_BUY_BLOCK_THRESHOLD` to 70 (mirror `RSI_SELL_BLOCK_THRESHOLD` 25→30). |
 | 179 | **Per-window entry-burst cap.** Today opened 3 positions in 17 seconds (RECLTD 10:12:29, ABB 10:12:31, ENRIN 10:12:46) — all worked, but if 10:13 had reversed, all three would have gone red simultaneously and possibly tripped the soft-stop within minutes. No structural cap exists on entry pace. | After **≥ 5 trading days with ≥ 2 sub-60s entry bursts**, measure (a) drawdown when bursts occurred vs day average, (b) correlation of burst-entries' exit P&L (do they win/lose together?). If burst days show ≥ 1.5× the typical drawdown OR burst-entries are ≥ 70% correlated in outcome, promote and add `MAX_ENTRIES_PER_60S = 2`. |
+| 182 | **Pre-open auction tape classification (gap fade vs follow-through).** We classify gap *magnitude* (`GAP_UP_STRONG` etc.) but not gap *quality*. A `GAP_UP_STRONG` with low pre-open auction volume tends to fade by 09:45; same gap with high auction volume tends to follow through. The 9:00-9:08 IST pre-open auction is available from Zerodha. Could refine the gap-coherence gate (#173) override threshold by auction-volume tier. | After **≥ 20 strong-gap entries** (`GAP_*_STRONG` either side), bucket by pre-open auction volume tertile (low/mid/high) and compare hit-rate per bucket. If low-volume gaps underperform high-volume by ≥ 25% hit-rate, promote and add a per-bucket override threshold. |
+| 183 | **Advance-decline breadth filter on the pre-filter set.** Scanner produces top-N candidates; we don't compute the BUY/SELL ratio across that set. If 70%+ of pre-filtered candidates lean SELL, the broader tape is bearish — BUYs from that day's set probably underperform regardless of individual score. Currently no breadth-aware adjustment beyond NIFTY trend (which lags intraday). | After **≥ 15 trading days** with breadth metric logged (BUY count vs SELL count in scanner output), measure hit-rate of BUY entries on days when ≥ 70% of pre-filter set was SELL-leaning. If those BUY entries underperform same-direction-as-breadth entries by ≥ 30% hit-rate, promote and add a `BREADTH_CONTRA_SCORE_PENALTY = 0.5` (subtract from contra-breadth entries' score) or hard-block contra-breadth entries below score 6.5. |
+| 184 | **Mid/small-cap liquidity discount on impact-cost cap.** `MAX_IMPACT_COST_PCT = 0.2` is one-size-fits-all. NIFTY50 names easily clear this; mid/small caps with ATR > 2% routinely sit at 0.25-0.4% impact cost and get rejected even on strong setups, OR squeeze through and slip badly on exit. A regime-based cap (NIFTY50: 0.2, NIFTY100: 0.3, others: 0.4) would let valid mid-cap entries through with realistic slippage budgets. | After **≥ 30 mid-cap-name entries** (outside NIFTY50, ATR > 1.5%), compare exit slippage vs entry slippage and net P&L vs a NIFTY50 baseline cohort. If mid-cap exit slippage averages > 2× entry slippage AND mid-cap net P&L underperforms NIFTY50 cohort by ≥ 20%, promote and add per-tier `MAX_IMPACT_COST_PCT_BY_INDEX_TIER`. |
 
 These items are intentionally NOT in the main Pending table or Pending — Details list. Implementing them now would be guessing; we already have the data-collection path (every entry logs score / RVol / sector / NIFTY trend), so the right move is to wait.
 
@@ -269,6 +274,18 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 ## Pending — Details
 
 In priority order, matching the Pending table above.
+
+### 180. Circuit-Limit (UC/LC) Entry Guard
+- **Priority**: HIGH
+- **Today**: We don't check how close a stock already is to its 20% circuit before entering. A BUY on a stock already up +19.2% intraday means the order book has only ~0.8% of upside before the upper circuit freezes the tape; SL placement and exit liquidity both collapse near the circuit. Same risk symmetric for SELL near lower circuit.
+- **Fix**: Compute `move_pct = (ltp - prev_close) / prev_close * 100` from the live quote. New `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` config. Reject BUY when `move_pct >= (20 - buffer)` and SELL when `move_pct <= -(20 - buffer)`. Fail-open if `prev_close` missing. Add to entry pipeline before R:R check.
+- **Effort**: Low. ~20 lines, single config attrib, kill-switch via `CIRCUIT_LIMIT_GUARD_ENABLED`.
+
+### 181. India VIX Intraday Spike Pause
+- **Priority**: MEDIUM
+- **Today**: VIX *regime* is read at scanner level (#23) and adjusts thresholds, but there's no detector for an *intraday* VIX shock. A 12% VIX spike inside a single 15-min window means a black-swan move is in progress (RBI surprise, geopolitical headline, gap-down on a constituent that's dragging the index). New entries during that window have terrible risk/reward — the volatility gets priced into spreads before a trend establishes.
+- **Fix**: Cache `vix_open` once per session. On each scan, fetch `vix_now`. If `(vix_now - vix_open) / vix_open >= VIX_SPIKE_THRESHOLD_PCT` (default 10) OR `vix_now >= VIX_SPIKE_ABSOLUTE_LEVEL` (default 25), set `_vix_pause_until = now + 15 min` and skip new entries until then. Existing positions managed normally (SL-M, trailing, exits all unaffected). Kill-switch via `VIX_SPIKE_PAUSE_ENABLED`.
+- **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
 
 ### 166. Unrealised-MTM-Aware Circuit Breaker
 - **Priority**: MEDIUM

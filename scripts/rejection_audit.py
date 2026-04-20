@@ -383,7 +383,14 @@ def run_audit(
         else:
             after = [c for c in candles
                      if c["date"].replace(tzinfo=None) >= r["ts"] - dt.timedelta(minutes=1)]
-            r["verdict"] = verdict("BUY", ref_price, after or candles)
+            # Guard: if no candles exist AT or AFTER rejection time, the
+            # only candles available are pre-rejection. Verdicts derived
+            # from pre-rejection bars would be backwards (we'd be "reading
+            # the future from the past"). Mark NO_DATA instead.
+            if not after:
+                r["verdict"] = {"label": "NO_DATA"}
+            else:
+                r["verdict"] = verdict("BUY", ref_price, after)
         rows.append(r)
 
     text = render(date, rows, slot_rupees=slot_rupees)

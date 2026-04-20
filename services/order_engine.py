@@ -1142,27 +1142,40 @@ class OrderEngine:
 
         Returns True if the order was placed/logged successfully.
 
-        Entry pipeline (each step can reject the trade):
-          1. Validate entry price vs live Zerodha quote
-          2. Bid-ask spread check (illiquid stocks)
-          2b. Volume confirmation (RVol gate with scan-time fallback)
-          3. ATR-based SL/target (pure ATR when available, config fallback otherwise)
-          4. Late-entry target reduction (13:00 / 14:00 cutoffs)
-          5. R:R floor check (time-based: morning 1.3, afternoon 1.2, late 1.0 + adaptive relaxation)
-          6. Minimum profit check (must cover round-trip charges)
-          7. Slippage simulation (dry-run only)
-          8. Budget / max positions / duplicate / sector / direction guards
-          9. Short entry cutoff
-         10. Max re-entries per stock + declining score block
-         11. RSI contradiction filter (symmetric): no SELL at RSI>70, no BUY at RSI>75,
-             no BUY at RSI<30, no SELL at RSI<25
-         12. Daily trade cap + expiry trade cap
-         13. Stagnant churn guard (no re-enter stagnant exits)
-         14. VWAP guard: trend-fight (BUY<VWAP, SELL>VWAP) + extension-chase
-             (BUY far above VWAP, SELL far below) + fresh-reversal (big score Δ)
-         15. Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
-         16. Place order → scale SL/target to actual fill price
-         17. Place exchange SL-M for instant stop-loss execution
+        Entry pipeline (each step can reject the trade). Counted at
+        29 distinct gates — keep this list and STRATEGY_V2.md in sync.
+          1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
+          2.  Daily-loss soft-stop (#163) — block new entries at -1.5% realized
+          3.  Validate entry price vs live Zerodha quote
+          4.  Bid-ask spread check (illiquid stocks)
+          5.  Volume confirmation (RVol gate with scan-time fallback)
+          6.  Impact-cost check (#146) — depth-weighted slippage
+          7.  ATR-based SL/target (pure ATR when available, config fallback)
+          8.  Late-entry target reduction (13:00 / 14:00 cutoffs)
+          9.  R:R floor check (time-based, adaptive relaxation)
+         10.  Minimum profit check (must cover round-trip charges)
+         11.  Charge-aware target floor (#162) — gross target ≥ 2× charges
+         12.  Slippage simulation (dry-run only)
+         13.  Budget cap
+         14.  Max positions cap
+         15.  Duplicate position guard (no two open on same symbol+side)
+         16.  Sector cap (max 2 per sector)
+         17.  Direction diversification (max same-side concurrent)
+         18.  Short entry cutoff
+         19.  Max re-entries per stock + declining score block
+         20.  Per-symbol re-entry cooldown (#161) — 30 min same-side
+         21.  RSI > BUY ceiling (default 75)
+         22.  RSI > SELL ceiling (default 70)
+         23.  RSI < 30 BUY floor / RSI < 25 SELL floor
+         24.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
+         25.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
+         26.  Daily trade cap + expiry trade cap (#124)
+         27.  Stagnant churn guard (no re-enter stagnant exits)
+         28.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
+         29.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+         --- order placement ---
+         30.  Place order → scale SL/target to actual fill price
+         31.  Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
