@@ -1743,6 +1743,48 @@ class OrderEngine:
                     f"+DI {plus_di:.1f} / -DI {minus_di:.1f}"
                 )
 
+        # ── Gap-coherence gate (#173) ─────────────────────────────
+        # Pro-desk practice: opening gap direction reflects overnight
+        # institutional positioning + the first wave of regular-session
+        # flow. Taking a BUY on a STRONG gap-DOWN (or SELL on STRONG
+        # gap-UP) means trading against that flow; intraday V-recoveries
+        # of strong gaps are the exception, not the rule.
+        # Block such contradictory entries unless |score| is very high
+        # (signals an exceptional setup that justifies fighting flow).
+        # Only acts on the high-conviction GAP_*_STRONG signals — WEAK
+        # gaps (low-volume) and NO_GAP are not gated here. Fails open
+        # when the snapshot is missing/malformed (other gates remain
+        # active).
+        if getattr(self.cfg, "GAP_COHERENCE_GATE_ENABLED", False):
+            snap_str = trade.get("_indicator_snapshot", "")
+            if snap_str:
+                try:
+                    import json as _json
+                    snap = _json.loads(snap_str)
+                    gap_signal = snap.get("gap", "NO_GAP")
+                    score_abs  = abs(trade.get("_entry_score") or 0)
+                    override   = self.cfg.GAP_COHERENCE_OVERRIDE_SCORE
+                    contradicts = (
+                        (side == "BUY"  and gap_signal == "GAP_DOWN_STRONG") or
+                        (side == "SELL" and gap_signal == "GAP_UP_STRONG")
+                    )
+                    if contradicts and score_abs < override:
+                        self.log.warning(
+                            f"{symbol}: {side} contradicts {gap_signal} — "
+                            f"|score| {score_abs:.1f} < {override:.1f} override. Skipping."
+                        )
+                        return False
+                    if contradicts:
+                        self.log.info(
+                            f"  ✓ {symbol}: gap-coherence override — {side} on "
+                            f"{gap_signal} allowed at |score| {score_abs:.1f} ≥ {override:.1f}"
+                        )
+                except Exception as e:
+                    self.log.warning(
+                        f"{symbol}: gap-coherence gate skipped — indicator snapshot "
+                        f"parse failed ({type(e).__name__}: {e})"
+                    )
+
         # ── Daily trade cap ───────────────────────────────────────
         # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
         # Intentionally counts EXTERNAL/adopted positions too — manual

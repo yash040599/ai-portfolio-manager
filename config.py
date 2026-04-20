@@ -404,6 +404,26 @@ class Config:
     # Applies every day.
     FRESH_REVERSAL_DELTA_THRESHOLD: float = 8.0
 
+    # ── Entry Filter — Gap-Coherence Gate (#173) ─────────────────
+    # Pro intraday desks treat gap direction as the strongest single
+    # opening signal — it reflects overnight institutional positioning
+    # AND the first wave of regular-session order flow. Taking a BUY on
+    # a strong gap-DOWN (or SELL on strong gap-UP) means trading against
+    # that flow; the score may justify it on indicators alone, but the
+    # opening flow rarely V-recovers within the same intraday session.
+    #
+    # When the trade direction contradicts a STRONG gap signal, require
+    # an extra-high score to override. WEAK gaps (low-volume) and NO_GAP
+    # are not gated — only the high-conviction GAP_*_STRONG signals.
+    #
+    # MOTIVATING CASE: HDFCBANK 2026-04-20 — entered BUY at 11:31 with
+    #   `Gap GAP_DOWN_STRONG` in rationale and score exactly at the
+    #   lunch-lull floor (+6.0). Stopped out at 13:26 for Rs.-155, then
+    #   the very next scanner tick scored it -10.0 STRONG_SELL with
+    #   EVENING_STAR + BEARISH_HARAMI. Gap direction was the early tell.
+    GAP_COHERENCE_GATE_ENABLED:  bool  = True
+    GAP_COHERENCE_OVERRIDE_SCORE: float = 7.5
+
     # ── Adopted / External Position Handling ─────────────────────
     # When the bot picks up a position it did not originate
     # (load_existing_positions → RESUMED, sync_external_positions
@@ -585,6 +605,33 @@ class Config:
     #   prevents that collapse by keeping SL at least this % away
     #   from the live price, and at least this % from entry.
     CANDLE_PROTECT_MIN_CUSHION_PCT: float = 0.3
+
+    # ── Signal-Reversal Exit (#174) ───────────────────────────────
+    # When the periodic candle re-scan (V2_CANDLE_RESCAN_MINUTES) sees
+    # a held position's combined_score flip strongly OPPOSITE to the
+    # trade direction AND a confirming reversal candle pattern is
+    # present, exit immediately rather than waiting for price to hit SL.
+    # The static SL-M only catches price-side moves; a momentum reversal
+    # is signal-side information that arrives BEFORE the price stop —
+    # acting on it cuts losses earlier than the fixed SL would.
+    #
+    # Triggers (BUY position, mirrored for SELL):
+    #   combined_score <= -SIGNAL_REVERSAL_SCORE
+    #   AND (if SIGNAL_REVERSAL_REQUIRE_PATTERN) at least one of:
+    #     EVENING_STAR, BEARISH_ENGULFING, BEARISH_HARAMI,
+    #     SHOOTING_STAR, HANGING_MAN, THREE_BLACK_CROWS
+    # Skipped when the position is already in profit ≥ 1× initial risk
+    # (let the trailing stop manage winners — don't dump a profitable
+    #  trade just because a single 15-min candle reverses).
+    #
+    # MOTIVATING CASE: HDFCBANK 2026-04-20 — bot held BUY from 11:31,
+    #   stopped out at 13:26 for Rs.-155. The very next scanner tick
+    #   (13:27) scored it -10.0 STRONG_SELL with EVENING_STAR +
+    #   BEARISH_HARAMI. Held positions weren't being rescored at all;
+    #   the bearish patterns were forming for ~30 min before the SL hit.
+    SIGNAL_REVERSAL_EXIT_ENABLED:    bool  = True
+    SIGNAL_REVERSAL_SCORE:           float = 7.0
+    SIGNAL_REVERSAL_REQUIRE_PATTERN: bool  = True
 
     # ── ADX + DI Entry Gate (Roadmap #157) ────────────────────────
     # ADX_ENTRY_GATE_ENABLED: require minimum ADX and directional
@@ -1088,6 +1135,8 @@ class Config:
         _pct("VWAP_EXTENSION_BLOCK_PCT", cls.VWAP_EXTENSION_BLOCK_PCT, 10)
         _pos("VWAP_EXT_SCORE_OVERRIDE",  cls.VWAP_EXT_SCORE_OVERRIDE)
         _pos("FRESH_REVERSAL_DELTA_THRESHOLD", cls.FRESH_REVERSAL_DELTA_THRESHOLD)
+        _pos("GAP_COHERENCE_OVERRIDE_SCORE", cls.GAP_COHERENCE_OVERRIDE_SCORE)
+        _pos("SIGNAL_REVERSAL_SCORE",   cls.SIGNAL_REVERSAL_SCORE)
 
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)

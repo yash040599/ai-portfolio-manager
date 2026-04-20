@@ -1176,6 +1176,10 @@ class StockScannerV2(StockScanner):
             "rvol": candidate.get("rvol", 0),
             "ext_move": tech.get("extended_move_pct", 0),
             "score_delta": candidate.get("score_delta"),
+            # Gap signal (#173 gap-coherence gate). Read by OrderEngine
+            # pre-trade check to reject contradictory-direction entries
+            # on STRONG gaps unless score is exceptionally high.
+            "gap": tech.get("gap", {}).get("signal", "NO_GAP"),
         }
         return json.dumps(snap)
 

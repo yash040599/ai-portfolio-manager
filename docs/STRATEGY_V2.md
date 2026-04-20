@@ -20,6 +20,12 @@
   trade cap, min-score). New "Decision Timeline — Plain English" section at top
   of Strategy Flow walks through every decision from 9:00 AM to EOD with example
   log lines. Pre-trade check count: 22 → 26.
+  
+  2026-04-20 sync — HDFCBANK-driven safety upgrades (Roadmap #173-174).
+  Added: gap-coherence entry gate (rejects BUY on GAP_DOWN_STRONG /
+  SELL on GAP_UP_STRONG unless |score| ≥ 7.5) and signal-reversal hard
+  exit (closes held positions when score flips to ±7 with confirming
+  reversal candle, skipped if profit ≥ 1× initial risk).
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -208,6 +214,8 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **Time decay** | The fact that late-day trades have less time to hit targets. | After 2 PM, open targets compressed by 25%. |
 | **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
 | **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <20%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
+| **Signal-reversal exit** (#174) | Hard-exit a held position when the periodic candle re-scan sees a strong opposite signal AND a confirming reversal candle pattern. | Both modes. Triggered when held BUY scores ≤ -7 (or held SELL ≥ +7) with a bearish/bullish reversal pattern present. Skipped on profitable winners (≥1× initial risk) — those are the trailing stop's job. See [§Signal-Reversal Exit](#signal-reversal-exit). |
+| **Gap coherence** (#173) | Pre-trade check that rejects entries which contradict a STRONG opening gap. | Both modes. BUY blocked on `GAP_DOWN_STRONG` (and SELL blocked on `GAP_UP_STRONG`) unless `\|score\| ≥ 7.5`. Targets the rare overnight-flow setups where indicators look fine but opening flow is the wrong way. |
 
 ### 9. Bot-Specific Concepts
 
@@ -339,6 +347,8 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 **Every 30 minutes** (NoAI only):
 
 19. **Stagnant exit (two-tier).** **Tier 1** — positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156). **Tier 2** (Roadmap #172) — positions open ≥ 90 min that have covered < 20% of the entry→target distance → same exit + blacklist (`drift X% to target` reason tag). Tier 2 only runs if Tier 1 didn't already fire on this position.
+
+20. **Signal-reversal exit (#174).** On every candle re-scan (every 15 min, free), each open position is rescored. If a held BUY's combined score flips to ≤ -7 with a confirming bearish reversal candle (or held SELL flips to ≥ +7 with a bullish one), exit immediately at market with reason `SIGNAL_REVERSAL`. Profitable positions (≥1× initial risk) are skipped — winners belong to the trailing stop. See [§Signal-Reversal Exit](#signal-reversal-exit).
 
 **At any time:**
 
@@ -586,6 +596,7 @@ Every trade must pass these 26 checks in order. If any fails, the trade is rejec
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
 | 18a | **Charge-aware target multiple** (#162) | `MIN_PROFIT_CHARGE_MULTIPLE = 2.0` | After net R:R passes, reject when gross target profit < 2× round-trip charges. Ensures at least 1× charges as cushion for slippage |
+| 18b | **Gap-coherence gate** (#173) | `GAP_COHERENCE_GATE_ENABLED = True`, override `GAP_COHERENCE_OVERRIDE_SCORE = 7.5` | Reject `BUY` on `GAP_DOWN_STRONG` and `SELL` on `GAP_UP_STRONG` (entry direction contradicts overnight institutional flow) unless `\|score\| ≥ 7.5`. Only acts on the high-conviction STRONG gaps; WEAK / `NO_GAP` not gated. Fails open when the indicator snapshot is missing/malformed |
 
 ### R:R Floor System
 
@@ -705,7 +716,11 @@ In `--ai` mode, Claude reviews every 30 min instead and can recommend HOLD / EXI
 
 ### Contrary Signal Protection
 
-Every 15 min (`V2_CANDLE_RESCAN_MINUTES`), re-run candle pattern analysis on open positions. If a position's 15-min composite score flips to ±4 or stronger in the **opposite** direction:
+Every 15 min (`V2_CANDLE_RESCAN_MINUTES`), re-run candle pattern analysis on open positions. The re-scan now drives **two** layered protections (signal-reversal exit runs first; if it doesn't fire, the SL-tightening kicks in):
+
+**1. Signal-reversal hard exit (#174).** If a held position's combined score flips strongly in the OPPOSITE direction AND a confirming reversal candle is present, exit immediately rather than wait for the price stop. See [§Signal-Reversal Exit](#signal-reversal-exit).
+
+**2. SL tightening on weaker contrary signals.** If the score flips to ±4 or stronger in the **opposite** direction (but doesn't meet the reversal-exit bar):
 - If in profit: tighten SL to lock 50% of unrealised gains.
 - If at breakeven or losing: tighten SL toward entry, **but never closer than `CANDLE_PROTECT_MIN_CUSHION_PCT`** (default 0.3%) from the live price.
 
@@ -714,6 +729,23 @@ The cushion matters: on a contrary signal the live price is already moving again
 Both the software SL and the exchange SL-M trigger are updated together (see bug-fix #153).
 
 This is automatic in both modes. In `--ai` mode, Claude additionally sees the patterns and can act on weaker contrary signals.
+
+### Signal-Reversal Exit
+
+The static SL-M only catches **price-side** moves. A momentum reversal — large opposite combined_score plus a confirming reversal candle — is **signal-side** information that typically arrives BEFORE the price stop. Acting on it cuts losses earlier than the fixed SL would.
+
+**Trigger (BUY position; mirrored for SELL):**
+- `combined_score <= -SIGNAL_REVERSAL_SCORE` (default `-7.0`)
+- AND (when `SIGNAL_REVERSAL_REQUIRE_PATTERN = True`, the default) at least one bearish reversal pattern is present: `EVENING_STAR`, `BEARISH_ENGULFING`, `BEARISH_HARAMI`, `SHOOTING_STAR`, `HANGING_MAN`, `THREE_BLACK_CROWS`. The mirrored bullish set applies for held SELLs.
+
+**Skipped when:**
+- Disabled via `SIGNAL_REVERSAL_EXIT_ENABLED = False`.
+- Position is in profit ≥ 1× initial risk — winners belong to the trailing stop; one bad 15-min candle shouldn't dump a paid-up trade.
+- Live price is missing/zero (no way to compute the exit P&L).
+
+**Motivating case (HDFCBANK, 2026-04-20):** Bot held a BUY from 11:31; SL-M fired at 13:26 for Rs.-155. The very next scanner tick at 13:27 scored HDFCBANK -10.0 STRONG_SELL with `EVENING_STAR + BEARISH_HARAMI`. Held positions weren't being rescored at all — the bearish patterns had been forming for ~30 min before the price stop hit. With this exit in place, the bot would have closed the position when the patterns first crystallised, saving most of the loss.
+
+Reason tag in trade history: `SIGNAL_REVERSAL`. Logged at WARNING level.
 
 ---
 
@@ -899,6 +931,11 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `STAGNANT_HARD_MAX_MINUTES` | 90 | Tier-2 checkpoint (catches drifters Tier-1 missed) |
 | `STAGNANT_MIN_PROGRESS_PCT` | 20% | Exit at Tier-2 if progress toward target is below this |
 | `CANDLE_PROTECT_MIN_CUSHION_PCT` | 0.3% | Minimum gap between tightened SL and live price (candle/regime protect) |
+| `SIGNAL_REVERSAL_EXIT_ENABLED` | True | Kill-switch for hard-exit on strong opposite signal (#174) |
+| `SIGNAL_REVERSAL_SCORE` | 7.0 | `\|combined_score\|` threshold (in the opposite direction) that triggers the exit |
+| `SIGNAL_REVERSAL_REQUIRE_PATTERN` | True | Require a confirming bearish/bullish reversal candle alongside the score flip |
+| `GAP_COHERENCE_GATE_ENABLED` | True | Kill-switch for the pre-trade gap-coherence gate (#173) |
+| `GAP_COHERENCE_OVERRIDE_SCORE` | 7.5 | `\|score\|` that bypasses the gate (BUY-on-gap-down / SELL-on-gap-up) |
 | `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157) |
 | `ADX_MIN_THRESHOLD` | 18.0 | Minimum ADX for entry (chop filter) |
 | `ADX_OVERRIDE_SCORE` | 7.0 | `|score|` threshold that overrides a weak ADX reading |

@@ -796,6 +796,13 @@ class PortfolioManagerV2(PortfolioManager):
                             f"patterns: [{patterns}]"
                         )
 
+                    # Hard exit on strong signal reversal (#174). Runs
+                    # BEFORE _auto_protect_on_contrary_signal — if the
+                    # reversal is severe enough to trigger an exit, no
+                    # point tightening SL on a position we're closing.
+                    if self._signal_reversal_exit(pos, fresh, quotes):
+                        continue
+
                     # Auto-tighten SL on strong contrary signal
                     self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
@@ -1013,6 +1020,110 @@ class PortfolioManagerV2(PortfolioManager):
             if new_sl >= old_sl:
                 return None
             return new_sl
+
+    # ================================================================
+    # SIGNAL-REVERSAL EXIT (#174)
+    # ================================================================
+
+    # Bearish reversal patterns that confirm a short-side flip.
+    # Names match services/candle_patterns.py output strings exactly.
+    _BEARISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+        "EVENING_STAR", "BEARISH_ENGULFING", "BEARISH_HARAMI",
+        "SHOOTING_STAR", "HANGING_MAN", "THREE_BLACK_CROWS",
+    })
+    _BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+        "MORNING_STAR", "BULLISH_ENGULFING", "BULLISH_HARAMI",
+        "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
+    })
+
+    def _signal_reversal_exit(
+        self,
+        pos: dict,
+        analysis: dict,
+        quotes: dict,
+    ) -> bool:
+        """
+        Hard-exit a held position when the free candle re-scan detects
+        a STRONG opposite signal. Returns True if the position was exited
+        (callers should `continue` past further per-position protection
+        steps in that case).
+
+        Why this exists: the static SL-M only catches price-side moves.
+        A momentum reversal — large opposite combined_score + a confirming
+        bearish/bullish reversal candle — is signal-side information that
+        typically arrives BEFORE the price stop. Acting on it cuts losses
+        earlier than the fixed SL would.
+
+        Triggers (BUY position, mirrored for SELL):
+          - combined_score <= -SIGNAL_REVERSAL_SCORE
+          - AND (if SIGNAL_REVERSAL_REQUIRE_PATTERN) at least one
+            confirming bearish reversal pattern is present.
+
+        Skipped when:
+          - Feature disabled via SIGNAL_REVERSAL_EXIT_ENABLED.
+          - Position is in profit ≥ 1× initial risk — a profitable
+            position is the trailing-stop's job; don't dump a winner
+            on a single 15-min candle reversal.
+          - Live price is missing/zero (no way to compute exit P&L).
+        """
+        if not getattr(self.cfg, "SIGNAL_REVERSAL_EXIT_ENABLED", False):
+            return False
+
+        score  = analysis.get("combined_score", 0)
+        side   = pos["side"]
+        symbol = pos["symbol"]
+
+        threshold = self.cfg.SIGNAL_REVERSAL_SCORE
+        is_buy_reversal  = (side == "BUY"  and score <= -threshold)
+        is_sell_reversal = (side == "SELL" and score >=  threshold)
+        if not (is_buy_reversal or is_sell_reversal):
+            return False
+
+        # Confirming-pattern requirement: avoid acting on a single noisy
+        # score swing without a candlestick reversal to back it up.
+        patterns = analysis.get("pattern_summary", {}).get("patterns", []) or []
+        pattern_set = {p.upper() for p in patterns}
+        if self.cfg.SIGNAL_REVERSAL_REQUIRE_PATTERN:
+            confirming = (
+                self._BEARISH_REVERSAL_PATTERNS if side == "BUY"
+                else self._BULLISH_REVERSAL_PATTERNS
+            )
+            if not (pattern_set & confirming):
+                return False
+
+        # Live price needed to evaluate profit-skip + log accurate P&L.
+        key = f"{pos.get('exchange', 'NSE')}:{symbol}"
+        current_price = quotes.get(key, {}).get("last_price", 0)
+        if current_price <= 0:
+            return False
+
+        entry = pos["entry_price"]
+        qty   = pos["qty"]
+        if side == "BUY":
+            pnl = (current_price - entry) * qty
+        else:
+            pnl = (entry - current_price) * qty
+
+        # Profitable winners are the trailing-stop's responsibility —
+        # one bad candle shouldn't dump a position that's already paid
+        # ≥1R. Use the position's recorded initial risk when available.
+        initial_sl = pos.get("initial_sl") or pos.get("stop_loss") or entry
+        initial_risk = abs(entry - initial_sl) * qty
+        if initial_risk > 0 and pnl >= initial_risk:
+            return False
+
+        confirming_match = sorted(pattern_set & (
+            self._BEARISH_REVERSAL_PATTERNS if side == "BUY"
+            else self._BULLISH_REVERSAL_PATTERNS
+        ))
+        pattern_tag = ", ".join(confirming_match) if confirming_match else "none"
+        self.log.warning(
+            f"⚠ SIGNAL REVERSAL {symbol} {side}: score {score:+.1f} "
+            f"(threshold ±{threshold:.1f}), patterns [{pattern_tag}] — "
+            f"exiting at Rs.{current_price:.2f}, P&L Rs.{pnl:+,.2f}"
+        )
+        self.engine.exit_position(pos, current_price, "SIGNAL_REVERSAL")
+        return True
 
     def _auto_protect_on_contrary_signal(
         self,

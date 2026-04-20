@@ -11,9 +11,10 @@ This document is the **history log** of every strategy improvement, the **backlo
 ### Sections
 
 1. **Pending** — items still to be built. Each has priority + impact + effort estimates.
-2. **Removed** — items evaluated and rejected. The reason column explains why (saves us from re-proposing them).
-3. **Completed** — everything shipped, grouped by category. The `#` column is the historical item number (don't renumber — it breaks references in commit messages and other docs).
-4. **Pending — Details** — long-form explanations for complex pending items.
+2. **Pending — Awaiting Trade Data** — promising ideas blocked on insufficient real-trade evidence. Each lists the trigger (minimum sample size + threshold) that would promote it to the main Pending list. Do NOT implement these speculatively.
+3. **Removed** — items evaluated and rejected. The reason column explains why (saves us from re-proposing them).
+4. **Completed** — everything shipped, grouped by category. The `#` column is the historical item number (don't renumber — it breaks references in commit messages and other docs).
+5. **Pending — Details** — long-form explanations for complex pending items.
 
 ### Category legend
 
@@ -38,6 +39,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 6. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
 7. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
 8. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+9. If the idea is plausible but rests on too few real trades to justify shipping, add it to **Pending — Awaiting Trade Data** with a clear, measurable promotion trigger (sample size + threshold). Do NOT add it to the main Pending table until that trigger fires.
 
 ---
 
@@ -60,6 +62,17 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 | 41 | Holiday-shifted expiry detection — Wed instead of Thu, ~3 days/year | LOW | Low | Low |
 
+### Pending — Awaiting Trade Data (2 items)
+
+These ideas look reasonable on paper but rest on too few data points to justify shipping. Each lists the **minimum sample size** that would let us promote it to the main Pending list (or move it to Removed). Until then, **do not implement** — collect the trades first, then re-evaluate.
+
+| # | Idea | Trigger to revisit |
+|---|------|--------------------|
+| 175 | **Lunch-lull score floor raise** (6.0 → 7.0, or `RVol ≥ 1.5x`). Today the lunch-lull bypass admits any candidate with `\|score\| ≥ 6.0`. HDFCBANK 2026-04-20 entered at exactly 6.0 with `RVol 1.2x` and lost Rs.155. Raising the floor would have skipped it, but a single trade is not a population. | After **≥ 10 lunch-lull entries** (11:30-12:15 IST), compare hit-rate / R-multiple of those scoring 6.0-6.9 vs 7.0+. If 6.0-6.9 underperforms 7.0+ by ≥ 30% on hit-rate, promote to main Pending and tighten `LUNCH_LULL_SCORE_OVERRIDE` to 7.0. |
+| 176 | **Bank/financial sector NIFTY-alignment filter.** Banks (HDFCBANK, ICICIBANK, SBIN, AXISBANK, KOTAKBANK) have ~1.0+ beta to NIFTY (financials are ~36% of the index weight). A BUY on a bank when NIFTY is trending DOWN bets against the index's own gravity (inverse for SELL when NIFTY is up). Today only one data point (HDFCBANK 2026-04-20). | After **≥ 20 bank-direction trades** (BANKING/FINANCE sector, both directions), compare hit-rate when entry direction is NIFTY-aligned vs contra-NIFTY. If contra-NIFTY underperforms aligned by ≥ 25% hit-rate, promote and add a per-sector NIFTY-alignment gate before entry. |
+
+These items are intentionally NOT in the main Pending table or Pending — Details list. Implementing them now would be guessing; we already have the data-collection path (every entry logs score / RVol / sector / NIFTY trend), so the right move is to wait.
+
 ### Removed (8 items — not worth implementing)
 
 | # | Item | Reason |
@@ -73,7 +86,7 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (149 items)
+### Completed (151 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -100,7 +113,7 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (30)** | | |
+| **Risk Management (32)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -229,6 +242,8 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 170 | **Centralised Claude model in `generate_sheet.py`.** Script hard-coded `claude-sonnet-4-20250514` (a snapshot id) in two `messages.create()` calls. When Anthropic deprecated that snapshot, the post-trade sheet generator silently broke even though the live analyser kept working off `Config._CLAUDE_RULES`. Fix: read `Config.claude()["model"]` once at import-time into `CLAUDE_MODEL`, use that everywhere. Single source of truth across the bot and all scripts. | Bug Fix |
 | 171 | **Budget double-counting bug (CRITICAL).** `refresh_budget()` overwrote `_budget` with Zerodha's `available` funds (which Zerodha had ALREADY reduced by margin blocked on open positions). The downstream budget check then subtracted `_total_open_exposure()` from this already-shrunken `_budget`, double-counting the same blocked margin and blocking legitimate mid-day re-entries. On 2026-04-20 this rejected TRENT (₹4,500 share, ~₹218 expected profit) even though ≈₹11K was actually deployable — budget log showed only ₹3,303 remaining. Side-effects: `loss_adjusted_budget()` and ATR-based qty sizing both read the deflated `_budget`, shrinking risk allowance and causing further phantom rejections. Fix: keep `_budget` as the configured cap (immutable post-`set_budget`) and store live Zerodha available in a new `_available_funds` field. Budget check now takes `min(loss_adjusted_budget() - exposure, _available_funds)`. `budget_remaining()` mirrors the same clamp so Claude prompts and budget displays match what the broker will actually permit. `set_budget()` clears the stale live reading; manager seeds `_available_funds` at startup so day-1 entries also respect any pre-existing manual MIS positions. Also surfaces silent fund-fetch failures as WARNINGs (was bare `except: pass`). | Bug Fix |
 | 172 | **Two-tier stagnant exit (drift catcher).** Single 45-min directional check (adverse / dead-flat ±0.1%) was missing drifters that wiggled just outside the dead-flat band on the snapshot tick. UNITDSPR 2026-04-20 sat 183 min for +0.03% before LOSER_EXIT caught it — burned a slot for 3 hours on a ₹50K/3-slot portfolio while morning trades were turning ~₹200 each in 30-60 min. Fix: add Tier-2 hard-max check at `STAGNANT_HARD_MAX_MINUTES` (90 min) using `progress_pct = move_toward_target / (target-entry) * 100`. Exits if `progress_pct < STAGNANT_MIN_PROGRESS_PCT` (20% — lowered from initial 25% same day after re-review showed 25% projected target hit past close). Target-relative so it scales naturally with the trade's own R:R. Tier-1 unchanged — no regression on the Apr-17 directional-split benefit. progress_pct clamped ±100% to keep logs readable on extreme cases. Three new configs, all kill-switchable via `STAGNANT_HARD_MAX_ENABLED`. Same `_stagnant_exits` guard blocks same-side re-entry. Also removed the leftover `STAGNANT_EXIT_MIN_MOVE_PCT` field that was kept as a no-op since 2026-04-17. | Execution |
+| 173 | **Gap-coherence entry gate.** Pre-trade check rejected nothing on opening-gap direction. Pro intraday desks treat a strong gap as the day's tape-print of overnight institutional positioning + opening flow; taking a BUY on `GAP_DOWN_STRONG` (or SELL on `GAP_UP_STRONG`) means trading against that flow, and intraday V-recoveries of strong gaps are the exception. HDFCBANK 2026-04-20: bot took BUY on `GAP_DOWN_STRONG` at the lunch-lull score floor (+6.0); the trade lost Rs.155, and the very next scanner tick scored it -10.0 STRONG_SELL. Fix: new `GAP_COHERENCE_GATE_ENABLED` block in `enter_trade` (after the ADX gate, uses the same `_indicator_snapshot` JSON path as the VWAP guard). Reads `gap` from the snapshot (newly added in `_build_indicator_snapshot`); rejects contradictory entries unless `\|score\| ≥ GAP_COHERENCE_OVERRIDE_SCORE` (default 7.5, well above the +6 lunch-lull floor and the +5 strong-direction threshold). Only acts on the high-conviction `GAP_*_STRONG` signals — `WEAK` and `NO_GAP` are unaffected. Fails open on missing/malformed snapshot (logs a WARNING, lets trade through; other gates remain active). Override path also logs success for visibility. | Risk |
+| 174 | **Signal-reversal hard exit on held positions.** Static SL-M only catches price-side moves. The free 15-min candle re-scan was already running on every open position (V2_CANDLE_RESCAN_MINUTES) and `_auto_protect_on_contrary_signal` was tightening SL on score ≤ -4 / ≥ +4 — but a brutal opposite-direction flip with a confirming reversal candle still meant waiting for the price stop to fire. HDFCBANK 2026-04-20: bot held BUY from 11:31; price stop fired 13:26 for Rs.-155; the very next scanner tick (13:27) scored -10.0 STRONG_SELL with `EVENING_STAR + BEARISH_HARAMI`. The bearish patterns had been forming for ~30 min before the SL hit. Fix: new `_signal_reversal_exit()` method in `manager_v2.py` runs FIRST in the candle re-scan loop (before `_auto_protect_on_contrary_signal`). Triggers when held BUY scores ≤ `-SIGNAL_REVERSAL_SCORE` (default -7.0) AND a confirming bearish reversal pattern is present (`EVENING_STAR`, `BEARISH_ENGULFING`, `BEARISH_HARAMI`, `SHOOTING_STAR`, `HANGING_MAN`, `THREE_BLACK_CROWS`); mirrored bullish set for held SELLs. Exits via `engine.exit_position(..., "SIGNAL_REVERSAL")`. Skipped when position is in profit ≥ 1× initial risk (winners belong to the trailing stop — one bad 15-min candle shouldn't dump a paid-up trade) or live price is missing. Pattern names verified against `services/candle_patterns.py`. Three configs: `SIGNAL_REVERSAL_EXIT_ENABLED` (kill-switch), `SIGNAL_REVERSAL_SCORE` (threshold), `SIGNAL_REVERSAL_REQUIRE_PATTERN` (confirming-pattern requirement). Validates via `Config.validate_ranges()`. | Risk |
 
 ---
 
