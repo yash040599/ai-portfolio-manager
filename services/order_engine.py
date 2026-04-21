@@ -2221,6 +2221,56 @@ class OrderEngine:
     # EXIT — CLOSE A POSITION
     # ================================================================
 
+    def _fetch_fill_price_with_retry(
+        self,
+        order_id: str,
+        symbol: str,
+        label: str = "order",
+        timeout: int = 3,
+    ) -> float | None:
+        """
+        Fetch the actual broker fill price with one outer retry.
+
+        `get_order_fill_price()` already retries internally for `timeout`
+        seconds. We add a single outer retry to ride out transient Kite
+        API blips (occasional 502s, network reset). Returns None on
+        sustained failure — caller is expected to fall back to the LTP
+        estimate, and EOD `verify_trades.py` corrects the stored P&L
+        from the broker order book regardless. (#187)
+        """
+        for attempt in (1, 2):
+            try:
+                price = self.zerodha.get_order_fill_price(order_id, timeout=timeout)
+                if price:
+                    return price
+                # None on first attempt → maybe trades not yet visible; retry once.
+                if attempt == 1:
+                    self.log.warning(
+                        f"{label} fill price for {symbol} not available "
+                        f"(order {order_id}, attempt 1) — retrying once"
+                    )
+                    continue
+                # Second attempt also returned None — give up.
+                self.log.warning(
+                    f"{label} fill price for {symbol} unavailable after retry — "
+                    f"live log will use LTP estimate, EOD verify will correct"
+                )
+                return None
+            except Exception as e:
+                if attempt == 1:
+                    self.log.warning(
+                        f"{label} fill price fetch raised for {symbol} "
+                        f"(order {order_id}, attempt 1): {e} — retrying once"
+                    )
+                    continue
+                self.log.warning(
+                    f"{label} fill price fetch raised for {symbol} "
+                    f"(order {order_id}, attempt 2): {e} — "
+                    f"live log will use LTP estimate, EOD verify will correct"
+                )
+                return None
+        return None
+
     def exit_position(
         self,
         position: dict,
@@ -2313,18 +2363,12 @@ class OrderEngine:
                     # we noticed the breach, which can drift from the real fill
                     # by 1-2 ticks (HDFCLIFE 2026-04-21: LTP Rs.609.65 vs real
                     # fill Rs.609.30 → log showed -124.80 vs Zerodha -116.40).
-                    # Falls back silently to the LTP estimate if the trades-API
-                    # call fails — verify_trades.py still corrects EOD (#186).
-                    sl_fill_price = None
-                    try:
-                        sl_fill_price = self.zerodha.get_order_fill_price(
-                            sl_order_id, timeout=3
-                        )
-                    except Exception as e:
-                        self.log.warning(
-                            f"Could not fetch SL-M fill price for {symbol}: {e} — "
-                            f"live log will use LTP estimate, EOD verify will correct"
-                        )
+                    # One outer retry on transient API failures (Kite occasionally
+                    # 502s); falls back silently to the LTP estimate after that
+                    # — verify_trades.py still corrects EOD (#186, #187).
+                    sl_fill_price = self._fetch_fill_price_with_retry(
+                        sl_order_id, symbol, label="SL-M", timeout=3,
+                    )
 
                     if sl_filled_qty >= qty:
                         if sl_fill_price:
@@ -2348,12 +2392,10 @@ class OrderEngine:
                                 symbol=symbol, exchange=exchange,
                                 qty=remaining, side=exit_side, order_type="MARKET",
                             )
-                            try:
-                                market_fill_price = self.zerodha.get_order_fill_price(
-                                    market_exit_id, timeout=5
-                                )
-                            except Exception:
-                                market_fill_price = None
+                            market_fill_price = self._fetch_fill_price_with_retry(
+                                market_exit_id, symbol,
+                                label="MARKET top-up", timeout=5,
+                            )
                         except Exception as e:
                             self.log.error(
                                 f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
