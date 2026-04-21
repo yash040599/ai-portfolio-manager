@@ -305,7 +305,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 > - **Max positions?** Dynamic (2–7 from budget tier).
 > - **Duplicate, sector (2/sector), direction (score-aware)** — any of these → skip.
 > - **Short cutoff.** No new shorts after 1 PM.
-> - **Max re-entries.** Per stock per day ≤ 2. Also rejects if new `|score| < previous |score|` (setup weakening).
+> - **Max re-entries.** Per stock per day ≤ 2. Also rejects if new `|score| < previous |score|` ON THE SAME SIDE (setup weakening). A direction flip is treated as a fresh setup, not a weakening (#185).
 > - **RSI extremes.** Block SELL at RSI > 70, BUY at RSI > 75, BUY at RSI < 30, SELL at RSI < 25.
 > - **Daily trade cap.** Total trades (bot + external) ≥ regime-adjusted cap → stop.
 > - **Stagnant churn guard.** Same stock+direction already exited as stagnant today → skip.
@@ -591,7 +591,7 @@ Every trade must pass these 31 checks in order. If any fails, the trade is rejec
 | 10 | **Direction diversification** | Dynamic (score-aware) | Score ≥5: all slots in same dir allowed. Score <5: max `N−1` in same direction. Prevents forcing weak counter-trend trades on trending days |
 | 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM. Post-cutoff SELL slots reallocated to BUY (if BUY candidates with score ≥4.0 exist) |
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
-| 13 | **Declining re-entry block** | — | If re-entering a stock already traded today, block when new \|score\| < previous \|score\| (setup weakening) |
+| 13 | **Declining re-entry block** | — | If re-entering a stock on the SAME SIDE already traded today, block when new \|score\| < previous \|score\| (setup weakening). Opposite-side re-entries (a real reversal) bypass this gate AND the per-symbol cooldown (16a, keyed by SYMBOL_SIDE); they are protected by the standard entry gates — ADX, RSI, VWAP, gap-coherence (#185) |
 | 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
 | 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |

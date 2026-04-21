@@ -1720,16 +1720,25 @@ class OrderEngine:
                 )
                 return False
 
-            # Block re-entry when score is declining (setup weakening)
-            if past_entries:
+            # Block re-entry when score is declining (setup weakening).
+            # Only compare against PRIOR ENTRIES ON THE SAME SIDE — a flip from
+            # SELL @ -8.7 to BUY @ +7.0 is a different setup (the market
+            # reversed), not a weakening of the original thesis. Opposite-side
+            # re-entries bypass this gate AND the per-symbol cooldown #161
+            # (which is keyed by SYMBOL_SIDE); they're protected by the
+            # standard entry gates (ADX, RSI, VWAP, gap-coherence). (#185)
+            same_side_past = [
+                p for p in past_entries if p.get("side") == side
+            ]
+            if same_side_past:
                 entry_score = abs(trade.get("_entry_score") or 0)
                 prev_score = max(
-                    abs(p.get("_entry_score") or 0) for p in past_entries
+                    abs(p.get("_entry_score") or 0) for p in same_side_past
                 )
                 if entry_score < prev_score and prev_score > 0:
                     self.log.warning(
                         f"{symbol}: re-entry score {entry_score:.1f} < "
-                        f"previous {prev_score:.1f} (setup weakening) — "
+                        f"previous {prev_score:.1f} same-side (setup weakening) — "
                         f"skipping declining re-entry"
                     )
                     return False
