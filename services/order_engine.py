@@ -2307,31 +2307,80 @@ class OrderEngine:
                     except Exception:
                         sl_filled_qty = qty  # API blip after COMPLETE — safe to trust
 
+                    # Pull the broker's actual SL-M fill price so the live log
+                    # and stored pos["exit_price"] match Zerodha exactly. Without
+                    # this, exit_price stays as the LTP we polled at the moment
+                    # we noticed the breach, which can drift from the real fill
+                    # by 1-2 ticks (HDFCLIFE 2026-04-21: LTP Rs.609.65 vs real
+                    # fill Rs.609.30 → log showed -124.80 vs Zerodha -116.40).
+                    # Falls back silently to the LTP estimate if the trades-API
+                    # call fails — verify_trades.py still corrects EOD (#186).
+                    sl_fill_price = None
+                    try:
+                        sl_fill_price = self.zerodha.get_order_fill_price(
+                            sl_order_id, timeout=3
+                        )
+                    except Exception as e:
+                        self.log.warning(
+                            f"Could not fetch SL-M fill price for {symbol}: {e} — "
+                            f"live log will use LTP estimate, EOD verify will correct"
+                        )
+
                     if sl_filled_qty >= qty:
+                        if sl_fill_price:
+                            exit_price = sl_fill_price
                         self.log.info(
                             f"SL-M {sl_order_id} triggered for {symbol} — "
-                            f"full fill confirmed ({sl_filled_qty} shares)"
+                            f"full fill confirmed ({sl_filled_qty} shares "
+                            f"@ Rs.{exit_price:.2f})"
                         )
                     else:
                         # Partial fill — place market exit for remaining shares
                         remaining = qty - sl_filled_qty
                         self.log.warning(
-                            f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares. "
+                            f"SL-M {sl_order_id} PARTIAL fill: {sl_filled_qty}/{qty} shares "
+                            f"@ Rs.{sl_fill_price or exit_price:.2f}. "
                             f"Placing MARKET exit for remaining {remaining} shares."
                         )
+                        market_fill_price = None
                         try:
-                            self.zerodha.place_order(
+                            market_exit_id = self.zerodha.place_order(
                                 symbol=symbol, exchange=exchange,
                                 qty=remaining, side=exit_side, order_type="MARKET",
                             )
+                            try:
+                                market_fill_price = self.zerodha.get_order_fill_price(
+                                    market_exit_id, timeout=5
+                                )
+                            except Exception:
+                                market_fill_price = None
                         except Exception as e:
                             self.log.error(
                                 f"FAILED to exit remaining {remaining} shares of {symbol}: {e} — "
                                 f"MANUAL INTERVENTION NEEDED"
                             )
+
+                        # Weighted average of SL-M slice + market top-up
+                        if sl_fill_price and market_fill_price:
+                            exit_price = round(
+                                (sl_fill_price * sl_filled_qty +
+                                 market_fill_price * remaining) / qty,
+                                2,
+                            )
+                        elif sl_fill_price:
+                            exit_price = sl_fill_price  # market fill unknown
+                        elif market_fill_price:
+                            exit_price = market_fill_price  # SL fill unknown
+                        # else: keep LTP estimate, EOD verify will correct
                     self._pending_order_ids.discard(sl_order_id)
                     position["_sl_order_id"] = None
                     sl_m_handled = True
+
+                    # Recompute P&L with the actual broker fill price
+                    if side == "BUY":
+                        pnl = (exit_price - entry) * qty
+                    else:
+                        pnl = (entry - exit_price) * qty
                 else:
                     # SL-M did NOT fire on exchange (status likely TRIGGER PENDING
                     # or OPEN — software SL was tighter). Cancel the stale SL-M
