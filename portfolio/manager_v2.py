@@ -803,6 +803,15 @@ class PortfolioManagerV2(PortfolioManager):
                     if self._signal_reversal_exit(pos, fresh, quotes):
                         continue
 
+                    # Same-direction thesis decay (#188). Catches
+                    # trades where the entry signal hasn't flipped to
+                    # the opposite side (which #174 already covers)
+                    # but has decayed to a small fraction of its entry
+                    # strength. Runs AFTER reversal so a decisive flip
+                    # still goes through the reversal log line.
+                    if self._signal_decay_exit(pos, fresh, quotes):
+                        continue
+
                     # Auto-tighten SL on strong contrary signal
                     self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
@@ -1134,6 +1143,146 @@ class PortfolioManagerV2(PortfolioManager):
             f"exiting at Rs.{current_price:.2f}, P&L Rs.{pnl:+,.2f}"
         )
         self.engine.exit_position(pos, current_price, "SIGNAL_REVERSAL")
+        return True
+
+    def _signal_decay_exit(
+        self,
+        pos: dict,
+        analysis: dict,
+        quotes: dict,
+    ) -> bool:
+        """
+        Same-direction thesis decay exit (#188). Companion to
+        `_signal_reversal_exit`: catches positions whose entry signal
+        hasn't flipped to the opposite side (which #174 covers) but
+        has decayed to a small fraction of its entry strength, AND
+        the trade isn't yet in profit.
+
+        Without this gate, weak-but-not-flipped trades sit in the
+        slow-positive corridor for hours and only exit on LOSER_EXIT
+        (BHARTIARTL 2026-04-21: 5h 3min held flat for entry score
+        +10.1 → +3.6 at the 10:31 re-scan; nothing else fired).
+
+        Triggers (BUY position, mirrored for SELL):
+          - feature enabled
+          - abs(entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE — only
+            act on trades that started with real conviction
+          - fresh_score has the SAME sign as entry_score (true flips
+            are #174's job, NOT this one)
+          - abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
+          - elapsed >= SIGNAL_DECAY_MIN_HOLD_MINUTES (don't act on
+            one bad re-score immediately after entry)
+          - pnl < initial_risk * SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
+            (book-and-go below 1R: sub-1R profit has no trailing-stop
+             cushion — the stop is at-or-below entry so any pullback
+             gives it all back. Winners ≥1R keep running on the
+             trailing stop. Fallback on missing initial_sl: use the
+             conservative `pnl > 0` skip so we never dump a legacy /
+             restart-rehydrated profitable position.)
+
+        Returns True if the position was exited (caller should
+        `continue` past further per-position protection in that
+        case).
+        """
+        if not getattr(self.cfg, "SIGNAL_DECAY_EXIT_ENABLED", False):
+            return False
+
+        entry_score = pos.get("_entry_score")
+        if entry_score is None:
+            return False  # legacy / restart-rehydrated position
+
+        try:
+            entry_score = float(entry_score)
+        except (TypeError, ValueError):
+            return False
+
+        if abs(entry_score) < self.cfg.SIGNAL_DECAY_MIN_ENTRY_SCORE:
+            return False
+
+        fresh_score = analysis.get("combined_score")
+        if fresh_score is None:
+            return False
+        try:
+            fresh_score = float(fresh_score)
+        except (TypeError, ValueError):
+            return False
+
+        # Same-sign requirement (opposite flips are #174's domain).
+        if (entry_score > 0) != (fresh_score > 0):
+            return False
+        # Edge case: fresh_score == 0 also disqualifies same-sign,
+        # caught above (0 > 0 is False on both sides).
+
+        # Decay magnitude check.
+        if abs(fresh_score) >= abs(entry_score) * self.cfg.SIGNAL_DECAY_FRACTION:
+            return False
+
+        # Hold-time guard: avoid acting on the very first re-scan
+        # after entry. parse entry_time HH:MM:SS against today.
+        side   = pos["side"]
+        symbol = pos["symbol"]
+        entry_time_str = pos.get("entry_time", "")
+        if not entry_time_str:
+            return False
+        now = now_ist()
+        try:
+            entry_dt = datetime.datetime.strptime(
+                f"{now.strftime('%Y-%m-%d')} {entry_time_str}",
+                "%Y-%m-%d %H:%M:%S",
+            )
+        except (ValueError, TypeError):
+            return False
+        # `now_ist()` returns naive IST; `entry_dt` is naive too.
+        elapsed_min = (now - entry_dt).total_seconds() / 60
+        if elapsed_min < self.cfg.SIGNAL_DECAY_MIN_HOLD_MINUTES:
+            return False
+
+        # Live price needed to compute pnl + log accurate exit.
+        key = f"{pos.get('exchange', 'NSE')}:{symbol}"
+        current_price = quotes.get(key, {}).get("last_price", 0)
+        if current_price <= 0:
+            return False
+
+        entry_price = pos["entry_price"]
+        qty         = pos["qty"]
+        pnl = (current_price - entry_price) * qty if side == "BUY" \
+            else (entry_price - current_price) * qty
+
+        # Winner skip. Book-and-go below 1R (configurable via
+        # SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE): sub-1R profit has no
+        # trailing-stop cushion, so any pullback on a decayed signal
+        # just bleeds it back to flat. Above 1R the trailing stop is
+        # already above entry and can protect the winner — let it run.
+        # Fallback when initial_sl is missing (legacy / rehydrated
+        # positions): conservative `pnl > 0` skip so we never dump a
+        # profitable trade without a known risk reference.
+        initial_sl   = pos.get("initial_sl") or pos.get("stop_loss")
+        initial_risk = (
+            abs(entry_price - initial_sl) * qty
+            if initial_sl and initial_sl > 0
+            else 0.0
+        )
+        if initial_risk > 0:
+            winner_floor = initial_risk * self.cfg.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
+            if pnl >= winner_floor and winner_floor > 0:
+                return False
+        else:
+            # Fallback: no usable initial_sl → conservative `pnl > 0` skip
+            # so we never dump a profitable legacy / rehydrated position
+            # without a known risk reference.
+            if pnl > 0:
+                return False
+
+        decay_pct = (1 - abs(fresh_score) / abs(entry_score)) * 100
+        r_multiple_str = (
+            f"{pnl / initial_risk:+.2f}R" if initial_risk > 0 else "n/a"
+        )
+        self.log.warning(
+            f"⚠ SIGNAL DECAY {symbol} {side}: entry score {entry_score:+.1f} "
+            f"→ {fresh_score:+.1f} ({decay_pct:.0f}% decay) after {elapsed_min:.0f} min, "
+            f"P&L Rs.{pnl:+,.2f} ({r_multiple_str}) — exiting at Rs.{current_price:.2f}"
+        )
+        self.engine.exit_position(pos, current_price, "SIGNAL_DECAY")
         return True
 
     def _auto_protect_on_contrary_signal(

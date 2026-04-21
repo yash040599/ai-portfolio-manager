@@ -676,6 +676,45 @@ class Config:
     SIGNAL_REVERSAL_SCORE:           float = 7.0
     SIGNAL_REVERSAL_REQUIRE_PATTERN: bool  = True
 
+    # ── Signal-Decay Exit (#188) ──────────────────────────────────
+    # Companion to signal-reversal: catches *same-direction thesis
+    # decay* — the entry signal hasn't flipped to the opposite side
+    # (which #174 would already catch), but its strength has collapsed
+    # to a small fraction of what it was at entry. Without this gate
+    # such trades sit in the slow-positive corridor for hours and
+    # only exit on LOSER_EXIT, burning a slot the whole time.
+    #
+    # Triggers (BUY position, mirrored for SELL):
+    #   abs(entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE   (only act
+    #     on trades that started with real conviction — a +3 → +1
+    #     drift is statistical noise, not decay)
+    #   AND fresh_score is still SAME-SIGN as entry      (opposite
+    #     flips are #174's job)
+    #   AND abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
+    #   AND elapsed_minutes >= SIGNAL_DECAY_MIN_HOLD_MINUTES
+    #   AND pnl < initial_risk * SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
+    #     (book-and-go below 1R: sub-1R profit has no trailing-stop
+    #     cushion anyway — the stop sits at or below entry, so any
+    #     pullback gives it all back. Winners ≥1R keep running on
+    #     the trailing stop. If `initial_sl` is missing — e.g. a
+    #     restart-rehydrated position — fall back to the conservative
+    #     `pnl > 0` skip so we never dump a profitable legacy trade.)
+    #
+    # MOTIVATING CASE: BHARTIARTL 2026-04-21 — entered BUY @ +10.1 at
+    #   09:42, re-scored +3.6 (Δ-6.5) at 10:31, sat in the slow-
+    #   positive corridor for 5h 3min and exited LOSER_EXIT @ -Rs.16
+    #   at 14:45. Max favourable was +Rs.109 at 11:05 (0.72R). Initial
+    #   #188 with a strict `pnl > 0` skip would NOT have fired between
+    #   09:57 and 13:30 because the trade was always in small profit.
+    #   With the 1R winner-skip the gate fires at the 10:31 re-scan
+    #   (pnl Rs.+41 = 0.27R < 1R) and books +Rs.41 instead of drifting
+    #   to -Rs.16 at LOSER_EXIT.
+    SIGNAL_DECAY_EXIT_ENABLED:          bool  = True
+    SIGNAL_DECAY_FRACTION:              float = 0.4
+    SIGNAL_DECAY_MIN_ENTRY_SCORE:       float = 7.0
+    SIGNAL_DECAY_MIN_HOLD_MINUTES:      int   = 30
+    SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE: float = 1.0
+
     # ── ADX + DI Entry Gate (Roadmap #157) ────────────────────────
     # ADX_ENTRY_GATE_ENABLED: require minimum ADX and directional
     #   alignment (DI) before entering a new trade. Kills chop-day
@@ -1203,6 +1242,17 @@ class Config:
         _pos("FRESH_REVERSAL_DELTA_THRESHOLD", cls.FRESH_REVERSAL_DELTA_THRESHOLD)
         _pos("GAP_COHERENCE_OVERRIDE_SCORE", cls.GAP_COHERENCE_OVERRIDE_SCORE)
         _pos("SIGNAL_REVERSAL_SCORE",   cls.SIGNAL_REVERSAL_SCORE)
+        _pos("SIGNAL_DECAY_MIN_ENTRY_SCORE", cls.SIGNAL_DECAY_MIN_ENTRY_SCORE)
+        _pos("SIGNAL_DECAY_MIN_HOLD_MINUTES", cls.SIGNAL_DECAY_MIN_HOLD_MINUTES)
+        if cls.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE < 0:
+            errors.append(
+                f"SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE must be ≥ 0: "
+                f"{cls.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE!r}"
+            )
+        if not (0 < cls.SIGNAL_DECAY_FRACTION < 1):
+            errors.append(
+                f"SIGNAL_DECAY_FRACTION must be in (0, 1): {cls.SIGNAL_DECAY_FRACTION!r}"
+            )
 
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)

@@ -55,6 +55,8 @@
    - [Loss-Adjusted Budget](#loss-adjusted-budget)
    - [Stagnant Position Exit (NoAI)](#stagnant-position-exit-noai-only)
    - [Contrary Signal Protection](#contrary-signal-protection)
+   - [Signal-Reversal Exit](#signal-reversal-exit)
+   - [Signal-Decay Exit](#signal-decay-exit)
 9. [Market Intelligence](#market-intelligence)
    - [India VIX Adjustments](#india-vix-adjustments)
    - [VIX Spike Protection](#vix-spike-protection)
@@ -215,6 +217,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
 | **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <20%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
 | **Signal-reversal exit** (#174) | Hard-exit a held position when the periodic candle re-scan sees a strong opposite signal AND a confirming reversal candle pattern. | Both modes. Triggered when held BUY scores ≤ -7 (or held SELL ≥ +7) with a bearish/bullish reversal pattern present. Skipped on profitable winners (≥1× initial risk) — those are the trailing stop's job. See [§Signal-Reversal Exit](#signal-reversal-exit). |
+| **Signal-decay exit** (#188) | Hard-exit a held position when the entry signal hasn't *flipped* but has *decayed* to a small fraction of its entry strength, AND the trade isn't yet a genuine winner (≥1R of initial risk). | Both modes. Triggered when entry score had |≥7| conviction, fresh re-scan score is same-direction but |< 40%| of entry magnitude, hold ≥ 30 min, and `pnl < 1R`. Book-and-go below 1R; winners ≥1R keep running on the trailing stop. See [§Signal-Decay Exit](#signal-decay-exit). |
 | **Gap coherence** (#173) | Pre-trade check that rejects entries which contradict a STRONG opening gap. | Both modes. BUY blocked on `GAP_DOWN_STRONG` (and SELL blocked on `GAP_UP_STRONG`) unless `\|score\| ≥ 7.5`. Targets the rare overnight-flow setups where indicators look fine but opening flow is the wrong way. |
 
 ### 9. Bot-Specific Concepts
@@ -349,6 +352,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 19. **Stagnant exit (two-tier).** **Tier 1** — positions open ≥ 45 min that are either losing > 0.2% (adverse) OR inside ±0.1% of entry (dead-flat) → exit at market, log `"STAGNANT EXIT"`, blacklist `{symbol}_{side}` for the rest of the day (Roadmap #156). **Tier 2** (Roadmap #172) — positions open ≥ 90 min that have covered < 20% of the entry→target distance → same exit + blacklist (`drift X% to target` reason tag). Tier 2 only runs if Tier 1 didn't already fire on this position.
 
 20. **Signal-reversal exit (#174).** On every candle re-scan (every 15 min, free), each open position is rescored. If a held BUY's combined score flips to ≤ -7 with a confirming bearish reversal candle (or held SELL flips to ≥ +7 with a bullish one), exit immediately at market with reason `SIGNAL_REVERSAL`. Profitable positions (≥1× initial risk) are skipped — winners belong to the trailing stop. See [§Signal-Reversal Exit](#signal-reversal-exit).
+21. **Signal-decay exit (#188).** Runs in the same re-scan loop, AFTER signal-reversal so a decisive flip still gets the reversal log. Catches *same-direction thesis decay*: if the entry score was high-conviction (|score| ≥ 7) but the re-scan score has shrunk to < 40% of entry magnitude (still same sign), held ≥ 30 min, and `pnl < 1R` of initial risk (book-and-go floor), exit at market with reason `SIGNAL_DECAY`. Winners ≥1R are skipped (trailing stop's job). See [§Signal-Decay Exit](#signal-decay-exit).
 
 **At any time:**
 
@@ -462,7 +466,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 |----------|--------|------|
 | Every 10s (5s near SL/target) | SL/target check, trailing stop, time-decay | Free |
 | Every 15 min | Sync with Zerodha — detect manual MIS positions. Adopted positions get ATR-based SL/targets and full bot management | Free |
-| Every 15 min | Re-run candle analysis on open positions. **Auto-protect:** contrary score ≥ ±4 → tighten SL (50% profit lock or breakeven) | Free |
+| Every 15 min | Re-run candle analysis on open positions. **Signal-reversal exit** (#174) → opposite-side score ≥ ±7 + reversal pattern, exit. **Signal-decay exit** (#188) → same-side score collapsed to <40% of entry conviction, hold ≥ 30 min, pnl < 1R of initial risk (book-and-go), exit. Otherwise **auto-protect** → contrary score ≥ ±4, tighten SL (50% profit lock or breakeven) | Free |
 | Every 15 min | NIFTY trend recheck (regime shift detection) | Free |
 | Every 30 min (if free slots) | Opportunity re-scan for new trades | 1 Claude call (`--ai`) / Free (NoAI) |
 | Every 30 min (`--ai` only) | Claude reviews open positions with fresh 5-min candle data + StochRSI + 15-min composite score | 1 Claude call |
@@ -722,11 +726,13 @@ In `--ai` mode, Claude reviews every 30 min instead and can recommend HOLD / EXI
 
 ### Contrary Signal Protection
 
-Every 15 min (`V2_CANDLE_RESCAN_MINUTES`), re-run candle pattern analysis on open positions. The re-scan now drives **two** layered protections (signal-reversal exit runs first; if it doesn't fire, the SL-tightening kicks in):
+Every 15 min (`V2_CANDLE_RESCAN_MINUTES`), re-run candle pattern analysis on open positions. The re-scan now drives **three** layered protections (signal-reversal exit runs first; if it doesn't fire, signal-decay catches same-direction collapse; if neither fires, the SL-tightening kicks in):
 
 **1. Signal-reversal hard exit (#174).** If a held position's combined score flips strongly in the OPPOSITE direction AND a confirming reversal candle is present, exit immediately rather than wait for the price stop. See [§Signal-Reversal Exit](#signal-reversal-exit).
 
-**2. SL tightening on weaker contrary signals.** If the score flips to ±4 or stronger in the **opposite** direction (but doesn't meet the reversal-exit bar):
+**2. Signal-decay hard exit (#188).** If the score is still SAME-direction but has decayed to a small fraction of entry conviction (and the trade isn't yet in profit), exit at market. Catches the BHARTIARTL-style 5-hour drift trap. See [§Signal-Decay Exit](#signal-decay-exit).
+
+**3. SL tightening on weaker contrary signals.** If the score flips to ±4 or stronger in the **opposite** direction (but doesn't meet the reversal-exit bar):
 - If in profit: tighten SL to lock 50% of unrealised gains.
 - If at breakeven or losing: tighten SL toward entry, **but never closer than `CANDLE_PROTECT_MIN_CUSHION_PCT`** (default 0.3%) from the live price.
 
@@ -752,6 +758,29 @@ The static SL-M only catches **price-side** moves. A momentum reversal — large
 **Motivating case (HDFCBANK, 2026-04-20):** Bot held a BUY from 11:31; SL-M fired at 13:26 for Rs.-155. The very next scanner tick at 13:27 scored HDFCBANK -10.0 STRONG_SELL with `EVENING_STAR + BEARISH_HARAMI`. Held positions weren't being rescored at all — the bearish patterns had been forming for ~30 min before the price stop hit. With this exit in place, the bot would have closed the position when the patterns first crystallised, saving most of the loss.
 
 Reason tag in trade history: `SIGNAL_REVERSAL`. Logged at WARNING level.
+
+### Signal-Decay Exit
+
+Companion gate to the signal-reversal exit. Where signal-reversal catches **opposite-direction flips** (BUY scoring -7, SELL scoring +7), signal-decay catches **same-direction thesis collapse** — the entry conviction has evaporated but the score hasn't crossed zero. Without this gate, weak-but-not-flipped trades sit in the slow-positive corridor (above the ±0.1% dead-flat band but below the 20% target-progress threshold) for hours and only exit on `LOSER_EXIT` at 14:45, burning a slot the whole time.
+
+**Trigger (BUY position; mirrored for SELL):**
+- `abs(_entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE` (default `7.0`) — only act on trades that started with real conviction. A +3 → +1 drift is statistical noise, not decay.
+- AND `fresh_score` has the SAME sign as `_entry_score` — opposite-side flips are signal-reversal's domain (#174).
+- AND `abs(fresh_score) < abs(_entry_score) × SIGNAL_DECAY_FRACTION` (default `0.4`) — e.g. +10.0 → +3.9 fires; +10.0 → +4.1 doesn't.
+- AND elapsed since entry ≥ `SIGNAL_DECAY_MIN_HOLD_MINUTES` (default `30`) — skip the very first re-scan after entry where tick-noise dominates.
+- AND `pnl < initial_risk × SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE` (default `1.0`) — **book-and-go below 1R.** Sub-1R profit has no trailing-stop cushion (the stop is at-or-below entry), so any pullback on a decayed signal bleeds the profit back to flat. Winners ≥1R keep running on the trailing stop. Fallback when `initial_sl` is missing (legacy / restart-rehydrated positions): the conservative `pnl > 0` skip so we never dump a profitable trade without a known risk reference.
+
+**Skipped when:**
+- Disabled via `SIGNAL_DECAY_EXIT_ENABLED = False`.
+- `_entry_score` is missing (legacy / restart-rehydrated positions; `load_existing_positions` doesn't preserve the original score).
+- `combined_score` from the re-scan is missing or non-numeric.
+- Live price missing/zero.
+
+**Motivating case (BHARTIARTL, 2026-04-21):** Entered BUY @ score +10.1 at 09:42:09. The 10:31 candle re-scan dropped the score to +3.6 (Δ-6.5 — a 64% conviction collapse). Actual price arc (from Zerodha 5-min candles): peak +Rs.109 at 11:05 (0.72R, still below the 1R winner floor), drifted back to -Rs.16 at 14:45 when `LOSER_EXIT` finally caught it. Stagnant Tier-1 (#172) couldn't fire because the price stayed outside the ±0.1% dead-flat band on every snapshot tick; Tier-2 needed ≥20% target progress, which the trade kept barely clearing. Signal-reversal (#174) requires an opposite-side flip + confirming reversal pattern — neither was present. With the 1R book-and-go, the position would have closed at the 10:31 re-scan (pnl +Rs.41 = 0.27R < 1R floor) — slot freed in 49 min instead of 303 min, booked +Rs.41 instead of drifting to -Rs.16.
+
+**Why `< 1R` rather than `<= 0`?** Below 1R of profit, the trailing stop has no real cushion — it sits at or below entry price, so on a pullback the stop gives all the profit back. Above 1R, the trailing stop is comfortably above entry (by design: the trailer activates at `TRAIL_TRIGGER_PCT` and locks in partial profit) and can protect the winner on its own. The 1R boundary matches the natural risk unit of the trade, not an arbitrary rupee amount.
+
+Reason tag in trade history: `SIGNAL_DECAY`. Logged at WARNING level.
 
 ---
 
