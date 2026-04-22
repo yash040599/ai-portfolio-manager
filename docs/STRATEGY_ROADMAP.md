@@ -47,7 +47,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (8 items)
+### Pending (9 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
@@ -60,6 +60,7 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 167 | Earnings/results-day blackout — skip stocks with corporate results announced today (Q1–Q4 season abnormal moves) | MEDIUM | Medium | Medium |
 | 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
 | 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
+| 196 | Weekly profitability dashboard — single CLI/HTML report aggregating after-charges P&L, win-rate, profit factor, max-DD, expectancy, Sharpe, capital-scaling readiness flags. Decision tool for *when to scale budget* (Rs.50k → Rs.1L → Rs.2.5L → ...). Pure analytics layer; no strategy/order code touched | LOW | High | Medium |
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 
 ### Pending — Awaiting Trade Data (8 items)
@@ -346,6 +347,79 @@ In priority order, matching the Pending table above.
 
 ### 147. Session-Time-Aware RVol Baseline
 - **Status**: ✅ Completed (see #147 in Completed table). Shipped 2026-04-22 as `RVOL_FLOOR_BY_HOUR` hour-bucket scaling on the existing 0.7× floor (heavier reduction during 12:00 hour, light reduction at 11/13). Uses live volume + scan fallback path.
+
+### 196. Weekly Profitability Dashboard
+
+- **Priority**: LOW (analytics, not strategy edge — but high decision-value)
+- **Today**: Existing scripts (`view_performance.py`, `view_trades.py`, `view_intraday_ledger.py`, `tax_summary.py`) each show one slice of P&L data. There is **no single report** that answers the only question that actually matters week-over-week: *"Is this bot profitable enough to scale capital, or am I just re-cycling Rs.50k through Zerodha's charges?"*. Without that, decisions to add capital (Rs.50k → Rs.1L → Rs.2.5L → ...) are vibes-based.
+- **Why it matters**: Per the capital-ladder plan agreed 2026-04-22, the bot should not advance to a higher budget tier without **3 consecutive profitable weeks net of charges, max-drawdown ≤ 8%, profit-factor ≥ 1.4**. A dashboard makes that decision mechanical instead of emotional. Also surfaces silent-loss patterns (e.g. "every Tuesday loses Rs.300", "BUY win-rate 58% but SELL win-rate 42%") that aren't visible in daily reports.
+
+- **Scope (what to build)**:
+  - **New script**: `scripts/profitability_dashboard.py`
+  - **Two output modes**:
+    - `--text` (default): rich CLI table similar to `view_performance.py` style, suitable for terminal + email cron.
+    - `--html` (optional): writes `reports/dashboard/<YYYY-MM-DD>.html` with charts (matplotlib → embedded base64 PNGs, no JS dependencies). Open locally on Windows.
+  - **Default time window**: last 7 trading days (configurable via `--days N`, `--from YYYY-MM-DD --to YYYY-MM-DD`, or `--month YYYY-MM`).
+  - **Pure read-only**: queries `data/trades.db` (already populated by `import_reports_to_db.py`) and `data/intraday_tax_ledger.db` (charges + net P&L per trade). Touches NO strategy / order / config code. Safe to run any time, even mid-session.
+
+- **Metrics to compute (sectioned)**:
+
+  **Section A — Headline P&L (after charges)**
+  - Gross P&L (sum of `pnl` column)
+  - Total charges (sum from `intraday_tax_ledger.charges_total`)
+  - Net P&L = Gross − Charges
+  - Net P&L as % of budget (use current `Config.BUDGET` or per-day historical budget if tracked)
+  - Daily net P&L mean ± stddev
+  - Best day / worst day (with date)
+
+  **Section B — Trade-quality metrics**
+  - Total trades (count) + per-day breakdown
+  - Win rate = wins / total (where win = `pnl > 0` after charges, NOT gross)
+  - Loss rate
+  - Avg win Rs., Avg loss Rs.
+  - Profit factor = sum(wins) / abs(sum(losses)) — target ≥ 1.4
+  - Expectancy per trade = (WinRate × AvgWin) − (LossRate × AvgLoss) — must be > 0
+  - R-multiple distribution: count of trades binned at <-1R, -1R to 0, 0 to 0.5R, 0.5 to 1R, 1 to 2R, >2R (use `(pnl − charges) / risked_amount` where `risked_amount = qty × |entry − stop_loss|`)
+
+  **Section C — Risk metrics**
+  - Max drawdown (peak-to-trough on cumulative net P&L curve) in Rs. and as % of budget
+  - Max consecutive losses (streak)
+  - Max consecutive wins
+  - Sharpe ratio (annualised): `(daily_mean_return / daily_stddev_return) × sqrt(252)`. Target Sharpe > 1.0 for "scale candidate", > 2.0 for "production-ready"
+  - % of days profitable (target ≥ 55%)
+
+  **Section D — Strategy diagnostics (the value-add over `view_performance.py`)**
+  - **Per-side breakdown**: BUY vs SELL — win rate, avg P&L, count. If asymmetric, suggests scoring/regime bias.
+  - **Per-day-of-week**: Mon-Fri P&L average. Catches "Tuesday is always a loss" patterns.
+  - **Per-time-of-entry bucket**: 09:15-10:00, 10:00-11:00, 11:00-12:00, 12:00-13:00, 13:00-14:00, 14:00-15:10. Catches "morning rush is profitable, afternoon bleeds".
+  - **Per-exit-reason breakdown**: TARGET_HIT / STOP_LOSS / STAGNANT_EXIT / SIGNAL_DECAY / SIGNAL_REVERSAL / SQUARE_OFF / EXTERNAL_CLOSE — count + total P&L per reason. Catches "STAGNANT exits cost Rs.X/week" — the original motivator for #192/#195.
+  - **Per-symbol top winners/losers**: top 5 + bottom 5 stocks by net P&L over the window. Identifies "always-loses" names that should be excluded from `SCAN_UNIVERSE`.
+  - **Per-score-bucket performance**: bin trades by `|_entry_score|` into [3-4, 4-5, 5-6, 6-7, 7-8, 8+]. Should show monotonic improvement with score (proves the scorer has edge). If it doesn't → strong evidence the scoring is noise.
+  - **Per-regime performance**: BULLISH-aligned trades vs BEARISH-aligned vs NEUTRAL. Catches "we only make money in trending markets".
+
+  **Section E — Capital-scaling readiness flags (the actionable bit)**
+  Three traffic-light verdicts at the bottom of the report:
+  - **GREEN**: All of (Net P&L > 0 over window, win-rate ≥ 50%, profit-factor ≥ 1.4, max-DD ≤ 8% of budget). Output: `"READY TO SCALE: budget Rs.X → Rs.Y per ladder"` where Y is the next rung.
+  - **AMBER**: Net P&L > 0 but one secondary metric below threshold. Output: `"HOLDING: positive but inconsistent — collect 2 more weeks at current budget"`.
+  - **RED**: Net P&L ≤ 0 over window. Output: `"DO NOT SCALE: review losing patterns above before continuing"`. Highlight the worst diagnostic in Section D.
+
+- **Implementation notes (for the implementer)**:
+  - Read `data/trades.db` via existing helpers in `scripts/view_trades.py` (don't reinvent the SQL).
+  - Read `data/intraday_tax_ledger.db` via `scripts/tax_db.py` (charges per trade are already computed there).
+  - Use only stdlib + `pandas` (already a dep) + `matplotlib` for charts. No new deps.
+  - Capital-ladder thresholds + ladder rungs go in `config.py` as `CAPITAL_LADDER` (a list of `(budget_rs, win_rate_min, profit_factor_min, weeks_required)` tuples). Default: `[(50_000, 0.50, 1.4, 1), (100_000, 0.50, 1.4, 4), (250_000, 0.52, 1.5, 8), (500_000, 0.55, 1.5, 12)]`. Dashboard reads this; never modifies.
+  - Add to `scripts/backup_data.py` SYNC list if generating HTML reports.
+  - Add a `Makefile`-style alias or `main.py --mode dashboard` entry-point so `python main.py --mode dashboard` works without remembering the script path.
+
+- **Testing**:
+  - Run on existing `data/trades.db` content (current ~30 days of historical trades) to validate metrics against hand-computed values for any one week.
+  - Verify Sharpe calc against a known reference (e.g. `pandas` `.mean() / .std() * sqrt(252)`).
+  - Profit-factor edge case: when there are zero losses in window, return `inf` symbol or `"N/A (no losses)"` instead of dividing by zero.
+  - When window has < 5 trades, print a warning banner: "Insufficient sample — metrics not statistically meaningful below N=20."
+
+- **Effort**: Medium (~1-2 days). Mostly SQL + pandas aggregations + a markdown/HTML template. Zero risk to live trading code (read-only).
+
+- **Future extension (out of scope for v1)**: Email digest via cron — write `dashboard.html`, attach to email, send via SES/SMTP every Sunday 6 PM. Catches "haven't checked in 2 weeks" failure mode.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)
