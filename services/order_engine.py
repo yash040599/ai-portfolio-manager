@@ -640,8 +640,42 @@ class OrderEngine:
                     and (p["symbol"], p["side"], p["qty"]) not in self._bot_closed_positions):
                 # This is a position the bot doesn't know about and it's NOT
                 # in bot_closed_positions, so it looks like a user close.
+                #
+                # CRITICAL BUG FIX (2026-04-22): Before labelling this as
+                # EXTERNAL_CLOSE, check if the position's tracked exchange
+                # SL-M order has actually FIRED. The exchange SL-M can
+                # trigger between two of our 10s polling cycles (or via a
+                # gap that skips the software-SL check entirely). When that
+                # happens, _bot_closed_positions never gets populated
+                # because exit_position() was never called — and we
+                # mis-attribute a real STOP_LOSS as a manual user exit.
+                # GRASIM 2026-04-22 was the first observed case: software
+                # never called exit_position("STOP_LOSS") but the exchange
+                # SL-M fired at Rs.2782.90 and the position vanished.
+                sl_oid_check = p.get("_sl_order_id")
+                sl_fired = False
+                sl_fill_price = None
+                if sl_oid_check and not self.cfg.DRY_RUN:
+                    try:
+                        sl_status = self.zerodha.get_order_status(sl_oid_check)
+                    except Exception as e:
+                        sl_status = None
+                        self.log.warning(
+                            f"Could not read SL-M status for {p['symbol']} "
+                            f"({sl_oid_check}) during external-close check: {e} — "
+                            f"falling back to EXTERNAL_CLOSE attribution"
+                        )
+                    if sl_status == "COMPLETE":
+                        sl_fired = True
+                        try:
+                            sl_fill_price = self.zerodha.get_order_fill_price(
+                                sl_oid_check, timeout=3,
+                            )
+                        except Exception:
+                            sl_fill_price = None
+
                 # Fetch exit price from Zerodha's day position data with multiple fallbacks
-                exit_price = None
+                exit_price = sl_fill_price  # may be None; will fall through
                 
                 # BUG FIX: Try multiple sources for exit price
                 # 1. Try Zerodha position data (sell_price for BUY, buy_price for SELL)
@@ -680,30 +714,53 @@ class OrderEngine:
                     pnl = (p["entry_price"] - exit_price) * p["qty"]
 
                 # Cancel pending SL-M order for bot-opened positions
+                # (skip when SL-M already fired — there's nothing to cancel).
                 sl_oid = p.get("_sl_order_id")
-                if sl_oid and not self.cfg.DRY_RUN:
+                if sl_oid and not self.cfg.DRY_RUN and not sl_fired:
                     try:
                         self.zerodha.cancel_order(sl_oid)
                         self.log.info(f"Cancelled orphaned SL-M {sl_oid} for {p['symbol']}")
                     except Exception:
                         pass  # order may already be cancelled/completed
+                if sl_oid:
                     self._pending_order_ids.discard(sl_oid)
                     p["_sl_order_id"] = None
 
                 origin = "External" if p.get("_external") else "Bot"
                 p["status"] = "CLOSED"
                 p["exit_price"] = round(exit_price, 2)
-                p["exit_reason"] = "EXTERNAL_CLOSE"
+                if sl_fired:
+                    # Exchange SL-M fired between our polling cycles — attribute
+                    # to STOP_LOSS, not EXTERNAL_CLOSE. Also feed the whipsaw
+                    # guard via record_sl_hit() so consecutive SL behaviour stays
+                    # consistent with software-detected stops.
+                    p["exit_reason"] = "STOP_LOSS"
+                else:
+                    p["exit_reason"] = "EXTERNAL_CLOSE"
                 p["exit_time"] = now_ist().strftime("%H:%M:%S")
                 p["pnl"] = round(pnl, 2)
                 # Record exit time for per-symbol re-entry cooldown (Roadmap #161).
                 self._last_exit_time[f"{p['symbol']}_{p['side']}"] = now_ist()
-                self.log.info(
-                    f"{origin} position closed by user: {p['side']} {p['qty']}x "
-                    f"{p['symbol']} @ Rs.{exit_price:.2f} | P&L: Rs.{pnl:+,.2f}"
-                )
-                self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
-                                 p["qty"], exit_price, "User closed via Zerodha app")
+                if sl_fired:
+                    pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
+                    self.log.info(
+                        f"Exchange SL-M fired for {p['symbol']} (detected via sync, "
+                        f"order {sl_oid_check}): {p['side']} {p['qty']}x "
+                        f"@ Rs.{exit_price:.2f} | P&L: {pnl_color}Rs.{pnl:+,.2f}\033[0m"
+                    )
+                    self._log_action("EXIT", p["symbol"], p["side"], p["qty"],
+                                     exit_price, "STOP_LOSS")
+                    self.record_sl_hit()
+                    # Track in _bot_closed_positions so a second sync pass in the
+                    # same cycle doesn't re-process this as something else.
+                    self._bot_closed_positions.add((p["symbol"], p["side"], p["qty"]))
+                else:
+                    self.log.info(
+                        f"{origin} position closed by user: {p['side']} {p['qty']}x "
+                        f"{p['symbol']} @ Rs.{exit_price:.2f} | P&L: Rs.{pnl:+,.2f}"
+                    )
+                    self._log_action("EXTERNAL_CLOSE", p["symbol"], p["side"],
+                                     p["qty"], exit_price, "User closed via Zerodha app")
                 continue
 
             # ── Partial external close detection (Roadmap #151) ─────
