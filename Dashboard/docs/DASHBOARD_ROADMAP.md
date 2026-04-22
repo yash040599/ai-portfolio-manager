@@ -61,6 +61,7 @@ Dashboard/
 3. **Surface silent loss patterns** that daily reports miss: per-day-of-week, per-time-bucket, per-exit-reason, per-symbol, per-score-bucket. Each pattern is a strategy improvement candidate.
 4. **Data finality awareness** — clearly distinguish API-verified (day-of, may change) from sheet-verified (T+1, frozen). Numbers shown as final must come ONLY from sheet-verified rows.
 5. **In-loop verification trigger** — when sheet verification is pending, the HTML can launch the import flow with one click. Closes the gap between *"I should run the importer"* and *"I actually did"*.
+6. **Tax-filing-ready** — turn a year of trades into ITR-3-shaped numbers, an advance-tax schedule, a proof-document folder, and a CA-friendly export. Make ITR season a 30-minute task instead of a weekend of spreadsheet wrangling. See [TAX_GUIDE.md](../../docs/TAX_GUIDE.md) for the regulatory rules this builds on.
 
 ---
 
@@ -104,6 +105,65 @@ decisions risks compounding small reporting errors into the wrong call.
 | D13 | **Strategy-version timeline** — vertical timeline of git commits affecting strategy, overlaid on cumulative P&L curve. Visually answer: *"did P&L improve after we shipped #192?"*. Read `git log` + match dates to trades | LOW | High | Medium | Pending (after D4) |
 | D14 | **Cost-of-friction breakdown** — pie chart of where money goes on a losing day: brokerage / STT / GST / exchange / SEBI / stamp / actual losses. Validates the "reduce trade frequency" hypothesis. Reuse `tax_summary.py` | LOW | Medium | Low | Pending |
 | D15 | **Live-mode mini-dashboard** — read-only HTTP page (Flask single-route) hosted on the trading machine that auto-refreshes every 30s during market hours. Shows current open positions, today's P&L (provisional), open MTM, last 5 entries/exits. NOT for analytics — just for "is the bot alive and what's it doing" | LOW | High | High | Pending |
+| D16 | **Tax filing module — FY summary view** — new `Dashboard/tax/` sub-package. Reads `intraday_tax_ledger` (sheet-verified only) + `capital_gains_ledger` for the chosen FY. Outputs an ITR-3-friendly summary: speculative business gross profit, total deductible expenses (brokerage / STT / exchange / GST / SEBI / stamp), net speculative income, turnover (absolute-sum method per [TAX_GUIDE §7](../../docs/TAX_GUIDE.md)), STCG/LTCG split. Reuse `scripts/tax_summary.py` as the data layer; this module just adds presentation + Schedule-BP framing | HIGH | High | Low | Pending |
+| D17 | **Tax projection / what-if engine** — user inputs (or CLI flag) projected total income for the FY (salary + other sources). Module pulls current FY intraday net + capital-gains net, applies Budget-2025 new-regime slabs from a versioned `Dashboard/tax/slabs.py`, computes projected total tax, advance-tax due dates with cumulative %, and Section-87A rebate eligibility. Output: "If FY ends today, total tax = Rs.X; next advance tax due Sep 15 = Rs.Y". Versioned slabs file so FY 2027-28 changes are a one-line config | HIGH | High | Medium | Pending |
+| D18 | **Documentary-proof collection workflow** — scaffolds a per-FY folder `data/tax_proofs/FY_<YYYY>/` with sub-folders `broker/`, `api_subscriptions/`, `software/`, `hardware/`, `internet/`, `electricity/`, `claude_api/`, `misc/`. Dashboard shows a checklist UI ("Have you saved Zerodha Console statement? Kite Connect Rs.500/mo bills × 12? Anthropic monthly invoices?") with last-modified-date per slot. A "Mark collected" button writes a manifest JSON `proofs_manifest.json` listing every file with SHA-256 + tag (e.g. `kite_connect_apr_2026`). At ITR time the dashboard zips the whole folder + manifest as `FY_<YYYY>_proofs.zip` | HIGH | High | Low | Pending |
+| D19 | **Charge anomaly detector** — for each trading day where both `verified='verified'` and `sheet_verified='verified'` rows exist, compute per-charge-bucket drift (brokerage, STT, exchange, GST, SEBI, stamp) between API-day-of vs sheet-T+1. Flag any bucket drift > 5% or any total-charge drift > 2%. List on dashboard "Days where Zerodha sheet differed materially from API". Useful for tax (final number is sheet) and for noticing broker billing issues | MEDIUM | Medium | Low | Pending |
+| D20 | **Loss carry-forward ledger** — new SQLite table `loss_carryforward` tracking speculative losses pending offset (4-year window per [TAX_GUIDE §6](../../docs/TAX_GUIDE.md)) and STCL/LTCL (8-year window). Dashboard shows: "Rs.X speculative loss from FY 2026-27 expires after FY 2030-31; current FY profit Rs.Y absorbs Rs.Z; remaining Rs.W". Critical for not letting carry-forwards lapse silently | MEDIUM | High | Medium | Pending |
+| D21 | **Advance-tax tracker + reminder** — reads projection from D17. Shows the four advance-tax due dates (Jun 15 / Sep 15 / Dec 15 / Mar 15) with cumulative-% targets, amount due each, amount paid so far (manual entry → stored in `advance_tax_payments` table). Highlights upcoming deadline within 14 days. Optional: writes an iCal `.ics` reminder users can import to their calendar | MEDIUM | Medium | Low | Pending |
+| D22 | **AIS / Form 26AS reconciliation helper** — user uploads/pastes their AIS JSON or CSV (downloaded from income-tax e-filing portal). Dashboard cross-checks the broker transaction list against AIS-reported aggregates and surfaces any mismatch (e.g. AIS shows 124 trades, our ledger has 122). Reuse `scripts/verify_trades.py` matching logic. Prevents the "got an IT notice for un-reported trades" failure mode | LOW | High | Medium | Pending |
+| D23 | **ITR-3 schedule pre-fill JSON exporter** — emits a structured JSON containing every value an ITR-3 filer needs to type into the income-tax portal: Schedule BP (speculative gross / expenses / net), Schedule CG (STCG/LTCG), Schedule BS (no-account-case minimal), expense breakdown table, audit-applicability flag, advance-tax-paid total. CA gets one file instead of 5 reports. Out of scope: actual ITR XML upload (income-tax portal API is closed) | LOW | High | Medium | Pending |
+
+### Tax Filing Sub-Module (D16–D23) — design notes
+
+All tax-filing items live under `Dashboard/tax/` (separate sub-package
+inside the dashboard so the analytics core and tax module can evolve
+independently):
+
+```
+Dashboard/tax/
+├── __init__.py
+├── slabs.py              # versioned Budget-2025+ new-regime slabs, 87A rebate, cess
+├── fy_summary.py         # D16 — Schedule-BP-shaped aggregations
+├── projection.py         # D17 — what-if engine + advance-tax computation
+├── proofs.py             # D18 — folder scaffolding + manifest writer
+├── anomaly.py            # D19 — charge drift detector
+├── carryforward.py       # D20 — loss carry-forward ledger
+├── advance_tax.py        # D21 — tracker + iCal exporter
+├── reconciliation.py     # D22 — AIS cross-check
+├── itr3_export.py        # D23 — JSON exporter
+└── tests/
+```
+
+**Source of truth split:**
+- [docs/TAX_GUIDE.md](../../docs/TAX_GUIDE.md) — regulatory reference (slabs, ITR forms, deductible expense list, audit thresholds, advance-tax due dates). Updated once per Union Budget.
+- `Dashboard/tax/` — the *workflow* layer that turns those rules into per-trade computations, prefilled forms, and a proofs folder. References TAX_GUIDE wherever a regulatory citation is needed.
+
+**Critical rule (re-stated for tax module):** every number that ends up
+in an ITR-3 field MUST come from `sheet_verified='verified'` rows.
+Provisional rows are never used in tax outputs, even with
+`--include-provisional` (that flag is for analytics only — D16+ ignores
+it and warns if set).
+
+**Document-collection mental model (D18):**
+
+| Slot | What goes there | Source |
+|------|-----------------|--------|
+| `broker/zerodha_tax_pl_<FY>.xlsx` | Official Zerodha Tax P&L | Zerodha Console → Reports → Tax P&L |
+| `broker/zerodha_ledger_<FY>.xlsx` | Funds ledger (proves capital deployed) | Zerodha Console → Funds → Statement |
+| `broker/contract_notes/` | Daily contract notes (zip OK) | Zerodha email or Console |
+| `api_subscriptions/kite_connect_<MMM_YYYY>.pdf` | Kite Connect Rs.500/month invoice (×12) | developers.kite.trade billing |
+| `claude_api/anthropic_<MMM_YYYY>.pdf` | Anthropic monthly invoice | console.anthropic.com → Settings → Billing |
+| `software/` | Other paid trading tools (data feeds, screeners) | vendor invoices |
+| `hardware/laptop_invoice.pdf` | One-time computer purchase (depreciable) | purchase invoice |
+| `internet/<MMM_YYYY>.pdf` | ISP bills (×12, claim a proportion) | ISP portal |
+| `electricity/<MMM_YYYY>.pdf` | Electricity bills (×12, optional, claim small proportion) | utility portal |
+| `misc/` | CA fees, books, courses, stamp paper for rent agreement | as incurred |
+
+The dashboard does NOT scrape any vendor portal automatically (creds
+risk + ToS risk). It just provides the folder skeleton, the checklist,
+and the manifest. User uploads files manually. This is intentional —
+tax docs are too important to entrust to a scraper.
 
 ---
 
@@ -204,6 +264,51 @@ decisions risks compounding small reporting errors into the wrong call.
 │  SEBI + Stamp:  Rs. 70  ( 9%)                                    │
 │  Total:         Rs.780                                           │
 │  → 18.4% of gross P&L went to charges. Target < 15%.             │
+└──────────────────────────────────────────────────────────────────┘
+
+┌─ TAX FILING — FY 2026-27 (D16–D23) ─────────────────────────────┐
+│  Schedule BP (speculative business income)                       │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Gross speculative profit:     Rs.   12,450               │    │
+│  │ Deductible expenses:          Rs.    9,820               │    │
+│  │   ├─ Brokerage / exchange:    Rs.    4,200               │    │
+│  │   ├─ STT:                     Rs.    2,100               │    │
+│  │   ├─ GST + SEBI + stamp:      Rs.    1,520               │    │
+│  │   ├─ Kite Connect API (×12):  Rs.    6,000               │    │
+│  │   ├─ Anthropic Claude (×7):   Rs.    1,800               │    │
+│  │   └─ Internet (40% of ×12):   Rs.      …                 │    │
+│  │ Net speculative income:       Rs.    2,630               │    │
+│  │ Turnover (absolute-sum):      Rs.   28,400  (no audit)   │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Tax projection (your salary input: Rs. 22,00,000)               │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Total income (salary + speculative + STCG):              │    │
+│  │   Rs. 22,02,630 → slab 25% on the marginal Rs.2,630      │    │
+│  │ Projected total tax (incl 4% cess):  Rs. 3,12,580        │    │
+│  │ Section 87A rebate:                  N/A (income > 12L)  │    │
+│  │ Advance tax paid YTD:                Rs. 2,00,000        │    │
+│  │ Next due (Sep 15, 45% target):       Rs.    40,661       │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Loss carry-forward                                              │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ Speculative loss FY 2025-26:  Rs.  8,200  (expires FY30) │    │
+│  │ Absorbed by current FY:       Rs.  8,200                 │    │
+│  │ Remaining:                    Rs.      0  ✓              │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Documentary proofs (data/tax_proofs/FY_2026/)                   │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │ ✓ Zerodha Tax P&L                                        │    │
+│  │ ✓ Zerodha funds ledger                                   │    │
+│  │ ⚠ Kite Connect invoices (10/12 — Feb, Mar missing)       │    │
+│  │ ⚠ Anthropic invoices    (5/7 — Jan, Feb missing)         │    │
+│  │ ✗ Internet bills        (0/12)        [ Mark collected ] │    │
+│  │ ✗ Electricity bills     (0/12 — optional)                │    │
+│  │ ─────────────────────────────────────────────────────── │    │
+│  │ [ Export FY_2026_proofs.zip ]   [ Open ITR-3 JSON ]      │    │
+│  └──────────────────────────────────────────────────────────┘    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 

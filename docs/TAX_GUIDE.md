@@ -100,6 +100,12 @@ Download from [Console](https://console.zerodha.com) → **Tax P&L**:
 Since intraday trading is **business income**, you can deduct legitimate
 business expenses from your gross profit:
 
+> **Workflow:** the per-FY proof folder (`data/tax_proofs/FY_<YYYY>/`)
+> and the documentary-proof checklist live inside the upcoming
+> dashboard — see [Dashboard/docs/DASHBOARD_ROADMAP.md](../Dashboard/docs/DASHBOARD_ROADMAP.md) item D18
+> for the folder layout (broker / api_subscriptions / claude_api /
+> hardware / internet / electricity / misc) and the manifest format.
+
 | Expense | Deductible? | Notes |
 |---------|-------------|-------|
 | **Brokerage** | ✅ Yes | Zerodha's Rs.20/order or 0.03% |
@@ -110,7 +116,7 @@ business expenses from your gross profit:
 | **Stamp duty** | ✅ Yes | 0.003% on buy side |
 | **Internet bill** (proportion for trading) | ✅ Yes | Keep bills as proof |
 | **Computer/laptop depreciation** | ✅ Yes | Proportion used for trading |
-| **Trading software/subscriptions** | ✅ Yes | Zerodha Connect Rs.500/mo, data feeds |
+| **Trading software/subscriptions** | ✅ Yes | Kite Connect API Rs.500/month, data feeds, screeners |
 | **Claude AI API costs** | ✅ Yes | Directly used for trade decisions |
 | **Advisory/research subscriptions** | ✅ Yes | If used for trading |
 | **Electricity** (proportion) | ⚠️ Arguable | Keep records if claiming |
