@@ -5,7 +5,7 @@
 > Touches NO strategy/order/config code. Safe to iterate on
 > independently of live trading.
 >
-> **Pickup window:** weekend sessions when live trading is closed.
+> **Status:** Phase 3 — upcoming. Multi-session build (D1–D15).
 >
 > **Location:** all dashboard code, docs, templates, and tests live
 > under the top-level `Dashboard/` folder, isolated from the trading

@@ -19,7 +19,7 @@ Copilot/automation should follow this contract so updates are
 consistent across edits.
 
 Structure (do NOT reorder, do NOT merge):
-  1. What it does       — 2 modes (Phase 1, Phase 2). One paragraph + bullets.
+  1. What it does       — 3 modes (Phase 1, Phase 2, Phase 3 upcoming). One paragraph + bullets.
   2. Quick start        — install + first run, max 7 commands.
   3. Documentation map  — table of links to docs/* (single source of truth).
   4. Prerequisites      — bullets only.
@@ -99,6 +99,25 @@ python main.py --mode trade           # NoAI (default)
 python main.py --mode trade --ai      # with Claude
 ```
 
+### Phase 3 — Profitability dashboard (upcoming)
+
+A dedicated **read-only analytics layer** — not yet shipped. Will
+launch via `python main.py --mode dashboard` and render a single
+consolidated view (text or HTML) over the trades DB to answer one
+question: *"is the bot profitable enough to scale capital?"*.
+
+- Sheet-verified data only (T+1 frozen P&L, not provisional API numbers).
+- Capital-ladder traffic-light verdict (GREEN / AMBER / RED) tied to win-rate, profit factor, max-drawdown thresholds.
+- Per-side / day-of-week / time-bucket / exit-reason / score-bucket / symbol diagnostics to surface silent loss patterns.
+- Pending-verification banner with one-click trigger for `scripts/import_zerodha_taxpnl.py`.
+- Lives in its own [Dashboard/](Dashboard/) folder, isolated from the trading bot. Touches no strategy/order code.
+
+```
+python main.py --mode dashboard       # not yet implemented
+```
+
+Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (15 items, D1–D15).
+
 ### Historical candle cache
 
 - `data/candle_cache.db` (SQLite) keeps prior days' candles to avoid
@@ -134,7 +153,7 @@ their content.
 | [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 34-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
 | [docs/STRATEGY_V1.md](docs/STRATEGY_V1.md) | V1 architecture (deprecated, frozen) |
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
-| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Upcoming** — Profitability dashboard roadmap (lives in its own `Dashboard/` folder, weekend-pickup track) |
+| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (upcoming)** — Profitability dashboard roadmap; lives in its own `Dashboard/` folder |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | V3 research ideas (ML scoring, options chain, Claude narrative) |
 | [docs/TAX_GUIDE.md](docs/TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 
@@ -226,6 +245,7 @@ Open [config.py](config.py). Common settings:
 | `python main.py --mode trade --nifty 150` | Override scan universe |
 | `python main.py --mode trade --v1` | V1 legacy (deprecated) |
 | `python main.py --mode login` | Test Zerodha login only |
+| `python main.py --mode dashboard` | **Phase 3 (upcoming)** — launch profitability dashboard. See [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) |
 
 **Ctrl+C** triggers graceful shutdown — squares off all positions first.
 Phase 2 can be started any time (handles weekends / NSE holidays / late
@@ -262,6 +282,8 @@ ai-portfolio-manager/
 │   └── performance_tracker.py    # SQLite trades + analyses
 ├── scripts/                      # see Sections 9 + 10 for tables
 ├── docs/                         # see Section 3 doc map
+├── Dashboard/                    # 🚧 Phase 3 (upcoming) — read-only analytics layer
+│   └── docs/DASHBOARD_ROADMAP.md # full plan (D1–D15)
 ├── data/                         # gitignored (trades.db, tokens, etc.)
 ├── reports/                      # generated; gitignored
 └── logs/                         # rotating logs; gitignored
