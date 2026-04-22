@@ -35,13 +35,14 @@ This document is the **history log** of every strategy improvement, the **backlo
 3. Add it under the matching **category** heading in **Completed** (Indicators / Risk Management / Execution / Market Intelligence / Infrastructure / Bug Fixes). If none fits, add a new category heading — do NOT create per-review/per-date sub-headings.
 4. Keep the one-line description short but specific. If context matters, use a longer description on the same row (see items #137, #140, #146).
 5. Bump the count in the category sub-heading and the top-line Completed count.
-6. If it changes user-visible behaviour, also:
+6. **When an item ships, fully remove it from Pending AND from Pending — Details.** The Completed table is the historical record; do not leave `✅ Completed (see #N)` stubs in either place. Decrement the Pending header count to match.
+7. If it changes user-visible behaviour, also:
    - Update the relevant section in [STRATEGY_V2.md](STRATEGY_V2.md).
    - If it introduces a new technical term, add a glossary entry there.
-7. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
-8. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
-9. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
-10. If the idea is plausible but rests on too few real trades to justify shipping, add it to **Pending — Awaiting Trade Data** with a clear, measurable promotion trigger (sample size + threshold). Do NOT add it to the main Pending table until that trigger fires.
+8. If the idea is still planned, add it to **Pending**. The Pending table is sorted by **priority first** (HIGH → MEDIUM → LOW), then by **impact** (Highest → High → Medium → Low) descending, then by **effort** (Low → Medium → High) ascending. The `#` column is just the historical id — row position is by priority, not by number. Insert the new row at the correct sorted position; do NOT append blindly to the bottom.
+9. Also add a long-form entry under **Pending — Details** in the same priority order as the table. Include: Priority, Today (the gap), Fix, Effort.
+10. If the idea is explicitly rejected, add it to **Removed** with the reason (future-you will thank you).
+11. If the idea is plausible but rests on too few real trades to justify shipping, add it to **Pending — Awaiting Trade Data** with a clear, measurable promotion trigger (sample size + threshold). Do NOT add it to the main Pending table until that trigger fires.
 
 ---
 
@@ -284,10 +285,10 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 
 ## Pending — Details
 
-In priority order, matching the Pending table above.
-
-### 192. Choppy-Morning Entry Pause
-- **Status**: ✅ Completed (see #192 in Completed table). Shipped 2026-04-22 as `OrderEngine.is_choppy_morning_paused()` armed by `record_nifty_adx()` (manager pushes NIFTY 15-min ADX every NIFTY-recheck tick from `_build_nifty_context`) and `record_chop_exit()` (auto-stamped inside `exit_position` for STAGNANT_EXIT/SIGNAL_DECAY). Pause is sliding 15-min, can re-arm. Kill-switch `CHOPPY_MORNING_PAUSE_ENABLED`.
+In priority order, matching the Pending table above. Once an item ships,
+**delete its block from this section entirely** — the Completed table
+above is the historical record. Do not leave “✅ Completed (see #N)”
+stubs here; they bloat the Pending list and slow review.
 
 ### 193. NSE Early-Close Calendar
 - **Priority**: HIGH
@@ -300,10 +301,6 @@ In priority order, matching the Pending table above.
 - **Today**: VIX *regime* is read at scanner level (#23) and adjusts thresholds, but there's no detector for an *intraday* VIX shock. A 12% VIX spike inside a single 15-min window means a black-swan move is in progress (RBI surprise, geopolitical headline, gap-down on a constituent that's dragging the index). New entries during that window have terrible risk/reward — the volatility gets priced into spreads before a trend establishes.
 - **Fix**: Cache `vix_open` once per session. On each scan, fetch `vix_now`. If `(vix_now - vix_open) / vix_open >= VIX_SPIKE_THRESHOLD_PCT` (default 10) OR `vix_now >= VIX_SPIKE_ABSOLUTE_LEVEL` (default 25), set `_vix_pause_until = now + 15 min` and skip new entries until then. Existing positions managed normally (SL-M, trailing, exits all unaffected). Kill-switch via `VIX_SPIKE_PAUSE_ENABLED`.
 - **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
-- **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
-
-### 166. Unrealised-MTM-Aware Circuit Breaker
-- **Status**: ✅ Completed (see #166 in Completed table). Shipped 2026-04-22. New `OrderEngine.set_latest_quotes()` cache populated by manager monitor loop; new `effective_day_pnl()` adds open-position MTM via `unrealised_pnl(quotes)` when `MTM_AWARE_CB_ENABLED = True`. `check_circuit_breaker()`, `is_soft_stopped()`, and `is_peak_drawdown_stopped()` all switched to `effective_day_pnl()`; peak ratchets on the MTM curve too. Kill-switch `MTM_AWARE_CB_ENABLED`.
 
 ### 144. Bracket Orders (Atomic Entry + SL + Target)
 - **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
@@ -317,12 +314,6 @@ In priority order, matching the Pending table above.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
 - **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
 
-### 194. Strong-Gap ADX Threshold Boost
-- **Status**: ✅ Completed (see #194 in Completed table). Shipped 2026-04-22. Manager arms `OrderEngine.record_strong_gap_day("UP"|"DOWN")` once per session inside `_build_nifty_context` when today's NIFTY gap is ≥ ±1.0% AND continues prior-day direction. `effective_adx_threshold(side)` adds `STRONG_GAP_ADX_DELTA` (+1) and `effective_adx_override_score(side)` adds `STRONG_GAP_OVERRIDE_DELTA` (+0.5) **only for fade-side trades** (BUY when gap is DOWN, SELL when gap is UP) for the rest of the day. Aligned trades are unaffected. Kill-switch `STRONG_GAP_ADX_BOOST_ENABLED`.
-
-### 195. Average-Down Prevention via `_last_exit_score`
-- **Status**: ✅ Completed (see #195 in Completed table). Shipped 2026-04-22. `exit_position()` stamps `_last_exit_score[f"{symbol}_{side}"] = {score, reason, time}` on every exit. SIGNAL_DECAY callers set `pos["_exit_score"] = fresh_score` first so the gate compares against the decayed re-score; STAGNANT_EXIT falls back to `_entry_score`. New gate runs in `enter_trade` after the per-symbol cooldown (gate 22b): blocks when prior reason ∈ {STAGNANT_EXIT, SIGNAL_DECAY} AND inside `AVG_DOWN_LOOKBACK_MINUTES` (120) AND `|delta| ≤ AVG_DOWN_SCORE_DELTA` (1.0) AND `|last.score| ≥ 0.5` (so a stamped-zero score doesn't spuriously block low-magnitude fresh signals). Override at `|score| ≥ AVG_DOWN_OVERRIDE_SCORE` (8.0). Kill-switch `AVG_DOWN_PREVENTION_ENABLED`.
-
 ### 167. Earnings / Results-Day Blackout
 - **Priority**: MEDIUM
 - **Today**: NSE quarterly results clusters (mid-Jan, mid-Apr, mid-Jul, mid-Oct) routinely produce ±5–10% one-day moves on individual stocks the day of (or after) the announcement. The bot has no awareness of which stock reports today — it can size into INFY 30 minutes before the company drops Q-results. ATR is meaningless on those days.
@@ -335,20 +326,11 @@ In priority order, matching the Pending table above.
 - **Fix**: Every scan, roll up per-sector open P&L. If a sector's exposure is ≤ −1% of budget in ≤ 15 min, tighten SLs on **all** positions in that sector to breakeven immediately — don't wait for individual SLs.
 - **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
 
-### 168. Intraday Equity-Peak Drawdown Stop
-- **Status**: ✅ Completed (see #168 in Completed table).
-
 ### 158. Regime-Shift Opportunity Window
 - **Priority**: LOW (small but non-zero alpha)
 - **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
 - **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
 - **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
-
-### 147. Session-Time-Aware RVol Baseline
-- **Status**: ✅ Completed (see #147 in Completed table). Shipped 2026-04-22 as `RVOL_FLOOR_BY_HOUR` hour-bucket scaling on the existing 0.7× floor (heavier reduction during 12:00 hour, light reduction at 11/13). Uses live volume + scan fallback path.
-
-### 196. Profitability Dashboard
-- **Status**: Tracked separately in [../Dashboard/docs/DASHBOARD_ROADMAP.md](../Dashboard/docs/DASHBOARD_ROADMAP.md). All dashboard code and docs live under the top-level `Dashboard/` folder. Pure read-only analytics layer with its own multi-session implementation plan (D1–D15). Sheet-verified data finality contract documented there.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)
@@ -356,13 +338,4 @@ In priority order, matching the Pending table above.
 - **Fix**: Replay V2 scoring on historical 15-min data, simulate ATR-based entries/exits, compute win rate per indicator combination.
 - **Source**: Every professional quant desk backtests before going live.
 - **Note**: We have 80+ live trades with full indicator snapshots in SQLite. Use `python scripts/view_performance.py --summary` to identify patterns before building a full framework.
-
-### 169. Defensive `score == 0` Entry Skip
-- **Status**: ✅ Completed (see #169 in Completed table).
-
-### 170. Move Claude Model String Out of `generate_sheet.py`
-- **Status**: ✅ Completed (see #170 in Completed table).
-
-### 41. Holiday-Shifted Expiry Detection
-- **Status**: ✅ Completed (see #41 in Completed table).
 
