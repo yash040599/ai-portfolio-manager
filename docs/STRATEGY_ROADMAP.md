@@ -348,7 +348,7 @@ In priority order, matching the Pending table above.
 - **Status**: ✅ Completed (see #147 in Completed table). Shipped 2026-04-22 as `RVOL_FLOOR_BY_HOUR` hour-bucket scaling on the existing 0.7× floor (heavier reduction during 12:00 hour, light reduction at 11/13). Uses live volume + scan fallback path.
 
 ### 196. Profitability Dashboard
-- **Status**: Tracked separately in [DASHBOARD_ROADMAP.md](DASHBOARD_ROADMAP.md). Pure read-only analytics layer with its own multi-session implementation plan (D1–D15). Sheet-verified data finality contract documented there.
+- **Status**: Tracked separately in [../Dashboard/docs/DASHBOARD_ROADMAP.md](../Dashboard/docs/DASHBOARD_ROADMAP.md). All dashboard code and docs live under the top-level `Dashboard/` folder. Pure read-only analytics layer with its own multi-session implementation plan (D1–D15). Sheet-verified data finality contract documented there.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)

@@ -134,7 +134,7 @@ their content.
 | [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 34-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
 | [docs/STRATEGY_V1.md](docs/STRATEGY_V1.md) | V1 architecture (deprecated, frozen) |
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
-| [docs/DASHBOARD_ROADMAP.md](docs/DASHBOARD_ROADMAP.md) | Profitability dashboard roadmap (separate, weekend-pickup track) |
+| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Upcoming** — Profitability dashboard roadmap (lives in its own `Dashboard/` folder, weekend-pickup track) |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | V3 research ideas (ML scoring, options chain, Claude narrative) |
 | [docs/TAX_GUIDE.md](docs/TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 

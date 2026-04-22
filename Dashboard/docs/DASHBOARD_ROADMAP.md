@@ -6,6 +6,51 @@
 > independently of live trading.
 >
 > **Pickup window:** weekend sessions when live trading is closed.
+>
+> **Location:** all dashboard code, docs, templates, and tests live
+> under the top-level `Dashboard/` folder, isolated from the trading
+> bot. Trading bot remains the source of truth for the SQLite DB and
+> Zerodha sheet files; the dashboard only **reads** them.
+
+---
+
+## Folder Structure
+
+```
+Dashboard/
+├── docs/
+│   └── DASHBOARD_ROADMAP.md      # this file
+├── __init__.py
+├── cli.py                        # argparse entry; called from main.py --mode dashboard
+├── data_layer.py                 # all DB reads (sheet_verified filtering lives here)
+├── metrics.py                    # win-rate, profit-factor, Sharpe, max-DD, expectancy
+├── verdict.py                    # capital-ladder traffic-light engine
+├── diagnostics.py                # per-side / dow / time-bucket / exit-reason / score / symbol
+├── charts.py                     # matplotlib → base64 PNG helpers
+├── render_text.py                # text-mode output (D1-D3)
+├── render_html.py                # HTML-mode output (D4+)
+├── templates/
+│   ├── dashboard.html            # f-string template (no Jinja)
+│   └── style.css                 # inline-loaded CSS
+├── verification.py               # D5 — pending-verification banner + launch button
+└── tests/
+    ├── test_data_layer.py
+    ├── test_metrics.py
+    └── test_verdict.py
+```
+
+**Rules:**
+- `Dashboard/` is **read-only** w.r.t. trading state. No imports from
+  `services/order_engine.py`, `portfolio/manager.py`, or any module
+  that can place orders. Safe even if dashboard code has bugs.
+- `Dashboard/` may import from `config.py` (for `CAPITAL_LADDER`,
+  paths) and `scripts/tax_db.py` helpers, but only their pure-read
+  functions.
+- New deps stay confined to `Dashboard/`. If we add `flask` for D15,
+  it goes in a separate `Dashboard/requirements.txt` so the live
+  trading bot's deploy footprint stays untouched.
+- `main.py` gets one new line: `--mode dashboard` dispatches to
+  `Dashboard.cli:main()`. That's the only edit outside `Dashboard/`.
 
 ---
 
@@ -44,7 +89,7 @@ decisions risks compounding small reporting errors into the wrong call.
 
 | # | Item | Priority | Impact | Effort | Status |
 |---|------|----------|--------|--------|--------|
-| D1 | **Skeleton + sheet-verified data layer** — create `scripts/profitability_dashboard.py` with `--text` mode only. Read `intraday_tax_ledger` filtered to `sheet_verified='verified'`. Show Section A (headline P&L) + Section E (capital-ladder verdict). Print provisional-days banner | HIGH | High | Low | Pending |
+| D1 | **Skeleton + sheet-verified data layer** — scaffold `Dashboard/` folder per Folder Structure section above (`__init__.py`, `cli.py`, `data_layer.py`). Wire `main.py --mode dashboard` to dispatch into `Dashboard.cli:main()`. `--text` mode only. Read `intraday_tax_ledger` filtered to `sheet_verified='verified'`. Show Section A (headline P&L) + Section E (capital-ladder verdict). Print provisional-days banner | HIGH | High | Low | Pending |
 | D2 | **Section B + C metrics** — trade-quality (win rate, profit factor, avg win/loss, R-multiple histogram) + risk (max DD, max consecutive losses, Sharpe, % profitable days). Still text mode | HIGH | High | Low | Pending |
 | D3 | **Section D diagnostics — per-side / per-day-of-week / per-time-bucket / per-exit-reason / per-symbol / per-score-bucket / per-regime breakdowns**. Each one is one helper function reusing aggregation logic from `view_performance.py` | HIGH | High | Medium | Pending |
 | D4 | **HTML mode (`--html`)** — render `reports/dashboard/<YYYY-MM-DD>.html` using a stdlib Jinja-style template (or just f-strings + a CSS file). Embed matplotlib charts as base64 PNGs. No JS required | MEDIUM | High | Medium | Pending |
@@ -225,8 +270,8 @@ python main.py --mode dashboard --html --open
 ```
 
 Wire `--mode dashboard` in `main.py` so users don't need to remember the
-script path. Keep `scripts/profitability_dashboard.py` as the actual
-implementation and treat `main.py` as a thin dispatcher (matches existing
+import path. Keep `Dashboard/cli.py` as the actual entry point and
+treat `main.py` as a thin dispatcher (matches existing
 `--mode analyze` / `--mode trade` pattern).
 
 ### Capital ladder config
