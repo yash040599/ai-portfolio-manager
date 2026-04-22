@@ -35,6 +35,18 @@ from core.zerodha_client import ZerodhaClient
 
 class OrderEngine:
 
+    # Reversal pattern sets used by the pattern-direction entry veto
+    # (#190). Names match services/candle_patterns.py output strings
+    # and mirror the sets used by manager_v2._signal_reversal_exit().
+    _BEARISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+        "EVENING_STAR", "BEARISH_ENGULFING", "BEARISH_HARAMI",
+        "SHOOTING_STAR", "HANGING_MAN", "THREE_BLACK_CROWS",
+    })
+    _BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+        "MORNING_STAR", "BULLISH_ENGULFING", "BULLISH_HARAMI",
+        "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
+    })
+
     def __init__(
         self,
         config:  type[Config],
@@ -1467,18 +1479,28 @@ class OrderEngine:
         # doesn't exist in Kite's response so avg_volume is always 0.
         # We fall back to scan-time RVol from the indicator snapshot.
         if not self.cfg.DRY_RUN:
+            # Session-time-aware RVol floor (Roadmap #147). NSE intraday
+            # volume is U-shaped \u2014 the linear-prorated RVol over-rejects
+            # midday and under-rejects opens/closes. Scale 0.7\u00d7 floor by
+            # the hour bucket. Falls back to 1.0\u00d7 outside table or when
+            # disabled.
+            rvol_floor = 0.7
+            if self.cfg.RVOL_TIME_NORMALIZATION_ENABLED:
+                hour_now = now_ist().hour
+                bucket = self.cfg.RVOL_FLOOR_BY_HOUR.get(hour_now, 1.0)
+                rvol_floor = round(0.7 * bucket, 2)
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
             live_volume = quote_data.get("volume", 0)
             avg_volume = quote_data.get("average_volume", 0)
             if avg_volume > 0 and live_volume > 0:
                 rvol = live_volume / avg_volume
-                if rvol < 0.7:
+                if rvol < rvol_floor:
                     self.log.warning(
-                        f"{symbol}: live RVol {rvol:.1f}x (< 0.7x avg) — "
+                        f"{symbol}: live RVol {rvol:.1f}x (< {rvol_floor:.2f}x avg) — "
                         f"low volume, skipping entry"
                     )
                     return False
-                self.log.info(f"  ✓ {symbol}: RVol {rvol:.1f}x OK (≥0.7x)")
+                self.log.info(f"  ✓ {symbol}: RVol {rvol:.1f}x OK (\u2265{rvol_floor:.2f}x)")
             else:
                 # Zerodha didn't provide average_volume — fall back to
                 # scan-time RVol from the indicator snapshot.
@@ -1491,14 +1513,14 @@ class OrderEngine:
                         scan_rvol = snap.get("rvol", 0)
                     except Exception:
                         pass
-                if scan_rvol > 0 and scan_rvol < 0.7:
+                if scan_rvol > 0 and scan_rvol < rvol_floor:
                     self.log.warning(
-                        f"{symbol}: scan RVol {scan_rvol:.1f}x (< 0.7x) — "
+                        f"{symbol}: scan RVol {scan_rvol:.1f}x (< {rvol_floor:.2f}x) — "
                         f"low volume at scan time, skipping entry"
                     )
                     return False
                 elif scan_rvol > 0:
-                    self.log.info(f"  ✓ {symbol}: scan RVol {scan_rvol:.1f}x OK (≥0.7x, live avg unavailable)")
+                    self.log.info(f"  ✓ {symbol}: scan RVol {scan_rvol:.1f}x OK (\u2265{rvol_floor:.2f}x, live avg unavailable)")
                 else:
                     self.log.info(f"  ⚠ {symbol}: volume data unavailable — proceeding without RVol check")
 
@@ -1836,6 +1858,35 @@ class OrderEngine:
                     f"extended oversold move. Skipping."
                 )
                 return False
+
+        # ── Pattern-direction entry veto (Roadmap #190) ───────────
+        # Mirror of #174 SIGNAL_REVERSAL exit, applied at ENTRY.
+        # If the entry-tick patterns include an opposite-side reversal
+        # (e.g. BUY with BEARISH_ENGULFING) AND |score| is below the
+        # high-conviction override, skip. Patterns flow into score as
+        # weighted contributions but borderline scores can clear the
+        # main gate even when the chart is printing a flip pattern.
+        # Empirical: PNB BUY @ +6.1 / TRENT BUY @ +6.4 both with
+        # BEARISH_ENGULFING on 2026-04-22 \u2014 both stagnant losers.
+        if self.cfg.PATTERN_VETO_ENABLED:
+            entry_patterns = trade.get("_entry_patterns") or []
+            if entry_patterns:
+                pset = {str(p).upper() for p in entry_patterns}
+                opposite = (
+                    self._BEARISH_REVERSAL_PATTERNS if side == "BUY"
+                    else self._BULLISH_REVERSAL_PATTERNS
+                )
+                conflicts = pset & opposite
+                if conflicts:
+                    score_abs_pv = abs(trade.get("_entry_score", 0) or 0)
+                    if score_abs_pv < self.cfg.PATTERN_VETO_OVERRIDE_SCORE:
+                        self.log.warning(
+                            f"{symbol}: {side} pattern {sorted(conflicts)[0]} "
+                            f"contradicts direction (score {score_abs_pv:.1f} "
+                            f"< {self.cfg.PATTERN_VETO_OVERRIDE_SCORE:.1f} override). "
+                            f"Skipping."
+                        )
+                        return False
 
         # ── ADX + DI directional gate (Roadmap #157) ──────────────
         # Reject entries on chop days (ADX below threshold) UNLESS the

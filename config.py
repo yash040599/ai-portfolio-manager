@@ -814,6 +814,46 @@ class Config:
     LUNCH_LULL_END_MINUTE:      int   = 15
     LUNCH_LULL_SCORE_OVERRIDE:  float = 6.0
 
+    # ── Pattern-direction entry veto (Roadmap #190) ──────────
+    # Mirror of the SIGNAL_REVERSAL exit (#174) applied at ENTRY.
+    # Candle patterns flow into combined_score as weighted contributions
+    # but never act as a hard veto. A BUY can clear |score| ≥ 6.0 even
+    # when the entry-tick pattern set contains a bearish reversal
+    # (BEARISH_ENGULFING, EVENING_STAR, BEARISH_HARAMI, SHOOTING_STAR,
+    # HANGING_MAN, THREE_BLACK_CROWS) — and vice-versa for SELL with
+    # the bullish set. Today's PNB BUY @ +6.1 with BEARISH_ENGULFING
+    # and TRENT BUY @ +6.4 with BEARISH_ENGULFING both stagnated.
+    #
+    # Gate: if entry-tick patterns include an opposite-side reversal
+    # AND |score| < PATTERN_VETO_OVERRIDE_SCORE, skip the entry.
+    # Set PATTERN_VETO_ENABLED = False to disable.
+    PATTERN_VETO_ENABLED:        bool  = True
+    PATTERN_VETO_OVERRIDE_SCORE: float = 8.0
+
+    # ── Session-time-aware RVol normalization (Roadmap #147) ────
+    # NSE intraday volume is U-shaped: heavy 09:15-10:30, light 11:00-
+    # 13:00, heavy 13:30-15:30. The scanner's prorated RVol divides
+    # today's volume so far by the linear time fraction — which over-
+    # estimates expected midday volume and under-estimates morning/
+    # close volume. The 0.7× entry floor was calibrated on full-day
+    # average and rejects valid trades during the lunch trough.
+    #
+    # Approach: scale the 0.7 floor by an hour-bucket multiplier.
+    # E.g. at 12:00 the multiplier is 0.7 → effective floor 0.49,
+    # so a 0.5× RVol observed at noon now passes (it would have
+    # been mid-pack relative to typical noon volume).
+    # Buckets cover 09-15. Hours outside fall back to 1.0 (no scaling).
+    RVOL_TIME_NORMALIZATION_ENABLED: bool = True
+    RVOL_FLOOR_BY_HOUR: dict[int, float] = {
+        9:  1.00,  # opening surge — keep strict
+        10: 1.00,
+        11: 0.85,  # mid-morning fade
+        12: 0.70,  # lunch trough
+        13: 0.85,  # post-lunch warm-up
+        14: 1.00,
+        15: 1.00,  # closing surge
+    }
+
     # ══════════════════════════════════════════════════════════════
     # BUDGET REGIME — DYNAMIC CONFIG BY ACCOUNT SIZE (Roadmap #165)
     # ══════════════════════════════════════════════════════════════

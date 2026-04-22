@@ -957,6 +957,7 @@ class StockScannerV2(StockScanner):
                 "_entry_adx": tech.get("adx", {}).get("adx", 0),
                 "_entry_plus_di": tech.get("adx", {}).get("plus_di", 0),
                 "_entry_minus_di": tech.get("adx", {}).get("minus_di", 0),
+                "_entry_patterns": list(ps.get("patterns", []) or []),
                 "_indicator_snapshot": self._build_indicator_snapshot(tech, c),
             })
 
