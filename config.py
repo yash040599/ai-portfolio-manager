@@ -814,6 +814,60 @@ class Config:
     LUNCH_LULL_END_MINUTE:      int   = 15
     LUNCH_LULL_SCORE_OVERRIDE:  float = 6.0
 
+    # ── Choppy-Morning Entry Pause (Roadmap #192) ─────────────────
+    # On weak-trend mornings (NIFTY ADX < CHOPPY_PAUSE_ADX_THRESHOLD
+    # for ≥ CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS in the 09:30 –
+    # CHOPPY_PAUSE_WINDOW_END_HOUR:MINUTE window) AND the bot has
+    # already churned out ≥ CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS
+    # entries via STAGNANT_EXIT or SIGNAL_DECAY in the last
+    # CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES, set a sliding pause
+    # of CHOPPY_PAUSE_MINUTES on NEW entries. Existing positions
+    # are managed normally. Pause re-arms after expiry, so a chop
+    # morning can pause multiple times.
+    CHOPPY_MORNING_PAUSE_ENABLED:                 bool  = True
+    CHOPPY_PAUSE_ADX_THRESHOLD:                   float = 16.0
+    CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS:           int   = 3
+    CHOPPY_PAUSE_MINUTES:                         int   = 15
+    CHOPPY_PAUSE_WINDOW_START_HOUR:               int   = 9
+    CHOPPY_PAUSE_WINDOW_START_MINUTE:             int   = 30
+    CHOPPY_PAUSE_WINDOW_END_HOUR:                 int   = 10
+    CHOPPY_PAUSE_WINDOW_END_MINUTE:               int   = 30
+    CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS:       int   = 2
+    CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES:    int   = 10
+
+    # ── Unrealised-MTM-Aware Circuit Breaker (Roadmap #166) ───────
+    # When True, check_circuit_breaker / is_soft_stopped /
+    # is_peak_drawdown_stopped use day_pnl() + unrealised_pnl(quotes)
+    # instead of just day_pnl(). Catches the "five open positions all
+    # bleeding -1.5% MTM = -7.5% real exposure but no SL has fired
+    # yet" pattern. Engine keeps its own quote cache populated by the
+    # monitor loop — enabling/disabling is purely a flag flip.
+    MTM_AWARE_CB_ENABLED:        bool  = True
+
+    # ── Strong-Gap ADX Threshold Boost (Roadmap #194) ─────────────
+    # When today's NIFTY opening gap is GAP_*_STRONG and continues
+    # the prior-day direction (continuation, not reversal), raise
+    # the ADX entry threshold and override score for the rest of the
+    # day. Levels the field for fade-the-gap setups whose intraday
+    # hit-rate sits below 40%. Reverts at session end.
+    STRONG_GAP_ADX_BOOST_ENABLED: bool  = True
+    STRONG_GAP_ADX_DELTA:         float = 1.0
+    STRONG_GAP_OVERRIDE_DELTA:    float = 0.5
+
+    # ── Average-Down Prevention (Roadmap #195) ────────────────────
+    # Per-symbol cooldown (#161) blocks 30 min after any exit. After
+    # that, a fresh same-direction signal at the SAME magnitude as
+    # the prior STAGNANT/DECAY exit means we're chasing the same
+    # false signal twice. Block when |new_score - last_exit_score|
+    # ≤ AVG_DOWN_SCORE_DELTA AND the prior exit was STAGNANT_EXIT
+    # or SIGNAL_DECAY AND the prior exit was within
+    # AVG_DOWN_LOOKBACK_MINUTES. Override at |score| ≥
+    # AVG_DOWN_OVERRIDE_SCORE (real reversal-strength signal).
+    AVG_DOWN_PREVENTION_ENABLED:    bool  = True
+    AVG_DOWN_SCORE_DELTA:           float = 1.0
+    AVG_DOWN_LOOKBACK_MINUTES:      int   = 120
+    AVG_DOWN_OVERRIDE_SCORE:        float = 8.0
+
     # ── Pattern-direction entry veto (Roadmap #190) ──────────
     # Mirror of the SIGNAL_REVERSAL exit (#174) applied at ENTRY.
     # Candle patterns flow into combined_score as weighted contributions
@@ -1293,6 +1347,46 @@ class Config:
             errors.append(
                 f"SIGNAL_DECAY_FRACTION must be in (0, 1): {cls.SIGNAL_DECAY_FRACTION!r}"
             )
+
+        # Choppy-morning pause (#192)
+        if cls.CHOPPY_PAUSE_ADX_THRESHOLD <= 0:
+            errors.append(
+                f"CHOPPY_PAUSE_ADX_THRESHOLD must be > 0: {cls.CHOPPY_PAUSE_ADX_THRESHOLD!r}"
+            )
+        _pos("CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS", cls.CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS)
+        _pos("CHOPPY_PAUSE_MINUTES",               cls.CHOPPY_PAUSE_MINUTES)
+        _pos("CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS",
+             cls.CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS)
+        _pos("CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES",
+             cls.CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES)
+        if not (0 <= cls.CHOPPY_PAUSE_WINDOW_START_HOUR <= 23):
+            errors.append(
+                f"CHOPPY_PAUSE_WINDOW_START_HOUR out of range: "
+                f"{cls.CHOPPY_PAUSE_WINDOW_START_HOUR!r}"
+            )
+        if not (0 <= cls.CHOPPY_PAUSE_WINDOW_END_HOUR <= 23):
+            errors.append(
+                f"CHOPPY_PAUSE_WINDOW_END_HOUR out of range: "
+                f"{cls.CHOPPY_PAUSE_WINDOW_END_HOUR!r}"
+            )
+
+        # Strong-gap ADX boost (#194)
+        if cls.STRONG_GAP_ADX_DELTA < 0:
+            errors.append(
+                f"STRONG_GAP_ADX_DELTA must be ≥ 0: {cls.STRONG_GAP_ADX_DELTA!r}"
+            )
+        if cls.STRONG_GAP_OVERRIDE_DELTA < 0:
+            errors.append(
+                f"STRONG_GAP_OVERRIDE_DELTA must be ≥ 0: {cls.STRONG_GAP_OVERRIDE_DELTA!r}"
+            )
+
+        # Average-down prevention (#195)
+        if cls.AVG_DOWN_SCORE_DELTA < 0:
+            errors.append(
+                f"AVG_DOWN_SCORE_DELTA must be ≥ 0: {cls.AVG_DOWN_SCORE_DELTA!r}"
+            )
+        _pos("AVG_DOWN_LOOKBACK_MINUTES", cls.AVG_DOWN_LOOKBACK_MINUTES)
+        _pos("AVG_DOWN_OVERRIDE_SCORE",   cls.AVG_DOWN_OVERRIDE_SCORE)
 
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)

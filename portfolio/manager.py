@@ -42,7 +42,7 @@ from services.stock_scanner        import StockScanner
 from services.order_engine         import OrderEngine
 from services.report_writer        import ReportWriter
 from services.performance_tracker  import PerformanceTracker
-
+from services.technical_indicators import adx as _calc_adx
 
 class PortfolioManager:
     """
@@ -1293,6 +1293,50 @@ class PortfolioManager:
             except Exception:
                 pass  # VIX data is optional
 
+            # ── NIFTY ADX feed for choppy-morning pause (#192) ────
+            # Compute 15-min NIFTY ADX(14) and feed it to the engine
+            # so the choppy-morning gate has a rolling buffer of recent
+            # trend-strength readings. Fail-soft: any error is swallowed
+            # (gate fails open when buffer is empty).
+            try:
+                to_d   = now_ist().date()
+                from_d = to_d - datetime.timedelta(days=5)
+                n15 = self.zerodha.get_historical(
+                    "NIFTY 50", "NSE", from_d, to_d, "15minute"
+                )
+                if n15 and len(n15) >= 30:
+                    adx_res = _calc_adx(n15[-60:], period=14)
+                    nifty_adx = adx_res.get("adx", 0) if isinstance(adx_res, dict) else 0
+                    if nifty_adx and hasattr(self, "engine") and self.engine is not None:
+                        self.engine.record_nifty_adx(nifty_adx)
+            except Exception as _e:
+                self.log.warning(f"NIFTY ADX feed failed: {_e}")  # gate fails-open
+
+            # ── Strong-gap continuation flag for #194 ─────────────
+            # If today's NIFTY gap is ≥ ±1.0% AND continues prior-day
+            # direction, arm the ADX boost for the rest of the day.
+            # Idempotent — repeated calls inside the same session are
+            # no-ops after the first arming.
+            try:
+                if (
+                    hasattr(self, "engine") and self.engine is not None
+                    and day_open and prev_close and len(nifty_candles) >= 2
+                ):
+                    today_gap_pct = (day_open - prev_close) / prev_close * 100
+                    prev_prev_close = nifty_candles[-2]["close"]
+                    if prev_prev_close > 0:
+                        prior_dir = prev_close - prev_prev_close
+                        is_strong = abs(today_gap_pct) >= 1.0
+                        is_continuation = (
+                            (today_gap_pct > 0 and prior_dir > 0) or
+                            (today_gap_pct < 0 and prior_dir < 0)
+                        )
+                        if is_strong and is_continuation:
+                            gap_dir = "UP" if today_gap_pct > 0 else "DOWN"
+                            self.engine.record_strong_gap_day(gap_dir)
+            except Exception as _e:
+                self.log.warning(f"strong-gap detection failed: {_e}")  # flag stays disarmed
+
             # ── FII/DII bias (if available) ───────────────────────
             fii_dii_text = ""
             if self._fii_dii_bias:
@@ -1873,7 +1917,10 @@ class PortfolioManager:
         """Compact 2-line status during monitor loop — session P&L + net daily totals."""
         open_pos   = self.engine.open_positions()
         closed_pos = self.engine.closed_positions()
-        unrealised = self.engine.unrealised_pnl(quotes)
+        try:
+            unrealised = self.engine.unrealised_pnl(quotes)
+        except ValueError:
+            unrealised = 0.0  # partial quotes — display 0 rather than crash status line
         realised   = self.engine.day_pnl()
         now        = now_ist().strftime("%H:%M:%S")
 

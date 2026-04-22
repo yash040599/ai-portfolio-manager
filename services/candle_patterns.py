@@ -30,6 +30,23 @@
 # ================================================================
 
 
+# ----------------------------------------------------------------
+# Reversal pattern sets (single source of truth).
+# Used by:
+#   - portfolio/manager_v2._signal_reversal_exit() (exit-side flip)
+#   - services/order_engine pattern-direction entry veto (#190)
+# Names match this module's detector output strings exactly.
+# ----------------------------------------------------------------
+BEARISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+    "EVENING_STAR", "BEARISH_ENGULFING", "BEARISH_HARAMI",
+    "SHOOTING_STAR", "HANGING_MAN", "THREE_BLACK_CROWS",
+})
+BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
+    "MORNING_STAR", "BULLISH_ENGULFING", "BULLISH_HARAMI",
+    "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
+})
+
+
 def body(c: dict) -> float:
     """Absolute size of the real body."""
     return abs(c["close"] - c["open"])

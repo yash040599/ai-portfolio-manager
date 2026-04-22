@@ -26,6 +26,37 @@
   SELL on GAP_UP_STRONG unless |score| ≥ 7.5) and signal-reversal hard
   exit (closes held positions when score flips to ±7 with confirming
   reversal candle, skipped if profit ≥ 1× initial risk).
+
+  2026-04-22 sync — Pre-trade check count: 29 → 32. Added:
+    • #190 Pattern-direction entry veto (row 14b) — rejects BUY when bearish
+      reversal pattern present unless |score| ≥ 8.0; mirror for SELL.
+    • #147 Session-time-aware RVol normalization — RVOL_FLOOR_BY_HOUR
+      hour-bucket multiplier so midday lulls don't over-reject valid entries.
+    • #191 Exchange-fired SL-M attribution fix — sync_external_positions
+      now checks SL-M order status before labelling an exit EXTERNAL_CLOSE.
+    • #168 Intraday equity-peak drawdown stop, #41 holiday-shifted expiry,
+      #180 circuit-limit (UC/LC) entry guard (all already shipped earlier).
+    • DRY refactor: BEARISH/BULLISH_REVERSAL_PATTERNS now live in
+      services/candle_patterns (single source of truth shared by entry veto
+      and exit-side signal-reversal).
+
+  2026-04-22 sync (continued) — Pre-trade check count: 32 → 34. Added:
+    • #192 Choppy-morning entry pause (row 0d) — pauses NEW entries when
+      NIFTY ADX < 16 for 3 consecutive scans in the 09:30-10:30 window AND
+      ≥2 STAGNANT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding
+      15-min pause; existing positions managed normally.
+    • #195 Average-down prevention (row 16b) — after the 30-min cooldown,
+      block re-entry of same SYMBOL_SIDE when |new_score - last_exit_score|
+      ≤ 1.0 AND prior exit was STAGNANT/SIGNAL_DECAY within 120 min.
+      Override at |score| ≥ 8.0.
+    • #166 MTM-aware circuit-breaker / soft-stop / peak-drawdown — modify
+      existing rows 0b, 0c (and the hard CB) to include open-position MTM
+      via effective_day_pnl(); kill-switch MTM_AWARE_CB_ENABLED.
+    • #194 Strong-gap ADX boost — when today's NIFTY gap is GAP_*_STRONG
+      AND continues prior-day direction, raise effective_adx_threshold by
+      +1 and effective_adx_override_score by +0.5 for fade-side trades only
+      (BUY on a gap-DOWN day, SELL on a gap-UP day) for the rest of the day.
+      Kill-switch STRONG_GAP_ADX_BOOST_ENABLED.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -249,7 +280,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (31 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
+**Shared across both modes:** pre-filter, entry pipeline (34 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
 
 ---
 
@@ -454,7 +485,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (31 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (34 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -572,13 +603,14 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 31 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 34 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
+| 0d | **Choppy-morning entry pause** (#192) | `CHOPPY_MORNING_PAUSE_ENABLED = True`, `CHOPPY_PAUSE_ADX_THRESHOLD = 16`, `CHOPPY_PAUSE_MINUTES = 15` | Fires FIRST in code (before 0a). Pauses NEW entries when NIFTY ADX < 16 for ≥3 consecutive scans inside the 09:30-10:30 IST window AND ≥2 STAGNANT_EXIT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding 15-min pause; can re-arm multiple times per morning. Existing positions managed normally. Manager feeds NIFTY ADX via `engine.record_nifty_adx()` each NIFTY-recheck tick |
 | 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (6.0). Boundary-exclusive on the right |
-| 0b | **Daily-loss soft stop** (#163) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5` | Reject new entries when day P&L ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
-| 0c | **Peak-drawdown stop** (#168) | `PEAK_DRAWDOWN_STOP_PCT = 1.5`, `PEAK_DRAWDOWN_MIN_PEAK_PCT = 0.5` | Tracks intraday equity high-water mark. Reject new entries when (peak − current day P&L) ≥ 1.5% of budget AND peak itself was ≥ 0.5% of budget (so tiny early swings don't trip). Catches the "+2% by 11 AM, give it back by 13:00" pattern that soft-stop misses (day P&L never crosses zero). Existing positions still managed |
+| 0b | **Daily-loss soft stop** (#163, MTM-aware via #166) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5`, `MTM_AWARE_CB_ENABLED = True` | Reject new entries when `effective_day_pnl()` (closed P&L + open-position MTM, when MTM-aware kill-switch on) ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
+| 0c | **Peak-drawdown stop** (#168, MTM-aware via #166) | `PEAK_DRAWDOWN_STOP_PCT = 1.5`, `PEAK_DRAWDOWN_MIN_PEAK_PCT = 0.5`, `MTM_AWARE_CB_ENABLED = True` | Tracks intraday equity high-water mark using `effective_day_pnl()` so open-position MTM contributes to both peak and current. Reject new entries when (peak − current effective P&L) ≥ 1.5% of budget AND peak itself was ≥ 0.5% of budget (so tiny early swings don't trip). Catches the "+2% by 11 AM, give it back by 13:00" pattern that soft-stop misses (closed-only day P&L never crosses zero). Existing positions still managed |
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
 | 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
 | 2a | **Impact-cost / depth check** | `MAX_IMPACT_COST_PCT = 0.2` | Walk top-5 order-book levels on the side we'd hit (asks for BUY, bids for SELL); compute weighted-average fill for our full qty. Skip if slippage vs LTP > 0.2%, or if visible top-5 depth < our qty. Fail-open (log warning, let trade through) when depth data is missing/malformed. Catches paper-thin top-of-book traps that spread-only misses |
@@ -597,9 +629,11 @@ Every trade must pass these 31 checks in order. If any fails, the trade is rejec
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 | 13 | **Declining re-entry block** | — | If re-entering a stock on the SAME SIDE already traded today, block when new \|score\| < previous \|score\| (setup weakening). Opposite-side re-entries (a real reversal) bypass this gate AND the per-symbol cooldown (16a, keyed by SYMBOL_SIDE); they are protected by the standard entry gates — ADX, RSI, VWAP, gap-coherence (#185) |
 | 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
+| 14b | **Pattern-direction entry veto** (#190) | `PATTERN_VETO_ENABLED = True`, override `PATTERN_VETO_OVERRIDE_SCORE = 8.0` | Mirror of SIGNAL_REVERSAL exit (#174) at ENTRY. If entry-tick patterns include an opposite-side reversal (BUY with `BEARISH_ENGULFING`/`EVENING_STAR`/`BEARISH_HARAMI`/`SHOOTING_STAR`/`HANGING_MAN`/`THREE_BLACK_CROWS`, mirror set for SELL) AND `\|score\| < 8.0`, skip. Catches PNB/TRENT-style 2026-04-22 stagnant losers where score absorbed pattern weight but the chart was printing a flip pattern |
 | 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
 | 16a | **Per-symbol re-entry cooldown** (#161) | `RE_ENTRY_COOLDOWN_MINUTES = 30` | Block re-entry of same SYMBOL_SIDE within 30 min after ANY exit (SL / target / stagnant / external). Opposite direction still allowed. Override at \|score\| ≥ `RE_ENTRY_SCORE_OVERRIDE` (7.0) |
+| 16b | **Average-down prevention** (#195) | `AVG_DOWN_PREVENTION_ENABLED = True`, `AVG_DOWN_SCORE_DELTA = 1.0`, `AVG_DOWN_LOOKBACK_MINUTES = 120`, override `AVG_DOWN_OVERRIDE_SCORE = 8.0` | Runs AFTER cooldown 16a. When the prior exit of the same SYMBOL_SIDE was `STAGNANT_EXIT` or `SIGNAL_DECAY` within the last 120 min AND `\|new_score - last_exit_score\| ≤ 1.0`, reject the re-entry as same-magnitude false signal. Override at `\|score\| ≥ 8.0` for genuine reversal-strength signals. SIGNAL_DECAY callers stamp `pos['_exit_score'] = fresh_score` so the gate compares against the decayed score; STAGNANT_EXIT falls back to `_entry_score` |
 | 17 | **VWAP trend block** | ±0.3% deviation | After 10:15 AM only (VWAP needs ≥1 hour of candles for stability). Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP (fighting institutional flow) |
 | 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 0.8`, override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | Block BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move). Override allowed when \|score\| ≥ 6.0 |
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
@@ -971,7 +1005,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `SIGNAL_REVERSAL_REQUIRE_PATTERN` | True | Require a confirming bearish/bullish reversal candle alongside the score flip |
 | `GAP_COHERENCE_GATE_ENABLED` | True | Kill-switch for the pre-trade gap-coherence gate (#173) |
 | `GAP_COHERENCE_OVERRIDE_SCORE` | 7.5 | `\|score\|` that bypasses the gate (BUY-on-gap-down / SELL-on-gap-up) |
-| `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157) |
+| `ADX_ENTRY_GATE_ENABLED` | True | Kill-switch for the ADX + DI entry gate (#157). When `STRONG_GAP_ADX_BOOST_ENABLED = True` (#194) AND today's NIFTY gap is `GAP_*_STRONG` continuing prior-day direction, the effective threshold is raised by `STRONG_GAP_ADX_DELTA` (+1) and the override score by `STRONG_GAP_OVERRIDE_DELTA` (+0.5) for **fade-side trades only** (BUY on a gap-DOWN day, SELL on a gap-UP day) for the rest of the day. Aligned trades (BUY on gap-UP, SELL on gap-DOWN) ride the institutional flow and don't get the boost |
 | `ADX_MIN_THRESHOLD` | 18.0 | Minimum ADX for entry (chop filter) |
 | `ADX_OVERRIDE_SCORE` | 7.0 | `|score|` threshold that overrides a weak ADX reading |
 | `ATR_SIZING_ENABLED` | True | Kill-switch for ATR-based position sizing (#145) |
@@ -985,6 +1019,10 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `MIN_PROFIT_CHARGE_MULTIPLE` | 2.0 | Gross target profit must be ≥ this × round-trip charges (#162). Set 0 to disable |
 | `DAILY_LOSS_SOFT_STOP_PCT` | 1.5% | Soft-stop new entries when day loss crosses this; existing positions still managed (#163). Set 0 to disable |
 | `LUNCH_LULL_ENABLED` | True | Kill-switch for lunch-lull entry skip (#164) |
+| `CHOPPY_MORNING_PAUSE_ENABLED` | True | Kill-switch for choppy-morning entry pause (#192) — NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits → 15-min pause |
+| `MTM_AWARE_CB_ENABLED` | True | Kill-switch for unrealised-MTM-aware circuit breaker / soft-stop / peak-drawdown (#166) — when on, `effective_day_pnl()` adds open-position MTM to the safety-gate math |
+| `STRONG_GAP_ADX_BOOST_ENABLED` | True | Kill-switch for strong-gap ADX boost (#194) — raises effective ADX threshold + override score on continuation-strong-gap days **for fade-side trades only** (boost is direction-aware) |
+| `AVG_DOWN_PREVENTION_ENABLED` | True | Kill-switch for average-down prevention (#195) — blocks same-magnitude re-entry within 120 min of a STAGNANT/SIGNAL_DECAY exit |
 | `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
 | `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
 | `LUNCH_LULL_SCORE_OVERRIDE` | 6.0 | `|score|` that bypasses the lunch skip |

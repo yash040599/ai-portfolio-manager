@@ -53,8 +53,8 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
+| 193 | NSE early-close calendar — hardcode the ~7 days/year NSE closes at 13:30 IST (Good Friday, Diwali eve, year-end). On those days advance `SQUARE_OFF_HOUR/MINUTE` to 13:25 so we exit ahead of Zerodha's auto-square distress prices | HIGH | Medium | Low |
 | 181 | India VIX intraday-spike pause — when `(VIX_now - VIX_open)/VIX_open ≥ 10%` OR `VIX_now ≥ 25`, pause new entries 15 min; existing positions managed normally | MEDIUM | High | Low |
-| 166 | Unrealised-MTM-aware circuit breaker — include open-position MTM in `day_pnl()` so CB fires before five bleeders all hit individual SLs | MEDIUM | High | Low |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
 | 167 | Earnings/results-day blackout — skip stocks with corporate results announced today (Q1–Q4 season abnormal moves) | MEDIUM | Medium | Medium |
@@ -106,7 +106,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 
-### Completed (163 items)
+### Completed (167 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -133,7 +133,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (37)** | | |
+| **Risk Management (41)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -170,6 +170,10 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 191 | **Exchange-fired SL-M attribution fix** — `sync_external_positions()` previously labelled every position that vanished between two polling cycles as `EXTERNAL_CLOSE` ("User closed via Zerodha app"). When the exchange-resident SL-M order fired server-side BEFORE the bot's 10s polling loop noticed the breach, `exit_position("STOP_LOSS")` was never called, `_bot_closed_positions` was never populated, and a real stop-loss got mis-attributed as a manual user exit. Reported case: GRASIM 2026-04-22 SELL @ Rs.2759.80, exchange SL-M filled @ Rs.2782.90 — user did NOT touch Kite. Fix: before EXTERNAL_CLOSE attribution, if `p['_sl_order_id']` is set AND `zerodha.get_order_status(sl_oid) == "COMPLETE"`, treat as STOP_LOSS instead. Pulls actual SL-M fill price via `get_order_fill_price()` (preserving the #186 / #187 broker-fill-price guarantees), feeds the whipsaw guard via `record_sl_hit()`, and records `_bot_closed_positions` to keep idempotency. Skips the cancel_order() call (nothing to cancel — SL-M is already filled). Fail-safe: any exception reading order status falls through to the original EXTERNAL_CLOSE path. Kill-free: change is structural, not gated. | Risk |
 | 190 | **Pattern-direction entry veto** — mirror of SIGNAL_REVERSAL exit (#174) at ENTRY. New gate in `enter_trade()` after the RSI check, before ADX: if any entry-tick pattern is on the opposite-side reversal set AND `|score| < PATTERN_VETO_OVERRIDE_SCORE` (default 8.0), skip with `"BUY pattern BEARISH_ENGULFING contradicts direction (score 6.4 < 8.0 override)"`. Bearish set (`EVENING_STAR`, `BEARISH_ENGULFING`, `BEARISH_HARAMI`, `SHOOTING_STAR`, `HANGING_MAN`, `THREE_BLACK_CROWS`) blocks BUY; bullish mirror set blocks SELL. Pattern lists exposed as `OrderEngine._BEARISH_REVERSAL_PATTERNS` / `_BULLISH_REVERSAL_PATTERNS` class frozensets, mirroring the V2 manager's exit sets. Scanner now passes `_entry_patterns` from `pattern_summary["patterns"]` so the gate has them at entry time. High-conviction (≥8.0) trades override the veto (same threshold philosophy as gap-coherence #173). Kill-switch `PATTERN_VETO_ENABLED`. Motivating cases: PNB BUY +6.1 with BEARISH_ENGULFING and TRENT BUY +6.4 with BEARISH_ENGULFING (both 2026-04-22, both STAGNANT losers). | Risk |
 | 147 | **Session-time-aware RVol normalization** — NSE intraday volume is U-shaped (heavy 09:15-10:30, light 11:00-13:00, heavy 13:30-15:30). The scanner's prorated RVol divides today's volume so far by the linear time fraction, which over-rejects valid midday entries (volume genuinely lower at noon). Today's lunch-window rejection audit (2026-04-22) showed Rs.524 net opportunity cost from RVol-pinned skips between 11:30-13:30. Fix: scale the 0.7× RVol floor by an hour-bucket multiplier in `RVOL_FLOOR_BY_HOUR` (1.00 at 09/10/14/15, 0.85 at 11/13, 0.70 at 12). Effective floor at noon becomes 0.49× — lets in mid-pack lunch entries that previously got pinned. Applied to BOTH the live-volume RVol path and the scan-RVol fallback path so behavior is consistent regardless of which Kite quote field is populated. Kill-switch `RVOL_TIME_NORMALIZATION_ENABLED`. Hours outside 9-15 fall back to 1.0 (no scaling). | Risk |
+| 192 | **Choppy-morning entry pause** — pauses NEW entries when NIFTY ADX < `CHOPPY_PAUSE_ADX_THRESHOLD` (16) for ≥`CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS` (3) inside the `CHOPPY_PAUSE_WINDOW_START/END` window (09:30-10:30 IST) AND ≥`CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS` (2) of the bot's last `CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES` (10) exits were `STAGNANT_EXIT` or `SIGNAL_DECAY`. Sliding `CHOPPY_PAUSE_MINUTES` (15) pause; can re-arm multiple times per morning. Existing positions managed normally. New `OrderEngine.is_choppy_morning_paused(now)` arms the pause; `record_nifty_adx(adx)` and `record_chop_exit(when)` feed the rolling buffers (chop-exit timestamps stamped automatically inside `exit_position` whenever reason ∈ {STAGNANT_EXIT, SIGNAL_DECAY}). Manager fetches NIFTY 15-min candles in `_build_nifty_context`, computes `adx(period=14)` and pushes via `engine.record_nifty_adx()` each NIFTY-recheck tick. Gate inserted as the very first check in `enter_trade` (before lunch-lull / soft-stop / peak-drawdown). Motivating case: 2026-04-22 GRASIM/WIPRO/ADANIGREEN entered within 6 seconds at 09:53, all exited STAGNANT within 60 min, net -Rs.264. Kill-switch `CHOPPY_MORNING_PAUSE_ENABLED`. | Risk |
+| 166 | **Unrealised-MTM-aware safety gates** — `OrderEngine.check_circuit_breaker()`, `is_soft_stopped()`, and `is_peak_drawdown_stopped()` previously read `day_pnl()` (closed-only). Five positions each bleeding -1.5% MTM = -7.5% real exposure stayed invisible until SLs fired one by one. Fix: new `set_latest_quotes(quotes)` cache populated by the manager monitor loop after each `get_quotes` call; new `effective_day_pnl()` adds `unrealised_pnl(quotes)` on top of `day_pnl()` when `MTM_AWARE_CB_ENABLED = True`. CB / soft-stop / peak-drawdown all switched to `effective_day_pnl()` (peak now ratchets on the MTM curve too). Backwards compatible — empty cache or kill-switch off falls back to closed-only behaviour. Fail-safe: `unrealised_pnl()` exception is swallowed with a WARNING and the helper falls back to closed-only. Kill-switch `MTM_AWARE_CB_ENABLED`. | Risk |
+| 194 | **Strong-gap ADX threshold boost** — fading a `GAP_*_STRONG` that continues NIFTY's prior-day direction is a low-edge setup (institutional opening flow continues, ADX often 18-20 borderline). Without this gate, those trades passed the existing ADX floor and historically posted <40% intraday hit-rate. Fix: new `OrderEngine.record_strong_gap_day(direction)` armed once at session start by the manager when today's NIFTY gap (`(today_open - prev_close) / prev_close`) is ≥ ±1.0% AND its sign matches the prior day's close direction; the manager passes "UP" or "DOWN". Once armed, `effective_adx_threshold(side)` adds `STRONG_GAP_ADX_DELTA` (+1) and `effective_adx_override_score(side)` adds `STRONG_GAP_OVERRIDE_DELTA` (+0.5) **only for fade-side trades** (BUY when gap is DOWN, SELL when gap is UP). Aligned trades that ride institutional flow are unaffected. The ADX-entry gate consumes both via the new override helper. Reverts on fresh `OrderEngine` (i.e. daily restart). Doesn't touch the gap-coherence gate (#173) — that one stays as a separate veto on contradictory entries. Kill-switch `STRONG_GAP_ADX_BOOST_ENABLED`. | Risk |
+| 195 | **Average-down prevention via `_last_exit_score`** — per-symbol cooldown (#161) only blocks 30 min after any exit. After 30 min, a fresh same-direction signal at the same magnitude as the prior exit's signal lets the bot chase the same false signal twice — averaging down with no new information. Fix: `exit_position()` now stamps `_last_exit_score[f"{symbol}_{side}"] = {"score": float, "reason": str, "time": datetime}` on every exit. SIGNAL_DECAY callers (`_signal_decay_exit` in `manager_v2`) set `pos["_exit_score"] = fresh_score` first so the gate compares against the decayed re-score; STAGNANT_EXIT falls back to `_entry_score`. New gate inserted in `enter_trade` after gate 22 (cooldown): if last exit's reason ∈ {STAGNANT_EXIT, SIGNAL_DECAY} AND now − last.time ≤ `AVG_DOWN_LOOKBACK_MINUTES` (120) AND `|new_score - last.score| ≤ AVG_DOWN_SCORE_DELTA` (1.0), reject. Override at `|score| ≥ AVG_DOWN_OVERRIDE_SCORE` (8.0) for genuine reversal-strength signals. Kill-switch `AVG_DOWN_PREVENTION_ENABLED`. Complements per-symbol cooldown #161 by extending the protection beyond the 30-min hard window. | Risk |
 | **Execution (37)** | | |
 | 10 | Partial profit taking (1/3 at 1.5R, trail 50%) | Execution |
 | 11 | Periodic opportunity scanning (30 min, free slots) | Execution |
@@ -282,17 +286,24 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 
 In priority order, matching the Pending table above.
 
+### 192. Choppy-Morning Entry Pause
+- **Status**: ✅ Completed (see #192 in Completed table). Shipped 2026-04-22 as `OrderEngine.is_choppy_morning_paused()` armed by `record_nifty_adx()` (manager pushes NIFTY 15-min ADX every NIFTY-recheck tick from `_build_nifty_context`) and `record_chop_exit()` (auto-stamped inside `exit_position` for STAGNANT_EXIT/SIGNAL_DECAY). Pause is sliding 15-min, can re-arm. Kill-switch `CHOPPY_MORNING_PAUSE_ENABLED`.
+
+### 193. NSE Early-Close Calendar
+- **Priority**: HIGH
+- **Today**: `SQUARE_OFF_HOUR=15, SQUARE_OFF_MINUTE=10` is hardcoded. NSE closes early at 13:30 IST on ~7 days/year (Good Friday, Diwali Muhurat days that double as half-day, year-end half-day, occasional Budget-day half-sessions). On those dates Zerodha auto-squares MIS at 13:25; positions held to our 15:10 routine never get exited by us — we get the broker's distress price (typically 0.5–2% slippage on illiquid names).
+- **Fix**: New `NSE_EARLY_CLOSE_CALENDAR: dict[tuple[int,int,int], tuple[int,int]]` in `config.py` mapping `(YYYY, MM, DD) → (close_HH, close_MM)`. At startup, `Config.apply_session_overrides()` checks today's date; if early-close, override `SQUARE_OFF_HOUR/MINUTE` to `(close_HH, close_MM - 5)` and log a banner. Maintain only the upcoming calendar year (rotate annually like `NSE_HOLIDAYS_2026`). Also tighten `LAST_TRADE_TIME` proportionally. Kill-switch `EARLY_CLOSE_DETECTION_ENABLED`.
+- **Effort**: Low. ~30 lines + dict + startup hook. Calendar maintained manually (Zerodha API doesn't expose it).
+
 ### 181. India VIX Intraday Spike Pause
 - **Priority**: MEDIUM
 - **Today**: VIX *regime* is read at scanner level (#23) and adjusts thresholds, but there's no detector for an *intraday* VIX shock. A 12% VIX spike inside a single 15-min window means a black-swan move is in progress (RBI surprise, geopolitical headline, gap-down on a constituent that's dragging the index). New entries during that window have terrible risk/reward — the volatility gets priced into spreads before a trend establishes.
 - **Fix**: Cache `vix_open` once per session. On each scan, fetch `vix_now`. If `(vix_now - vix_open) / vix_open >= VIX_SPIKE_THRESHOLD_PCT` (default 10) OR `vix_now >= VIX_SPIKE_ABSOLUTE_LEVEL` (default 25), set `_vix_pause_until = now + 15 min` and skip new entries until then. Existing positions managed normally (SL-M, trailing, exits all unaffected). Kill-switch via `VIX_SPIKE_PAUSE_ENABLED`.
 - **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
+- **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
 
 ### 166. Unrealised-MTM-Aware Circuit Breaker
-- **Priority**: MEDIUM
-- **Today**: `OrderEngine.check_circuit_breaker()` uses `day_pnl()`, which sums only **CLOSED** positions plus already-booked partial profits on still-open positions. Open-position MTM is excluded. Five positions each bleeding -1.5% MTM = -7.5% real exposure, but CB at 3% will not fire until SLs actually hit — by which time real loss can far exceed the 3% cap. Soft-stop (#163) has the same blind spot.
-- **Fix**: Add `unrealised_pnl(quotes)` (already exists) into both `check_circuit_breaker()` and `_check_daily_loss_soft_stop()` via a new `effective_day_pnl(quotes)` helper. Pass the live quote dict in from the monitor loop. Behaviour stays identical when there are no open positions.
-- **Effort**: Low. ~30 lines, single helper, kill-switch via new `MTM_AWARE_CB_ENABLED`.
+- **Status**: ✅ Completed (see #166 in Completed table). Shipped 2026-04-22. New `OrderEngine.set_latest_quotes()` cache populated by manager monitor loop; new `effective_day_pnl()` adds open-position MTM via `unrealised_pnl(quotes)` when `MTM_AWARE_CB_ENABLED = True`. `check_circuit_breaker()`, `is_soft_stopped()`, and `is_peak_drawdown_stopped()` all switched to `effective_day_pnl()`; peak ratchets on the MTM curve too. Kill-switch `MTM_AWARE_CB_ENABLED`.
 
 ### 144. Bracket Orders (Atomic Entry + SL + Target)
 - **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
@@ -305,6 +316,12 @@ In priority order, matching the Pending table above.
 - **Today**: 10-second polling can miss rapid SL/target breaches during news events.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
 - **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
+
+### 194. Strong-Gap ADX Threshold Boost
+- **Status**: ✅ Completed (see #194 in Completed table). Shipped 2026-04-22. Manager arms `OrderEngine.record_strong_gap_day("UP"|"DOWN")` once per session inside `_build_nifty_context` when today's NIFTY gap is ≥ ±1.0% AND continues prior-day direction. `effective_adx_threshold(side)` adds `STRONG_GAP_ADX_DELTA` (+1) and `effective_adx_override_score(side)` adds `STRONG_GAP_OVERRIDE_DELTA` (+0.5) **only for fade-side trades** (BUY when gap is DOWN, SELL when gap is UP) for the rest of the day. Aligned trades are unaffected. Kill-switch `STRONG_GAP_ADX_BOOST_ENABLED`.
+
+### 195. Average-Down Prevention via `_last_exit_score`
+- **Status**: ✅ Completed (see #195 in Completed table). Shipped 2026-04-22. `exit_position()` stamps `_last_exit_score[f"{symbol}_{side}"] = {score, reason, time}` on every exit. SIGNAL_DECAY callers set `pos["_exit_score"] = fresh_score` first so the gate compares against the decayed re-score; STAGNANT_EXIT falls back to `_entry_score`. New gate runs in `enter_trade` after the per-symbol cooldown (gate 22b): blocks when prior reason ∈ {STAGNANT_EXIT, SIGNAL_DECAY} AND inside `AVG_DOWN_LOOKBACK_MINUTES` (120) AND `|delta| ≤ AVG_DOWN_SCORE_DELTA` (1.0) AND `|last.score| ≥ 0.5` (so a stamped-zero score doesn't spuriously block low-magnitude fresh signals). Override at `|score| ≥ AVG_DOWN_OVERRIDE_SCORE` (8.0). Kill-switch `AVG_DOWN_PREVENTION_ENABLED`.
 
 ### 167. Earnings / Results-Day Blackout
 - **Priority**: MEDIUM
@@ -328,10 +345,7 @@ In priority order, matching the Pending table above.
 - **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
 
 ### 147. Session-Time-Aware RVol Baseline
-- **Priority**: LOW (current RVol is "good enough" for the pre-filter)
-- **Today**: RVol compares today's intraday volume to the 20-day **daily** average. But intraday volume has a U-shape (huge at open, dead 12–13:30, huge at close). Midday, almost every stock looks "quiet" by daily-average math — we may be skipping good trades.
-- **Fix**: Build a 20-day average for each 30-minute bucket of the day. Compare today's 12:30 volume to the historical 12:30 volume.
-- **Effort**: Medium. Needs a new cache of hourly-bucket volume history.
+- **Status**: ✅ Completed (see #147 in Completed table). Shipped 2026-04-22 as `RVOL_FLOOR_BY_HOUR` hour-bucket scaling on the existing 0.7× floor (heavier reduction during 12:00 hour, light reduction at 11/13). Uses live volume + scan fallback path.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)

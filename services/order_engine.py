@@ -26,9 +26,11 @@
 
 import datetime
 import time
+import collections
 
 from config              import Config, now_ist
 from services.stock_scanner_v2 import SECTOR_MAP, MAX_PER_SECTOR
+from services             import candle_patterns
 from core.logger         import Logger
 from core.zerodha_client import ZerodhaClient
 
@@ -36,16 +38,9 @@ from core.zerodha_client import ZerodhaClient
 class OrderEngine:
 
     # Reversal pattern sets used by the pattern-direction entry veto
-    # (#190). Names match services/candle_patterns.py output strings
-    # and mirror the sets used by manager_v2._signal_reversal_exit().
-    _BEARISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
-        "EVENING_STAR", "BEARISH_ENGULFING", "BEARISH_HARAMI",
-        "SHOOTING_STAR", "HANGING_MAN", "THREE_BLACK_CROWS",
-    })
-    _BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
-        "MORNING_STAR", "BULLISH_ENGULFING", "BULLISH_HARAMI",
-        "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
-    })
+    # (#190). Single source of truth lives in services/candle_patterns.
+    _BEARISH_REVERSAL_PATTERNS = candle_patterns.BEARISH_REVERSAL_PATTERNS
+    _BULLISH_REVERSAL_PATTERNS = candle_patterns.BULLISH_REVERSAL_PATTERNS
 
     def __init__(
         self,
@@ -127,6 +122,45 @@ class OrderEngine:
         # Ratchets up via max(peak, day_pnl()) on every is_peak_drawdown_stopped()
         # call. Fresh per OrderEngine instance — reset implicitly by daily restart.
         self._intraday_peak_pnl: float = 0.0
+
+        # ── MTM-aware CB quote cache (#166) ────────────────────────
+        # Populated by manager monitor loop via set_latest_quotes().
+        # Used by effective_day_pnl() so circuit-breaker / soft-stop /
+        # peak-drawdown can include open-position MTM without every
+        # call site having to thread quotes through.
+        self._latest_quotes: dict = {}
+
+        # ── Choppy-morning pause state (#192) ──────────────────────
+        # _recent_nifty_adx is a rolling buffer of recent NIFTY ADX
+        # readings stamped via record_nifty_adx() each scan tick.
+        # _recent_chop_exits keeps timestamps of STAGNANT_EXIT and
+        # SIGNAL_DECAY exits so we know when churn is in progress.
+        # _choppy_pause_until is the wall-clock time the current pause
+        # ends (None when no pause is active).
+        self._recent_nifty_adx: collections.deque = collections.deque(
+            maxlen=max(1, int(self.cfg.CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS))
+        )
+        self._recent_chop_exits: collections.deque = collections.deque(maxlen=20)
+        self._choppy_pause_until: datetime.datetime | None = None
+
+        # ── Strong-gap ADX boost flag (#194) ───────────────────────
+        # Set once per session by record_strong_gap_day("UP"|"DOWN") when the
+        # NIFTY opens with a strong gap that continues the prior-day trend.
+        # Resets on engine restart (i.e. at session boundary).
+        # `_strong_gap_day` is a cached bool kept in sync for legacy readers;
+        # the authoritative value is `_strong_gap_direction` ("UP"/"DOWN"/None).
+        self._strong_gap_day: bool = False
+        self._strong_gap_direction: str | None = None
+        # opening NIFTY gap is GAP_*_STRONG and continues prior-day
+        # direction. Reverts at session end (set False) or fresh
+        # OrderEngine instance.
+        self._strong_gap_day: bool = False
+
+        # ── Last-exit score cache (#195) ───────────────────────────
+        # Stamped by exit_position(). Keyed "SYMBOL_SIDE", value is
+        # {"score": float, "reason": str, "time": datetime}. Used by
+        # the average-down prevention gate in enter_trade.
+        self._last_exit_score: dict[str, dict] = {}
 
         # ── Adaptive R:R tracking ─────────────────────────────────
         # Counts scans that produced 0 entries (all candidates failed
@@ -1217,14 +1251,15 @@ class OrderEngine:
         Returns True if the order was placed/logged successfully.
 
         Entry pipeline (each step can reject the trade). Counted at
-        31 distinct gates — keep this list and STRATEGY_V2.md in sync.
+        34 distinct gates — keep this list and STRATEGY_V2.md in sync.
+          0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
-          2.  Daily-loss soft-stop (#163) — block new entries at -1.5% realized
-          3.  Peak-drawdown stop (#168) — block when day P&L gives back ≥1.5% from intraday peak
+          2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl
+          3.  Peak-drawdown stop (#168, MTM-aware via #166) — block when effective_day_pnl gives back ≥1.5% from intraday peak
           4.  Validate entry price vs live Zerodha quote
           5.  Circuit-limit (UC/LC) entry guard (#180) — reject BUY when within 1% of +20% upper circuit, SELL within 1% of -20% lower circuit
           6.  Bid-ask spread check (illiquid stocks)
-          7.  Volume confirmation (RVol gate with scan-time fallback)
+          7.  Volume confirmation (RVol gate with scan-time fallback, hour-bucket scaling #147)
           8.  Impact-cost check (#146) — depth-weighted slippage
           9.  ATR-based SL/target (pure ATR when available, config fallback)
          10.  Late-entry target reduction (13:00 / 14:00 cutoffs)
@@ -1240,18 +1275,20 @@ class OrderEngine:
          20.  Short entry cutoff
          21.  Max re-entries per stock + declining score block
          22.  Per-symbol re-entry cooldown (#161) — 30 min same-side
+         22b. Average-down prevention (#195) — block same-magnitude re-entry within 120 min of STAGNANT/SIGNAL_DECAY exit unless |score|≥8
          23.  RSI > BUY ceiling (default 75)
          24.  RSI > SELL ceiling (default 70)
          25.  RSI < 30 BUY floor / RSI < 25 SELL floor
-         26.  ADX + DI directional gate (#157) — chop-day reject unless |score|≥7
-         27.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
-         28.  Daily trade cap + expiry trade cap (#124)
-         29.  Stagnant churn guard (no re-enter stagnant exits)
-         30.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
-         31.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+         26.  Pattern-direction entry veto (#190) — BUY blocked when bearish reversal pattern present unless |score|≥8
+         27.  ADX + DI directional gate (#157, #194 strong-gap boost) — chop-day reject; effective threshold + override score raised on continuation-strong-gap days
+         28.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
+         29.  Daily trade cap + expiry trade cap (#124)
+         30.  Stagnant churn guard (no re-enter stagnant exits)
+         31.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
+         32.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
          --- order placement ---
-         32.  Place order → scale SL/target to actual fill price
-         33.  Place exchange SL-M for instant stop-loss execution
+         33.  Place order → scale SL/target to actual fill price
+         34.  Place exchange SL-M for instant stop-loss execution
         """
         symbol    = trade["symbol"]
         exchange  = trade.get("exchange", "NSE")
@@ -1263,6 +1300,20 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = now_ist()
+
+        # ── Choppy-morning entry pause (Roadmap #192) ─────────────
+        # Pause new entries when NIFTY ADX has been weak for several
+        # consecutive scans AND ≥2 entries already exited STAGNANT/
+        # SIGNAL_DECAY in the last 10 min. Existing positions are
+        # managed normally. Kill-switch: CHOPPY_MORNING_PAUSE_ENABLED.
+        if self.is_choppy_morning_paused(now):
+            until = self._choppy_pause_until
+            self.log.warning(
+                f"{symbol}: choppy-morning pause active — new entries "
+                f"paused until {until.strftime('%H:%M:%S') if until else '?'}. "
+                f"Skipping (existing positions still managed)."
+            )
+            return False
 
         # ── Lunch-lull entry skip (Roadmap #164) ──────────────────
         # Indian markets are lowest-volume + lowest-ADX during lunch.
@@ -1292,7 +1343,7 @@ class OrderEngine:
         # still closes all at MAX_LOSS_PER_DAY_PCT.
         if self.is_soft_stopped():
             self.log.warning(
-                f"{symbol}: soft-stop active — day P&L Rs.{self.day_pnl():,.2f} "
+                f"{symbol}: soft-stop active — day P&L Rs.{self.effective_day_pnl():,.2f} "
                 f"≤ -{self.cfg.DAILY_LOSS_SOFT_STOP_PCT}% of budget. "
                 f"No new entries (existing positions still managed)."
             )
@@ -1305,7 +1356,7 @@ class OrderEngine:
         # Existing positions managed normally.
         if self.is_peak_drawdown_stopped():
             peak = getattr(self, "_intraday_peak_pnl", 0.0)
-            give_back = peak - self.day_pnl()
+            give_back = peak - self.effective_day_pnl()
             self.log.warning(
                 f"{symbol}: peak-drawdown stop active — day P&L gave back "
                 f"Rs.{give_back:,.2f} from peak Rs.{peak:,.2f} "
@@ -1899,15 +1950,16 @@ class OrderEngine:
             plus_di   = trade.get("_entry_plus_di", 0) or 0
             minus_di  = trade.get("_entry_minus_di", 0) or 0
             score_abs = abs(trade.get("_entry_score", 0) or 0)
-            override  = score_abs >= self.cfg.ADX_OVERRIDE_SCORE
+            adx_override_score = self.effective_adx_override_score(side)
+            override  = score_abs >= adx_override_score
 
             if entry_adx > 0:  # only enforce if ADX was measured
-                adx_threshold = self.effective_adx_threshold()
+                adx_threshold = self.effective_adx_threshold(side)
                 if entry_adx < adx_threshold and not override:
                     self.log.warning(
                         f"{symbol}: ADX {entry_adx:.1f} < {adx_threshold:.1f} "
                         f"(chop, regime={self.budget_regime()}) and |score| "
-                        f"{score_abs:.1f} < {self.cfg.ADX_OVERRIDE_SCORE} override "
+                        f"{score_abs:.1f} < {adx_override_score} override "
                         f"— skipping. Entry likely to churn out."
                     )
                     return False
@@ -2021,6 +2073,52 @@ class OrderEngine:
                 f"  ✓ {symbol}: re-entry cooldown bypass — exited {mins_ago:.1f} min ago, "
                 f"|score| {score_abs:.1f} ≥ {override:.1f} override"
             )
+
+        # ── Average-down prevention (Roadmap #195) ────────────────
+        # After the 30-min cooldown expires, a fresh same-direction
+        # signal at the same magnitude as the prior STAGNANT/DECAY
+        # exit is essentially chasing the same false signal twice —
+        # no new information has arrived. Block such re-entries
+        # within AVG_DOWN_LOOKBACK_MINUTES of the prior chop exit.
+        # Override at |score| >= AVG_DOWN_OVERRIDE_SCORE so genuine
+        # high-conviction reversals still get through.
+        # Kill-switch: AVG_DOWN_PREVENTION_ENABLED.
+        if getattr(self.cfg, "AVG_DOWN_PREVENTION_ENABLED", False):
+            last_exit = self._last_exit_score.get(f"{symbol}_{side}")
+            if last_exit:
+                last_reason = last_exit.get("reason", "")
+                last_score  = float(last_exit.get("score", 0) or 0)
+                last_time   = last_exit.get("time")
+                lookback    = int(self.cfg.AVG_DOWN_LOOKBACK_MINUTES)
+                within_lookback = (
+                    last_time is not None
+                    and (now - last_time).total_seconds() <= lookback * 60
+                )
+                # Skip the gate when last_score is effectively zero — we have
+                # no real magnitude to compare against, and abs(new_score - 0)
+                # would spuriously block any low-score fresh signal.
+                has_meaningful_last_score = abs(last_score) >= 0.5
+                if (
+                    last_reason in ("STAGNANT_EXIT", "SIGNAL_DECAY")
+                    and within_lookback
+                    and has_meaningful_last_score
+                ):
+                    new_score = float(trade.get("_entry_score") or 0)
+                    delta = abs(new_score - last_score)
+                    abs_override = float(self.cfg.AVG_DOWN_OVERRIDE_SCORE)
+                    if (
+                        delta <= float(self.cfg.AVG_DOWN_SCORE_DELTA)
+                        and abs(new_score) < abs_override
+                    ):
+                        mins_ago = (now - last_time).total_seconds() / 60
+                        self.log.warning(
+                            f"{symbol}: same-magnitude re-signal after "
+                            f"{last_reason} {mins_ago:.0f} min ago — "
+                            f"prev score {last_score:+.1f}, new {new_score:+.1f} "
+                            f"(Δ {delta:.1f} ≤ {self.cfg.AVG_DOWN_SCORE_DELTA:.1f}). "
+                            f"Skipping average-down."
+                        )
+                        return False
 
         # ── VWAP trend + extension block ──────────────────────────
         # Two-sided guard:
@@ -2662,6 +2760,26 @@ class OrderEngine:
 
         # Record exit time for per-symbol re-entry cooldown (Roadmap #161).
         self._last_exit_time[f"{symbol}_{side}"] = now
+
+        # Record exit score + reason for average-down prevention (#195).
+        # Prefer position["_exit_score"] when caller stamped a fresh re-score
+        # (e.g. SIGNAL_DECAY); fall back to the entry score so we always
+        # have a magnitude to compare against. Never crash on missing.
+        try:
+            exit_score = position.get("_exit_score")
+            if exit_score is None:
+                exit_score = position.get("_entry_score", 0)
+            self._last_exit_score[f"{symbol}_{side}"] = {
+                "score":  float(exit_score or 0),
+                "reason": reason,
+                "time":   now,
+            }
+        except (TypeError, ValueError):
+            pass
+
+        # Track chop-exit timestamps for the choppy-morning pause (#192).
+        if reason in ("STAGNANT_EXIT", "SIGNAL_DECAY"):
+            self.record_chop_exit(now)
         
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
@@ -3499,12 +3617,16 @@ class OrderEngine:
 
         budget   = self._budget
         max_loss = budget * max_loss_pct / 100
-        pnl_since_baseline = self.day_pnl() - self._cb_pnl_baseline
+        # MTM-aware (#166): include open-position MTM. Backwards
+        # compatible — falls back to closed-only day_pnl() when
+        # MTM_AWARE_CB_ENABLED is False or no quotes have been cached.
+        eff_pnl = self.effective_day_pnl()
+        pnl_since_baseline = eff_pnl - self._cb_pnl_baseline
 
         if pnl_since_baseline < -max_loss:
             self.log.error(
                 f"CIRCUIT BREAKER: P&L since baseline Rs.{pnl_since_baseline:,.2f} "
-                f"(day total Rs.{self.day_pnl():,.2f}) exceeds max loss of "
+                f"(day total Rs.{eff_pnl:,.2f}) exceeds max loss of "
                 f"Rs.{max_loss:,.0f} ({max_loss_pct}% of budget). "
                 f"Stopping all trading."
             )
@@ -3513,7 +3635,7 @@ class OrderEngine:
 
     def reset_circuit_breaker_baseline(self):
         """After cooldown, reset so the breaker only trips on NEW losses."""
-        self._cb_pnl_baseline = self.day_pnl()
+        self._cb_pnl_baseline = self.effective_day_pnl()
         self._cb_trip_count += 1
 
     def circuit_breaker_trips_exhausted(self) -> bool:
@@ -3559,13 +3681,49 @@ class OrderEngine:
         """Current budget regime — "TINY" / "SMALL" / "NORMAL" / "LARGE"."""
         return Config.budget_regime(self._budget)
 
-    def effective_adx_threshold(self) -> float:
-        """Base ADX_MIN_THRESHOLD with regime delta applied."""
+    def effective_adx_threshold(self, side: str | None = None) -> float:
+        """Base ADX_MIN_THRESHOLD with regime delta + strong-gap boost applied (#194).
+
+        The strong-gap boost only applies to FADE trades — i.e. trades whose
+        side is opposite to the gap direction (BUY on a gap-DOWN day, SELL
+        on a gap-UP day). Aligned trades (BUY on gap-UP, SELL on gap-DOWN)
+        ride the institutional flow and don't deserve the extra penalty.
+        Pass side=None to get the un-boosted base (e.g. for log headers).
+        """
         base = float(self.cfg.ADX_MIN_THRESHOLD)
-        if not self.cfg.BUDGET_REGIME_ENABLED:
-            return base
-        delta = self.cfg.BUDGET_ADX_THRESHOLD_DELTA.get(self.budget_regime(), 0.0)
-        return max(0.0, base + float(delta))
+        if self.cfg.BUDGET_REGIME_ENABLED:
+            base += float(self.cfg.BUDGET_ADX_THRESHOLD_DELTA.get(self.budget_regime(), 0.0))
+        gap_dir = getattr(self, "_strong_gap_direction", None)
+        if (
+            getattr(self.cfg, "STRONG_GAP_ADX_BOOST_ENABLED", False)
+            and gap_dir is not None
+            and side is not None
+            and self._is_fade_side(side, gap_dir)
+        ):
+            base += float(self.cfg.STRONG_GAP_ADX_DELTA)
+        return max(0.0, base)
+
+    def effective_adx_override_score(self, side: str | None = None) -> float:
+        """ADX_OVERRIDE_SCORE with strong-gap boost applied (#194).
+
+        Same direction-aware semantics as effective_adx_threshold(): boost
+        applies only to fade-side trades on a strong-gap continuation day.
+        """
+        base = float(self.cfg.ADX_OVERRIDE_SCORE)
+        gap_dir = getattr(self, "_strong_gap_direction", None)
+        if (
+            getattr(self.cfg, "STRONG_GAP_ADX_BOOST_ENABLED", False)
+            and gap_dir is not None
+            and side is not None
+            and self._is_fade_side(side, gap_dir)
+        ):
+            base += float(self.cfg.STRONG_GAP_OVERRIDE_DELTA)
+        return base
+
+    @staticmethod
+    def _is_fade_side(side: str, gap_dir: str) -> bool:
+        """True when `side` trades against `gap_dir` (BUY vs DOWN, SELL vs UP)."""
+        return (side == "BUY" and gap_dir == "DOWN") or (side == "SELL" and gap_dir == "UP")
 
     def effective_trade_cap(self) -> int:
         """MAX_TRADES_PER_DAY with regime delta applied (floor at 1)."""
@@ -3582,6 +3740,161 @@ class OrderEngine:
             return base
         delta = self.cfg.BUDGET_MIN_SCORE_DELTA.get(self.budget_regime(), 0.0)
         return max(0.0, base + float(delta))
+
+    # ================================================================
+    # MTM / SESSION-STATE INPUTS (Roadmap #166, #192, #194)
+    # ================================================================
+
+    def set_latest_quotes(self, quotes: dict) -> None:
+        """Cache the latest live quote dict from the monitor loop (#166).
+
+        Used by effective_day_pnl() so circuit-breaker / soft-stop /
+        peak-drawdown can include open-position MTM without every call
+        site having to thread quotes through. Safe to call with an
+        empty dict — falls back to closed-only day_pnl().
+        """
+        if isinstance(quotes, dict):
+            self._latest_quotes = quotes
+
+    def effective_day_pnl(self) -> float:
+        """Day P&L with open-position MTM included when enabled (#166).
+
+        Falls back to closed-only `day_pnl()` when MTM_AWARE_CB_ENABLED
+        is False, no quotes have been cached yet, or unrealised_pnl()
+        raises (e.g. malformed quote dict — never let the safety gate
+        crash the bot).
+        """
+        closed = self.day_pnl()
+        if not getattr(self.cfg, "MTM_AWARE_CB_ENABLED", False):
+            return closed
+        quotes = getattr(self, "_latest_quotes", None) or {}
+        if not quotes:
+            return closed
+        try:
+            return closed + self.unrealised_pnl(quotes)
+        except Exception as e:
+            self.log.warning(
+                f"effective_day_pnl: unrealised_pnl failed ({type(e).__name__}: {e}); "
+                f"falling back to closed-only day_pnl"
+            )
+            return closed
+
+    def record_nifty_adx(self, adx: float) -> None:
+        """Stamp a NIFTY ADX reading into the rolling buffer (#192)."""
+        try:
+            val = float(adx)
+        except (TypeError, ValueError):
+            return
+        if val <= 0:
+            return
+        self._recent_nifty_adx.append(val)
+
+    def record_chop_exit(self, when: datetime.datetime | None = None) -> None:
+        """Stamp a STAGNANT_EXIT / SIGNAL_DECAY exit time for #192."""
+        self._recent_chop_exits.append(when or now_ist())
+
+    def is_choppy_morning_paused(self, now: datetime.datetime | None = None) -> bool:
+        """True if the choppy-morning entry pause is currently active (#192).
+
+        Two conditions arm a fresh pause:
+          1. ≥ CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS NIFTY ADX readings
+             below CHOPPY_PAUSE_ADX_THRESHOLD in the recent buffer.
+          2. ≥ CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS chop-exits in
+             the last CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES.
+
+        Only arms inside the morning window
+        [CHOPPY_PAUSE_WINDOW_START_HOUR:MINUTE,
+         CHOPPY_PAUSE_WINDOW_END_HOUR:MINUTE]. Once tripped, sets
+        `_choppy_pause_until = now + CHOPPY_PAUSE_MINUTES`. The pause
+        sticks even past the morning window if armed inside it.
+        Existing positions are unaffected — gate is entry-only.
+        Kill-switch: CHOPPY_MORNING_PAUSE_ENABLED.
+        """
+        if not getattr(self.cfg, "CHOPPY_MORNING_PAUSE_ENABLED", False):
+            return False
+        t = now or now_ist()
+        # If a pause is already armed and still in window, honour it.
+        until = self._choppy_pause_until
+        if until is not None:
+            if t < until:
+                return True
+            # Expired — clear so the next chop episode can re-arm.
+            self._choppy_pause_until = None
+
+        # Check arming window.
+        start = (self.cfg.CHOPPY_PAUSE_WINDOW_START_HOUR,
+                 self.cfg.CHOPPY_PAUSE_WINDOW_START_MINUTE)
+        end   = (self.cfg.CHOPPY_PAUSE_WINDOW_END_HOUR,
+                 self.cfg.CHOPPY_PAUSE_WINDOW_END_MINUTE)
+        cur   = (t.hour, t.minute)
+        if not (start <= cur < end):
+            return False
+
+        # Condition 1 — sustained low NIFTY ADX.
+        need = int(self.cfg.CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS)
+        thresh = float(self.cfg.CHOPPY_PAUSE_ADX_THRESHOLD)
+        adx_buf = list(self._recent_nifty_adx)
+        if len(adx_buf) < need:
+            return False
+        if not all(a < thresh for a in adx_buf[-need:]):
+            return False
+
+        # Condition 2 — recent chop exits.
+        lookback_min = int(self.cfg.CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES)
+        cutoff = t - datetime.timedelta(minutes=lookback_min)
+        recent_count = sum(1 for ts in self._recent_chop_exits if ts >= cutoff)
+        if recent_count < int(self.cfg.CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS):
+            return False
+
+        # Arm the pause.
+        self._choppy_pause_until = t + datetime.timedelta(
+            minutes=int(self.cfg.CHOPPY_PAUSE_MINUTES)
+        )
+        self.log.warning(
+            f"CHOPPY_MORNING_PAUSE armed — NIFTY ADX last {need} scans "
+            f"all < {thresh:.1f} AND {recent_count} chop-exits in last "
+            f"{lookback_min} min. New entries paused until "
+            f"{self._choppy_pause_until.strftime('%H:%M:%S')}."
+        )
+        return True
+
+    def record_strong_gap_day(self, direction) -> None:
+        """Set / clear the strong-gap continuation direction for the session (#194).
+
+        `direction` is one of: "UP" (gap continues prior-day uptrend),
+        "DOWN" (gap continues prior-day downtrend), None / False / ""
+        (clear the flag). Manager calls this once at session start after
+        classifying the opening NIFTY gap. Idempotent — repeated calls
+        with the same direction are safe.
+
+        Backwards-compat: a bare True value defaults to "UP" so older
+        callsites don't break (and a warning is logged so we notice).
+        """
+        if direction is True:
+            self.log.warning(
+                "record_strong_gap_day(True) is deprecated — pass 'UP' or 'DOWN' "
+                "so the boost can be applied direction-aware. Defaulting to 'UP'."
+            )
+            direction = "UP"
+        if direction in (None, False, ""):
+            new_dir = None
+        elif str(direction).upper() in ("UP", "DOWN"):
+            new_dir = str(direction).upper()
+        else:
+            self.log.warning(f"record_strong_gap_day: ignoring unknown direction {direction!r}")
+            return
+        prev = getattr(self, "_strong_gap_direction", None)
+        self._strong_gap_direction = new_dir
+        # Keep _strong_gap_day in sync for any legacy reader.
+        self._strong_gap_day = new_dir is not None
+        if new_dir and new_dir != prev:
+            fade_side = "SELL" if new_dir == "UP" else "BUY"
+            self.log.info(
+                f"STRONG_GAP_ADX_BOOST armed (gap {new_dir}) — ADX threshold "
+                f"+{self.cfg.STRONG_GAP_ADX_DELTA:.1f}, override score "
+                f"+{self.cfg.STRONG_GAP_OVERRIDE_DELTA:.1f} for {fade_side} "
+                f"trades only (fade direction)."
+            )
 
     # ================================================================
     # CHURN-REDUCTION GATE HELPERS (Roadmap #161-164)
@@ -3624,7 +3937,7 @@ class OrderEngine:
         budget = self._budget
         if budget <= 0:
             return False
-        return self.day_pnl() <= -budget * soft_pct / 100
+        return self.effective_day_pnl() <= -budget * soft_pct / 100
 
     def is_peak_drawdown_stopped(self) -> bool:
         """True if day P&L has given back too much from its intraday peak (Roadmap #168).
@@ -3646,7 +3959,9 @@ class OrderEngine:
         budget = self._budget
         if budget <= 0:
             return False
-        pnl = self.day_pnl()
+        # MTM-aware (#166): include open-position MTM so the gate fires
+        # before five bleeders all hit individual SLs.
+        pnl = self.effective_day_pnl()
         peak = max(getattr(self, "_intraday_peak_pnl", 0.0), pnl)
         self._intraday_peak_pnl = peak
         min_peak_rs = budget * float(self.cfg.PEAK_DRAWDOWN_MIN_PEAK_PCT) / 100
@@ -3673,17 +3988,32 @@ class OrderEngine:
         return closed_pnl + open_partial
 
     def unrealised_pnl(self, quotes: dict) -> float:
-        """Unrealised P&L from open positions at current prices, including partial exits."""
+        """Unrealised P&L from open positions at current prices, including partial exits.
+
+        Raises ValueError if any open position is missing from `quotes` —
+        callers that need a fail-safe (e.g. effective_day_pnl for the
+        MTM-aware circuit breaker, #166) must catch and degrade gracefully
+        instead of letting silent entry_price fallbacks mask real losses.
+        """
         total = 0.0
+        missing: list[str] = []
         for pos in self.open_positions():
             key = f"{pos['exchange']}:{pos['symbol']}"
-            q   = quotes.get(key, {})
-            current = q.get("last_price", pos["entry_price"])
+            q   = quotes.get(key)
+            if q is None or "last_price" not in q:
+                missing.append(key)
+                continue
+            current = q["last_price"]
             if pos["side"] == "BUY":
                 total += (current - pos["entry_price"]) * pos["qty"]
             else:
                 total += (pos["entry_price"] - current) * pos["qty"]
             total += pos.get("_partial_pnl", 0)
+        if missing:
+            raise ValueError(
+                f"unrealised_pnl: missing quotes for {len(missing)} "
+                f"open position(s): {missing}"
+            )
         return round(total, 2)
 
     def calculate_charges(self) -> dict:

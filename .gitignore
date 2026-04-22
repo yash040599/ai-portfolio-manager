@@ -17,6 +17,9 @@ reports/
 # ── Database (contains personal trading data) ────────────
 data/
 
+# ── Copilot operational skills (synced via backup_data.py to data repo) ──
+copilot/
+
 # ── IDE / Editor ─────────────────────────────────────────
 .vscode/
 .idea/

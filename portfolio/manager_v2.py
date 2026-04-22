@@ -35,6 +35,7 @@ from core.logger                      import Logger
 from core.zerodha_client              import ZerodhaClient
 from core.claude_client               import ClaudeClient
 from services.stock_scanner_v2        import StockScannerV2
+from services                         import candle_patterns
 from services.order_engine            import OrderEngine
 from services.report_writer           import ReportWriter
 from services.performance_tracker     import PerformanceTracker
@@ -651,6 +652,11 @@ class PortfolioManagerV2(PortfolioManager):
                 time.sleep(base_poll)
                 continue
 
+            # Cache quotes on the engine so MTM-aware CB / soft-stop /
+            # peak-drawdown (Roadmap #166) can include open-position
+            # MTM without every call site threading quotes through.
+            self.engine.set_latest_quotes(quotes)
+
             # ── SL/target check (free, rule-based) ────────────────
             closed = self.engine.check_stops_and_targets(quotes)
             if closed > 0:
@@ -1034,16 +1040,10 @@ class PortfolioManagerV2(PortfolioManager):
     # SIGNAL-REVERSAL EXIT (#174)
     # ================================================================
 
-    # Bearish reversal patterns that confirm a short-side flip.
-    # Names match services/candle_patterns.py output strings exactly.
-    _BEARISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
-        "EVENING_STAR", "BEARISH_ENGULFING", "BEARISH_HARAMI",
-        "SHOOTING_STAR", "HANGING_MAN", "THREE_BLACK_CROWS",
-    })
-    _BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
-        "MORNING_STAR", "BULLISH_ENGULFING", "BULLISH_HARAMI",
-        "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
-    })
+    # Reversal pattern sets — single source of truth in
+    # services/candle_patterns.
+    _BEARISH_REVERSAL_PATTERNS = candle_patterns.BEARISH_REVERSAL_PATTERNS
+    _BULLISH_REVERSAL_PATTERNS = candle_patterns.BULLISH_REVERSAL_PATTERNS
 
     def _signal_reversal_exit(
         self,
@@ -1282,6 +1282,9 @@ class PortfolioManagerV2(PortfolioManager):
             f"→ {fresh_score:+.1f} ({decay_pct:.0f}% decay) after {elapsed_min:.0f} min, "
             f"P&L Rs.{pnl:+,.2f} ({r_multiple_str}) — exiting at Rs.{current_price:.2f}"
         )
+        # Stamp the fresh re-score so #195 average-down prevention can
+        # block a same-magnitude re-entry of this symbol+side.
+        pos["_exit_score"] = fresh_score
         self.engine.exit_position(pos, current_price, "SIGNAL_DECAY")
         return True
 

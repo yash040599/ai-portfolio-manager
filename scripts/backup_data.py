@@ -39,6 +39,7 @@ SYNC_ITEMS = [
     "data",
     "reports",
     "logs",
+    "copilot",
 ]
 
 # Skip these within synced folders
