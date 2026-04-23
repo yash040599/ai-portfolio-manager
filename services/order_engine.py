@@ -3763,6 +3763,18 @@ class OrderEngine:
         is False, no quotes have been cached yet, or unrealised_pnl()
         raises (e.g. malformed quote dict — never let the safety gate
         crash the bot).
+
+        Just-opened positions (entered between two monitor ticks) won't
+        yet appear in the cached quotes dict — `enter_trade` posts the
+        order and the next safety-gate read fires before the next
+        `set_latest_quotes()`. Without compensation, `unrealised_pnl`
+        raises on every such call until the monitor tick refreshes the
+        cache, so we synthesise a break-even quote (`last_price =
+        entry_price`) for any open position missing from the cache. A
+        freshly opened position is at break-even by definition; MTM
+        contribution = 0; the real value lands on the next tick (~10s).
+        Avoids the spurious `missing quotes` WARNING burst that
+        appeared after every fresh entry on 2026-04-23 (INFY, TATACAP).
         """
         closed = self.day_pnl()
         if not getattr(self.cfg, "MTM_AWARE_CB_ENABLED", False):
@@ -3770,8 +3782,23 @@ class OrderEngine:
         quotes = getattr(self, "_latest_quotes", None) or {}
         if not quotes:
             return closed
+        # Local copy — never mutate the cached dict.
+        augmented = dict(quotes)
+        added: list[str] = []
+        for pos in self.open_positions():
+            key = f"{pos['exchange']}:{pos['symbol']}"
+            cached = augmented.get(key) or {}
+            if "last_price" not in cached:
+                augmented[key] = {"last_price": pos["entry_price"]}
+                added.append(key)
+        if added:
+            self.log.debug(
+                f"effective_day_pnl: synthesised break-even quote for "
+                f"{len(added)} just-opened position(s) {added} "
+                f"(real quote arrives next monitor tick)"
+            )
         try:
-            return closed + self.unrealised_pnl(quotes)
+            return closed + self.unrealised_pnl(augmented)
         except Exception as e:
             self.log.warning(
                 f"effective_day_pnl: unrealised_pnl failed ({type(e).__name__}: {e}); "

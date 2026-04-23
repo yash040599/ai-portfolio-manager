@@ -717,9 +717,134 @@ class PortfolioManager:
                     f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
                 )
                 return
+            # Stale-score guard (#196): refresh composite score on a
+            # fresh candle pull and drop trades whose conviction has
+            # decayed during the observation window. No-op when the
+            # active scanner doesn't expose `_analyse_stock` (V1).
+            confirmed = self._stale_score_filter(confirmed, delay)
+            if not confirmed:
+                self.log.warning(
+                    "All entries dropped by stale-score guard (#196) — "
+                    "scores decayed during observation"
+                )
+                return
             self._enter_positions(confirmed)
         else:
             self.log.warning("No stocks passed the observation filter")
+
+    # ================================================================
+    # STALE-SCORE GUARD (Roadmap #196)
+    # ================================================================
+
+    def _stale_score_filter(
+        self,
+        trades: list[dict],
+        wait_minutes: int,
+    ) -> list[dict]:
+        """Drop entries whose composite score has decayed during the
+        observation window (Roadmap #196).
+
+        Pipeline:
+          1.  Skip entirely when feature disabled, wait < min, or the
+              active scanner can't re-score (V1 StockScanner has no
+              `_analyse_stock` — V1 is FROZEN, not modified).
+          2.  Per surviving trade, fetch fresh score via
+              `scanner._analyse_stock(symbol, exchange)`.
+          3.  Abort the trade if:
+                - sign(fresh) != sign(entry)             (signal flipped)
+                - abs(fresh) < abs(entry) × FRACTION    (decay below floor)
+          4.  Otherwise update `trade["_entry_score"] = fresh` so all
+              downstream score-gated checks compare against the
+              freshest available value (lunch-lull bypass, ADX override,
+              gap-coherence override, average-down prevention, …).
+
+        Fail-open on any per-symbol exception or missing fresh score —
+        we log a warning but let the trade through; the existing entry
+        gates remain active.
+        """
+        if not getattr(self.cfg, "FRESH_ENTRY_RECHECK_ENABLED", False):
+            return trades
+        if wait_minutes < self.cfg.FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES:
+            return trades
+        if not hasattr(self.scanner, "_analyse_stock"):
+            return trades
+
+        fraction = self.cfg.FRESH_ENTRY_DECAY_FRACTION
+        survivors: list[dict] = []
+        for trade in trades:
+            symbol   = trade["symbol"]
+            exchange = trade.get("exchange", "NSE")
+            entry_score = trade.get("_entry_score")
+
+            try:
+                entry_val = float(entry_score) if entry_score is not None else 0.0
+            except (TypeError, ValueError):
+                entry_val = 0.0
+
+            if entry_val == 0.0:
+                # No entry score to compare against — let the trade
+                # through; downstream gates will handle it.
+                survivors.append(trade)
+                continue
+
+            try:
+                fresh = self.scanner._analyse_stock(symbol, exchange)
+            except Exception as e:
+                self.log.warning(
+                    f"  ⚠ {symbol}: stale-score recheck failed ({type(e).__name__}: {e}) — "
+                    f"letting trade through with entry score {entry_val:+.1f}"
+                )
+                survivors.append(trade)
+                continue
+
+            if not fresh or "combined_score" not in fresh:
+                self.log.warning(
+                    f"  ⚠ {symbol}: stale-score recheck returned no data — "
+                    f"letting trade through with entry score {entry_val:+.1f}"
+                )
+                survivors.append(trade)
+                continue
+
+            try:
+                fresh_val = float(fresh["combined_score"])
+            except (TypeError, ValueError):
+                survivors.append(trade)
+                continue
+
+            # Sign flip — abort.
+            if (entry_val > 0) != (fresh_val > 0):
+                self.log.info(
+                    f"  ✗ {symbol}: stale-score guard — entry {entry_val:+.1f} → "
+                    f"fresh {fresh_val:+.1f} (SIGN FLIP), skipping"
+                )
+                continue
+
+            floor = abs(entry_val) * fraction
+            if abs(fresh_val) < floor:
+                decay_pct = (1 - abs(fresh_val) / abs(entry_val)) * 100
+                self.log.info(
+                    f"  ✗ {symbol}: stale-score guard — entry {entry_val:+.1f} → "
+                    f"fresh {fresh_val:+.1f} ({decay_pct:.0f}% decay, "
+                    f"floor {fraction*100:.0f}%), skipping"
+                )
+                continue
+
+            # Survived — refresh stored score so downstream gates use
+            # the latest value.
+            self.log.info(
+                f"  ✓ {symbol}: stale-score recheck — entry {entry_val:+.1f} → "
+                f"fresh {fresh_val:+.1f} (within decay floor)"
+            )
+            trade["_entry_score"] = fresh_val
+            survivors.append(trade)
+
+        dropped = len(trades) - len(survivors)
+        if dropped > 0:
+            self.log.info(
+                f"Stale-score guard (#196): dropped {dropped} of {len(trades)} "
+                f"entries after {wait_minutes}-min observation"
+            )
+        return survivors
 
 
     # ================================================================

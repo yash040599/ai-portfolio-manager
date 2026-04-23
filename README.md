@@ -457,6 +457,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Choppy-morning entry pause** — auto-pauses new entries (15 min, sliding) when NIFTY 15-min ADX prints weak (<16) for 3 consecutive scans in 09:30–10:30 IST AND ≥2 recent exits were STAGNANT/SIGNAL_DECAY. Re-arms each session.
 - **Whipsaw guard** — pauses entries after 3 consecutive SL hits.
 - **Per-symbol re-entry cooldown** — 30 min on same `SYMBOL_SIDE`.
+- **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped or decayed below 60% of the scan-time score.
 - **Lunch-lull skip** — 11:30-12:15 IST unless `|score| ≥ 6.0`.
 - **Charge-aware target** — gross target ≥ 2× round-trip charges.
 - **Budget-regime gates** — auto-tighten on TINY/SMALL accounts.

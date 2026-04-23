@@ -715,6 +715,31 @@ class Config:
     SIGNAL_DECAY_MIN_HOLD_MINUTES:      int   = 30
     SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE: float = 1.0
 
+    # ── Post-Observation Score Recheck (Roadmap #196) ─────────────
+    # The observation window (ENTRY_DELAY_MINUTES, EXPIRY_ENTRY_DELAY_MINUTES,
+    # or the late-start floor) keeps the bot honest on price direction —
+    # but the composite score that justified the trade is computed BEFORE
+    # the wait and never refreshed. On 2026-04-23 the morning burst entered
+    # CUMMINSIND/HINDUNILVR/SIEMENS at scan-time scores +9.9/+9.8/+9.5
+    # 15 min after the scan; all three exited losers within 41 min, two
+    # via SIGNAL_DECAY (#188 confirmed scores had decayed below 40% of
+    # entry). This gate refreshes the score AFTER the wait and aborts
+    # entries whose conviction has evaporated.
+    #
+    # Triggers (per surviving trade after price-direction filter):
+    #   abort if sign(fresh) != sign(entry_score)        (signal flipped)
+    #   abort if abs(fresh) < abs(entry_score) * FRESH_ENTRY_DECAY_FRACTION
+    #   otherwise update trade["_entry_score"] = fresh   (so downstream
+    #     score-gated checks compare against the freshest available score)
+    #
+    # Only fires when wait >= FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES
+    # (default 5 — skip on near-zero waits where no new candle has closed).
+    # Requires the active scanner to expose `_analyse_stock(symbol, exchange)`
+    # — V2 scanner does, V1 (frozen) does not, so V1 path is unaffected.
+    FRESH_ENTRY_RECHECK_ENABLED:        bool  = True
+    FRESH_ENTRY_DECAY_FRACTION:         float = 0.6
+    FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES: int = 5
+
     # ── ADX + DI Entry Gate (Roadmap #157) ────────────────────────
     # ADX_ENTRY_GATE_ENABLED: require minimum ADX and directional
     #   alignment (DI) before entering a new trade. Kills chop-day
@@ -1346,6 +1371,18 @@ class Config:
         if not (0 < cls.SIGNAL_DECAY_FRACTION < 1):
             errors.append(
                 f"SIGNAL_DECAY_FRACTION must be in (0, 1): {cls.SIGNAL_DECAY_FRACTION!r}"
+            )
+
+        # Post-observation score recheck (#196)
+        if not (0 < cls.FRESH_ENTRY_DECAY_FRACTION < 1):
+            errors.append(
+                f"FRESH_ENTRY_DECAY_FRACTION must be in (0, 1): "
+                f"{cls.FRESH_ENTRY_DECAY_FRACTION!r}"
+            )
+        if cls.FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES < 0:
+            errors.append(
+                f"FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES must be ≥ 0: "
+                f"{cls.FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES!r}"
             )
 
         # Choppy-morning pause (#192)

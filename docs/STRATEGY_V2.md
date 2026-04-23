@@ -484,6 +484,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 
 1. Wait `ENTRY_DELAY_MINUTES` (5 min) after market open
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
+2b. **Stale-score guard** (#196) — when wait ≥ `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` (5), re-run `_analyse_stock` on each survivor. Abort if sign flipped or `|fresh| < |entry| × FRESH_ENTRY_DECAY_FRACTION` (0.6). Otherwise refresh `_entry_score` so all downstream score-gated checks (lunch-lull, ADX override, gap-coherence, average-down) compare against the freshest value. Fail-open per-symbol; V1 path unaffected (no `_analyse_stock`)
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
 4. Pre-trade checks pass (34 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
@@ -1023,6 +1024,9 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `MTM_AWARE_CB_ENABLED` | True | Kill-switch for unrealised-MTM-aware circuit breaker / soft-stop / peak-drawdown (#166) — when on, `effective_day_pnl()` adds open-position MTM to the safety-gate math |
 | `STRONG_GAP_ADX_BOOST_ENABLED` | True | Kill-switch for strong-gap ADX boost (#194) — raises effective ADX threshold + override score on continuation-strong-gap days **for fade-side trades only** (boost is direction-aware) |
 | `AVG_DOWN_PREVENTION_ENABLED` | True | Kill-switch for average-down prevention (#195) — blocks same-magnitude re-entry within 120 min of a STAGNANT/SIGNAL_DECAY exit |
+| `FRESH_ENTRY_RECHECK_ENABLED` | True | Kill-switch for post-observation score recheck (#196) — re-runs `_analyse_stock` after the entry-delay wait and aborts trades whose score sign-flipped or decayed below `FRESH_ENTRY_DECAY_FRACTION` |
+| `FRESH_ENTRY_DECAY_FRACTION` | 0.6 | Min `|fresh| / |entry|` to allow entry after observation; e.g. +9.9 → +5.9 fires, +9.9 → +6.0 doesn't |
+| `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` | 5 | Skip the recheck when wait was shorter than this (no new candle has closed) |
 | `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
 | `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
 | `LUNCH_LULL_SCORE_OVERRIDE` | 6.0 | `|score|` that bypasses the lunch skip |
