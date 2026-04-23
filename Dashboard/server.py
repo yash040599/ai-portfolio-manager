@@ -34,6 +34,7 @@ from Dashboard.data_layer import (
     resolve_window,
     verified_dates,
 )
+from Dashboard.day_detail import day_detail
 from Dashboard.metrics import (
     bucketed_pnl,
     cumulative_series,
@@ -125,6 +126,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_shell()
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
+            elif url.path == "/api/day":
+                self._serve_day(parse_qs(url.query))
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001 — surface to browser
@@ -168,6 +171,26 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             granularity=granularity,
             include_provisional=include_provisional,
         )
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_day(self, qs: dict[str, list[str]]) -> None:
+        date = (qs.get("date") or [None])[0]
+        if not date:
+            self.send_error(400, "Missing 'date' query param.")
+            return
+        verified = (qs.get("verified") or ["all"])[0]
+        include_provisional = (verified != "verified")
+        try:
+            payload = day_detail(date, include_provisional=include_provisional)
+        except ValueError as exc:
+            self.send_error(400, f"Invalid date: {exc}")
+            return
         body = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")

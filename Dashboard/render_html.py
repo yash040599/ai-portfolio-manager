@@ -182,6 +182,30 @@ _SHELL_TEMPLATE = r"""<!doctype html>
                        margin-bottom: 8px; font-weight: 600;
                        text-transform: uppercase; letter-spacing: 0.05em; }
   canvas { max-height: 320px; }
+  .bucket-hint { font-size: 12px; color: var(--muted); margin-top: 8px; font-style: italic; }
+  .day-detail { margin-top: 14px; padding: 14px 16px; background: #f8f9fb;
+                border: 1px solid var(--line); border-radius: 6px; }
+  .day-detail .head { display: flex; justify-content: space-between; align-items: center;
+                      margin-bottom: 10px; }
+  .day-detail .head h3 { margin: 0; font-size: 16px; }
+  .day-detail .summary { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .day-detail .close { background: none; border: 1px solid var(--line); cursor: pointer;
+                       padding: 3px 10px; border-radius: 4px; font-size: 12px; }
+  .day-detail table { width: 100%; border-collapse: collapse; font-size: 13px;
+                      font-variant-numeric: tabular-nums; }
+  .day-detail th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--line);
+                   font-weight: 600; color: var(--muted); font-size: 11px;
+                   text-transform: uppercase; letter-spacing: 0.04em; }
+  .day-detail td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .day-detail tr.win  td:last-child { color: #1b8e3a; font-weight: 600; }
+  .day-detail tr.loss td:last-child { color: #c62828; font-weight: 600; }
+  .day-detail tr.expand-row td { background: #fff; padding: 8px 12px;
+                                 border-bottom: 1px solid var(--line); font-size: 12px;
+                                 color: var(--muted); }
+  .day-detail tr.trade-row { cursor: pointer; }
+  .day-detail tr.trade-row:hover td { background: #eef2ff; }
+  .day-detail .pending-tag { background: #fff4e0; color: #b06a00; padding: 1px 6px;
+                              border-radius: 3px; font-size: 11px; margin-left: 6px; }
   footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
   code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
   .static-banner { background: #fff4e0; border: 1px solid #f0d28a; padding: 8px 14px;
@@ -240,6 +264,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
     <div class="card chart-card">
       <div class="title" id="bucket-title">Net P&amp;L per bucket</div>
       <canvas id="bucket-chart"></canvas>
+      <div class="bucket-hint" id="bucket-hint">Tip: click any bar to drill into that day's trades.</div>
+      <div id="day-detail" class="day-detail" hidden></div>
     </div>
   </div>
 
@@ -316,6 +342,8 @@ function render(payload) {
     "Net P&L per " + w.granularity + " bucket";
   drawCum(payload.charts.cumulative);
   drawBucket(payload.charts.bucketed);
+  // Filter changed -> any open day-detail is now stale; collapse it.
+  closeDayDetail();
 
   const ph = document.getElementById("pending-host");
   if (w.pending_dates.length) {
@@ -382,15 +410,138 @@ function drawBucket(buckets) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        onBucketClick(buckets[els[0].index]);
+      },
+      onHover: (evt, els) => {
+        evt.native.target.style.cursor = els.length ? "pointer" : "default";
+      },
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: {
-          afterLabel: ctx => buckets[ctx.dataIndex].trades + " trade(s)",
+          afterLabel: ctx => buckets[ctx.dataIndex].trades + " trade(s)\nClick to drill in",
         } },
       },
       scales: { y: { ticks: { callback: v => "Rs." + v } } },
     },
   });
+}
+
+// ── Drill-down: bar click -> per-day trade detail ────────────────
+let activeDate = null;
+
+function onBucketClick(bucket) {
+  const gran = document.getElementById("granularity").value;
+  const host = document.getElementById("day-detail");
+  if (gran !== "daily") {
+    host.hidden = false;
+    host.innerHTML = '<div class="summary">Drill-down is only available in <strong>daily</strong>'
+      + ' granularity. Switch granularity to <code>Daily</code> and click a bar to see'
+      + ' that day\'s trades.</div>';
+    return;
+  }
+  // Toggle: clicking the same bar again collapses the panel.
+  if (activeDate === bucket.label) {
+    host.hidden = true;
+    host.innerHTML = "";
+    activeDate = null;
+    return;
+  }
+  activeDate = bucket.label;
+  loadDayDetail(bucket.label);
+}
+
+async function loadDayDetail(date) {
+  const host = document.getElementById("day-detail");
+  host.hidden = false;
+  host.innerHTML = '<div class="summary">Loading ' + escapeHTML(date) + '…</div>';
+  if (!SERVER_MODE) {
+    host.innerHTML = '<div class="summary">Per-trade detail needs the live server.'
+      + ' Re-run <code>python main.py --mode dashboard</code> (without <code>--no-open</code>).</div>';
+    return;
+  }
+  const verified = document.getElementById("verified").value;
+  const params = new URLSearchParams({ date, verified });
+  try {
+    const res = await fetch("/api/day?" + params.toString());
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    renderDayDetail(await res.json());
+  } catch (e) {
+    host.innerHTML = '<div class="summary">Failed to load ' + escapeHTML(date)
+      + ': ' + escapeHTML(String(e)) + '</div>';
+  }
+}
+
+function renderDayDetail(d) {
+  const host = document.getElementById("day-detail");
+  if (d.trade_count === 0) {
+    host.innerHTML =
+      '<div class="head"><h3>' + escapeHTML(d.date) + '</h3>'
+      + '<button class="close" onclick="closeDayDetail()">close ✕</button></div>'
+      + '<div class="summary">No trades on this date'
+      + (d.report_found ? "" : " (no trading report on disk)") + '.</div>';
+    return;
+  }
+  const pnlClass = d.net_pnl >= 0 ? "pos" : "neg";
+  const summary =
+    '<strong>' + d.trade_count + '</strong> trade(s) · '
+    + '<span class="' + pnlClass + '">' + fmtRs(d.net_pnl) + ' net</span>'
+    + ' (gross ' + fmtRs(d.gross_pnl) + ', charges ' + fmtRs(-d.charges) + ')'
+    + ' · ' + d.winners + ' win / ' + d.losers + ' loss'
+    + (d.report_found ? "" : ' · <span class="pending-tag">no report on disk</span>');
+
+  const rows = d.trades.map((t, i) => {
+    const cls = t.net_pnl > 0 ? "win" : (t.net_pnl < 0 ? "loss" : "");
+    const ent = t.entry_time ? t.entry_time.slice(11, 16) : "—";
+    const ext = t.exit_time  ? t.exit_time.slice(11, 16)  : "—";
+    const pendBadge = t.sheet_verified === "verified" ? ""
+      : ' <span class="pending-tag">provisional</span>';
+    const extras = [];
+    if (t.entry_score != null) extras.push("entry score " + Number(t.entry_score).toFixed(1));
+    if (t.entry_rsi   != null) extras.push("RSI " + Number(t.entry_rsi).toFixed(1));
+    if (t.exit_score  != null) extras.push("exit score " + Number(t.exit_score).toFixed(1));
+    const expandText = (t.rationale || extras.length)
+      ? (extras.join(" · ") + (t.rationale ? (extras.length ? " — " : "") + t.rationale : ""))
+      : "";
+    let html = '<tr class="trade-row ' + cls + '" data-idx="' + i + '">'
+      + '<td>' + ent + ' → ' + ext + '</td>'
+      + '<td><strong>' + escapeHTML(t.symbol) + '</strong>' + pendBadge + '</td>'
+      + '<td>' + escapeHTML(t.side) + '</td>'
+      + '<td>' + t.qty + '</td>'
+      + '<td>' + t.entry_price.toFixed(2) + ' → ' + t.exit_price.toFixed(2) + '</td>'
+      + '<td>' + escapeHTML(t.exit_reason || "—") + '</td>'
+      + '<td>' + fmtRs(t.net_pnl) + '</td>'
+      + '</tr>';
+    if (expandText) {
+      html += '<tr class="expand-row" data-idx="' + i + '" hidden>'
+        + '<td colspan="7">' + escapeHTML(expandText) + '</td></tr>';
+    }
+    return html;
+  }).join("");
+
+  host.innerHTML =
+    '<div class="head"><h3>' + escapeHTML(d.date) + '</h3>'
+    + '<button class="close" onclick="closeDayDetail()">close ✕</button></div>'
+    + '<div class="summary">' + summary + '</div>'
+    + '<table><thead><tr>'
+    + '<th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th>'
+    + '<th>Entry → Exit</th><th>Exit reason</th><th>Net P&L</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+  host.querySelectorAll("tr.trade-row").forEach(tr => {
+    tr.addEventListener("click", () => {
+      const idx = tr.dataset.idx;
+      const ext = host.querySelector('tr.expand-row[data-idx="' + idx + '"]');
+      if (ext) ext.hidden = !ext.hidden;
+    });
+  });
+  host.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+function closeDayDetail() {
+  const host = document.getElementById("day-detail");
+  host.hidden = true; host.innerHTML = ""; activeDate = null;
 }
 
 async function refresh() {
