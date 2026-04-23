@@ -5,7 +5,7 @@
 > Touches NO strategy/order/config code. Safe to iterate on
 > independently of live trading.
 >
-> **Status:** Phase 3 — upcoming. Multi-session build (D1–D15).
+> **Status:** Phase 3 — D1 + D1.1 shipped 2026-04-23. Interactive HTML dashboard live (Chart.js SPA + stdlib HTTP server, in-page date / granularity / source controls, per-day budget from trading reports). D2–D23 pending.
 >
 > **Location:** all dashboard code, docs, templates, and tests live
 > under the top-level `Dashboard/` folder, isolated from the trading
@@ -22,16 +22,14 @@ Dashboard/
 │   └── DASHBOARD_ROADMAP.md      # this file
 ├── __init__.py
 ├── cli.py                        # argparse entry; called from main.py --mode dashboard
-├── data_layer.py                 # all DB reads (sheet_verified filtering lives here)
-├── metrics.py                    # win-rate, profit-factor, Sharpe, max-DD, expectancy
-├── verdict.py                    # capital-ladder traffic-light engine
-├── diagnostics.py                # per-side / dow / time-bucket / exit-reason / score / symbol
-├── charts.py                     # matplotlib → base64 PNG helpers
-├── render_text.py                # text-mode output (D1-D3)
-├── render_html.py                # HTML-mode output (D4+)
-├── templates/
-│   ├── dashboard.html            # f-string template (no Jinja)
-│   └── style.css                 # inline-loaded CSS
+├── server.py                     # ✅ D1.1 — stdlib http.server SPA backend (/, /api/data)
+├── data_layer.py                 # all DB reads (sheet_verified filtering, FY window helper)
+├── metrics.py                    # headline P&L + bucketed/cumulative series; D2 adds win-rate, profit-factor, Sharpe, max-DD, expectancy
+├── budget_history.py             # ✅ D1.1 — per-day budget from reports/trading/.../trading_data_DD.json
+├── verdict.py                    # capital-ladder traffic-light engine (D1 minimal; D6 expands)
+├── diagnostics.py                # D3 — per-side / dow / time-bucket / exit-reason / score / symbol
+├── render_text.py                # text-mode output (--text)
+├── render_html.py                # ✅ D1.1 — JSON-driven SPA shell, Chart.js via CDN
 ├── verification.py               # D5 — pending-verification banner + launch button
 └── tests/
     ├── test_data_layer.py
@@ -46,9 +44,9 @@ Dashboard/
 - `Dashboard/` may import from `config.py` (for `CAPITAL_LADDER`,
   paths) and `scripts/tax_db.py` helpers, but only their pure-read
   functions.
-- New deps stay confined to `Dashboard/`. If we add `flask` for D15,
-  it goes in a separate `Dashboard/requirements.txt` so the live
-  trading bot's deploy footprint stays untouched.
+- **Zero new Python deps.** D1.1 ships an interactive HTML dashboard
+  using only stdlib (`http.server`) on the Python side and Chart.js
+  via CDN on the page side. No Flask, no matplotlib.
 - `main.py` gets one new line: `--mode dashboard` dispatches to
   `Dashboard.cli:main()`. That's the only edit outside `Dashboard/`.
 
@@ -90,11 +88,11 @@ decisions risks compounding small reporting errors into the wrong call.
 
 | # | Item | Priority | Impact | Effort | Status |
 |---|------|----------|--------|--------|--------|
-| D1 | **Skeleton + sheet-verified data layer** — scaffold `Dashboard/` folder per Folder Structure section above (`__init__.py`, `cli.py`, `data_layer.py`). Wire `main.py --mode dashboard` to dispatch into `Dashboard.cli:main()`. `--text` mode only. Read `intraday_tax_ledger` filtered to `sheet_verified='verified'`. Show Section A (headline P&L) + Section E (capital-ladder verdict). Print provisional-days banner | HIGH | High | Low | Pending |
+| D1 | **Skeleton + sheet-verified data layer** — scaffold `Dashboard/` folder per Folder Structure section above (`__init__.py`, `cli.py`, `data_layer.py`). Wire `main.py --mode dashboard` to dispatch into `Dashboard.cli:main()`. `--text` mode only. Read `intraday_tax_ledger` filtered to `sheet_verified='verified'`. Show Section A (headline P&L) + Section E (capital-ladder verdict). Print provisional-days banner | HIGH | High | Low | ✅ Done (2026-04-23) |
 | D2 | **Section B + C metrics** — trade-quality (win rate, profit factor, avg win/loss, R-multiple histogram) + risk (max DD, max consecutive losses, Sharpe, % profitable days). Still text mode | HIGH | High | Low | Pending |
 | D3 | **Section D diagnostics — per-side / per-day-of-week / per-time-bucket / per-exit-reason / per-symbol / per-score-bucket / per-regime breakdowns**. Each one is one helper function reusing aggregation logic from `view_performance.py` | HIGH | High | Medium | Pending |
-| D4 | **HTML mode (`--html`)** — render `reports/dashboard/<YYYY-MM-DD>.html` using a stdlib Jinja-style template (or just f-strings + a CSS file). Embed matplotlib charts as base64 PNGs. No JS required | MEDIUM | High | Medium | Pending |
-| D5 | **Pending-verification banner + verification-launch button** — HTML shows count of trading days where rows exist in `intraday_tax_ledger` but no row has `sheet_verified='verified'`. A button (or printable command) triggers the import flow | MEDIUM | High | Medium | Pending |
+| D4 | ~~**HTML mode (`--html`)** — render `reports/dashboard/<YYYY-MM-DD>.html` using a stdlib Jinja-style template (or just f-strings + a CSS file). Embed matplotlib charts as base64 PNGs. No JS required~~ — **superseded by D1.1**: shipped as default-mode interactive SPA (Chart.js via CDN, no matplotlib, no PNG embedding). Static `--no-open` snapshot still writes to `reports/dashboard/dashboard_<date>.html` | MEDIUM | High | Medium | ✅ Done via D1.1 |
+| D5 | **Pending-verification banner + verification-launch button** — HTML shows count of trading days where rows exist in `intraday_tax_ledger` but no row has `sheet_verified='verified'`. A button (or printable command) triggers the import flow. **Banner shipped in D1.1** (lists pending dates + shows the import command); launch button still pending | MEDIUM | High | Medium | Partially done (banner in D1.1; button pending) |
 | D6 | **Capital-ladder config + verdict engine** — promote the ladder from a hardcoded list to `Config.CAPITAL_LADDER`. Verdict engine reads it + the metrics + emits GREEN / AMBER / RED with the recommended next budget | MEDIUM | High | Low | Pending |
 | D7 | **Rejection-audit panel** — surface the *opportunity cost* of new gates (#192/#194/#195). Reuse `scripts/rejection_audit.py`. Show "X trades blocked this week, hypothetical P&L if any 50% had won = Rs.Y" so we can tune gates with data | MEDIUM | Medium | Medium | Pending |
 | D8 | **Indicator-attribution panel** — join `analyses` table with `trades`. Per-indicator (RSI / MACD / pattern / ADX) win-rate contribution. Surfaces which indicators have edge and which are noise. Pattern after `view_analyses.py` + `print_indicator_correlation` in `view_performance.py` | MEDIUM | High | Medium | Pending |
@@ -102,7 +100,7 @@ decisions risks compounding small reporting errors into the wrong call.
 | D10 | **Drill-down per-trade table** — collapsible expander that shows every trade in the window with full audit trail (entry score, ADX, pattern, exit reason, charges, net). Reuse `view_trades.py` SQL | LOW | Medium | Medium | Pending |
 | D11 | **Email digest cron** — Sunday 6 PM, render the HTML, attach to email, send via SES/SMTP (or just save as PDF on Windows + Outlook automation). Catches "haven't checked in 2 weeks" failure mode | LOW | Medium | Medium | Pending |
 | D12 | **Data quality badge** — top-of-page indicator: "✓ N days verified / ⚠ M days pending / ✗ K days no data". Click for diff vs Zerodha API to see what's missing. Reuse `verify_trades.py` | LOW | Medium | Low | Pending |
-| D13 | **Strategy-version timeline** — vertical timeline of git commits affecting strategy, overlaid on cumulative P&L curve. Visually answer: *"did P&L improve after we shipped #192?"*. Read `git log` + match dates to trades | LOW | High | Medium | Pending (after D4) |
+| D13 | **Strategy-version timeline** — vertical timeline of git commits affecting strategy, overlaid on cumulative P&L curve. Visually answer: *"did P&L improve after we shipped #192?"*. Read `git log` + match dates to trades | LOW | High | Medium | Pending (cum-P&L curve already shipped in D1.1) |
 | D14 | **Cost-of-friction breakdown** — pie chart of where money goes on a losing day: brokerage / STT / GST / exchange / SEBI / stamp / actual losses. Validates the "reduce trade frequency" hypothesis. Reuse `tax_summary.py` | LOW | Medium | Low | Pending |
 | D15 | **Live-mode mini-dashboard** — read-only HTTP page (Flask single-route) hosted on the trading machine that auto-refreshes every 30s during market hours. Shows current open positions, today's P&L (provisional), open MTM, last 5 entries/exits. NOT for analytics — just for "is the bot alive and what's it doing" | LOW | High | High | Pending |
 | D16 | **Tax filing module — FY summary view** — new `Dashboard/tax/` sub-package. Reads `intraday_tax_ledger` (sheet-verified only) + `capital_gains_ledger` for the chosen FY. Outputs an ITR-3-friendly summary: speculative business gross profit, total deductible expenses (brokerage / STT / exchange / GST / SEBI / stamp), net speculative income, turnover (absolute-sum method per [TAX_GUIDE §7](../../docs/TAX_GUIDE.md)), STCG/LTCG split. Reuse `scripts/tax_summary.py` as the data layer; this module just adds presentation + Schedule-BP framing | HIGH | High | Low | Pending |
@@ -445,3 +443,12 @@ else:
 - Counts at the top of the Pending table must match table row count (same convention as `STRATEGY_ROADMAP.md`).
 - When an item ships, move it to a `## Completed` section at the bottom (TBD when first item ships).
 - Keep this doc separate from `STRATEGY_ROADMAP.md` — strategy lives there, analytics/observability lives here.
+
+---
+
+## Completed
+
+| # | Item | Shipped | Notes |
+|---|------|---------|-------|
+| D1 | Skeleton + sheet-verified data layer + headline P&L + minimum-viable verdict | 2026-04-23 | New `Dashboard/` package with `__init__.py`, `data_layer.py`, `metrics.py`, `verdict.py`, `render_text.py`, `cli.py`. Wired `--mode dashboard` in `main.py` (thin dispatcher; argparse owned by `Dashboard/cli.py`). Added `Config.CAPITAL_LADDER` (5 rungs, Rs.50K → Rs.10L) — D6 will plug in win-rate / profit-factor / DD / weeks-required gates once those metrics land in `metrics.py`. Verdict logic: GREEN (net>0 AND ≥20 trades), AMBER (net>0 but <20 trades), RED (net≤0), GREY (no trades). Headline shows trades / gross / charges / net (with % of budget) / best & worst day, sourced ONLY from `sheet_verified='verified'` rows by default. `--include-provisional` opts in to pending rows for analytics; the data-finality contract still holds — tax outputs (D16+) ignore the flag. CLI flags shipped: `--days N`, `--from`, `--to`, `--include-provisional`. Future-date `--to` is clamped with a stderr warning. Smoke-tested against live `data/trades.db` (114 sheet-verified trades over 14 days → RED -3.92%; 137 with provisional → RED -2.49%). |
+| D1.1 | Interactive HTML dashboard + local server + per-day budget | 2026-04-23 | Pivoted from "static text/HTML report" to "the webpage IS the config surface". (a) `render_html.py` rewritten as a JSON-driven SPA shell using Chart.js 4.4.1 via CDN (zero new Python deps, no matplotlib). Two charts: cumulative net P&L (line, daily) + per-bucket P&L (bar, granularity-switchable). In-page controls: `from`/`to` date pickers, granularity (daily/weekly/monthly), source toggle (all vs verified-only), Apply button + presets (FY / month / 7d / 30d). (b) New `Dashboard/server.py` runs a stdlib `ThreadingHTTPServer` on `127.0.0.1` (auto-allocated port) exposing `GET /` (HTML shell with embedded initial payload) and `GET /api/data` (JSON refresh on every filter change). (c) New `Dashboard/budget_history.py` reads `reports/trading/<YYYY>/<MM>/trading_data_<DD>.json` → `config.budget` so % return is computed against the **actually deployed** capital per day (matters because the user runs with `--max 50000` some days, default on others). LRU-cached, falls back to `Config.MAX_BUDGET_INR` for missing days. (d) `metrics.py` extended with `Granularity` literal, `bucketed_pnl(trades, granularity)` (ISO-week and YYYY-MM keys), `cumulative_series(trades)` (always daily). (e) `data_layer.py` added `current_fy_window(today)` and changed `resolve_window()` default from "last 7 days" to current Indian FY (Apr 1 → Mar 31). (f) `cli.py` redesigned: default = launch server + open browser; `--text` = legacy plain text; `--no-open` = static HTML snapshot to `reports/dashboard/dashboard_<date>.html`. Static snapshots include client-side re-bucketing so granularity still works offline; date-range changes prompt a relaunch. Also `--port` and `--host` for fixed-port serving. (g) Smoke-tested live: `--no-open` writes 17 KB HTML; server returns 200 on `/` (17 KB, Chart.js CDN linked) and `/api/data?granularity=monthly` (1.4 KB JSON). FY view: 15 trading days, RED, -Rs.382 net, avg budget Rs.38,231 (mix of 50K and lower). User-visible: `MAX_BUDGET_INR` raised 20K → 50K to match current trading reality. |

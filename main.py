@@ -38,7 +38,7 @@ from core.zerodha_client import ZerodhaClient
 from portfolio.analyser  import PortfolioAnalyser
 from portfolio.manager   import PortfolioManager
 
-VALID_MODES = {"analyze", "trade", "login"}
+VALID_MODES = {"analyze", "trade", "login", "dashboard"}
 
 
 def main():
@@ -109,7 +109,7 @@ def main():
         sys.exit(1)
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|login] [flags]")
+        print("Usage: python main.py --mode [analyze|trade|login|dashboard] [flags]")
         print()
         print("  analyze                    — read-only portfolio analysis")
         print()
@@ -193,6 +193,14 @@ def main():
         client = ZerodhaClient(Config, Logger("ZerodhaLogin"))
         client.login()
         client.print_account_snapshot()
+
+    elif mode == "dashboard":
+        # Read-only profitability dashboard. All flags after `--mode
+        # dashboard` are forwarded to Dashboard.cli (its own argparse).
+        from Dashboard.cli import main as dashboard_main
+        idx = sys.argv.index("--mode")
+        forwarded = [a for a in sys.argv[idx + 2:] if a]
+        sys.exit(dashboard_main(forwarded))
 
 
 if __name__ == "__main__":

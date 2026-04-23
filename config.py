@@ -49,7 +49,22 @@ class Config:
     #
     # MAX_BUDGET_INR: absolute cap on how much capital the bot can
     # deploy in a single day, regardless of account balance.
-    MAX_BUDGET_INR: int = 20_000
+    MAX_BUDGET_INR: int = 50_000
+
+    # ── Capital-deployment ladder (Dashboard Roadmap D1, expanded D6) ──
+    # Mechanical scaling rule: the dashboard recommends moving to the
+    # next rung only when the current rung has been held long enough
+    # AND every metric threshold is met. Read-only — the dashboard
+    # consumes this; the trading bot doesn't.
+    # Each entry: {budget, win_rate_min, profit_factor_min, max_dd_pct,
+    #              weeks_required}.
+    CAPITAL_LADDER: list = [
+        {"budget":    50_000, "win_rate_min": 0.50, "profit_factor_min": 1.4, "max_dd_pct": 0.08, "weeks_required":  1},
+        {"budget":  1_00_000, "win_rate_min": 0.50, "profit_factor_min": 1.4, "max_dd_pct": 0.08, "weeks_required":  4},
+        {"budget":  2_50_000, "win_rate_min": 0.52, "profit_factor_min": 1.5, "max_dd_pct": 0.07, "weeks_required":  8},
+        {"budget":  5_00_000, "win_rate_min": 0.55, "profit_factor_min": 1.5, "max_dd_pct": 0.07, "weeks_required": 12},
+        {"budget": 10_00_000, "win_rate_min": 0.55, "profit_factor_min": 1.6, "max_dd_pct": 0.06, "weeks_required": 24},
+    ]
 
     # MIN_BALANCE_TO_TRADE: minimum Zerodha account balance required
     # to start trading. If your funds are below this, the bot logs
