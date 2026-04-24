@@ -48,7 +48,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (7 items)
+### Pending (9 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
@@ -60,7 +60,9 @@ Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
 | 167 | Earnings/results-day blackout — skip stocks with corporate results announced today (Q1–Q4 season abnormal moves). Implementation note: needs an external NSE corp-action calendar feed OR a config-driven `EARNINGS_BLACKOUT_SYMBOLS: dict[str, date]` user-maintained list. The latter is low-effort but requires user discipline to keep current; the former is a clean fetch-from-NSE call but adds a network dependency at startup. Defer until the user picks an approach | MEDIUM | Medium | Medium |
 | 149 | Sector-cascade exit — breakeven-tighten all positions in a fast-falling sector | MEDIUM | Medium | Medium |
+| 215 | **Sector-relative-strength directional bias** — currently we have (a) a sector cap (max 2 per sector) and (b) a small sector-momentum boost (+0.5 to score when sector is moving the candidate's way). Missing: rank all ~12 NSE sectors 1→12 by intraday momentum at each scan, then bias the entry-direction score weighting by rank. On a day when Pharma is the top-1 sector and Auto is bottom-12, BUY-Pharma and SELL-Auto candidates should get an extra 0.5–1.0 score nudge while contra-rank candidates (BUY-Auto, SELL-Pharma) should be penalised. Implementation: extend the existing sector-momentum block in `services/stock_scanner_v2.py` (just after the tape-breadth filter #212) to compute `rank = sectors_sorted_by_momentum.index(stock_sector)` and apply `bias = (6 - rank) * 0.1` clamped to ±0.6, sign-aware. Kill-switch: `SECTOR_RANK_BIAS_ENABLED`. Analyst rationale: 2–3% win-rate lift on sector-aligned entries by reducing loser clusters when whole sectors fade together | MEDIUM | Medium | Medium |
 | 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
+| 216 | **Intraday correlation-flip detector** — most NIFTY100 stocks have ~0.7–0.9 rolling correlation to NIFTY on a normal trading day. When a stock's intraday rolling correlation drops below ~0.5 (or sign-flips negative), it usually signals either a sector rotation or a stock-specific catalyst — pro desks treat the divergence itself as confirmation. We currently have no such gate or flag. Implementation: in `services/technical_indicators.py`, add a rolling 15-min correlation between the candidate's 1-min returns and NIFTY's 1-min returns; expose as `corr_flip` flag on the indicator snapshot when correlation drops by ≥ 0.3 vs the day's baseline. Two consumption paths: (a) gentle: add as a tiebreaker score boost (+0.5) for the side aligned with the divergence direction; (b) aggressive: hard-block contra-divergence entries below score 6.5. Kill-switch: `CORR_FLIP_DETECTOR_ENABLED`. Analyst rationale: catches 1–2 false breakouts per week where a stock's correlation to NIFTY inverts and pro desks fade the consensus side | LOW | Low | Low |
 | 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
 
 ### Pending — Awaiting Trade Data (7 items)
