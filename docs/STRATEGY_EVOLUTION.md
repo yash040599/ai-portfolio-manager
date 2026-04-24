@@ -34,7 +34,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | X | Risk | Stale-SL-M re-attribution + idempotent transactional cancel-replace inside _sector_cascade_protect |
 
 > **Source of truth:** `STRATEGY_ROADMAP.md` (Completed section). When you ship a strategy item, add a row here in the same commit, following the rules above.
-> Last regenerated: 2026-04-25. Items: 134 (#1 → #221).
+> Last regenerated: 2026-04-25. Items: 144 (#1 → #221).
 
 ## Timeline
 

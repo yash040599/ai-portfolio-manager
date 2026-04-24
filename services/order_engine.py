@@ -1561,8 +1561,22 @@ class OrderEngine:
 
         Returns True if the order was placed/logged successfully.
 
-        Entry pipeline (each step can reject the trade). Counted at
-        40 distinct gates — keep this list and STRATEGY_V2.md in sync.
+        Entry pipeline (each step can reject the trade). Total = 41
+        checks across the V2 design (see docs/STRATEGY_V2.md §"Risk
+        Management — Entry Pre-Checks" for the canonical inventory):
+        3 scanner-side pre-filter gates (#-1 earnings blackout, #14c
+        pattern↔tech contradiction penalty, #14d tape-breadth filter)
+        run before enter_trade() is ever called; the remaining gates
+        run here in code order, ending with 2 post-decision placement
+        steps (#33 place order, #34 place SL-M).
+
+        Code-walkthrough summary below. A handful of subsidiary gates
+        (#0e VIX-spike pause #211, #17d VWAP statistical-band #201,
+        #18d/#18e late-entry tightening #202) are described inline in
+        their own code blocks and in STRATEGY_V2.md but omitted from
+        this numbered summary to keep the walkthrough readable. When
+        adding/removing gates, update STRATEGY_V2.md FIRST (it is the
+        source of truth), then patch this summary if helpful.
           0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥5.7 (LUNCH_LULL_SCORE_OVERRIDE; stepped down from 6.0 by #221)
           2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl
