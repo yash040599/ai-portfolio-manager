@@ -598,14 +598,6 @@ class Config:
     # dip → afternoon recovery). Set to 0 to disable.
     NIFTY_RECHECK_MINUTES: int = 15
 
-    # MIN_BUDGET_UTILISATION_PCT: minimum % of budget that Claude
-    # should deploy across all trades. If Claude picks trades that
-    # only use 30% of budget, the bot will auto-increase qty to
-    # reach this minimum. Set to 0 to disable.
-    # DISABLED: Forcing deployment into low-conviction trades causes losses.
-    # Better to hold cash than force trades.
-    MIN_BUDGET_UTILISATION_PCT: float = 0.0
-
     # ── Stagnant Position Exit (NoAI) ─────────────────────────────
     # STAGNANT_EXIT_MINUTES: after this many minutes, evaluate the
     #   position with the directional adverse / dead-flat thresholds

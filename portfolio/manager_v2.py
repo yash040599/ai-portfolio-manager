@@ -618,7 +618,7 @@ class PortfolioManagerV2(PortfolioManager):
                         f"  Day P&L so far: Rs.{day_pnl:,.2f} from {len(closed_trades)} closed trades.\n"
                         f"  Already traded today: {', '.join(traded_symbols) if traded_symbols else 'none'}.\n"
                         f"  DO NOT pick any stock already traded today unless opposite direction.\n"
-                        f"  {'If P&L is negative, only pick high-conviction candle setups with tight stops.' if day_pnl < 0 else f'All capital is free — deploy at least {self.cfg.MIN_BUDGET_UTILISATION_PCT:.0f}% on high-conviction setups.'}\n"
+                        f"  {'If P&L is negative, only pick high-conviction candle setups with tight stops.' if day_pnl < 0 else 'Idle capital is fine — only deploy on high-conviction setups, not to fill slots.'}\n"
                     )
                     self._trade_plans = []
                     self._run_pre_market_scan(session_context=session_ctx)

@@ -865,7 +865,6 @@ class StockScannerV2(StockScanner):
             trades = self._parse_scan_response(raw)
             # Enrich Claude trades with indicator snapshot data for learning
             self._enrich_trades_with_indicators(trades, candidates)
-            trades = self._boost_underdeployed(trades)
             self.log.success(f"Claude recommended {len(trades)} trades from {len(candidates)} candidates")
             return trades
         except Exception as e:
@@ -1212,7 +1211,6 @@ class StockScannerV2(StockScanner):
             # else: this fallback also failed budget validation, try next
 
         primary = self._score_weight_sizing(primary)
-        primary = self._boost_underdeployed(primary)
 
         all_trades = primary + fallback
         self.log.success(
@@ -1308,76 +1306,6 @@ class StockScannerV2(StockScanner):
         final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
         self.log.info(
             f"Score-weighted sizing: Rs.{final_cost:,.0f} / Rs.{budget:,.0f} "
-            f"({final_cost / budget * 100:.0f}%)"
-        )
-        return trades
-
-    # ================================================================
-    # MINIMUM CAPITAL DEPLOYMENT BOOST
-    # ================================================================
-
-    def _boost_underdeployed(self, trades: list[dict]) -> list[dict]:
-        """
-        If total trade cost is below MIN_BUDGET_UTILISATION_PCT of
-        budget, proportionally increase qty on each trade to reach
-        the minimum. Respects MAX_POSITION_PCT per-stock limit.
-        """
-        min_util_pct = self.cfg.MIN_BUDGET_UTILISATION_PCT
-        if min_util_pct <= 0 or not trades:
-            return trades
-
-        budget = self._budget
-        min_deploy = budget * min_util_pct / 100
-        max_pct = self.cfg.MAX_POSITION_PCT / 100
-        max_per = budget * max_pct
-
-        total_cost = sum(t["entry_price"] * t["qty"] for t in trades)
-        if total_cost >= min_deploy:
-            return trades  # already meeting minimum
-
-        self.log.info(
-            f"Capital under-deployed: Rs.{total_cost:,.0f} / Rs.{budget:,.0f} "
-            f"({total_cost / budget * 100:.0f}%) — minimum is {min_util_pct:.0f}%"
-        )
-
-        # Boost each trade proportionally, respecting per-stock cap
-        scale = min_deploy / total_cost if total_cost > 0 else 1
-        new_total = 0
-        for t in trades:
-            entry = t["entry_price"]
-            if entry <= 0:
-                continue
-            target_cost = min(entry * t["qty"] * scale, max_per)
-            new_qty = max(t["qty"], int(target_cost / entry))
-            # Don't exceed budget cap for this single stock
-            if new_qty * entry > max_per:
-                new_qty = int(max_per / entry)
-            if new_qty > t["qty"]:
-                self.log.info(
-                    f"  {t['symbol']}: qty {t['qty']} → {new_qty} "
-                    f"(Rs.{t['qty'] * entry:,.0f} → Rs.{new_qty * entry:,.0f})"
-                )
-                t["qty"] = new_qty
-            new_total += t["entry_price"] * t["qty"]
-
-        # Final budget check — don't exceed total budget
-        if new_total > budget:
-            # Scale back the last trade(s) to fit
-            excess = new_total - budget
-            for t in reversed(trades):
-                entry = t["entry_price"]
-                if entry <= 0:
-                    continue
-                reduce_qty = min(t["qty"] - 1, int(excess / entry) + 1)
-                if reduce_qty > 0:
-                    t["qty"] -= reduce_qty
-                    excess -= reduce_qty * entry
-                if excess <= 0:
-                    break
-
-        final_cost = sum(t["entry_price"] * t["qty"] for t in trades)
-        self.log.info(
-            f"After boost: Rs.{final_cost:,.0f} / Rs.{budget:,.0f} "
             f"({final_cost / budget * 100:.0f}%)"
         )
         return trades
@@ -1600,8 +1528,6 @@ class StockScannerV2(StockScanner):
         else:
             rr_min_text = f"1:{self.cfg.RR_FLOOR_MORNING}"
 
-        min_util = self.cfg.MIN_BUDGET_UTILISATION_PCT
-
         return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks.
 You have 15 years of experience with deep knowledge of Indian market microstructure — FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
 
@@ -1611,7 +1537,7 @@ CURRENT TIME PHASE: {time_phase}
 BUDGET: Rs.{budget:,} total capital.
 MAX POSITIONS: {max_positions} stocks simultaneously (Rs.{budget // max_positions:,} per slot).
 MAX PER STOCK: {max_pct}% of budget (= Rs.{budget * max_pct // 100:,} max per stock).
-MINIMUM DEPLOYMENT: Deploy at least {min_util:.0f}% of budget (= Rs.{budget * min_util / 100:,.0f}) across your trades. Do this by sizing HIGH-CONVICTION picks with larger qty — NOT by adding mediocre trades. Idle capital earns nothing intraday.
+Idle capital is fine — do NOT add mediocre trades to deploy more cash. Quality over quantity.
 {nifty_context}{perf_context}{session_context}
 The stocks below are PRE-FILTERED by mathematical technical analysis.
 Each stock shows real-time indicators — use them for precise, evidence-based decisions.
