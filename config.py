@@ -858,12 +858,20 @@ class Config:
     # LUNCH_LULL_START_HOUR / MINUTE: window start (11:30).
     # LUNCH_LULL_END_HOUR / MINUTE:   window end   (12:15).
     # LUNCH_LULL_SCORE_OVERRIDE: very strong signals bypass.
+    # NOTE 2026-04-26 (#221): rejection-audit on 2026-04-{22,23,24}
+    # showed lunch-lull was net-NEGATIVE on each day (Avoided
+    # Rs.1,649 vs Missed Rs.2,656 = net -Rs.1,007 over 3 days at
+    # 1-slot hypothetical sizing). Lowered override 6.0 → 5.5 to
+    # admit borderline signals during lunch while still skipping
+    # the truly weak (< V2_MIN_SCORE = 5.5 will still drop out at
+    # the entry score gate). Conservative tweak — not disabling
+    # the gate outright.
     LUNCH_LULL_ENABLED:         bool  = True
     LUNCH_LULL_START_HOUR:      int   = 11
     LUNCH_LULL_START_MINUTE:    int   = 30
     LUNCH_LULL_END_HOUR:        int   = 12
     LUNCH_LULL_END_MINUTE:      int   = 15
-    LUNCH_LULL_SCORE_OVERRIDE:  float = 6.0
+    LUNCH_LULL_SCORE_OVERRIDE:  float = 5.5
 
     # ── Choppy-Morning Entry Pause (Roadmap #192) ─────────────────
     # On weak-trend mornings (NIFTY ADX < CHOPPY_PAUSE_ADX_THRESHOLD
