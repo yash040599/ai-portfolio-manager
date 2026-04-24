@@ -10,12 +10,32 @@ Pulls the latest backup repo, then syncs in both directions:
 
 After syncing, commits and pushes changes to the backup repo.
 
+Two normal flows:
+
+  1. EOD VM run -> coding machine
+     Bot writes new rows + new reports on the VM, pushes via this script.
+     Coding machine pulls via this script — append-merge handles every-
+     thing without prompts.
+
+  2. Manual data fix on the coding machine -> VM
+     You edit a DB row or a report .txt to correct bad data (e.g. a
+     missed trade injected after the fact). Re-run with `--prefer local`
+     so your edits become the source of truth — DB rows are UPSERTed
+     (existing keys overwritten with your version, rows only on the other
+     side preserved); conflicting files are kept from local. The opposite
+     flow (`--prefer remote`) lets you nuke local edits and adopt remote.
+
 Usage
 -----
     python scripts/backup_data.py              # full two-way sync (HTTPS)
     python scripts/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/backup_data.py --dry-run    # show what would change (no writes)
-    python scripts/backup_data.py --overwrite-db  # overwrite DB in one direction (asks l/r)
+
+    # Smart conflict resolution (non-interactive) — for the manual-fix flow
+    python scripts/backup_data.py --prefer local   # local wins all conflicts (UPSERT into remote)
+    python scripts/backup_data.py --prefer remote  # remote wins all conflicts (UPSERT into local)
+
+    # Nuclear reset (also deletes files not on the chosen side)
     python scripts/backup_data.py --all-local  # push ALL local data to remote (full overwrite)
     python scripts/backup_data.py --all-remote # pull ALL remote data to local (full overwrite)
 """
@@ -104,10 +124,21 @@ def git_pull():
 
 
 def git_push(msg: str) -> bool:
-    """Stage all, commit, and push in the backup repo."""
+    """Stage all, commit, and push in the backup repo.
+
+    On failure surfaces the underlying git stdout/stderr (otherwise
+    silent — historically masked GitHub's 100 MB rejection)."""
     def run(cmd):
-        subprocess.run(cmd, cwd=BACKUP_ROOT, check=True,
-                       capture_output=True, text=True)
+        try:
+            subprocess.run(cmd, cwd=BACKUP_ROOT, check=True,
+                           capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            print(f"\n  ! git command failed: {' '.join(cmd)}")
+            if e.stdout:
+                print(f"    stdout:\n{e.stdout.rstrip()}")
+            if e.stderr:
+                print(f"    stderr:\n{e.stderr.rstrip()}")
+            raise
 
     run(["git", "add", "-A"])
 
@@ -178,10 +209,17 @@ def _merge_table(
     src_conn: sqlite3.Connection,
     table: str,
     direction: str,
+    upsert: bool = False,
 ) -> int:
     """
     Merge rows from src into dst for one table.
     Returns the number of new rows inserted.
+
+    upsert=False (default, append-merge): existing keys preserved; only
+        new rows from src are added. Equivalent to INSERT OR IGNORE.
+    upsert=True (preferred-side mode): existing keys are OVERWRITTEN
+        with src's values. Use when src is the trusted side after a
+        manual data fix. Rows that exist only in dst are left untouched.
     """
     dst_cols = _get_columns(dst_conn, table)
     src_cols = _get_columns(src_conn, table)
@@ -195,7 +233,8 @@ def _merge_table(
         return 0
 
     if table in UNIQUE_TABLES:
-        # Tables with UNIQUE constraints — INSERT OR IGNORE handles dedup
+        # Tables with UNIQUE constraints — INSERT OR IGNORE for append,
+        # INSERT OR REPLACE for upsert (overwrites on key collision).
         rows = src_conn.execute(
             f"SELECT {', '.join(cols)} FROM {table}"
         ).fetchall()
@@ -203,19 +242,27 @@ def _merge_table(
             return 0
         placeholders = ", ".join("?" for _ in cols)
         before = dst_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        verb = "REPLACE" if upsert else "IGNORE"
         dst_conn.executemany(
-            f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) "
+            f"INSERT OR {verb} INTO {table} ({', '.join(cols)}) "
             f"VALUES ({placeholders})",
             rows,
         )
         after = dst_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        # In upsert mode the row count may not change (key collisions
+        # overwrite in place); return rows touched (inserts + updates).
+        if upsert:
+            return len(rows)
         return after - before
 
     elif table in APPEND_TABLES:
-        # Tables without UNIQUE constraints — deduplicate on key columns
+        # Tables without UNIQUE constraints — deduplicate on key columns.
+        # Use SQLite's `IS` operator (null-safe equality) so rows with
+        # NULL key fields (e.g. legacy trades with no entry_time) still
+        # match each other and don't duplicate on every sync.
         key_cols = APPEND_TABLES[table]
         key_cols_sql = ", ".join(key_cols)
-        placeholders_key = " AND ".join(f"{c}=?" for c in key_cols)
+        placeholders_key = " AND ".join(f"{c} IS ?" for c in key_cols)
         all_placeholders = ", ".join("?" for _ in cols)
 
         rows = src_conn.execute(
@@ -223,19 +270,36 @@ def _merge_table(
         ).fetchall()
         col_idx = {c: i for i, c in enumerate(cols)}
         inserted = 0
+        updated  = 0
         for row in rows:
             key_vals = tuple(row[col_idx[c]] for c in key_cols)
             exists = dst_conn.execute(
                 f"SELECT 1 FROM {table} WHERE {placeholders_key}",
                 key_vals,
             ).fetchone()
-            if not exists:
+            if exists:
+                if upsert:
+                    # Preferred-side wins: delete the dst row(s) matching
+                    # this key and re-insert src's version. Handles the
+                    # rare case of multiple rows per key (defensive).
+                    dst_conn.execute(
+                        f"DELETE FROM {table} WHERE {placeholders_key}",
+                        key_vals,
+                    )
+                    dst_conn.execute(
+                        f"INSERT INTO {table} ({', '.join(cols)}) "
+                        f"VALUES ({all_placeholders})",
+                        row,
+                    )
+                    updated += 1
+                # append-mode: skip silently
+            else:
                 dst_conn.execute(
                     f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({all_placeholders})",
                     row,
                 )
                 inserted += 1
-        return inserted
+        return inserted + updated
 
     else:
         # Unknown table — skip merge (copy as-is would be handled by file sync)
@@ -320,38 +384,88 @@ MERGE_LOG_FILES = {
 }
 
 
-def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
+def merge_databases(local_db: str, remote_db: str, dry_run: bool,
+                    prefer: str | None = None) -> bool:
     """
-    Merge two SQLite databases bidirectionally:
-      1. New rows from remote -> local
-      2. Copy merged local -> remote (so remote gets all rows too)
-    Returns True if any rows were merged.
+    Merge two SQLite databases.
+
+    prefer=None (default, append-merge):
+        Bidirectional row union. Rows existing on either side are kept;
+        no row is ever overwritten. Safe for the normal "VM appends new
+        trades" flow. After merge, local is copied to remote so both
+        sides hold the union.
+
+    prefer="local" / "remote":
+        UPSERT mode. Rows from the preferred side WIN on key collisions
+        (their column values overwrite the other side's). Rows that
+        exist only on the non-preferred side are still preserved (we do
+        NOT delete). Use after a manual data fix on the preferred side
+        when you need that fix to propagate to existing rows.
+
+    Returns True if any rows were inserted/updated or the file changed.
     """
     if not os.path.isfile(local_db) or not os.path.isfile(remote_db):
         return False
 
     if dry_run:
-        print(f"    <-> merge:   data/trades.db (would merge rows from both sides)")
+        if prefer:
+            print(f"    <-> upsert:  data/trades.db ({prefer} wins on key collisions)")
+        else:
+            print(f"    <-> merge:   data/trades.db (would merge rows from both sides)")
         return True
 
     total_inserted = 0
+    total_upserted = 0
 
-    # Open both databases
     local_conn = sqlite3.connect(local_db)
     remote_conn = sqlite3.connect(remote_db)
 
     try:
-        # Ensure tables exist in local (in case remote has tables local doesn't)
-        local_tables = set(_get_user_tables(local_conn))
+        local_tables  = set(_get_user_tables(local_conn))
         remote_tables = set(_get_user_tables(remote_conn))
-
         mergeable = (UNIQUE_TABLES | set(APPEND_TABLES.keys()))
 
+        # Step A: pull preferred-side rows into the OTHER side first.
+        # In append mode this is a no-op pass on local (only the
+        # remote->local pull happens). In upsert mode this is where
+        # the user's edits propagate.
+        if prefer == "local":
+            # Local is truth: UPSERT local rows into remote conn (in-mem),
+            # then copy local file over remote at the end.
+            for table in sorted(mergeable):
+                if table in local_tables and table in remote_tables:
+                    n = _merge_table(remote_conn, local_conn, table,
+                                     "local->remote", upsert=True)
+                    if n > 0:
+                        print(f"    -> {n} row(s) UPSERTed into remote: {table}")
+                        total_upserted += n
+        elif prefer == "remote":
+            # Remote is truth: UPSERT remote rows into local.
+            for table in sorted(mergeable):
+                if table not in remote_tables:
+                    continue
+                if table not in local_tables:
+                    schema = remote_conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                        (table,),
+                    ).fetchone()
+                    if schema:
+                        local_conn.execute(schema[0])
+                        local_tables.add(table)
+                if table in local_tables:
+                    n = _merge_table(local_conn, remote_conn, table,
+                                     "remote->local", upsert=True)
+                    if n > 0:
+                        print(f"    <- {n} row(s) UPSERTed into local: {table}")
+                        total_upserted += n
+
+        # Step B: standard append-merge of the OTHER direction so rows
+        # that exist only on the non-preferred side are preserved.
+        # Direction below = "pull rows we're missing into local".
         for table in sorted(mergeable):
             if table not in remote_tables:
                 continue
             if table not in local_tables:
-                # Table exists in remote but not local — create it from remote schema
                 schema = remote_conn.execute(
                     "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
                     (table,),
@@ -361,23 +475,39 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool) -> bool:
                     local_tables.add(table)
 
             if table in local_tables:
-                n = _merge_table(local_conn, remote_conn, table, "remote->local")
+                # Always do an append-merge from remote into local so
+                # any rows only-on-remote (e.g. from another machine)
+                # survive. Skip when prefer=="remote" because step A
+                # already pulled everything.
+                if prefer == "remote":
+                    continue
+                n = _merge_table(local_conn, remote_conn, table,
+                                 "remote->local", upsert=False)
                 if n > 0:
                     print(f"    <- {n} new row(s) from remote: {table}")
                     total_inserted += n
 
         local_conn.commit()
+        remote_conn.commit()
     finally:
         remote_conn.close()
         local_conn.close()
 
-    if total_inserted > 0:
-        print(f"    <-> merged {total_inserted} total new row(s) into local DB")
+    if total_inserted:
+        print(f"    <-> merged {total_inserted} new row(s) into local DB")
+    if total_upserted:
+        print(f"    <-> upserted {total_upserted} row(s) using {prefer}-wins policy")
 
-    # Copy merged local -> remote so both sides are identical
+    # Sync the merged result back the other way so both files hold the
+    # same union. After append-merge or prefer=local, local has every-
+    # thing -> copy local to remote. After prefer=remote, the freshly-
+    # upserted local file is also the union -> still copy local->remote
+    # so the remote git checkout reflects it on next push.
     shutil.copy2(local_db, remote_db)
 
-    return total_inserted > 0 or not filecmp.cmp(local_db, remote_db, shallow=False)
+    changed = (total_inserted + total_upserted) > 0 \
+              or not filecmp.cmp(local_db, remote_db, shallow=False)
+    return changed
 
 
 def main():
@@ -386,19 +516,26 @@ def main():
                         help="Show what would change without making any writes.")
     parser.add_argument("--ssh", action="store_true",
                         help="Use SSH URL for cloning (for VMs with SSH key auth).")
-    parser.add_argument("--overwrite-db", action="store_true",
-                        help="Overwrite DB in one direction instead of merging. "
-                             "Asks which side to keep (l/r) with confirmation.")
+    parser.add_argument("--prefer", choices=("local", "remote"), default=None,
+                        help="Non-interactive conflict resolution. Files: chosen "
+                             "side wins. DBs: row-level UPSERT from chosen side "
+                             "(existing keys overwritten with chosen-side values; "
+                             "rows only on the other side are still preserved). "
+                             "Use after a manual data fix to propagate edits.")
     parser.add_argument("--all-local", action="store_true",
-                        help="Push ALL local data to remote (full overwrite). "
-                             "Replaces every file and DB in the backup repo with local copies.")
+                        help="Push ALL local data to remote (full overwrite, "
+                             "including DELETING remote files not present locally).")
     parser.add_argument("--all-remote", action="store_true",
-                        help="Pull ALL remote data to local (full overwrite). "
-                             "Replaces every local file and DB with backup repo copies.")
+                        help="Pull ALL remote data to local (full overwrite, "
+                             "including DELETING local files not present remotely).")
     args = parser.parse_args()
 
     if args.all_local and args.all_remote:
         print("  \u2717 Cannot use --all-local and --all-remote together.")
+        sys.exit(1)
+    if (args.all_local or args.all_remote) and args.prefer:
+        print("  \u2717 --prefer is incompatible with --all-local / --all-remote "
+              "(--all-* deletes; --prefer never deletes).")
         sys.exit(1)
 
     if not os.path.isdir(BACKUP_ROOT):
@@ -439,6 +576,18 @@ def main():
         src_root  = PROJECT_ROOT if args.all_local else BACKUP_ROOT
         dst_root  = BACKUP_ROOT  if args.all_local else PROJECT_ROOT
         print(f"  [{direction}] Full overwrite of {'remote' if args.all_local else 'local'} data\n")
+
+        # Destructive — confirm unless dry-run.
+        if not args.dry_run:
+            side_label = "remote backup repo" if args.all_local else "local project"
+            confirm = input(
+                f"  ! This will OVERWRITE the {side_label} (and DELETE any "
+                f"files not on the {'local' if args.all_local else 'remote'} "
+                f"side). Continue? [y/n]: "
+            ).strip().lower()
+            if confirm != "y":
+                print("  Aborted.")
+                return
 
         copied = 0
         for item in SYNC_ITEMS:
@@ -503,60 +652,24 @@ def main():
         else:
             # Both exist — check if they differ
             identical = filecmp.cmp(local_files[rel], remote_files[rel], shallow=False)
-            if identical and not (args.overwrite_db and rel.endswith(".db")):
+            if identical:
                 unchanged += 1
                 continue
 
-            # SQLite databases — merge rows (or overwrite if --overwrite-db)
+            # SQLite databases — merge rows (or upsert if --prefer set)
             if rel.endswith(".db"):
-                if args.overwrite_db:
-                    if args.dry_run:
-                        print(f"    != overwrite-db: {rel} (will ask l/r)")
-                        copied_to_remote += 1
-                    else:
-                        # Ask which side to keep
-                        while True:
-                            choice = input(
-                                f"    != {rel}\n"
-                                f"      Keep (l)ocal or (r)emote? [l/r]: "
-                            ).strip().lower()
-                            if choice in ("l", "r"):
-                                break
-                            print("      Please enter 'l' or 'r'.")
-                        # Confirm — this is destructive
-                        src = "LOCAL" if choice == "l" else "REMOTE"
-                        dst = "remote" if choice == "l" else "local"
-                        while True:
-                            confirm = input(
-                                f"      ! This will OVERWRITE the {dst} DB with {src}. "
-                                f"Are you sure? [y/n]: "
-                            ).strip().lower()
-                            if confirm in ("y", "n"):
-                                break
-                            print("      Please enter 'y' or 'n'.")
-                        if confirm == "y":
-                            if choice == "l":
-                                copy_file(local_files[rel], remote_files[rel], False)
-                                print(f"      -> overwrote remote with local")
-                                copied_to_remote += 1
-                            else:
-                                copy_file(remote_files[rel], local_files[rel], False)
-                                print(f"      <- overwrote local with remote")
-                                copied_to_local += 1
-                        else:
-                            print(f"      X skipped (no overwrite)")
-                            unchanged += 1
+                db_merged = merge_databases(
+                    local_files[rel], remote_files[rel], args.dry_run,
+                    prefer=args.prefer,
+                )
+                if not args.dry_run and not db_merged:
+                    unchanged += 1
                 else:
-                    db_merged = merge_databases(
-                        local_files[rel], remote_files[rel], args.dry_run,
-                    )
-                    if not args.dry_run and not db_merged:
-                        unchanged += 1
-                    else:
-                        copied_to_remote += 1
+                    copied_to_remote += 1
                 continue
 
-            # Log files — merge lines from both sides
+            # Log files — merge lines from both sides (always — logs are
+            # append-only by nature; --prefer doesn't apply)
             if rel in MERGE_LOG_FILES:
                 log_merged = merge_log_files(
                     local_files[rel], remote_files[rel], args.dry_run,
@@ -567,7 +680,21 @@ def main():
                     copied_to_remote += 1
                 continue
 
-            # Content differs — ask user
+            # Other file types — resolve conflict
+            if args.prefer == "local":
+                if not args.dry_run:
+                    copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), False)
+                print(f"    -> remote (prefer local): {rel}")
+                copied_to_remote += 1
+                continue
+            if args.prefer == "remote":
+                if not args.dry_run:
+                    copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), False)
+                print(f"    <- local (prefer remote): {rel}")
+                copied_to_local += 1
+                continue
+
+            # Default: ask
             conflicts += 1
             if args.dry_run:
                 print(f"    != conflict: {rel}")
@@ -590,7 +717,11 @@ def main():
         return
 
     # Step 4: Push changes to backup repo
-    if git_push("sync: two-way data sync"):
+    if args.prefer:
+        push_msg = f"sync: prefer-{args.prefer} (manual data fix propagated)"
+    else:
+        push_msg = "sync: two-way data sync"
+    if git_push(push_msg):
         print("  ok Pushed to remote.\n")
     else:
         print()

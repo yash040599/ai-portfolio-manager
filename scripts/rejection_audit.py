@@ -33,6 +33,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from config import Config                       # noqa: E402
+from config import now_ist                      # noqa: E402  # IST-aware date
 from core.logger import Logger                  # noqa: E402
 from core.zerodha_client import ZerodhaClient   # noqa: E402
 
@@ -333,7 +334,7 @@ def run_audit(
     Failures are caught — this function never raises. EOD pipeline can
     call it without a try/except wrapper.
     """
-    date = date or dt.datetime.now().date()
+    date = date or now_ist().date()
     log  = log or Logger("rej-audit")
 
     try:
@@ -427,7 +428,7 @@ def main() -> int:
     args = p.parse_args()
 
     date = (dt.date.fromisoformat(args.date) if args.date
-            else dt.datetime.now().date())
+            else now_ist().date())
 
     text = run_audit(
         date,

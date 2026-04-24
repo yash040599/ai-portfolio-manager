@@ -57,6 +57,26 @@
       +1 and effective_adx_override_score by +0.5 for fade-side trades only
       (BUY on a gap-DOWN day, SELL on a gap-UP day) for the rest of the day.
       Kill-switch STRONG_GAP_ADX_BOOST_ENABLED.
+
+  2026-04-24 sync — Pre-trade check count: 34 → 35. Added:
+    • #200 Pattern↔Tech contradiction penalty — scanner reduces final
+      score when bullish pattern fires on bearish tech setup (or mirror)
+      to filter false positives upstream of #190 entry veto.
+    • #201 VWAP statistical-band gate — adapts VWAP guard to intraday
+      volatility using rolling SD bands instead of fixed % distance.
+    • #202 Late-entry tightening bundle — past LATE_ENTRY_HOUR, raises
+      score floor by LATE_ENTRY_MIN_SCORE_BUMP, R:R floor to 1.5, and
+      caps max_positions at 2.
+    • #203 Recover-prior-session-fills — synthetic CLOSED records built
+      on restart from Zerodha order history when local DB is missing.
+    • #204-208 Log-noise + naive-datetime cleanup (square-off SL clear,
+      shutdown WARNING leading newline, R:R-rejection retry guard,
+      rejection_audit IST timezone fix, cancel-order "does not exist"
+      demoted to debug).
+    • #209 Recovered-position rationale scrub (drop internal #203 tag).
+    • #210 Order-placement double-fire guard — `_find_recent_matching_order`
+      detects orders that reached Zerodha but whose response was lost,
+      preventing the 3-retry loop from creating duplicate live orders.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -1125,7 +1145,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `python scripts/verify_trades.py` | Same-day API verification — corrects prices, recomputes charges, and syncs reports + intraday_tax_ledger + trades table |
 | `python scripts/rejection_audit.py --append-report` | Post-trade rejection audit — parses today's `portfolio.log`, fetches close prices for every skipped entry, prints verdict table (`AVOIDED_LOSS` / `MISSED_PROFIT` / `NEUTRAL`), appends to trading report. Auto-invoked at EOD; CLI for back-fill: `--date YYYY-MM-DD` |
 | `python scripts/import_zerodha_taxpnl.py` | Quarterly xlsx verification — imports intraday + capital gains |
-| `python scripts/backup_data.py --ssh` | Two-way sync with private Git repo (row-level SQLite merge) |
+| `python scripts/backup_data.py --ssh` | Two-way sync with private Git repo (row-level append-merge by default; `--prefer local\|remote` for UPSERT after manual data fixes; `--all-local\|--all-remote` for full overwrite) |
 
 ---
 

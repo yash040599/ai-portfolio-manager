@@ -438,6 +438,14 @@ class PortfolioManager:
         self.engine.sync_external_positions()
 
         plans = trades if trades is not None else self._trade_plans
+        # Reset the engine's per-batch R:R rejection counter so the
+        # mid-day retry decision below can tell whether ANY of these
+        # candidates failed for an R:R-floor reason. If none did, a
+        # second pass at a lower floor is guaranteed to reject the
+        # same set (RSI / VWAP / pattern / liquidity rejections don't
+        # depend on the floor) — wasting Claude/Kite calls and log
+        # noise. Observed 2026-04-24 11:00:56 → 11:01:13 batch.
+        self.engine._rr_rejection_count = 0
         entered = self._attempt_entries(plans)
 
         # ── Mid-day retry step-down ────────────────────────────────
@@ -447,7 +455,15 @@ class PortfolioManager:
         retry_step = getattr(self.cfg, "RR_RETRY_STEP", 0)
         relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
         at_normal = self.engine._zero_entry_scans < relax_after
-        if entered == 0 and retry_step > 0 and at_normal and plans and self._initial_entry_done:
+        rr_rejections = self.engine._rr_rejection_count
+        if (
+            entered == 0
+            and retry_step > 0
+            and at_normal
+            and plans
+            and self._initial_entry_done
+            and rr_rejections > 0   # NEW: only retry if R:R floor was the blocker
+        ):
             hour_now = now_ist().hour
             current_floor = self.engine.current_rr_floor(hour=hour_now)
             retry_floor = max(current_floor - retry_step, 1.0)
@@ -2205,7 +2221,12 @@ class PortfolioManager:
                 self.log.error("Force exit — some positions may still be open!")
                 sys.exit(1)
 
-            self.log.warning("\nShutdown requested — will square off and exit...")
+            # Note: no leading "\n" — the formatter already prefixes
+            # the timestamp/level, so a leading newline produced an
+            # empty WARNING record followed by the real message on the
+            # next line, which broke log parsers that key on the
+            # leading timestamp.
+            self.log.warning("Shutdown requested — will square off and exit...")
             self._shutdown_requested = True
 
         signal.signal(signal.SIGINT, handler)

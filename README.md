@@ -81,7 +81,7 @@ Loop, in plain English:
    apply price filter, run candlestick + indicator detectors, score, pick
    the best candidates.
 2. **Execute** — LIMIT entry at LTP + 1 tick (MARKET fallback), ATR-based
-   SL/target with min-distance floor, **34-check pre-trade pipeline** (see
+   SL/target with min-distance floor, **35-check pre-trade pipeline** (see
    [STRATEGY_V2.md](docs/STRATEGY_V2.md#risk-management--entry-pre-checks)
    for the full table), risk-budget position sizing.
 3. **Monitor** — adaptive polling, auto-trail SL, partial profits,
@@ -156,9 +156,10 @@ their content.
 
 | Doc | What it covers |
 |-----|----------------|
-| [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 34-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
+| [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 35-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
 | [docs/STRATEGY_V1.md](docs/STRATEGY_V1.md) | V1 architecture (deprecated, frozen) |
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
+| [docs/STRATEGY_EVOLUTION.md](docs/STRATEGY_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 shipped)** — Profitability dashboard roadmap; lives in its own `Dashboard/` folder |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | V3 research ideas (ML scoring, options chain, Claude narrative) |
 | [docs/TAX_GUIDE.md](docs/TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
@@ -407,24 +408,66 @@ All scripts support `--help`.
 private repo** so they're portable across machines.
 
 ```bash
-python scripts/backup_data.py            # two-way sync + push (HTTPS)
+python scripts/backup_data.py            # two-way append-merge + push (HTTPS)
 python scripts/backup_data.py --ssh      # SSH (Linux VMs)
-python scripts/backup_data.py --dry-run  # preview
-python scripts/backup_data.py --all-local   # full push
-python scripts/backup_data.py --all-remote  # full pull
-python scripts/backup_data.py --overwrite-db  # one-direction DB overwrite
+python scripts/backup_data.py --dry-run  # preview, no writes
+
+# Manual-fix flow (you edited a row/report on this machine — make it the truth)
+python scripts/backup_data.py --prefer local    # local wins, edits propagate via UPSERT
+python scripts/backup_data.py --prefer remote   # remote wins (rare — adopt VM's version)
+
+# Nuclear reset (also DELETES files not on the chosen side; prompts y/n)
+python scripts/backup_data.py --all-local       # full overwrite of remote
+python scripts/backup_data.py --all-remote      # full overwrite of local
 ```
 
 | Scenario | Action |
 |----------|--------|
 | File only one side | Copied across |
 | File both sides, identical | Skipped |
-| `.db` in both, different | **Merged row-by-row** (no deletes) |
-| `.db` with `--overwrite-db` | One-direction overwrite (asks `l/r`) |
-| Other file in both, different | Asks `l/r` |
+| `.db` in both, different (default) | **Append-merge** — new rows from each side added; nothing overwritten or deleted |
+| `.db` in both with `--prefer X` | **Row UPSERT** — X's values win on key collisions; rows only on the OTHER side preserved |
+| Other file in both, different (default) | Asks `l/r` |
+| Other file in both, different with `--prefer X` | X's copy kept (no prompt) |
+| Log files (`logs/portfolio.log`) | Always line-merged (chronological union) |
+
+**Two normal flows**
+
+1. **EOD VM → coding machine** (no flag needed):
+   - VM: `python scripts/backup_data.py --ssh` after market close.
+   - Dev machine: `python scripts/backup_data.py` next morning.
+   - DBs append-merge cleanly because both sides only added new rows.
+
+2. **Manual data fix on coding machine → VM** (use `--prefer local`):
+   - Edit a DB row or report .txt to correct bad data.
+   - `python scripts/backup_data.py --prefer local` — your edits become the truth.
+   - VM picks up corrections on its next pull.
 
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.
+
+**GitHub 100 MB file limit**
+
+GitHub rejects any single file > 100 MB on push. The sync script will
+fail with a clear error from `git push` if this happens. Two protections
+are in place:
+
+- **Dedup key uses null-safe `IS` comparison** so the `trades` table
+  doesn't double on every sync (a single bug here previously inflated
+  `data/trades.db` from <1 MB to 135 MB over ~20 syncs).
+- **Periodic check.** If `data/trades.db` ever grows unexpectedly
+  (>10 MB for normal usage), inspect with:
+  ```bash
+  python -c "import sqlite3; c=sqlite3.connect('data/trades.db'); print('trades rows:', c.execute('SELECT COUNT(*) FROM trades').fetchone()[0])"
+  ```
+  Real row count for a few months of trading should be in the low
+  hundreds. If you see >10 000, the dedup is broken — bisect by date
+  and rebuild the table (see `_dedup` pattern in commit history).
+
+`--all-local` and `--all-remote` are NOT immune to the 100 MB limit —
+they `git push` the chosen side as-is. If the file is already too big,
+you must shrink it first (DELETE + VACUUM) before any sync flag will
+succeed.
 
 ---
 

@@ -469,6 +469,28 @@ class ZerodhaClient:
             except Exception as e:
                 last_error = e
                 if attempt < max_retries:
+                    # CRITICAL: before retrying, check whether the
+                    # previous attempt actually reached Zerodha. A network
+                    # timeout reading the response means the order may
+                    # already be live on the exchange — a blind retry
+                    # would create a DUPLICATE position. Look for any
+                    # order matching (symbol, side, qty) placed within
+                    # the last 90 s. If found, return its ID instead of
+                    # placing a second order.
+                    dup = self._find_recent_matching_order(
+                        symbol=symbol, side=side, qty=qty,
+                        order_type=order_params["order_type"],
+                        max_age_seconds=90,
+                    )
+                    if dup:
+                        self.log.warning(
+                            f"Zerodha order retry: previous attempt "
+                            f"({side} {qty}x {symbol}) appears to have "
+                            f"reached the exchange (order {dup} found). "
+                            f"Returning existing order ID — NOT retrying."
+                        )
+                        return str(dup)
+
                     wait = attempt * 2  # 2s, 4s backoff
                     self.log.warning(
                         f"Zerodha order failed (attempt {attempt}/{max_retries}): "
@@ -485,6 +507,79 @@ class ZerodhaClient:
             f"Order placement failed after {max_retries} retries: {last_error}"
         ) from last_error
 
+    def _find_recent_matching_order(
+        self,
+        symbol:           str,
+        side:             str,
+        qty:              int,
+        order_type:       str,
+        max_age_seconds:  int = 90,
+    ) -> str | None:
+        """Return the order_id of the most recent order matching
+        (symbol, side, qty, order_type) placed within `max_age_seconds`,
+        or None if no match exists.
+
+        Used by `place_order` to detect duplicate-fire scenarios where
+        a network timeout swallowed the response of a successful
+        placement. Without this guard the retry loop would create a
+        second live order.
+
+        Fail-safe: any exception fetching orders returns None (caller
+        falls back to retrying — accepting the duplicate-risk on top of
+        whatever original failure motivated the retry, which is no
+        worse than the legacy behaviour).
+        """
+        try:
+            orders = self._kite.orders() or []
+        except Exception:
+            return None
+        try:
+            import datetime as _dt
+            now = _dt.datetime.now()
+        except Exception:
+            return None
+        # Match exchange transaction type
+        wanted_txn = (
+            self._kite.TRANSACTION_TYPE_BUY if side.upper() == "BUY"
+            else self._kite.TRANSACTION_TYPE_SELL
+        )
+        # Order types like "MARKET", "SL-M", "LIMIT" come back as the same
+        # string Kite expects on placement, so equality is fine.
+        candidates = []
+        for o in orders:
+            try:
+                if o.get("tradingsymbol") != symbol:
+                    continue
+                if o.get("transaction_type") != wanted_txn:
+                    continue
+                if int(o.get("quantity", 0) or 0) != int(qty):
+                    continue
+                if o.get("order_type") != order_type:
+                    continue
+                # Skip explicitly-rejected/cancelled orders — they aren't
+                # live on the exchange so a retry is safe.
+                if o.get("status") in ("REJECTED", "CANCELLED"):
+                    continue
+                ts = o.get("order_timestamp")
+                if ts is None:
+                    continue
+                # Kite returns naive datetime in IST (or string).
+                if isinstance(ts, str):
+                    try:
+                        ts = _dt.datetime.fromisoformat(ts)
+                    except Exception:
+                        continue
+                age = (now - ts).total_seconds()
+                if 0 <= age <= max_age_seconds:
+                    candidates.append((age, str(o.get("order_id") or "")))
+            except Exception:
+                continue
+        if not candidates:
+            return None
+        # Most recent match
+        candidates.sort()
+        return candidates[0][1] or None
+
     def cancel_order(self, order_id: str):
         """
         Cancels a pending order by its Zerodha order ID.
@@ -498,7 +593,15 @@ class ZerodhaClient:
             )
             self.log.success(f"Order cancelled: {order_id}")
         except Exception as e:
-            self.log.warning(f"Could not cancel order {order_id}: {e}")
+            # "order does not exist" is the expected case during EOD
+            # square-off cleanup: the SL-M may have already been filled
+            # or auto-cancelled by Zerodha. Demote to debug so the
+            # user-facing log isn't polluted on every clean shutdown.
+            msg = str(e).lower()
+            if "does not exist" in msg or "already" in msg:
+                self.log.debug(f"Order {order_id} already terminal: {e}")
+            else:
+                self.log.warning(f"Could not cancel order {order_id}: {e}")
 
     def place_sl_m_order(
         self,

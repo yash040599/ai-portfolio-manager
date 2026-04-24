@@ -169,6 +169,17 @@ class OrderEngine:
         self._rr_giveup: bool = False  # True = stop trading for the day
         self._rr_retry_active: bool = False  # True = within-scan step-down active
 
+        # Per-batch counter of R:R-related rejections (gross R:R below
+        # `current_rr_floor()` OR net-of-charges R:R below 1.0). The
+        # manager's mid-day R:R-retry step-down checks this before
+        # firing a second pass: if zero R:R rejections happened, no
+        # candidate would benefit from a lower floor and re-running
+        # the same 15 stocks just wastes Claude/Kite quota and pollutes
+        # logs (observed 2026-04-24 11:00:56 → 11:01:13 batch). The
+        # manager calls reset_rr_rejection_count() at the start of
+        # each `_attempt_entries` pass.
+        self._rr_rejection_count: int = 0
+
     # ── Adaptive R:R methods ──────────────────────────────────
 
     def _time_based_rr_floor(self, hour: int) -> float:
@@ -315,6 +326,41 @@ class OrderEngine:
     # RESUME — LOAD EXISTING POSITIONS FROM ZERODHA
     # ================================================================
 
+    def _trades_index_by_symbol(self) -> dict[str, list[dict]]:
+        """Fetch today's executed trades from Zerodha and group by
+        symbol, sorted by fill_timestamp.
+
+        Returns {} on API failure (callers fall back to net-positions
+        only). Used by both load_existing_positions() and
+        recover_prior_session_fills() to recover real order_ids,
+        timestamps, and side ordering after a crash/restart.
+        """
+        try:
+            raw = self.zerodha.get_todays_trades()
+        except Exception as e:
+            self.log.warning(f"get_todays_trades() failed: {e}")
+            return {}
+
+        idx: dict[str, list[dict]] = {}
+        for t in raw or []:
+            sym = t.get("tradingsymbol")
+            if not sym:
+                continue
+            idx.setdefault(sym, []).append(t)
+        for sym, fills in idx.items():
+            fills.sort(key=lambda f: str(f.get("fill_timestamp")
+                                         or f.get("order_timestamp") or ""))
+        return idx
+
+    @staticmethod
+    def _fmt_fill_time(ts) -> str | None:
+        """Return HH:MM:SS for a Kite fill_timestamp (datetime or str)."""
+        if ts is None:
+            return None
+        s = str(ts)
+        # Kite returns "YYYY-MM-DD HH:MM:SS" (str or datetime). Take last 8 chars.
+        return s[-8:] if len(s) >= 8 else None
+
     def load_existing_positions(self) -> int:
         """
         Fetches today's open MIS positions from Zerodha and loads them
@@ -328,6 +374,12 @@ class OrderEngine:
         except Exception as e:
             self.log.error(f"Failed to fetch positions from Zerodha: {e}")
             return 0
+
+        # Pull today's fills so resumed positions get the real opening
+        # order_id + entry_time instead of the placeholder "RESUMED".
+        # Falls back gracefully to {} (and the legacy placeholder
+        # behaviour) if the API call fails.
+        trades_idx = self._trades_index_by_symbol()
 
         net_positions = positions_data.get("net", [])
         loaded = 0
@@ -359,6 +411,21 @@ class OrderEngine:
             else:
                 sl, target = self._default_sl_target(avg_price, side)
 
+            # Recover the real opening order_id + entry_time from
+            # today's fills, if available. The opening side equals the
+            # current net side (a still-open position has only opening
+            # fills on the dominant side; the opposite side's qty is 0).
+            real_order_id   = "RESUMED"
+            real_entry_time = now.strftime("%H:%M:%S")
+            for fill in trades_idx.get(symbol, []):
+                if fill.get("transaction_type") == side:
+                    real_order_id = str(fill.get("order_id") or "RESUMED")
+                    ft = self._fmt_fill_time(fill.get("fill_timestamp")
+                                             or fill.get("order_timestamp"))
+                    if ft:
+                        real_entry_time = ft
+                    break  # earliest fill (list is timestamp-sorted)
+
             position = {
                 "symbol":       symbol,
                 "exchange":     exchange,
@@ -371,10 +438,10 @@ class OrderEngine:
                 "exit_reason":  None,
                 "status":       "OPEN",
                 "pnl":          0.0,
-                "entry_time":   now.strftime("%H:%M:%S"),
+                "entry_time":   real_entry_time,
                 "exit_time":    None,
                 "rationale":    "Resumed from existing Zerodha position",
-                "order_id":     "RESUMED",
+                "order_id":     real_order_id,
             }
             self.positions.append(position)
             loaded += 1
@@ -446,9 +513,14 @@ class OrderEngine:
             positions_data = self.zerodha.get_positions()
         except Exception as e:
             self.log.warning(
-                f"#203 recovery: failed to fetch positions from Zerodha: {e}"
+                f"Realised-P&L recovery: failed to fetch positions from Zerodha: {e}"
             )
             return 0
+
+        # Pull fills so we can reconstruct true side / entry_time /
+        # exit_time / opening order_id for each round-trip. Falls back
+        # to the legacy net-positions-only path if the API fails.
+        trades_idx = self._trades_index_by_symbol()
 
         net_positions = positions_data.get("net", []) or []
         # Symbols already in self.positions (open or closed) — skip to
@@ -484,48 +556,84 @@ class OrderEngine:
                 qty = min(buy_qty, sell_qty)
                 if qty <= 0:
                     continue
-                # We cannot reliably reconstruct whether the original
-                # trade was LONG or SHORT from net-positions alone:
-                #   buy_price < sell_price + pnl > 0  → could be LONG (bought low, sold high) OR SHORT closed in profit
-                #   buy_price > sell_price + pnl < 0  → could be LONG closed in loss OR SHORT (sold low, bought high)
-                # Two of four real combinations are ambiguous. Inferring
-                # from price ordering (an earlier draft did this) is
-                # WRONG for losing LONGs and winning SHORTs and would
-                # mis-key the per-symbol re-entry cooldown (#161, keyed
-                # SYMBOL_SIDE), letting a fresh same-direction entry
-                # through when it should be blocked.
-                # Conservative default: tag as BUY. The pnl/exit_price
-                # values flow into day_pnl() correctly regardless. Side
-                # only affects (a) cosmetic display and (b) the cooldown
-                # / sector / direction caps; defaulting to BUY blocks
-                # BUY follow-ups conservatively (cost: may also block a
-                # legitimate SELL follow-up but a fresh +score will
-                # bypass the cooldown via RE_ENTRY_SCORE_OVERRIDE).
-                # If we ever wire kite.trades() (timestamped fills) we
-                # can reconstruct the true open/close sequence and the
-                # actual side here.
+
                 pnl = float(pos.get("pnl", 0) or 0)
                 exchange = pos.get("exchange", "NSE")
-                side = "BUY"   # see comment above — conservative default
+
+                # ── Reconstruct true side/times/order_id from fills ──
+                # First fill chronologically opened the position; the
+                # opposite side closed it. This disambiguates LONG vs
+                # SHORT (net-positions alone cannot — see comment block
+                # below for the legacy fallback rationale).
+                side          = "BUY"   # legacy fallback (see below)
+                entry_time    = None
+                exit_time     = None
+                opening_order = "RECOVERED"
+                closing_order = None
+                fills = trades_idx.get(symbol, [])
+                if fills:
+                    first = fills[0]
+                    last  = fills[-1]
+                    open_side  = first.get("transaction_type")
+                    close_side = last.get("transaction_type")
+                    if open_side in ("BUY", "SELL") and open_side != close_side:
+                        side          = open_side
+                        entry_time    = self._fmt_fill_time(
+                            first.get("fill_timestamp")
+                            or first.get("order_timestamp"))
+                        exit_time     = self._fmt_fill_time(
+                            last.get("fill_timestamp")
+                            or last.get("order_timestamp"))
+                        opening_order = str(first.get("order_id") or "RECOVERED")
+                        closing_order = str(last.get("order_id") or "")
+
+                # Without kite.trades() we cannot reliably reconstruct
+                # whether the original trade was LONG or SHORT from
+                # net-positions alone. Conservative default: BUY.
+                # (See git history for full rationale; the cooldown
+                # impact is asymmetric but a fresh +score override
+                # bypasses it.) Since #fills-recovery now handles the
+                # common case, this fallback only fires when get_trades
+                # itself fails — which also blocks the side disambiguation.
+
+                # Use real fill prices when we know the side (avoids
+                # the LONG-loser misnomer where buy_price > sell_price).
+                if side == "BUY":
+                    entry_price_disp, exit_price_disp = buy_price, sell_price
+                else:
+                    entry_price_disp, exit_price_disp = sell_price, buy_price
+
+                # Heuristic exit reason: stop-loss-style exit if loss
+                # exceeded ~0.5% of entry value — purely cosmetic, real
+                # reason is unrecoverable post-restart.
+                if abs(pnl) > 0 and entry_price_disp > 0:
+                    loss_pct = pnl / (entry_price_disp * qty) * 100
+                    if loss_pct <= -1.0:
+                        exit_reason = "STOP_LOSS_RECOVERED"
+                    elif loss_pct >= 1.0:
+                        exit_reason = "TARGET_RECOVERED"
+                    else:
+                        exit_reason = "SQUARE_OFF_RECOVERED"
+                else:
+                    exit_reason = "RECOVERED_FROM_ZERODHA"
+
                 synthetic = {
                     "symbol":        symbol,
                     "exchange":      exchange,
                     "side":          side,
                     "qty":           qty,
-                    # entry_price / exit_price are display-only for
-                    # recovered records (true ordering unknown). pnl
-                    # is authoritative.
-                    "entry_price":   round(buy_price, 2),
+                    "entry_price":   round(entry_price_disp, 2),
                     "stop_loss":     0.0,
                     "target_price":  0.0,
-                    "exit_price":    round(sell_price, 2),
-                    "exit_reason":   "RECOVERED_FROM_ZERODHA",
+                    "exit_price":    round(exit_price_disp, 2),
+                    "exit_reason":   exit_reason,
                     "status":        "CLOSED",
                     "pnl":           round(pnl, 2),
-                    "entry_time":    None,   # unknown — pre-restart
-                    "exit_time":     None,
-                    "rationale":     "Recovered from Zerodha after restart (#203)",
-                    "order_id":      "RECOVERED",
+                    "entry_time":    entry_time,
+                    "exit_time":     exit_time,
+                    "rationale":     "Recovered from Zerodha after restart",
+                    "order_id":      opening_order,
+                    "_sl_order_id":  closing_order,
                     "_external":     True,   # don't attribute to bot strategy
                 }
                 self.positions.append(synthetic)
@@ -538,7 +646,7 @@ class OrderEngine:
                 )
             except (ValueError, TypeError, KeyError) as e:
                 self.log.warning(
-                    f"#203 recovery: skipped malformed Zerodha row "
+                    f"Realised-P&L recovery: skipped malformed Zerodha row "
                     f"({type(e).__name__}: {e})"
                 )
                 continue
@@ -1910,6 +2018,7 @@ class OrderEngine:
 
         if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
             actual_rr = tgt_dist / sl_dist
+            self._rr_rejection_count += 1
             self.log.warning(
                 f"{symbol}: R:R {actual_rr:.2f}:1 is below {rr_floor:.1f}:1 "
                 f"{floor_label} floor — skipping"
@@ -2479,6 +2588,7 @@ class OrderEngine:
             net_profit = gross_profit - round_trip_charges
             net_risk = gross_risk + round_trip_charges
             if net_risk > 0 and net_profit / net_risk < 1.0:
+                self._rr_rejection_count += 1
                 self.log.warning(
                     f"{symbol}: net-of-charges R:R {net_profit / net_risk:.2f}:1 "
                     f"< 1.0:1 (charges Rs.{round_trip_charges:.0f} eat the edge). Skipping."
@@ -2800,12 +2910,25 @@ class OrderEngine:
         # BUG FIX (Apr 9 2026): Ensure pending_order_ids consistency.
         # If position has _sl_order_id but it's not in pending set,
         # log warning (possible orphan from earlier failed discard).
+        # SQUARE_OFF / CIRCUIT_BREAKER paths bulk-cancel SL-Ms upstream
+        # in `square_off_all()` and clear `_sl_order_id` immediately
+        # afterwards, so a stale ID here would never be reached on a
+        # clean square-off. If we DO see one on those paths it means
+        # the bulk-cancel was bypassed (e.g. direct exit_position()
+        # call) — still worth a debug breadcrumb but not a user-facing
+        # warning.
         if sl_order_id and sl_order_id not in self._pending_order_ids:
-            self.log.warning(
-                f"Orphan pending ID detected: {symbol} has _sl_order_id {sl_order_id} "
-                f"but not in pending set. Position may have been exited already or "
-                f"had a failed discard. Continuing with exit."
-            )
+            if reason in ("SQUARE_OFF", "CIRCUIT_BREAKER"):
+                self.log.debug(
+                    f"{symbol}: stale _sl_order_id {sl_order_id} on {reason} "
+                    f"path (already cancelled by square_off_all bulk path)"
+                )
+            else:
+                self.log.warning(
+                    f"Orphan pending ID detected: {symbol} has _sl_order_id {sl_order_id} "
+                    f"but not in pending set. Position may have been exited already or "
+                    f"had a failed discard. Continuing with exit."
+                )
 
         # ── Handle exchange SL-M order ────────────────────────────
         if sl_order_id and not self.cfg.DRY_RUN:
@@ -3952,7 +4075,19 @@ class OrderEngine:
         """
         # BUG FIX: Cancel all pending SL-M orders first to prevent stale triggers
         self.cancel_all_pending_orders()
-        
+
+        # After the bulk cancel, every open position's tracked SL-M is
+        # known to be gone from the exchange. Clear `_sl_order_id` on
+        # each so `exit_position()` doesn't fire its orphan-pending
+        # warning + a futile cancel-attempt for an order ID that no
+        # longer exists. Without this, every clean SQUARE_OFF logs two
+        # noisy WARNINGs per position ("Orphan pending ID detected" and
+        # "Could not cancel order ... does not exist") even though the
+        # exit path is fully intentional.
+        for _p in self.open_positions():
+            if _p.get("_sl_order_id"):
+                _p["_sl_order_id"] = None
+
         open_pos = self.open_positions()
         if not open_pos:
             self.log.info("No open positions to square off")
