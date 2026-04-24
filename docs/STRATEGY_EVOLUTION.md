@@ -1,7 +1,7 @@
 # Strategy Evolution
 Chronological log of every strategy item shipped, in order of work-item number (numbers are issued in time order). One line per item. Use this to skim how the system evolved from day 1 to today.
 > **Maintenance:** This file is regenerated from [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) (Completed section). Do NOT hand-edit rows. Add new items to the Roadmap; the regeneration recipe lives in [copilot/code-map.md](../copilot/code-map.md). Keep this file up to date after every shipped item or review-cycle pass.
-> Last regenerated: 2026-04-24. Items: 178 (#1 → #212).
+> Last regenerated: 2026-04-24. Items: 180 (#1 → #214).
 
 ## Timeline
 
@@ -185,3 +185,5 @@ Chronological log of every strategy item shipped, in order of work-item number (
 | 210 | Risk | Order-placement double-fire guard |
 | 211 | Risk | VIX intraday-spike entry-pause unification (closes hole left by #181) |
 | 212 | Risk | Tape-breadth filter on pre-filter set (BUY/SELL ratio penalty) |
+| 213 | Bug Fix | VIX-spike pre-loop priming (closes ~10 min gap left by #211) |
+| 214 | Bug Fix | Config validation: VIX threshold ranges + minor drift cleanups |
