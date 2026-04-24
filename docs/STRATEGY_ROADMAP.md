@@ -104,7 +104,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 | 175 | Lunch-lull score floor RAISE (6.0 → 7.0) | Counter-evidence won. Three consecutive days of `rejection_audit.py` (2026-04-22/23/24) showed lunch-lull is net-NEGATIVE: 3-day Avoided Rs.1,649 vs Missed Rs.2,656 = net **−Rs.1,007** at 1-slot hypothetical sizing. The floor was too HIGH, not too low. #221 LOWERED the floor 6.0 → 5.7 instead. |
 
-### Completed (193 items)
+### Completed (194 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -131,7 +131,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (42)** | | |
+| **Risk Management (43)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -303,6 +303,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 221 | **Lunch-lull score-override LOWERED (6.0 → 5.7)** — data-driven config tweak surfaced by the pre-code-freeze financial-analyst overlap audit. `scripts/rejection_audit.py` run on the three latest trading days (2026-04-22/23/24) showed lunch-lull was net-NEGATIVE every day at 1-slot hypothetical sizing: Avoided Rs.1,032/Rs.122/Rs.494 vs Missed Rs.1,416/Rs.503/Rs.737 — 3-day net **−Rs.1,007**. The gate was rejecting too many borderline-but-profitable trades during the 11:30–12:15 IST window. Initial commit lowered the override to 5.5, but that equalled `V2_MIN_SCORE` (5.5) and silently neutered the gate (every entry-score-passing candidate also passed lunch); same-day Step-1 financial-analyst review caught the no-op and the value was nudged up to 5.7 — a meaningful step above `V2_MIN_SCORE` so the gate still rejects truly weak lunch-window signals (5.5–5.7 band) while admitting the borderline-but-profitable 5.7+ band the audit said we were missing. Sister item #175 (which proposed RAISING the floor to 7.0) moved to Removed with the same evidence. Kept the gate enabled (not disabled outright) to monitor whether 5.7 is the right level. | Risk |
 | 222 | **Sector-cascade per-position try/except** — pre-code-freeze final hardening pass found that `_sector_cascade_protect()` in `portfolio/manager_v2.py` called `engine._update_exchange_sl(pos, new_sl)` inside its per-position loop unguarded. A transient broker error on position N would propagate up the monitor loop and crash mid-trading, leaving open positions unmonitored. Fix: software SL is updated first (in-memory, always succeeds); broker SL replace is wrapped in `try/except Exception`; on failure log a WARNING and `_reconcile_orphan_sl_m()` repairs the broker mismatch on the next sync. Loop continues to subsequent positions instead of aborting. No happy-path behaviour change. | Bug Fix |
 | 223 | **Candle/regime protect per-position try/except** — round-2 hardening found the defensive pattern from #222 was not mirrored in the two sibling SL-tightening paths (`_auto_protect_on_contrary_signal` / CANDLE PROTECT and `_regime_shift_protect` / REGIME PROTECT). Same crash class as #222. Fix: identical try/except wrapping around `engine._update_exchange_sl()` in both paths. Pattern now consistent across all three SL-tightening sites. | Bug Fix |
+| 224 | **Late-entry tightening recalibration (#202 follow-up)** — financial-analyst review of #202 surfaced two over-tightening defects. (a) `LATE_ENTRY_RR_FLOOR = 1.5` was equal to `RR_TARGET_RATIO = 1.5`, so base ATR geometry produced R:R == 1.5 exactly and the strict-`<` floor killed every borderline ATR trade once tick rounding nudged the computed value to 1.48-1.49. After 1 PM the −20%/−25% target compression made R:R structurally 1.20/1.13 → 1.5 floor banned all afternoon entries, not just the weak ones #202 intended to filter. Fix: lowered `LATE_ENTRY_RR_FLOOR` 1.5 → 1.3 (= morning floor; still rejects afternoon-compressed trades; gives ATR trades ~0.2 headroom for tick noise). (b) `LATE_ENTRY_MAX_POSITIONS = 2` was a flat cap regardless of budget — a Rs.5L account lost 5 of its 7 normal slots at 10 AM, severely under-utilising capital with no risk justification (the 2 was sized for tiny accounts). Fix: new `Config.dynamic_late_entry_max_positions(budget)` returns 2/2/3/3/4/4 across `<25K / 25-60K / 60K-1L / 1L-3L / 3L-5L / >5L`; always strictly below `dynamic_max_positions()` so #202's intent (less concurrent late risk) survives, but proportional to capital. `enter_trade()` now calls `dynamic_late_entry_max_positions(self._budget)` instead of reading the flat config. | Risk |
 
 ---
 

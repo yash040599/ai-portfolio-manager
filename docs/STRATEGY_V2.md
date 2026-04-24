@@ -67,7 +67,7 @@
       (gate 17d)
     • #202 Late-entry tightening bundle — past LATE_ENTRY_HOUR, raises
       score floor by LATE_ENTRY_MIN_SCORE_BUMP, R:R floor to 1.5, and
-      caps max_positions at 2. (gates 18d + 18e)
+      caps max_positions via `dynamic_late_entry_max_positions(budget)` so the cap scales with account size (was a hard 2 across all budgets pre-#224). (gates 18d + 18e)
     • #203 Recover-prior-session-fills — synthetic CLOSED records built
       on restart from Zerodha order history when local DB is missing.
     • #204-208 Log-noise + naive-datetime cleanup (square-off SL clear,
@@ -684,7 +684,7 @@ Every trade must pass these 41 checks in order. If any fails, the trade is rejec
 | 18b | **Gap-coherence gate** (#173) | `GAP_COHERENCE_GATE_ENABLED = True`, override `GAP_COHERENCE_OVERRIDE_SCORE = 7.5` | Reject `BUY` on `GAP_DOWN_STRONG` and `SELL` on `GAP_UP_STRONG` (entry direction contradicts overnight institutional flow) unless `\|score\| ≥ 7.5`. Only acts on the high-conviction STRONG gaps; WEAK / `NO_GAP` not gated. Fails open when the indicator snapshot is missing/malformed |
 | 18c | **Circuit-limit (UC/LC) entry guard** (#180) | `CIRCUIT_LIMIT_GUARD_ENABLED = True`, `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` | Reject `BUY` when intraday move ≥ +(20 - buffer)% from prev close, `SELL` when ≤ -(20 - buffer)%. Within 1% of the ±20% daily freeze the order book becomes one-sided — SL-M can't fill, MIS auto-square at 15:20 takes a distressed price. Fails open when `ohlc.close` missing in the live quote |
 | 18d | **Late-entry score-floor bump** (#202) | `LATE_ENTRY_TIGHTENING_ENABLED = True`, `LATE_ENTRY_HOUR = 10`, `LATE_ENTRY_MIN_SCORE_BUMP = 0.5` | After `LATE_ENTRY_HOUR` (10:00 IST), reject when `\|score\| < effective_min_score() + 0.5`. Stacks on top of regime/loss bumps. Tightens late entries because the remaining session is shorter — weak setups have less runway to play out |
-| 18e | **Late-entry max-positions cap** (#202) | `LATE_ENTRY_MAX_POSITIONS = 2` | After `LATE_ENTRY_HOUR`, the effective max-positions cap becomes `min(MAX_POSITIONS, 2)`. Limits over-exposure during the higher-volatility, lower-edge afternoon |
+| 18e | **Late-entry max-positions cap** (#202, refined by #224) | `LATE_ENTRY_MAX_POSITIONS = 2` (smallest-bucket floor), budget-scaled via `dynamic_late_entry_max_positions(budget)` | After `LATE_ENTRY_HOUR`, the effective max-positions cap becomes `min(MAX_POSITIONS, dynamic_late_entry_max_positions(budget))`. Bucket map: <25K → 2 (no-op), 25-60K → 2, 60K-1L → 3, 1-3L → 3, 3-5L → 4, >5L → 4. Always strictly below `dynamic_max_positions` for that bucket so the spirit of #202 (less concurrent late risk) survives, but a Rs.5L account is no longer crushed from 7 normal slots to 2. Refined 2026-04-25 — the original flat cap of 2 ignored that the same number that's appropriate for a Rs.20K account is severely under-utilising a Rs.5L account |
 
 ### R:R Floor System
 
@@ -700,7 +700,7 @@ The R:R (Risk:Reward) floor ensures every trade has adequate upside vs risk cons
 
 **Mid-day retry:** On mid-day rescans (all-closed, slot-freed, opportunity), if first pass finds 0 entries, retry with floor reduced by `RR_RETRY_STEP` (0.1). Example: morning 1.3 → 1.2. Morning scan is excluded (it has observation period + multiple candidates + adaptive relaxation).
 
-**Late-entry tightening (#202)** runs LAST in `current_rr_floor()` resolution and is a hard floor: after `LATE_ENTRY_HOUR` (10:00 IST), the result is `max(computed_floor, LATE_ENTRY_RR_FLOOR=1.5)`. This intentionally **overrides adaptive relaxation and mid-day retry** — those are "we're starving, lower the bar" mechanisms; late-entry is a structural correctness floor that says "with limited remaining session, only the highest-edge setups should run." The label is logged as `late-entry-tightened (overrides relaxed/retry/...)` so it's traceable.
+**Late-entry tightening (#202, refined by #224)** runs LAST in `current_rr_floor()` resolution and is a hard floor: after `LATE_ENTRY_HOUR` (10:00 IST), the result is `max(computed_floor, LATE_ENTRY_RR_FLOOR=1.3)`. This intentionally **overrides adaptive relaxation and mid-day retry** — those are "we're starving, lower the bar" mechanisms; late-entry is a structural correctness floor that says "with limited remaining session, only the highest-edge setups should run." The label is logged as `late-entry-tightened (overrides relaxed/retry/...)` so it's traceable. The floor was lowered from 1.5 to 1.3 on 2026-04-25 by #224: base ATR geometry (`SL = ATR_MULT × ATR`, `Target = ATR_MULT × RR_TARGET_RATIO × ATR`) produces R:R == `RR_TARGET_RATIO` == 1.5 exactly, so a strict-`<` 1.5 floor was killing every borderline ATR trade once tick-rounding nudged the computed R:R to 1.48-1.49. 1.3 matches the morning floor (so late entries are at least as strict as morning), and afternoon-compressed trades (1.20 / 1.13) are still rejected.
 
 ---
 
@@ -1082,8 +1082,8 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `LATE_ENTRY_TIGHTENING_ENABLED` | True | Roadmap #202 — master kill-switch for late-entry tightening (R:R floor, score-floor bump, max-positions cap) |
 | `LATE_ENTRY_HOUR` | 10 | IST hour after which late-entry rules activate |
 | `LATE_ENTRY_MIN_SCORE_BUMP` | 0.5 | Score points added to `effective_min_score()` past `LATE_ENTRY_HOUR` (gate 18d) |
-| `LATE_ENTRY_RR_FLOOR` | 1.5 | R:R floor enforced past `LATE_ENTRY_HOUR`. Overrides relaxation / retry / time-based floors via `max()` (see [R:R Floor System](#rr-floor-system)) |
-| `LATE_ENTRY_MAX_POSITIONS` | 2 | Cap on concurrent positions past `LATE_ENTRY_HOUR` (gate 18e) |
+| `LATE_ENTRY_RR_FLOOR` | 1.3 | R:R floor enforced past `LATE_ENTRY_HOUR`. Overrides relaxation / retry / time-based floors via `max()` (see [R:R Floor System](#rr-floor-system)). Lowered 1.5 → 1.3 by #224 so ATR-default trades (which compute to exactly 1.5) survive tick-rounding noise |
+| `LATE_ENTRY_MAX_POSITIONS` | 2 (floor for smallest budget bucket) | After `LATE_ENTRY_HOUR`, `dynamic_late_entry_max_positions(budget)` returns the effective cap (gate 18e). Budget-aware bucket map; #224 |
 | `MOMENTUM_KILL_ENABLED` | True | Roadmap #198 — kill-switch for the post-entry momentum-kill exit. Runs in `check_stops_and_targets()` BEFORE the SL check |
 | `MOMENTUM_KILL_GRACE_SECONDS` | 60 | Don't fire within this many seconds of entry (let spread tighten) |
 | `MOMENTUM_KILL_WINDOW_MINUTES` | 3 | After grace expires, the kill window stays open for this many minutes from entry |

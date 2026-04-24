@@ -1107,12 +1107,23 @@ class Config:
     #   - effective_min_score() bumped by LATE_ENTRY_MIN_SCORE_BUMP
     #     (checked inside enter_trade against |_entry_score|)
     #   - current_rr_floor() takes max(time_floor, LATE_ENTRY_RR_FLOOR)
-    #   - max-positions check uses min(MAX_POSITIONS, LATE_ENTRY_MAX_POSITIONS)
+    #   - max-positions check uses min(MAX_POSITIONS,
+    #     dynamic_late_entry_max_positions(budget)) so the cap scales
+    #     with account size instead of always being 2 (#224)
     # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
     LATE_ENTRY_TIGHTENING_ENABLED: bool  = True
     LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 0.5
-    LATE_ENTRY_RR_FLOOR:           float = 1.5
+    # 1.3 (was 1.5) — base ATR target = entry ± ATR_MULT × RR_TARGET_RATIO
+    # × ATR which produces R:R == RR_TARGET_RATIO == 1.5 exactly. The
+    # old 1.5 strict-< floor killed every borderline ATR trade once tick
+    # rounding nudged R:R to 1.48-1.49. 1.3 keeps the intent of #202 (=
+    # morning floor; cannot drop below it) but gives ATR trades ~0.2
+    # headroom for rounding noise. Afternoon-compressed trades (1.2 /
+    # 1.125) are still rejected. Lowered 2026-04-25 by #224.
+    LATE_ENTRY_RR_FLOOR:           float = 1.3
+    # Static cap kept as a hard floor; dynamic_late_entry_max_positions()
+    # reads it for the smallest budget bucket and scales up from there.
     LATE_ENTRY_MAX_POSITIONS:      int   = 2
 
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
@@ -1573,6 +1584,48 @@ class Config:
             return 6
         else:
             return 7
+
+    @classmethod
+    def dynamic_late_entry_max_positions(cls, budget: float) -> int:
+        """Late-entry concurrency cap (Roadmap #202, refined by #224).
+
+        After LATE_ENTRY_HOUR (10:00 IST), the entry pipeline applies
+        ``min(MAX_POSITIONS, this)`` so a bad late read can't fill every
+        slot with chop entries. The old design used a single static
+        value (LATE_ENTRY_MAX_POSITIONS = 2), which capped a Rs.5L
+        account at 2 of its 7 normal slots — way too aggressive for
+        well-capitalised accounts.
+
+        This budget-scaled cap stays strictly below dynamic_max_positions
+        for every bucket, so the spirit of #202 (less concurrent late
+        risk) is preserved while letting larger accounts use a
+        proportional share of their slots.
+
+        Bucket map (vs dynamic_max_positions in parens):
+          < 25K    → 2  (cap = normal, no-op for tiny accounts)
+          25-60K   → 2  (normal 3, late 2 — drops 1)
+          60-1L    → 3  (normal 4, late 3 — drops 1)
+          1L-3L    → 3  (normal 5, late 3 — drops 2)
+          3L-5L    → 4  (normal 6, late 4 — drops 2)
+          > 5L     → 4  (normal 7, late 4 — drops 3)
+
+        The static LATE_ENTRY_MAX_POSITIONS is honoured as the floor for
+        the smallest bucket (so a user who manually overrides it to 1
+        still gets a tighter cap).
+        """
+        floor = max(1, int(getattr(cls, "LATE_ENTRY_MAX_POSITIONS", 2)))
+        if budget < 25_000:
+            return floor
+        elif budget < 60_000:
+            return max(floor, 2)
+        elif budget < 100_000:
+            return max(floor, 3)
+        elif budget < 300_000:
+            return max(floor, 3)
+        elif budget < 500_000:
+            return max(floor, 4)
+        else:
+            return max(floor, 4)
 
     @classmethod
     def budget_regime(cls, budget: float) -> str:

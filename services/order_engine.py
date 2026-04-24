@@ -2142,14 +2142,22 @@ class OrderEngine:
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
         max_pos_cap = int(self.cfg.MAX_POSITIONS)
-        # Late-entry tightening (Roadmap #202): cap concurrent positions
-        # tighter past LATE_ENTRY_HOUR so a bad late read doesn't fill
-        # all slots with chop entries.
+        # Late-entry tightening (Roadmap #202, refined by #224): cap
+        # concurrent positions tighter past LATE_ENTRY_HOUR so a bad
+        # late read doesn't fill all slots with chop entries. Cap is
+        # budget-aware via dynamic_late_entry_max_positions() so a
+        # Rs.5L account isn't capped at 2 (its normal cap is 7); a
+        # Rs.20K account stays at 2 (matches its normal cap of 2 too,
+        # so the gate is a no-op for tiny accounts — desired).
         if (
             getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
             and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
         ):
-            max_pos_cap = min(max_pos_cap, int(self.cfg.LATE_ENTRY_MAX_POSITIONS))
+            if hasattr(self.cfg, "dynamic_late_entry_max_positions"):
+                late_cap = self.cfg.dynamic_late_entry_max_positions(self._budget)
+            else:
+                late_cap = int(self.cfg.LATE_ENTRY_MAX_POSITIONS)
+            max_pos_cap = min(max_pos_cap, late_cap)
         if open_count >= max_pos_cap:
             ext_count = len([p for p in self.positions if p["status"] == "OPEN" and p.get("_external")])
             bot_count = open_count - ext_count
