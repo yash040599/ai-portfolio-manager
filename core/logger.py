@@ -58,6 +58,16 @@ class Logger:
 
     # ── Public methods ────────────────────────────────────────────
 
+    def debug(self, message: str):
+        """Verbose diagnostic — written to logs/portfolio.log only.
+
+        No stdout print: keeps terminal output focused on user-facing
+        events while still capturing the full trace for post-mortem.
+        Mirrors `logging.Logger.debug()` so any module can call
+        `self.log.debug(...)` without crashing on AttributeError.
+        """
+        self._logger.debug(message)
+
     def info(self, message: str):
         """Plain informational message — no colour prefix."""
         self._clear_status_line()
