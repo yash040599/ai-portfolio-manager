@@ -34,7 +34,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | X | Risk | Stale-SL-M re-attribution + idempotent transactional cancel-replace inside _sector_cascade_protect |
 
 > **Source of truth:** `STRATEGY_ROADMAP.md` (Completed section). When you ship a strategy item, add a row here in the same commit, following the rules above.
-> Last regenerated: 2026-04-25. Items: 145 (#1 → #224).
+> Last regenerated: 2026-04-25. Items: 146 (#1 → #225).
 
 ## Timeline
 
@@ -182,3 +182,4 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | 220 | Risk | If a whole sector turns sharply against us inside one scan, tighten stop-losses on every open position in that sector right away. |
 | 221 | Risk | Lunch-lull score-override lowered 6.0 → 5.7 — old level was rejecting too many borderline-but-profitable trades during 11:30–12:15 IST. |
 | 224 | Risk | After 10 AM the bot was over-tightening: required R:R of 1.5 (which equals the default R:R, so tick rounding rejected almost everything) and capped concurrent trades at 2 regardless of budget (a Rs.5L account lost 5 of its 7 normal slots). Loosened the after-10 AM R:R bar to 1.3 and made the late-trade slot cap scale with budget (e.g. 4 slots on a Rs.5L account, still 2 on a Rs.20K account). |
+| 225 | Risk | Simplified the after-10 AM rules. The R:R bar is now a single always-on floor of 1.3 (same value, same behaviour after 10 AM, plus protection against over-relaxation before 10 AM too). The separate after-10 AM slot cap was dropped — the budget-based slot count (e.g. 5 slots on a Rs.2L account) already does the right thing all day, and the late-entry score bump (each new trade after 10 AM still needs a higher score) is the real edge filter. Two fewer config knobs, same protection. |

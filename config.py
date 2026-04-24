@@ -255,6 +255,16 @@ class Config:
     RR_FLOOR_AFTERNOON:    float = 1.2   # 1 PM to 2 PM
     RR_FLOOR_LATE:         float = 1.0   # after 2 PM — safety net only
     RR_FLOOR_RELAXED:      float = 1.1   # after N failed scans (any time)
+    # Always-on hard floor: current_rr_floor() returns max(computed, this).
+    # Wins over time-based floors AND adaptive relaxation AND mid-day
+    # retry — those are "we're starving, lower the bar" mechanisms; this
+    # is a structural correctness floor that says "we never run a trade
+    # whose computed R:R is worse than 1.3, full stop." Set just below
+    # RR_TARGET_RATIO (1.5) so default-ATR trades survive tick-rounding
+    # noise (computed R:R may print as 1.48-1.49 after rounding).
+    # Replaces the late-entry-only LATE_ENTRY_RR_FLOOR removed by #225 —
+    # the late-only gate was redundant once the floor matched morning.
+    RR_HARD_FLOOR:         float = 1.3
     RR_RETRY_STEP:         float = 0.1   # mid-day retry step-down (1.3 → 1.2)
     RR_RELAX_AFTER_FAILS:  int   = 3     # zero-entry scans before relaxing
     RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before giving up
@@ -1101,30 +1111,23 @@ class Config:
     # out. Late entries are *higher* risk yet today the entry pipeline
     # actually relaxes: observation floor drops to 5 min ("opening
     # volatility passed"), R:R floor stays the same. We invert this:
-    # past LATE_ENTRY_HOUR (default 10:00 IST), demand strictly
-    # better-than-base setups and cap concurrent positions.
-    # Effects when active:
+    # past LATE_ENTRY_HOUR (default 10:00 IST), demand a strictly
+    # better-than-base score for fresh entries.
+    # Effect when active:
     #   - effective_min_score() bumped by LATE_ENTRY_MIN_SCORE_BUMP
     #     (checked inside enter_trade against |_entry_score|)
-    #   - current_rr_floor() takes max(time_floor, LATE_ENTRY_RR_FLOOR)
-    #   - max-positions check uses min(MAX_POSITIONS,
-    #     dynamic_late_entry_max_positions(budget)) so the cap scales
-    #     with account size instead of always being 2 (#224)
+    #
+    # NOTE (#225 simplification): the previous late-entry-only R:R
+    # floor and concurrent-position cap were dropped. The R:R guard now
+    # lives in RR_HARD_FLOOR (always-on, see RR section above) which
+    # already prevents adaptive relaxation from undercutting morning
+    # standards. Concurrency is fully owned by dynamic_max_positions()
+    # all day — the late-only cap was budget-disproportionate and
+    # rarely bound in practice (most days fill 2-4 of 5-7 slots total).
     # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
     LATE_ENTRY_TIGHTENING_ENABLED: bool  = True
     LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 0.5
-    # 1.3 (was 1.5) — base ATR target = entry ± ATR_MULT × RR_TARGET_RATIO
-    # × ATR which produces R:R == RR_TARGET_RATIO == 1.5 exactly. The
-    # old 1.5 strict-< floor killed every borderline ATR trade once tick
-    # rounding nudged R:R to 1.48-1.49. 1.3 keeps the intent of #202 (=
-    # morning floor; cannot drop below it) but gives ATR trades ~0.2
-    # headroom for rounding noise. Afternoon-compressed trades (1.2 /
-    # 1.125) are still rejected. Lowered 2026-04-25 by #224.
-    LATE_ENTRY_RR_FLOOR:           float = 1.3
-    # Static cap kept as a hard floor; dynamic_late_entry_max_positions()
-    # reads it for the smallest budget bucket and scales up from there.
-    LATE_ENTRY_MAX_POSITIONS:      int   = 2
 
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
     # The dominant loss pattern today is "slow bleed to SL" — a trade
@@ -1586,48 +1589,6 @@ class Config:
             return 7
 
     @classmethod
-    def dynamic_late_entry_max_positions(cls, budget: float) -> int:
-        """Late-entry concurrency cap (Roadmap #202, refined by #224).
-
-        After LATE_ENTRY_HOUR (10:00 IST), the entry pipeline applies
-        ``min(MAX_POSITIONS, this)`` so a bad late read can't fill every
-        slot with chop entries. The old design used a single static
-        value (LATE_ENTRY_MAX_POSITIONS = 2), which capped a Rs.5L
-        account at 2 of its 7 normal slots — way too aggressive for
-        well-capitalised accounts.
-
-        This budget-scaled cap stays strictly below dynamic_max_positions
-        for every bucket, so the spirit of #202 (less concurrent late
-        risk) is preserved while letting larger accounts use a
-        proportional share of their slots.
-
-        Bucket map (vs dynamic_max_positions in parens):
-          < 25K    → 2  (cap = normal, no-op for tiny accounts)
-          25-60K   → 2  (normal 3, late 2 — drops 1)
-          60-1L    → 3  (normal 4, late 3 — drops 1)
-          1L-3L    → 3  (normal 5, late 3 — drops 2)
-          3L-5L    → 4  (normal 6, late 4 — drops 2)
-          > 5L     → 4  (normal 7, late 4 — drops 3)
-
-        The static LATE_ENTRY_MAX_POSITIONS is honoured as the floor for
-        the smallest bucket (so a user who manually overrides it to 1
-        still gets a tighter cap).
-        """
-        floor = max(1, int(getattr(cls, "LATE_ENTRY_MAX_POSITIONS", 2)))
-        if budget < 25_000:
-            return floor
-        elif budget < 60_000:
-            return max(floor, 2)
-        elif budget < 100_000:
-            return max(floor, 3)
-        elif budget < 300_000:
-            return max(floor, 3)
-        elif budget < 500_000:
-            return max(floor, 4)
-        else:
-            return max(floor, 4)
-
-    @classmethod
     def budget_regime(cls, budget: float) -> str:
         """Return budget regime name — "TINY", "SMALL", "NORMAL", or "LARGE".
 
@@ -1795,12 +1756,7 @@ class Config:
                 f"LATE_ENTRY_MIN_SCORE_BUMP must be ≥ 0: "
                 f"{cls.LATE_ENTRY_MIN_SCORE_BUMP!r}"
             )
-        _pos("LATE_ENTRY_RR_FLOOR", cls.LATE_ENTRY_RR_FLOOR)
-        if cls.LATE_ENTRY_MAX_POSITIONS < 1:
-            errors.append(
-                f"LATE_ENTRY_MAX_POSITIONS must be ≥ 1: "
-                f"{cls.LATE_ENTRY_MAX_POSITIONS!r}"
-            )
+        _pos("RR_HARD_FLOOR", cls.RR_HARD_FLOOR)
 
         # Post-entry momentum kill (#198)
         if cls.MOMENTUM_KILL_GRACE_SECONDS < 0:

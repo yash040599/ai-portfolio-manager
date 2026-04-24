@@ -211,21 +211,21 @@ class OrderEngine:
 
     def current_rr_floor(self, hour: int = 10) -> float:
         """Returns current R:R floor based on time of day, scan failures,
-        late-entry tightening, and mid-day retry state.
+        mid-day retry state, and the always-on RR_HARD_FLOOR.
 
         Resolution order:
           1. Compute time-based floor (morning 1.3 / afternoon 1.2 / late 1.0)
           2. Apply adaptive relaxation if N scans failed
              (min with RR_FLOOR_RELAXED)
           3. Apply mid-day retry step (max with RR_FLOOR_LATE)
-          4. **Late-entry tightening LAST (max with LATE_ENTRY_RR_FLOOR)**
-             so it has final say. Rationale: relaxation/retry are
-             "we're starving, lower the bar" mechanisms; late-entry
-             tightening (#202) is a hard correctness floor that says
-             "after 10:00 the remaining session is shorter, only the
-             highest-edge setups should run." Letting relaxation
-             defeat #202 would re-introduce the chop-day churn we
-             shipped #202 to prevent.
+          4. **Always-on hard floor LAST (max with RR_HARD_FLOOR)** so it
+             has final say. Rationale: relaxation/retry are "we're
+             starving, lower the bar" mechanisms; the hard floor is a
+             structural correctness floor that says "we never trade an
+             R:R worse than 1.3, full stop." Replaces the late-entry-
+             only floor (#202, removed by #225) — same effect on
+             post-10am entries, plus pre-10am entries also get
+             protection from over-aggressive relaxation.
         """
         time_floor = self._time_based_rr_floor(hour)
         floor = time_floor
@@ -238,13 +238,8 @@ class OrderEngine:
             # RR_FLOOR_LATE so we never go below the structural floor).
             floor = max(floor - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
 
-        # Late-entry tightening (Roadmap #202) wins over both — see
-        # docstring rationale.
-        if (
-            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
-            and hour >= int(self.cfg.LATE_ENTRY_HOUR)
-        ):
-            floor = max(floor, float(self.cfg.LATE_ENTRY_RR_FLOOR))
+        # Always-on hard floor wins over both — see docstring rationale.
+        floor = max(floor, float(getattr(self.cfg, "RR_HARD_FLOOR", 1.3)))
 
         return floor
 
@@ -252,13 +247,6 @@ class OrderEngine:
         """Returns a descriptive label for the current R:R floor state.
         Reflects current_rr_floor() resolution order so logs match the
         actual floor in effect."""
-        # Late-entry takes precedence (matches current_rr_floor) when
-        # the late floor would actually bind. Compute the candidate
-        # floor as current_rr_floor would and label accordingly.
-        late_active = (
-            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
-            and hour >= int(self.cfg.LATE_ENTRY_HOUR)
-        )
         candidate = self._time_based_rr_floor(hour)
         if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
             candidate = min(candidate, self.cfg.RR_FLOOR_RELAXED)
@@ -272,8 +260,9 @@ class OrderEngine:
             base_label = "afternoon"
         else:
             base_label = "morning"
-        if late_active and float(self.cfg.LATE_ENTRY_RR_FLOOR) > candidate:
-            return f"late-entry-tightened (overrides {base_label})"
+        hard_floor = float(getattr(self.cfg, "RR_HARD_FLOOR", 1.3))
+        if hard_floor > candidate:
+            return f"hard-floor (overrides {base_label})"
         return base_label
 
     def record_scan_result(self, entered: int):
@@ -1572,7 +1561,7 @@ class OrderEngine:
 
         Code-walkthrough summary below. A handful of subsidiary gates
         (#0e VIX-spike pause #211, #17d VWAP statistical-band #201,
-        #18d/#18e late-entry tightening #202) are described inline in
+        #18d late-entry score-floor #202) are described inline in
         their own code blocks and in STRATEGY_V2.md but omitted from
         this numbered summary to keep the walkthrough readable. When
         adding/removing gates, update STRATEGY_V2.md FIRST (it is the
@@ -2142,31 +2131,14 @@ class OrderEngine:
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
         max_pos_cap = int(self.cfg.MAX_POSITIONS)
-        # Late-entry tightening (Roadmap #202, refined by #224): cap
-        # concurrent positions tighter past LATE_ENTRY_HOUR so a bad
-        # late read doesn't fill all slots with chop entries. Cap is
-        # budget-aware via dynamic_late_entry_max_positions() so a
-        # Rs.5L account isn't capped at 2 (its normal cap is 7); a
-        # Rs.20K account stays at 2 (matches its normal cap of 2 too,
-        # so the gate is a no-op for tiny accounts — desired).
-        if (
-            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
-            and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
-        ):
-            if hasattr(self.cfg, "dynamic_late_entry_max_positions"):
-                late_cap = self.cfg.dynamic_late_entry_max_positions(self._budget)
-            else:
-                late_cap = int(self.cfg.LATE_ENTRY_MAX_POSITIONS)
-            max_pos_cap = min(max_pos_cap, late_cap)
+        # NOTE (#225): the late-entry-only concurrency cap was removed.
+        # dynamic_max_positions(budget) (set on engine init / set_budget)
+        # already scales the cap with account size all day; the late-only
+        # cap was budget-disproportionate and rarely bound in practice.
         if open_count >= max_pos_cap:
             ext_count = len([p for p in self.positions if p["status"] == "OPEN" and p.get("_external")])
             bot_count = open_count - ext_count
-            cap_label = (
-                f"{max_pos_cap} (late-entry cap)"
-                if max_pos_cap < int(self.cfg.MAX_POSITIONS)
-                else f"max {self.cfg.MAX_POSITIONS}"
-            )
-            msg = f"Cannot enter {symbol}: already at {cap_label} positions"
+            msg = f"Cannot enter {symbol}: already at max {max_pos_cap} positions"
             if ext_count:
                 msg += f" ({bot_count} bot + {ext_count} external/manual)"
             self.log.warning(msg)

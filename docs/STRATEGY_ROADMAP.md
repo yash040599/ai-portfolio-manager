@@ -104,7 +104,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 | 175 | Lunch-lull score floor RAISE (6.0 → 7.0) | Counter-evidence won. Three consecutive days of `rejection_audit.py` (2026-04-22/23/24) showed lunch-lull is net-NEGATIVE: 3-day Avoided Rs.1,649 vs Missed Rs.2,656 = net **−Rs.1,007** at 1-slot hypothetical sizing. The floor was too HIGH, not too low. #221 LOWERED the floor 6.0 → 5.7 instead. |
 
-### Completed (194 items)
+### Completed (195 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them).
 
@@ -131,7 +131,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (43)** | | |
+| **Risk Management (44)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
