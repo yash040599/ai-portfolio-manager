@@ -1089,7 +1089,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `REALISED_PNL_RECOVERY_ENABLED` | True | Roadmap #203 — on init, scan Zerodha net-positions for already-closed MIS round-trips not in our session and import them as synthetic CLOSED records (`exit_reason = RECOVERED_FROM_ZERODHA`, `_external = True`, `entry_time/exit_time = None`). Side defaults to BUY (true direction is unrecoverable from net-positions; `pnl` is authoritative) |
 | `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
 | `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
-| `LUNCH_LULL_SCORE_OVERRIDE` | 6.0 | `|score|` that bypasses the lunch skip |
+| `LUNCH_LULL_SCORE_OVERRIDE` | 5.7 | `|score|` that bypasses the lunch skip (lowered 6.0 → 5.7 by #221 after rejection-audit showed 6.0 was net-negative) |
 | `BUDGET_REGIME_ENABLED` | True | Master kill-switch for regime-adjusted gates (#165) |
 | `BUDGET_TIER_SMALL` / `_NORMAL` / `_LARGE` | 30k / 1L / 5L | Regime boundaries |
 | `BUDGET_ADX_THRESHOLD_DELTA` | {TINY: +2, SMALL: +1, NORMAL: 0, LARGE: -1} | Regime delta on `ADX_MIN_THRESHOLD` |
