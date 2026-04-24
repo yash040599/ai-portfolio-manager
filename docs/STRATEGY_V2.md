@@ -58,15 +58,16 @@
       (BUY on a gap-DOWN day, SELL on a gap-UP day) for the rest of the day.
       Kill-switch STRONG_GAP_ADX_BOOST_ENABLED.
 
-  2026-04-24 sync — Pre-trade check count: 34 → 35. Added:
+  2026-04-24 sync — Pre-trade check count: 34 → 38. Added:
     • #200 Pattern↔Tech contradiction penalty — scanner reduces final
       score when bullish pattern fires on bearish tech setup (or mirror)
-      to filter false positives upstream of #190 entry veto.
+      to filter false positives upstream of #190 entry veto. (gate 14c)
     • #201 VWAP statistical-band gate — adapts VWAP guard to intraday
       volatility using rolling SD bands instead of fixed % distance.
+      (gate 17d)
     • #202 Late-entry tightening bundle — past LATE_ENTRY_HOUR, raises
       score floor by LATE_ENTRY_MIN_SCORE_BUMP, R:R floor to 1.5, and
-      caps max_positions at 2.
+      caps max_positions at 2. (gates 18d + 18e)
     • #203 Recover-prior-session-fills — synthetic CLOSED records built
       on restart from Zerodha order history when local DB is missing.
     • #204-208 Log-noise + naive-datetime cleanup (square-off SL clear,
@@ -437,7 +438,7 @@ Only three decisions change in `--ai` mode — everything else is identical:
 | **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
 | **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
 
-Every entry/exit gate (all 31 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+Every entry/exit gate (all 38 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
 
 ---
 
