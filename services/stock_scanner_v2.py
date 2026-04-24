@@ -518,6 +518,78 @@ class StockScannerV2(StockScanner):
         if dropped_score:
             self.log.info(f"  Score filter: dropped {dropped_score} stocks below |score| {min_score}")
 
+        # Tape-breadth filter (Roadmap #212).
+        # Count BUY vs SELL candidates AFTER the score floor.
+        # When the minority side is ≤ BREADTH_BEARISH/BULLISH ratio of
+        # {BUY+SELL}, the broader tape is one-directional — apply
+        # BREADTH_PENALTY to |score| of the minority side so weak
+        # counter-tape candidates fall below V2_MIN_SCORE naturally.
+        # Operates on magnitude (sign preserved). Skipped when sample
+        # is too small to be meaningful (BREADTH_MIN_CANDIDATES).
+        if (
+            getattr(self.cfg, "BREADTH_FILTER_ENABLED", True)
+            and len(passed_score) >= int(self.cfg.BREADTH_MIN_CANDIDATES)
+        ):
+            n_buys  = sum(1 for s in passed_score if s["combined_score"] > 0)
+            n_sells = sum(1 for s in passed_score if s["combined_score"] < 0)
+            total   = n_buys + n_sells
+            buy_ratio  = (n_buys / total) if total > 0 else 0.5
+            sell_ratio = (n_sells / total) if total > 0 else 0.5
+            penalty    = float(self.cfg.BREADTH_PENALTY)
+            tape       = "NEUTRAL"
+            penalised  = 0
+            if buy_ratio <= float(self.cfg.BREADTH_BEARISH_BUY_RATIO):
+                tape = "BEARISH"
+                for s in passed_score:
+                    if s["combined_score"] > 0:
+                        mag = max(0.0, abs(s["combined_score"]) - penalty)
+                        s["combined_score"] = round(mag, 1)
+                        penalised += 1
+            elif sell_ratio <= float(self.cfg.BREADTH_BULLISH_SELL_RATIO):
+                tape = "BULLISH"
+                for s in passed_score:
+                    if s["combined_score"] < 0:
+                        mag = max(0.0, abs(s["combined_score"]) - penalty)
+                        s["combined_score"] = round(-mag, 1)
+                        penalised += 1
+            if penalised:
+                self.log.info(
+                    f"  Tape-breadth filter ({tape}): "
+                    f"BUYs={n_buys} SELLs={n_sells} "
+                    f"({buy_ratio*100:.0f}%/{sell_ratio*100:.0f}%) — "
+                    f"penalised {penalised} counter-tape candidate(s) "
+                    f"by -{penalty:.1f} |score|"
+                )
+            else:
+                self.log.debug(
+                    f"  Tape-breadth: BUYs={n_buys} SELLs={n_sells} "
+                    f"({buy_ratio*100:.0f}%/{sell_ratio*100:.0f}%) — "
+                    f"{tape}, no penalty applied"
+                )
+            # Re-apply score floor — penalised candidates may now
+            # have fallen below V2_MIN_SCORE and should be dropped
+            # before sector momentum / nifty trend filters.
+            before = len(passed_score)
+            passed_score = [
+                s for s in passed_score if abs(s["combined_score"]) >= min_score
+            ]
+            dropped_post = before - len(passed_score)
+            if dropped_post:
+                self.log.info(
+                    f"  Score filter (post-breadth): dropped {dropped_post} more"
+                )
+            # Stamp engine for log context on later rejections (#212).
+            try:
+                if hasattr(self, "engine") and self.engine is not None:
+                    self.engine.set_tape_breadth({
+                        "buys":  n_buys,
+                        "sells": n_sells,
+                        "ratio": round(buy_ratio, 2),
+                        "tape":  tape,
+                    })
+            except Exception:
+                pass
+
         # Sector momentum: compute average score per sector.
         # Stocks from sectors where 3+ stocks agree on direction get
         # a small score boost (sector is trending). This is applied

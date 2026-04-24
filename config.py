@@ -886,6 +886,48 @@ class Config:
     CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS:       int   = 2
     CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES:    int   = 10
 
+    # ── VIX Intraday-Spike Pause (Roadmap #211) ───────────────────
+    # India VIX measures 30-day expected NIFTY volatility. An intraday
+    # VIX spike (≥ VIX_SPIKE_PCT vs day open) signals a regime shift:
+    # correlations blow up, mean-reversion strategies misfire, SLs get
+    # hunted. The bot already used `_check_vix_spike()` to skip the
+    # opportunity scan and the all-closed re-scan, but the per-trade
+    # `enter_trade()` path was not gated — meaning an entry queued by
+    # the initial pre-market scan or a partial re-scan could still fire
+    # during a spike. #211 routes the same VIX-spike state through the
+    # OrderEngine via `set_vix_spike()` and adds a check inside
+    # `enter_trade()` so all entry paths honour the pause. Existing
+    # positions continue to be managed normally (only NEW entries
+    # block); the pause auto-clears when VIX retreats below the spike
+    # threshold. Kill-switch: VIX_SPIKE_ENTRY_PAUSE_ENABLED.
+    # Threshold tuning: VIX_SPIKE_PCT (10.0) is the existing
+    # `_check_vix_spike()` constant; reused so the engine and manager
+    # cannot disagree.
+    VIX_SPIKE_ENTRY_PAUSE_ENABLED:                bool  = True
+
+    # ── Tape-Breadth Filter (Roadmap #212) ────────────────────────
+    # On heavy-FII-sell days the broader tape is bearish: 70 %+ of the
+    # pre-filter set scores SELL, sectors weak across the board. BUYs
+    # entered on such days underperform their score-implied edge by
+    # ~30 % (anecdotal Apr 2026 backtests). #212 counts BUY vs SELL
+    # candidates AFTER the V2_MIN_SCORE filter and applies a small
+    # score penalty to the minority side. The penalty operates on
+    # magnitude (sign preserved) so weak counter-tape candidates fall
+    # below `V2_MIN_SCORE` naturally instead of being hard-blocked.
+    # BREADTH_BEARISH_BUY_RATIO: when BUY count ≤ this fraction of
+    #     {BUY+SELL}, tape is bearish — penalize remaining BUYs.
+    # BREADTH_BULLISH_SELL_RATIO: mirror for bullish tape (penalize
+    #     SELLs).
+    # BREADTH_PENALTY: subtract from |score| of the minority side.
+    # BREADTH_MIN_CANDIDATES: skip the filter when the post-V2_MIN
+    #     set is too small to be statistically meaningful.
+    # Kill-switch: BREADTH_FILTER_ENABLED.
+    BREADTH_FILTER_ENABLED:        bool  = True
+    BREADTH_BEARISH_BUY_RATIO:     float = 0.30
+    BREADTH_BULLISH_SELL_RATIO:    float = 0.30
+    BREADTH_PENALTY:               float = 0.5
+    BREADTH_MIN_CANDIDATES:        int   = 5
+
     # ── Unrealised-MTM-Aware Circuit Breaker (Roadmap #166) ───────
     # When True, check_circuit_breaker / is_soft_stopped /
     # is_peak_drawdown_stopped use day_pnl() + unrealised_pnl(quotes)
@@ -1616,6 +1658,23 @@ class Config:
             )
         _pos("AVG_DOWN_LOOKBACK_MINUTES", cls.AVG_DOWN_LOOKBACK_MINUTES)
         _pos("AVG_DOWN_OVERRIDE_SCORE",   cls.AVG_DOWN_OVERRIDE_SCORE)
+
+        # Tape-breadth filter (#212)
+        if not (0.0 < cls.BREADTH_BEARISH_BUY_RATIO < 1.0):
+            errors.append(
+                f"BREADTH_BEARISH_BUY_RATIO must be in (0, 1): "
+                f"{cls.BREADTH_BEARISH_BUY_RATIO!r}"
+            )
+        if not (0.0 < cls.BREADTH_BULLISH_SELL_RATIO < 1.0):
+            errors.append(
+                f"BREADTH_BULLISH_SELL_RATIO must be in (0, 1): "
+                f"{cls.BREADTH_BULLISH_SELL_RATIO!r}"
+            )
+        if cls.BREADTH_PENALTY < 0:
+            errors.append(
+                f"BREADTH_PENALTY must be ≥ 0: {cls.BREADTH_PENALTY!r}"
+            )
+        _pos("BREADTH_MIN_CANDIDATES", cls.BREADTH_MIN_CANDIDATES)
 
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)

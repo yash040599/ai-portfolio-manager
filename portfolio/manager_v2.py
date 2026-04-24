@@ -583,6 +583,7 @@ class PortfolioManagerV2(PortfolioManager):
                         time.sleep(base_poll)
                         continue
                     if self._check_vix_spike():
+                        self.engine.set_vix_spike(True)
                         self._clear_status_line()
                         self.log.info(
                             f"All positions closed but VIX (Volatility Index) spike active — "
@@ -590,6 +591,7 @@ class PortfolioManagerV2(PortfolioManager):
                         )
                         time.sleep(base_poll)
                         continue
+                    self.engine.set_vix_spike(False)
                     self._clear_status_line()
                     self.log.info(
                         f"All positions closed with {mins_remaining:.0f} min left — "
@@ -842,8 +844,10 @@ class PortfolioManagerV2(PortfolioManager):
                         )
                         # Tighten SLs on positions contradicted by new regime
                         self._regime_shift_protect(quotes)
-                    # VIX spike detection
-                    if self._check_vix_spike():
+                    # VIX spike detection (Roadmap #211)
+                    spike = self._check_vix_spike()
+                    self.engine.set_vix_spike(spike)
+                    if spike:
                         self._clear_status_line()
                         self.log.warning(
                             f"⚠ VIX (Volatility Index) SPIKE detected: {self._india_vix:.1f} "

@@ -162,6 +162,20 @@ class OrderEngine:
         # the average-down prevention gate in enter_trade.
         self._last_exit_score: dict[str, dict] = {}
 
+        # ── VIX intraday-spike pause state (#211) ──────────────────
+        # Manager updates this each NIFTY-recheck via set_vix_spike()
+        # so enter_trade() honours the same pause as the manager-level
+        # opportunity / re-scan paths. Default False = no pause.
+        self._vix_spike_active: bool = False
+
+        # ── Tape-breadth state (#212) ──────────────────────────────
+        # Scanner stamps this dict each scan with {"buys": int,
+        # "sells": int, "ratio": float, "tape": "BULLISH"/"BEARISH"
+        # /"NEUTRAL"}. Currently informational — the score penalty
+        # is applied scanner-side; this lets log lines reference the
+        # tape state when an entry is eventually rejected for score.
+        self._tape_breadth: dict | None = None
+
         # ── Adaptive R:R tracking ─────────────────────────────────
         # Counts scans that produced 0 entries (all candidates failed
         # R:R or other checks). After N failures, R:R floor relaxes.
@@ -1608,6 +1622,25 @@ class OrderEngine:
             self.log.warning(
                 f"{symbol}: choppy-morning pause active — new entries "
                 f"paused until {until.strftime('%H:%M:%S') if until else '?'}. "
+                f"Skipping (existing positions still managed)."
+            )
+            return False
+
+        # ── VIX intraday-spike pause (Roadmap #211) ───────────────
+        # Skip new entries when India VIX has spiked ≥ VIX_SPIKE_PCT
+        # vs day open. Manager already gates the opportunity / re-scan
+        # paths via _check_vix_spike(); this closes the entry-path
+        # hole so initial-scan / partial-rescan entries also honour
+        # the pause. Existing positions managed normally. Kill-switch:
+        # VIX_SPIKE_ENTRY_PAUSE_ENABLED.
+        if (
+            getattr(self.cfg, "VIX_SPIKE_ENTRY_PAUSE_ENABLED", True)
+            and self.is_vix_spike_active()
+        ):
+            self.log.warning(
+                f"{symbol}: VIX intraday-spike pause active — new entries "
+                f"blocked until VIX retreats below "
+                f"{self.cfg.VIX_SPIKE_PCT:.0f}% above day open. "
                 f"Skipping (existing positions still managed)."
             )
             return False
@@ -4338,6 +4371,30 @@ class OrderEngine:
     def record_chop_exit(self, when: datetime.datetime | None = None) -> None:
         """Stamp a STAGNANT_EXIT / SIGNAL_DECAY exit time for #192."""
         self._recent_chop_exits.append(when or now_ist())
+
+    def set_vix_spike(self, active: bool) -> None:
+        """Update VIX intraday-spike pause flag (#211).
+
+        Manager calls this each NIFTY-recheck after `_check_vix_spike()`.
+        Centralising the state on the engine lets `enter_trade()` honour
+        the same pause as the manager-level opportunity / re-scan paths
+        (closing the entry-path hole that #181 originally left open).
+        """
+        self._vix_spike_active = bool(active)
+
+    def is_vix_spike_active(self) -> bool:
+        """True if VIX intraday-spike pause is currently active (#211)."""
+        return self._vix_spike_active
+
+    def set_tape_breadth(self, info: dict | None) -> None:
+        """Stamp the latest scanner tape-breadth snapshot (#212).
+
+        Currently informational — the score penalty is applied scanner-side
+        via `BREADTH_PENALTY`. The engine reads this only for log context
+        when an entry is rejected on score (helps users understand WHY
+        the BUY/SELL was downgraded below the floor).
+        """
+        self._tape_breadth = info if isinstance(info, dict) else None
 
     def is_choppy_morning_paused(self, now: datetime.datetime | None = None) -> bool:
         """True if the choppy-morning entry pause is currently active (#192).
