@@ -1373,7 +1373,18 @@ class PortfolioManagerV2(PortfolioManager):
         # had a bug where it assumed the exchange order had already filled,
         # causing the position to stay live on Zerodha and get re-adopted
         # with double-booked P&L.
-        self.engine._update_exchange_sl(pos, new_sl)
+        # HARDENING (#223): mirror the per-position try/except pattern from
+        # _sector_cascade_protect so a transient broker error here cannot
+        # crash the monitor loop. Software SL is the tighter fallback;
+        # _reconcile_orphan_sl_m repairs the broker mismatch on next sync.
+        try:
+            self.engine._update_exchange_sl(pos, new_sl)
+        except Exception as e:
+            self.log.warning(
+                f"CANDLE PROTECT {symbol}: broker SL replace failed "
+                f"({type(e).__name__}: {e}); software SL still tightened "
+                f"to Rs.{new_sl:.2f}, reconcile will retry next sync"
+            )
         patterns = ", ".join(analysis["pattern_summary"]["patterns"][:3])
         self.log.warning(
             f"⚠ CANDLE PROTECT {symbol}: contrary signal (score {score:+.1f}, "
@@ -1425,7 +1436,17 @@ class PortfolioManagerV2(PortfolioManager):
 
             pos["stop_loss"] = new_sl
             # BUG FIX (Apr 17 2026): Keep exchange SL-M in sync with software SL.
-            self.engine._update_exchange_sl(pos, new_sl)
+            # HARDENING (#223): isolate broker failures so one transient
+            # error cannot abort the regime-protect pass for the remaining
+            # positions. Software SL is the tighter fallback.
+            try:
+                self.engine._update_exchange_sl(pos, new_sl)
+            except Exception as e:
+                self.log.warning(
+                    f"REGIME PROTECT {symbol} {side}: broker SL replace failed "
+                    f"({type(e).__name__}: {e}); software SL still tightened "
+                    f"to Rs.{new_sl:.2f}, reconcile will retry next sync"
+                )
             self.log.warning(
                 f"⚠ REGIME PROTECT {symbol} {side}: market turned {regime} "
                 f"→ SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"
