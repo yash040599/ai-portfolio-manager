@@ -1564,7 +1564,7 @@ class OrderEngine:
         Entry pipeline (each step can reject the trade). Counted at
         40 distinct gates — keep this list and STRATEGY_V2.md in sync.
           0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
-          1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
+          1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥5.7 (LUNCH_LULL_SCORE_OVERRIDE; stepped down from 6.0 by #221)
           2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl
           3.  Peak-drawdown stop (#168, MTM-aware via #166) — block when effective_day_pnl gives back ≥1.5% from intraday peak
           4.  Validate entry price vs live Zerodha quote

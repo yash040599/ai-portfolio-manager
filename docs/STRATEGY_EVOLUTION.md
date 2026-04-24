@@ -1,7 +1,7 @@
 # Strategy Evolution
 Chronological log of every strategy item shipped, in order of work-item number (numbers are issued in time order). One line per item. Use this to skim how the system evolved from day 1 to today.
 > **Maintenance:** This file is regenerated from [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) (Completed section). Do NOT hand-edit rows. Add new items to the Roadmap; the regeneration recipe lives in [copilot/code-map.md](../copilot/code-map.md). Keep this file up to date after every shipped item or review-cycle pass.
-> Last regenerated: 2026-04-24. Items: 185 (#1 → #221).
+> Last regenerated: 2026-04-25. Items: 187 (#1 → #223).
 
 ## Timeline
 
@@ -191,4 +191,6 @@ Chronological log of every strategy item shipped, in order of work-item number (
 | 218 | Risk | Sector-relative-strength directional bias — rank-driven score nudge (#215) |
 | 219 | Risk | Earnings/results-day blackout — config-driven scanner pre-filter framework (#167) |
 | 220 | Risk | Sector-cascade exit — defensive SL tightening on whole-sector collapse (#149) |
-| 221 | Risk | Lunch-lull score-override LOWERED 6.0 → 5.7 (data-driven; -Rs.1,007 over 3-day rejection-audit; landed at 5.7 not 5.5 to keep the gate biting above V2_MIN_SCORE) |
+| 221 | Risk | Lunch-lull score-override LOWERED 6.0 → 5.7 (data-driven; -Rs.1,007 over 3-day rejection-audit; first dropped 6.0 → 5.5, then stepped to 5.7 in review-pass-1 to keep the override visibly above the typical lunch-hour score band) |
+| 222 | Bug Fix | Sector-cascade per-position try/except around broker SL replace — prevents one transient Zerodha error from crashing the monitor loop mid-trading |
+| 223 | Bug Fix | Mirror #222 try/except into CANDLE PROTECT and REGIME PROTECT — consistent fault isolation across all three SL-tightening paths |
