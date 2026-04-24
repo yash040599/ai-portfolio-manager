@@ -520,7 +520,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **VWAP statistical-band gate (#201)** — blocks BUY at the upper 1σ/2σ VWAP band and SELL at the lower 1σ/2σ; complements the existing % VWAP-extension check with a volatility-adaptive band classifier. Override at `|score| ≥ 7.0`.
 - **Late-entry tightening (#202)** — after 10:00 IST: R:R floor raised to 1.5 (overrides adaptive relaxation and mid-day retry), `MIN_SCORE` bumped by +0.5, max concurrent positions capped at 2.
 - **Realised-P&L recovery on restart (#203)** — on init, scans Zerodha net-positions for already-closed MIS round-trips not in our session and imports them as synthetic CLOSED records so the MTM-aware safety gates and adaptive budget reason from the correct realised baseline after a mid-session restart.
-- **Lunch-lull skip** — 11:30-12:15 IST unless `|score| ≥ 6.0`.
+- **Lunch-lull skip** — 11:30-12:15 IST unless `|score| ≥ 5.7`.
 - **Charge-aware target** — gross target ≥ 2× round-trip charges.
 - **Budget-regime gates** — auto-tighten on TINY/SMALL accounts.
 - **Loss-adjusted sizing** — shrinks position size after losses.

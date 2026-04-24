@@ -838,8 +838,16 @@ class PortfolioManagerV2(PortfolioManager):
                 # never opens a new trade.
                 try:
                     self._sector_cascade_protect(quotes)
+                except (AttributeError, KeyError) as e:
+                    # Expected defensive-programming failures
+                    # (missing scanner attr, missing position field):
+                    # silent debug.
+                    self.log.debug(f"Sector cascade protect skipped: {e}")
                 except Exception as e:
-                    self.log.debug(f"Sector cascade protect failed: {e}")
+                    # Unexpected failure — surface at WARNING so we
+                    # notice in the daily log review instead of
+                    # losing a defensive exit silently.
+                    self.log.warning(f"Sector cascade protect failed: {e}")
 
                 self._last_candle_scan = time.time()
                 next_candle = now_ist() + datetime.timedelta(seconds=candle_rescan_interval)

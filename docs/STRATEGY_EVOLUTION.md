@@ -191,4 +191,4 @@ Chronological log of every strategy item shipped, in order of work-item number (
 | 218 | Risk | Sector-relative-strength directional bias — rank-driven score nudge (#215) |
 | 219 | Risk | Earnings/results-day blackout — config-driven scanner pre-filter framework (#167) |
 | 220 | Risk | Sector-cascade exit — defensive SL tightening on whole-sector collapse (#149) |
-| 221 | Risk | Lunch-lull score-override LOWERED 6.0 → 5.5 (data-driven; -Rs.1,007 over 3-day rejection-audit) |
+| 221 | Risk | Lunch-lull score-override LOWERED 6.0 → 5.7 (data-driven; -Rs.1,007 over 3-day rejection-audit; landed at 5.7 not 5.5 to keep the gate biting above V2_MIN_SCORE) |

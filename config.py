@@ -858,20 +858,24 @@ class Config:
     # LUNCH_LULL_START_HOUR / MINUTE: window start (11:30).
     # LUNCH_LULL_END_HOUR / MINUTE:   window end   (12:15).
     # LUNCH_LULL_SCORE_OVERRIDE: very strong signals bypass.
-    # NOTE 2026-04-26 (#221): rejection-audit on 2026-04-{22,23,24}
-    # showed lunch-lull was net-NEGATIVE on each day (Avoided
-    # Rs.1,649 vs Missed Rs.2,656 = net -Rs.1,007 over 3 days at
-    # 1-slot hypothetical sizing). Lowered override 6.0 → 5.5 to
-    # admit borderline signals during lunch while still skipping
-    # the truly weak (< V2_MIN_SCORE = 5.5 will still drop out at
-    # the entry score gate). Conservative tweak — not disabling
-    # the gate outright.
+    # NOTE 2026-04-26 (#221 then immediate same-day step-up):
+    # rejection-audit on 2026-04-{22,23,24} showed lunch-lull was
+    # net-NEGATIVE every day (Avoided Rs.1,649 vs Missed Rs.2,656
+    # = net -Rs.1,007 over 3 days at 1-slot hypothetical sizing).
+    # Initial fix lowered the override 6.0 → 5.5, but that
+    # equalled V2_MIN_SCORE (5.5) and silently turned the gate
+    # into a no-op (anything passing the entry score gate also
+    # passed lunch). Final landing: 5.7 — a meaningful step above
+    # V2_MIN_SCORE so the gate still bites on truly weak lunch-
+    # window signals (5.5–5.7 range) while admitting the
+    # borderline-but-profitable 5.7+ band the audit said we were
+    # missing. Conservative tweak — not disabling the gate.
     LUNCH_LULL_ENABLED:         bool  = True
     LUNCH_LULL_START_HOUR:      int   = 11
     LUNCH_LULL_START_MINUTE:    int   = 30
     LUNCH_LULL_END_HOUR:        int   = 12
     LUNCH_LULL_END_MINUTE:      int   = 15
-    LUNCH_LULL_SCORE_OVERRIDE:  float = 5.5
+    LUNCH_LULL_SCORE_OVERRIDE:  float = 5.7
 
     # ── Choppy-Morning Entry Pause (Roadmap #192) ─────────────────
     # On weak-trend mornings (NIFTY ADX < CHOPPY_PAUSE_ADX_THRESHOLD
@@ -1846,6 +1850,31 @@ class Config:
                 f"{cls.SECTOR_CASCADE_OPPOSITE_FLOOR!r}"
             )
         _pos("SECTOR_CASCADE_MIN_OPEN", cls.SECTOR_CASCADE_MIN_OPEN)
+
+        # NSE early-close calendar (#217) — format check only
+        for date_str, val in cls.NSE_EARLY_CLOSE_DATES_2026.items():
+            if (
+                not isinstance(val, tuple)
+                or len(val) != 2
+                or not all(isinstance(x, int) for x in val)
+                or not (0 <= val[0] <= 23)
+                or not (0 <= val[1] <= 59)
+            ):
+                errors.append(
+                    f"NSE_EARLY_CLOSE_DATES_2026[{date_str!r}] must be "
+                    f"(hour:int 0-23, minute:int 0-59), got {val!r}"
+                )
+
+        # Earnings blackout calendar (#219) — format check only
+        if cls.EARNINGS_BLACKOUT_ENABLED:
+            for date_str, syms in cls.EARNINGS_BLACKOUT_SYMBOLS_2026.items():
+                if not isinstance(syms, list) or not all(
+                    isinstance(s, str) for s in syms
+                ):
+                    errors.append(
+                        f"EARNINGS_BLACKOUT_SYMBOLS_2026[{date_str!r}] "
+                        f"must be list[str], got {syms!r}"
+                    )
 
         # India VIX thresholds
         if not (0.0 < cls.VIX_SPIKE_PCT <= 100.0):

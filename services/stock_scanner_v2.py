@@ -515,7 +515,6 @@ class StockScannerV2(StockScanner):
         # EARNINGS_BLACKOUT_ENABLED.
         if getattr(self.cfg, "EARNINGS_BLACKOUT_ENABLED", True):
             try:
-                from config import now_ist  # local import keeps top of file lean
                 today_str = now_ist().strftime("%Y-%m-%d")
                 year = today_str[:4]
                 cal = getattr(self.cfg, f"EARNINGS_BLACKOUT_SYMBOLS_{year}", {}) or {}
