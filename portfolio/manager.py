@@ -33,6 +33,8 @@ import signal
 import sys
 import time
 import datetime
+import json
+import os
 
 from config                        import Config, now_ist
 from core.logger                   import Logger
@@ -76,6 +78,7 @@ class PortfolioManager:
         self._market_condition: str = ""   # BULLISH/BEARISH/NEUTRAL + volatility
         self._last_partial_rescan: float = 0.0  # cooldown for partial re-scans
         self._prev_runs: dict | None = None     # cached previous-run totals for today
+        self._run_number: int | None = None      # current bot run # for today (1, 2, 3...)
         self._status_lines_printed = False       # tracks 2-line status display
         self._last_external_sync: float = 0.0    # periodic manual trade detection
         self._initial_entry_done = False         # True after first _enter_positions() completes
@@ -2038,6 +2041,24 @@ class PortfolioManager:
         print(f"  Square off     : {self.cfg.SQUARE_OFF_HOUR}:{self.cfg.SQUARE_OFF_MINUTE:02d}")
         print(f"{'='*58}\n")
 
+    def _compute_run_number(self) -> int:
+        """
+        Returns this bot run's session number for today (1, 2, 3, ...).
+        Reads `sessions` from today's existing trading_data_DD.json. If the
+        file does not exist yet, this is run 1; otherwise it is sessions+1
+        (matches ReportWriter.save_trading_day's merge logic).
+        """
+        try:
+            today = now_ist().date()
+            path = self.report.trading_data_path(today)
+            if not os.path.exists(path):
+                return 1
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            return int(existing.get("sessions", 1)) + 1
+        except (json.JSONDecodeError, OSError, ValueError, TypeError):
+            return 1
+
     def _print_status(self, quotes: dict):
         """Compact 2-line status during monitor loop — session P&L + net daily totals."""
         open_pos   = self.engine.open_positions()
@@ -2064,6 +2085,8 @@ class PortfolioManager:
         # Cumulative daily totals (previous runs from DB + current run)
         if self._prev_runs is None:
             self._prev_runs = self.tracker.get_today_previous_runs()
+        if self._run_number is None:
+            self._run_number = self._compute_run_number()
 
         prev = self._prev_runs
         total_closed = prev["trade_count"] + len(closed_pos)
@@ -2072,9 +2095,10 @@ class PortfolioManager:
         t_color = "\033[92m" if total_combined >= 0 else "\033[91m"
         tr_color = "\033[92m" if total_realised >= 0 else "\033[91m"
 
+        run_tag = f" (Run {self._run_number})" if self._run_number and self._run_number > 1 else ""
         net_line = (
             f"  "
-            f"Net today: {total_closed} trades  "
+            f"Net today{run_tag}: {total_closed} trades  "
             f"Realised: {tr_color}Rs.{total_realised:+,.2f}\033[0m  "
             f"Net: {t_color}Rs.{total_combined:+,.2f}\033[0m"
         )

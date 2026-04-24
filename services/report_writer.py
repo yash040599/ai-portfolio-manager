@@ -598,8 +598,7 @@ class ReportWriter:
             f.write(f"{self.SEP_MAJOR}\n")
             f.write(f"  INTRADAY TRADING REPORT — {today}\n")
             f.write(f"  Mode: {mode_label}\n")
-            if session_count > 1:
-                f.write(f"  Sessions: {session_count} (combined)\n")
+            f.write(f"  Sessions: {session_count} (Run {session_count})\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
             # ── Configuration ─────────────────────────────────────
