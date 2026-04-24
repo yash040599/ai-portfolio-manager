@@ -1676,6 +1676,25 @@ class Config:
             )
         _pos("BREADTH_MIN_CANDIDATES", cls.BREADTH_MIN_CANDIDATES)
 
+        # India VIX thresholds
+        if not (0.0 < cls.VIX_SPIKE_PCT <= 100.0):
+            errors.append(
+                f"VIX_SPIKE_PCT must be in (0, 100]: {cls.VIX_SPIKE_PCT!r}"
+            )
+        if cls.VIX_HIGH_THRESHOLD <= 0:
+            errors.append(
+                f"VIX_HIGH_THRESHOLD must be > 0: {cls.VIX_HIGH_THRESHOLD!r}"
+            )
+        if cls.VIX_LOW_THRESHOLD <= 0:
+            errors.append(
+                f"VIX_LOW_THRESHOLD must be > 0: {cls.VIX_LOW_THRESHOLD!r}"
+            )
+        if cls.VIX_LOW_THRESHOLD >= cls.VIX_HIGH_THRESHOLD:
+            errors.append(
+                f"VIX_LOW_THRESHOLD ({cls.VIX_LOW_THRESHOLD}) must be < "
+                f"VIX_HIGH_THRESHOLD ({cls.VIX_HIGH_THRESHOLD})"
+            )
+
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)
         _pct("TAX_CESS_PCT", cls.TAX_CESS_PCT)

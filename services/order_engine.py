@@ -1562,7 +1562,7 @@ class OrderEngine:
         Returns True if the order was placed/logged successfully.
 
         Entry pipeline (each step can reject the trade). Counted at
-        34 distinct gates — keep this list and STRATEGY_V2.md in sync.
+        40 distinct gates — keep this list and STRATEGY_V2.md in sync.
           0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥6.0
           2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl

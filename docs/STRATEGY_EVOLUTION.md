@@ -142,7 +142,7 @@ Chronological log of every strategy item shipped, in order of work-item number (
 | 154 | Bug Fix | **Candle-protect / regime-shift SL cushion.** Previously when a contrary signal hit a break-even or losing position, the tightened |
 | 155 | Bug Fix | **Reconciled-day safeguard.** `import_zerodha_taxpnl.py` used to overwrite trades that had been manually reconciled (e.g |
 | 156 | Execution | **Directional stagnant-exit.** Stagnant-exit previously fired whenever `move_pct < STAGNANT_EXIT_MIN_MOVE_PCT` (0.3%) |
-| 157 | score | **ADX + DI directional entry gate.** Entries used combined_score + VWAP + patterns but never gated on ADX/DI |
+| 157 | Risk | **ADX + DI directional entry gate.** Entries used combined_score + VWAP + patterns but never gated on ADX/DI |
 | 160 | Bug Fix | **Empty-API glitch guard on sync.** `sync_external_positions` previously mass-closed every tracked open position if Zerodha's `/po |
 | 161 | Execution | **Per-symbol re-entry cooldown.** After ANY exit (SL, target, stagnant, external), the same symbol+direction could be re-opened on |
 | 162 | Execution | **Charge-aware minimum target.** Net-of-charges R:R already demanded ≥1.0:1, but a trade with Rs.10 gross target on Rs.4 round-tri |
@@ -163,11 +163,11 @@ Chronological log of every strategy item shipped, in order of work-item number (
 | 186 | Bug Fix | **Live SL-M exit P&L matches broker fill.** When the exchange SL-M completed and our software SL also detected the breach on the s |
 | 187 | Bug Fix | **One outer retry on SL-M / top-up fill-price fetch.** `get_order_fill_price()` already retries internally for its `timeout` windo |
 | 188 | Execution | **Same-direction signal-decay exit (book-and-go at <1R).** Companion to signal-reversal (#174): catches positions whose entry sign |
-| 190 | score | Pattern-direction entry veto |
+| 190 | Risk | Pattern-direction entry veto |
 | 191 | Risk | Exchange-fired SL-M attribution fix |
 | 192 | Risk | Choppy-morning entry pause |
 | 194 | Risk | Strong-gap ADX threshold boost |
-| 195 | score | Average-down prevention via `_last_exit_score` |
+| 195 | Risk | Average-down prevention via `_last_exit_score` |
 | 196 | Risk | **Post-observation score recheck (stale-score guard at entry).** `_observe_and_enter()` ([portfolio/manager.py:514](../portfolio/m |
 | 197 | Bug Fix | **MTM-aware safety gate now resilient to just-opened positions.** `effective_day_pnl()` ([order_engine.py:3759](../services/order_ |
 | 198 | Risk | Post-entry momentum kill |

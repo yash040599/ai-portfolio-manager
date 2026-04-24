@@ -433,6 +433,15 @@ class PortfolioManager:
         """
         self.log.section("ENTERING POSITIONS")
 
+        # Prime VIX-spike state for the engine-side gate (#211) before
+        # any per-trade attempts. Closes the window where intraday VIX
+        # spiked between the manager's last NIFTY recheck and now.
+        # Cheap (one Kite quote) and idempotent.
+        try:
+            self.engine.set_vix_spike(self._check_vix_spike())
+        except Exception as e:
+            self.log.debug(f"VIX-spike prime before _enter_positions failed: {e}")
+
         # Sync with Zerodha to detect any positions opened manually
         # between the scan and now (affects budget + slot limits)
         self.engine.sync_external_positions()

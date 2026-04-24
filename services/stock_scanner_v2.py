@@ -578,17 +578,10 @@ class StockScannerV2(StockScanner):
                 self.log.info(
                     f"  Score filter (post-breadth): dropped {dropped_post} more"
                 )
-            # Stamp engine for log context on later rejections (#212).
-            try:
-                if hasattr(self, "engine") and self.engine is not None:
-                    self.engine.set_tape_breadth({
-                        "buys":  n_buys,
-                        "sells": n_sells,
-                        "ratio": round(buy_ratio, 2),
-                        "tape":  tape,
-                    })
-            except Exception:
-                pass
+            # NOTE: engine breadth stamp deferred — scanner is constructed
+            # without an engine ref, so passing the snapshot would need
+            # cross-wiring. The penalty is already applied above; the
+            # snapshot was only intended for downstream log context.
 
         # Sector momentum: compute average score per sector.
         # Stocks from sectors where 3+ stocks agree on direction get

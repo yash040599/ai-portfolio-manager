@@ -543,6 +543,15 @@ class PortfolioManagerV2(PortfolioManager):
         self._last_opportunity_scan = time.time()
         self._last_external_sync = time.time()
 
+        # Prime VIX-spike state once at loop start so opportunity-scan
+        # entries inside the loop honour the pause from the very first
+        # iteration (#211 — closes the window between observe-and-enter
+        # and the first NIFTY recheck).
+        try:
+            self.engine.set_vix_spike(self._check_vix_spike())
+        except Exception as e:
+            self.log.debug(f"VIX-spike prime at loop start failed: {e}")
+
         while not self._shutdown_requested:
             now = now_ist()
 
