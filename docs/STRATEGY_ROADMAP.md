@@ -48,13 +48,18 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (8 items)
+### Pending (13 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
+| 198 | Post-entry momentum kill — exit at small loss if MTM hasn't moved toward target within ~3 min of fill. Slow-bleed-to-SL is the dominant loss pattern (Apr 23 GRASIM/MAZDOCK; Apr 24 GRASIM still chopping at fill -1×ATR after 60s); caps -1.1% SL losses at ~-0.2% even with same hit rate | HIGH | High | Low |
+| 199 | Score-direction gate on stale-score recheck (#196 follow-up) — require fresh score ≥ entry score (or at least flat), not just ≥60% of magnitude. A *falling* score in the 5-min observation IS the market saying the edge is decaying; current gate lets MAZDOCK +6.5→+4.5 and BAJAJ-AUTO +6.5→+4.0 through. Also fix the misleading log: `"X% retained (floor 60%)"` instead of `"X% decay, floor 60%"` (today reads "59% decay floor 60%" for INFY which is actually 41% retained — confusing) | HIGH | High | Low |
+| 200 | Pattern↔tech contradiction penalty — when candle patterns directly oppose the tech verdict (e.g. NESTLEIND +5.6 STRONG_BUY with BEARISH_ENGULFING+DOJI; DMART -4.0 NEUTRAL with MARUBOZU; HCLTECH +3.5 BUY with DOJI), apply a hard score penalty (-2 suggested) or skip outright. DOJI is indecision and shouldn't contribute to either side; today the pattern engine and tech engine don't talk to each other | HIGH | Medium | Low |
 | 193 | NSE early-close calendar — hardcode the ~7 days/year NSE closes at 13:30 IST (Good Friday, Diwali eve, year-end). On those days advance `SQUARE_OFF_HOUR/MINUTE` to 13:25 so we exit ahead of Zerodha's auto-square distress prices | HIGH | Medium | Low |
+| 201 | VWAP-extension entry gate — skip BUY entries when price is at ≥+1SD above VWAP (e.g. Apr 23 BAJAJHLDNG / BAJAJ-AUTO both `AT_UPPER_1SD` → bought the intraday top, no room to run); skip SELL entries at ≤-1SD. ZYDUSLIFE pre-existing "below VWAP — fights institutional selling" gate already exists for SELL-side; this generalises and tightens it | MEDIUM | High | Low |
+| 202 | Late-entry tightening — when joining the market after 10:00 AM IST, raise `MIN_SCORE` by +0.5 and R:R floor to 1.5:1 (currently 1.3:1 morning). Today the 5-min observation floor is *relaxed* on late entries ("opening volatility passed") but late entries are *higher* risk — best moves already gone, only chop left. Inversion of incentives | MEDIUM | High | Low |
 | 181 | India VIX intraday-spike pause — when `(VIX_now - VIX_open)/VIX_open ≥ 10%` OR `VIX_now ≥ 25`, pause new entries 15 min; existing positions managed normally | MEDIUM | High | Low |
 | 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
 | 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
@@ -291,6 +296,50 @@ In priority order, matching the Pending table above. Once an item ships,
 **delete its block from this section entirely** — the Completed table
 above is the historical record. Do not leave “✅ Completed (see #N)”
 stubs here; they bloat the Pending list and slow review.
+
+### 198. Post-Entry Momentum Kill
+- **Priority**: HIGH
+- **Today**: Once a position is filled, the only exits are SL (-1×ATR), target (+1.5×ATR), STAGNANT_EXIT (after `STAGNANT_MINUTES`, default 25 min), and SIGNAL_DECAY. Slow-bleed-to-SL is the dominant loss mode in recent live data: Apr 23 MAZDOCK fill → -Rs.163 unrealised within 13 min, never recovered, walked to SL. Apr 24 GRASIM fill → -Rs.~100 within 60s. The trade gives all the information you need in the first 2–3 minutes; if it isn't moving toward target by then, the setup is dead.
+- **Fix**: New monitor-loop check in `services/order_engine.py`: at fill+`POST_ENTRY_MOMENTUM_WINDOW_SECONDS` (default 180), if MTM ≤ 0 AND price hasn't progressed `POST_ENTRY_MOMENTUM_MIN_PROGRESS_PCT` (default 0.15%) in the favourable direction from fill, exit at MARKET tagged `POST_ENTRY_NO_MOMENTUM`. Caps the typical -1.1% SL loss at ~-0.2%; with current hit rate this alone meaningfully shifts net daily P&L. Kill-switch `POST_ENTRY_MOMENTUM_KILL_ENABLED`.
+- **Effort**: Low. ~40 lines in monitor loop + 3 config knobs + new exit reason enum entry. Reuse `_latest_quotes` (no new fetch).
+- **Validation**: After 5 trading days, compare distribution of close-out times for `POST_ENTRY_NO_MOMENTUM` exits vs prior STOP_LOSS exits. Expected: median loss ~-Rs.30 instead of ~-Rs.150–200.
+
+### 199. Score-Direction Gate on Stale-Score Recheck (#196 follow-up)
+- **Priority**: HIGH
+- **Today**: #196 ships a magnitude-only floor (`FRESH_ENTRY_DECAY_FRACTION = 0.6` → fresh score must retain ≥ 60% of entry magnitude). It catches the worst decays but lets directional weakening through: Apr 23 MAZDOCK +6.5 → +4.5 (69% retained, passed), Apr 24 BAJAJ-AUTO +6.5 → +4.0 (62% retained, passed) — both lost. A *falling* score during the 5-min observation IS the market voting against the setup. Magnitude alone misses this. Plus: the user-facing log message is misleading — it prints "X% decay, floor 60%" where 60% is the *retention* floor, not the decay ceiling, so today INFY at 41% retained reads "59% decay floor 60%" which looks like a near-miss when it's actually a 59% drop.
+- **Fix**: Two-part change in `portfolio/manager_v2.py` stale-score-recheck branch.
+  1. **Direction gate**: in addition to the magnitude floor, require `sign(fresh) == sign(entry)` AND `|fresh| ≥ |entry| - FRESH_ENTRY_MAX_DROP` (suggested 1.5 absolute score points). Stricter than today; expected to drop ~30–40% more candidates but eliminate the slow-bleed entries.
+  2. **Log clarity**: change `f"{int(decay*100)}% decay, floor {int(floor*100)}%"` to `f"{int(retained*100)}% retained (floor {int(floor*100)}%)"`. Single string change, no behaviour shift.
+- **Effort**: Low. ~10 lines + 1 new config knob. Same kill-switch as #196 (`FRESH_ENTRY_RECHECK_ENABLED`).
+- **Validation**: After 5 trading days, count `STALE_SCORE_DIRECTION_FAIL` rejections and check their hypothetical P&L via `scripts/rejection_audit.py`. If ≥ 60% of skipped entries would have lost, gate is working as designed.
+
+### 200. Pattern↔Tech Contradiction Penalty
+- **Priority**: HIGH
+- **Today**: Candle patterns and the tech verdict are computed independently and the scorer doesn't penalise direct contradictions. Live examples: Apr 24 NESTLEIND scored +5.6 STRONG_BUY with patterns BEARISH_ENGULFING + DOJI; Apr 23 DMART -4.0 NEUTRAL with MARUBOZU; HCLTECH +3.5 BUY with DOJI. DOJI is by definition indecision — it should not contribute to a directional score on either side. BEARISH_ENGULFING contributing positively to a BUY is straight wrong.
+- **Fix**: New post-scoring step in `services/stock_scanner_v2.py` (or wherever final score is composed):
+  1. Define `BEARISH_PATTERNS = {BEARISH_ENGULFING, EVENING_STAR, THREE_BLACK_CROWS, DARK_CLOUD_COVER, SHOOTING_STAR}` and the bullish counterpart.
+  2. If tech verdict is BUY/STRONG_BUY and any bearish pattern present → score -= `PATTERN_CONTRADICTION_PENALTY` (default 2.0). Symmetric for SELL + bullish.
+  3. DOJI: subtract `PATTERN_INDECISION_PENALTY` (default 0.5) from |score| regardless of direction.
+- **Effort**: Low. ~25 lines + pattern set constants + 2 config knobs. Surfaces in scan output (already prints `patterns:` line).
+- **Validation**: A/B against the last 30 days of `analyses` table — recompute scores with the penalty, compare candidate list overlap. Expect ~10–15% of borderline picks (|score| 2.5–4.0) to drop out.
+
+### 201. VWAP-Extension Entry Gate
+- **Priority**: MEDIUM
+- **Today**: A pre-existing gate in `services/order_engine.py` rejects BUY when price is >0.5% below VWAP ("fights institutional selling"). No symmetric check on the *over-extended* side: Apr 23 BAJAJHLDNG and BAJAJ-AUTO both showed `VWAP-Band AT_UPPER_1SD` and were entered as BUYs — buying ≥+1σ above VWAP is buying the intraday top, statistically high mean-reversion risk. Same disease for SELL at lower bands.
+- **Fix**: Generalise the VWAP gate. Reject BUY when `vwap_band ∈ {AT_UPPER_1SD, AT_UPPER_2SD}`; reject SELL when `vwap_band ∈ {AT_LOWER_1SD, AT_LOWER_2SD}`. Override at `|score| ≥ VWAP_EXTENSION_OVERRIDE_SCORE` (default 7.0) — a genuinely strong signal can still chase a momentum extension. Kill-switch `VWAP_EXTENSION_GATE_ENABLED`.
+- **Effort**: Low. VWAP-band classification already exists in the indicator output; just gate on it.
+- **Validation**: Recompute would-be rejections over last 60 days; expect win-rate of skipped BUYs to be < 40%.
+
+### 202. Late-Entry Tightening
+- **Priority**: MEDIUM
+- **Today**: When the bot starts late (e.g. Apr 24 joined at 10:34 AM IST, 75 min after open), the 5-minute observation floor is *relaxed* with the message "opening volatility passed, using 5-min floor". This inverts the right incentive — late entries are *higher* risk, not lower: best moves of the day are usually done by 10:00, only chop and reversals remain, R:R degrades because the natural square-off horizon is shorter (~5h vs ~6.5h).
+- **Fix**: New `LATE_ENTRY_THRESHOLD_HHMM = "10:00"` (configurable). When market scan starts after this time:
+  1. Raise effective `MIN_SCORE` by `LATE_ENTRY_MIN_SCORE_BUMP` (default +0.5).
+  2. Raise R:R floor from morning 1.3:1 to `LATE_ENTRY_RR_FLOOR` (default 1.5:1).
+  3. Cap concurrent positions at `LATE_ENTRY_MAX_POSITIONS` (default 2 vs normal trade-cap).
+  4. Print a clear banner so the user sees what changed.
+- **Effort**: Low. ~30 lines in scanner + entry pipeline; 4 config knobs. Stack on top of the existing budget-regime overrides.
+- **Validation**: Tag every entry with `entered_after_threshold: bool` in the trades table; after 10 trading days compare hit rate / avg net P&L of pre-vs-post threshold entries. Expected: post-threshold hit rate is materially lower today; the gate should narrow that gap.
 
 ### 193. NSE Early-Close Calendar
 - **Priority**: HIGH
