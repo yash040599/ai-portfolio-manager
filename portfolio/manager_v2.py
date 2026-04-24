@@ -832,6 +832,15 @@ class PortfolioManagerV2(PortfolioManager):
                     # Auto-tighten SL on strong contrary signal
                     self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
+                # Sector-cascade protect (#149) — runs once per
+                # candle re-scan, AFTER per-position checks so it
+                # only tightens what's still open. Defensive only;
+                # never opens a new trade.
+                try:
+                    self._sector_cascade_protect(quotes)
+                except Exception as e:
+                    self.log.debug(f"Sector cascade protect failed: {e}")
+
                 self._last_candle_scan = time.time()
                 next_candle = now_ist() + datetime.timedelta(seconds=candle_rescan_interval)
                 self.log.info(
@@ -1413,3 +1422,99 @@ class PortfolioManagerV2(PortfolioManager):
                 f"⚠ REGIME PROTECT {symbol} {side}: market turned {regime} "
                 f"→ SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"
             )
+
+    # ================================================================
+    # SECTOR-CASCADE PROTECTION (#149)
+    # ================================================================
+
+    def _sector_cascade_protect(self, quotes: dict):
+        """Tighten SLs on open positions inside a fast-collapsing
+        sector. Defensive only — never opens a new trade.
+
+        Runs once per candle re-scan, just after per-position
+        decay / contrary checks. Reads the scanner's two-tick
+        per-sector AVERAGE score snapshot
+        (`scanner.last_sector_momentum` vs
+        `scanner._prev_sector_momentum`) and triggers when:
+
+          1. ``prev - last >= SECTOR_CASCADE_DROP_THRESHOLD`` (BUYs)
+             — sector flipped against us by ≥ 2.0 in one window.
+          2. ``last <= -SECTOR_CASCADE_OPPOSITE_FLOOR`` (BUYs) —
+             new average is solidly negative, not just "less
+             positive".
+          3. We have ≥ ``SECTOR_CASCADE_MIN_OPEN`` open positions
+             in that sector.
+
+        Mirror conditions for SELLs (sector turned bullish).
+
+        Action: software SL → max(current, breakeven-with-buffer);
+        exchange SL-M is replaced via `_update_exchange_sl()`.
+        """
+        if not getattr(self.cfg, "SECTOR_CASCADE_EXIT_ENABLED", True):
+            return
+        scanner = getattr(self, "scanner", None)
+        if scanner is None:
+            return
+        last = getattr(scanner, "last_sector_momentum", {}) or {}
+        prev = getattr(scanner, "_prev_sector_momentum", {}) or {}
+        if not last or not prev:
+            return  # need two snapshots to compute a delta
+
+        from services.stock_scanner_v2 import SECTOR_MAP
+
+        drop_thr = float(self.cfg.SECTOR_CASCADE_DROP_THRESHOLD)
+        opp_floor = float(self.cfg.SECTOR_CASCADE_OPPOSITE_FLOOR)
+        min_open = int(self.cfg.SECTOR_CASCADE_MIN_OPEN)
+
+        # Group open positions by sector.
+        by_sector: dict[str, list[dict]] = {}
+        for p in self.engine.open_positions():
+            sec = SECTOR_MAP.get(p["symbol"], "OTHER")
+            by_sector.setdefault(sec, []).append(p)
+
+        for sector, positions in by_sector.items():
+            if len(positions) < min_open:
+                continue
+            last_avg = last.get(sector)
+            prev_avg = prev.get(sector)
+            if last_avg is None or prev_avg is None:
+                continue
+            delta = prev_avg - last_avg  # positive when sector dropped
+            cascade_down = delta >= drop_thr and last_avg <= -opp_floor
+            cascade_up   = (-delta) >= drop_thr and last_avg >= opp_floor
+            if not (cascade_down or cascade_up):
+                continue
+
+            tightened = 0
+            for pos in positions:
+                side = pos["side"]
+                # Only tighten positions on the side that the cascade
+                # is now hostile to.
+                if cascade_down and side != "BUY":
+                    continue
+                if cascade_up and side != "SELL":
+                    continue
+                symbol = pos["symbol"]
+                entry  = pos["entry_price"]
+                old_sl = pos["stop_loss"]
+                key    = f"{pos.get('exchange', 'NSE')}:{symbol}"
+                q      = quotes.get(key, {})
+                current_price = q.get("last_price", 0)
+                if current_price <= 0:
+                    continue
+                new_sl = self._compute_protective_sl(side, entry, current_price, old_sl)
+                if new_sl is None:
+                    continue
+                pos["stop_loss"] = new_sl
+                self.engine._update_exchange_sl(pos, new_sl)
+                tightened += 1
+                self.log.warning(
+                    f"⚠ SECTOR CASCADE {symbol} {side}: {sector} avg score "
+                    f"{prev_avg:+.1f} → {last_avg:+.1f} (Δ {delta:+.1f}) "
+                    f"→ SL tightened Rs.{old_sl:.2f} → Rs.{new_sl:.2f}"
+                )
+            if tightened:
+                self.log.warning(
+                    f"⚠ SECTOR CASCADE: {sector} cascade — "
+                    f"tightened {tightened} position(s)"
+                )

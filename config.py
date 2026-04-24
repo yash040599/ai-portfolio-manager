@@ -928,6 +928,63 @@ class Config:
     BREADTH_PENALTY:               float = 0.5
     BREADTH_MIN_CANDIDATES:        int   = 5
 
+    # ── Sector-Rank Directional Bias (Roadmap #215) ───────────────
+    # Beyond the existing per-sector momentum boost (+/-0.5 when 3+
+    # stocks in the sector agree on direction), rank ALL sectors by
+    # their average score at scan time, then nudge each candidate's
+    # score by `bias = (mid_rank - rank_of_my_sector) * STEP`,
+    # clamped to ±MAX. Sign-aware: BUYs in top-ranked (most-bullish)
+    # sectors get a positive nudge; SELLs in bottom-ranked
+    # (most-bearish) sectors get a negative nudge (which deepens
+    # |score|). Counter-rank candidates are penalised. Operates on
+    # magnitude — never flips sign.
+    #
+    # SECTOR_RANK_BIAS_STEP: per-rank step size in score points.
+    # SECTOR_RANK_BIAS_MAX: cap on absolute bias regardless of rank
+    #     gap (prevents tiny universes with 2 sectors blowing up).
+    # SECTOR_RANK_MIN_SECTORS: skip the bias when we have fewer than
+    #     this many distinct sectors with ≥1 candidate (sample too
+    #     small for a meaningful ranking).
+    # Kill-switch: SECTOR_RANK_BIAS_ENABLED.
+    SECTOR_RANK_BIAS_ENABLED:      bool  = True
+    SECTOR_RANK_BIAS_STEP:         float = 0.1
+    SECTOR_RANK_BIAS_MAX:          float = 0.6
+    SECTOR_RANK_MIN_SECTORS:       int   = 4
+
+    # ── Sector-Cascade Exit (Roadmap #149) ────────────────────────
+    # When a sector's average score collapses fast (a "cascade"),
+    # all our open positions in that sector are statistically more
+    # likely to lose simultaneously. We tighten their SLs to break-
+    # even (or 50 % of profit if already in the green) BEFORE each
+    # individual position trips its own decay / SL gate. Defensive,
+    # never opens a new trade.
+    #
+    # Trigger (CONSERVATIVE — must satisfy ALL):
+    #   - sector_avg_score dropped by ≥ SECTOR_CASCADE_DROP_THRESHOLD
+    #     between the previous and current scan
+    #   - sector_avg_score is now on the side opposite to our open
+    #     positions (BEARISH for our BUYs, BULLISH for our SELLs)
+    #   - we have ≥ SECTOR_CASCADE_MIN_OPEN positions open in that
+    #     sector
+    #
+    # Action: software SL → max(current SL, breakeven-with-buffer);
+    # exchange SL-M is replaced via `_update_exchange_sl()`.
+    #
+    # SECTOR_CASCADE_DROP_THRESHOLD: minimum |avg-score-drop| in one
+    #     scan window to qualify (default 2.0 = "from neutral to
+    #     clearly bearish in one window"). Set high enough that
+    #     normal sector noise never trips it.
+    # SECTOR_CASCADE_OPPOSITE_FLOOR: the new sector avg must cross
+    #     this magnitude on the contrary side to qualify. Prevents
+    #     "drop from +5 to +1" (still positive) from firing on BUYs.
+    # SECTOR_CASCADE_MIN_OPEN: only fire when we have at least this
+    #     many open positions in the cascading sector.
+    # Kill-switch: SECTOR_CASCADE_EXIT_ENABLED.
+    SECTOR_CASCADE_EXIT_ENABLED:   bool  = True
+    SECTOR_CASCADE_DROP_THRESHOLD: float = 2.0
+    SECTOR_CASCADE_OPPOSITE_FLOOR: float = 1.5
+    SECTOR_CASCADE_MIN_OPEN:       int   = 2
+
     # ── Unrealised-MTM-Aware Circuit Breaker (Roadmap #166) ───────
     # When True, check_circuit_breaker / is_soft_stopped /
     # is_peak_drawdown_stopped use day_pnl() + unrealised_pnl(quotes)
@@ -1335,6 +1392,50 @@ class Config:
         "2026-12-25",  # Christmas
     ]
 
+    # ── NSE early-close calendar (Roadmap #193) ────────────────────
+    # NSE shuts the equity segment at 13:30 IST on a handful of days
+    # each year (Diwali Muhurat eve, year-end). On those days Zerodha
+    # auto-square-off intraday positions starts ~13:25 at distress
+    # prices. To exit ahead of that we shift our SQUARE_OFF time to
+    # ~13:25 by mutating SQUARE_OFF_HOUR / MINUTE at startup via
+    # `Config.apply_early_close_if_today()` (called once from
+    # `manager.run()` right after `validate_ranges()`).
+    #
+    # Format: dict[str, tuple[int, int]] — {"YYYY-MM-DD": (hour, minute)}
+    # Tuple is the EARLY square-off the bot should use, NOT the NSE
+    # close time. Default convention is to exit 5 min before the
+    # actual NSE early close.
+    #
+    # NSE publishes the early-close calendar on its circular page
+    # each year; verify dates and the actual close time annually.
+    # UPDATE THIS DICT every January.
+    NSE_EARLY_CLOSE_DATES_2026: dict[str, tuple[int, int]] = {
+        # Pending NSE 2026 circular confirmation. Examples:
+        # "2026-11-10": (13, 25),  # Diwali / Muhurat — NSE closes 13:30
+        # "2026-12-31": (13, 25),  # Year-end early close (if so notified)
+    }
+
+    # ── Earnings/results-day blackout (Roadmap #167) ──────────────
+    # Skip names announcing quarterly results today — Q1-Q4 result
+    # days produce 3-5 % gap moves intraday that no technical setup
+    # can predict. The scanner consults this dict in
+    # `_prefilter_universe()` right after the price filter and drops
+    # any matching symbol BEFORE per-stock analysis runs (cheap).
+    #
+    # Format: dict[str, list[str]] — {"YYYY-MM-DD": ["NSE_SYMBOL", ...]}
+    # Source: BSE / NSE corporate-action calendar — review every
+    # Friday evening for the upcoming week, OR every morning at
+    # 8:30 IST for that day. Empty list (or missing date key) means
+    # no blackout that day.
+    #
+    # Kill-switch: EARNINGS_BLACKOUT_ENABLED.
+    EARNINGS_BLACKOUT_ENABLED: bool = True
+    EARNINGS_BLACKOUT_SYMBOLS_2026: dict[str, list[str]] = {
+        # Example entries (commented):
+        # "2026-04-25": ["RELIANCE", "TCS"],
+        # "2026-04-28": ["INFY", "WIPRO"],
+    }
+
     # ── Plan rule tables ──────────────────────────────────────────
     # Maps plan names → capabilities. Read via claude() / zerodha().
 
@@ -1390,6 +1491,42 @@ class Config:
     def zerodha(cls) -> dict:
         """Returns the resolved Zerodha plan settings dict."""
         return cls._ZERODHA_RULES[cls.ZERODHA_PLAN]
+
+    @classmethod
+    def apply_early_close_if_today(cls) -> tuple[int, int] | None:
+        """Mutate ``SQUARE_OFF_HOUR`` / ``SQUARE_OFF_MINUTE`` if today
+        is in the NSE early-close calendar (Roadmap #193).
+
+        NSE shuts the equity segment at 13:30 IST on a handful of
+        days each year (Diwali Muhurat eve, year-end). On those days
+        Zerodha auto-square fires at distress prices around 13:25.
+        We move our SQUARE_OFF time forward to ~13:25 so positions
+        are exited at our chosen prices, not Zerodha's.
+
+        Idempotent: calling twice the same day is a no-op (we only
+        shift if the configured time is LATER than the early-close
+        time, so a manually-set earlier time is preserved).
+
+        Returns ``(hour, minute)`` if today was an early-close day
+        and SQUARE_OFF was actually advanced, else ``None``.
+        """
+        today_str = now_ist().strftime("%Y-%m-%d")
+        year = today_str[:4]
+        attr_name = f"NSE_EARLY_CLOSE_DATES_{year}"
+        cal: dict[str, tuple[int, int]] = getattr(cls, attr_name, {}) or {}
+        target = cal.get(today_str)
+        if not target:
+            return None
+        new_hour, new_minute = target
+        cur_minutes = cls.SQUARE_OFF_HOUR * 60 + cls.SQUARE_OFF_MINUTE
+        new_minutes = new_hour * 60 + new_minute
+        if new_minutes >= cur_minutes:
+            # Already earlier than (or equal to) the early-close target —
+            # honour user's tighter setting, do nothing.
+            return None
+        cls.SQUARE_OFF_HOUR = new_hour
+        cls.SQUARE_OFF_MINUTE = new_minute
+        return (new_hour, new_minute)
 
     @classmethod
     def dynamic_max_positions(cls, budget: float) -> int:
@@ -1675,6 +1812,32 @@ class Config:
                 f"BREADTH_PENALTY must be ≥ 0: {cls.BREADTH_PENALTY!r}"
             )
         _pos("BREADTH_MIN_CANDIDATES", cls.BREADTH_MIN_CANDIDATES)
+
+        # Sector-rank bias (#215)
+        if cls.SECTOR_RANK_BIAS_STEP < 0:
+            errors.append(
+                f"SECTOR_RANK_BIAS_STEP must be ≥ 0: "
+                f"{cls.SECTOR_RANK_BIAS_STEP!r}"
+            )
+        if cls.SECTOR_RANK_BIAS_MAX < 0:
+            errors.append(
+                f"SECTOR_RANK_BIAS_MAX must be ≥ 0: "
+                f"{cls.SECTOR_RANK_BIAS_MAX!r}"
+            )
+        _pos("SECTOR_RANK_MIN_SECTORS", cls.SECTOR_RANK_MIN_SECTORS)
+
+        # Sector-cascade exit (#149)
+        if cls.SECTOR_CASCADE_DROP_THRESHOLD <= 0:
+            errors.append(
+                f"SECTOR_CASCADE_DROP_THRESHOLD must be > 0: "
+                f"{cls.SECTOR_CASCADE_DROP_THRESHOLD!r}"
+            )
+        if cls.SECTOR_CASCADE_OPPOSITE_FLOOR < 0:
+            errors.append(
+                f"SECTOR_CASCADE_OPPOSITE_FLOOR must be ≥ 0: "
+                f"{cls.SECTOR_CASCADE_OPPOSITE_FLOOR!r}"
+            )
+        _pos("SECTOR_CASCADE_MIN_OPEN", cls.SECTOR_CASCADE_MIN_OPEN)
 
         # India VIX thresholds
         if not (0.0 < cls.VIX_SPIKE_PCT <= 100.0):

@@ -345,7 +345,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 40 checks, in order)
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 41 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -452,7 +452,7 @@ Only three decisions change in `--ai` mode — everything else is identical:
 | **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
 | **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
 
-Every entry/exit gate (all 40 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+Every entry/exit gate (all 41 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
 
 ---
 
@@ -644,6 +644,7 @@ Every trade must pass these 40 checks in order. If any fails, the trade is rejec
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
+| -1 | **Earnings/results-day blackout** (#219, was #167) | `EARNINGS_BLACKOUT_ENABLED = True`, `EARNINGS_BLACKOUT_SYMBOLS_2026: dict[str, list[str]]` | Scanner-side pre-filter inside `_prefilter_universe()` — runs BEFORE scoring, so the symbol never reaches `enter_trade()` at all. Reads today's `"YYYY-MM-DD"` key and drops listed symbols from `price_filtered`. User-maintained dict (empty by default = zero behaviour change); user updates each Friday from the next week's NSE corp-action calendar. Earnings-day moves are dominated by surprise content, not technicals — our setups underperform on these days |
 | 0d | **Choppy-morning entry pause** (#192) | `CHOPPY_MORNING_PAUSE_ENABLED = True`, `CHOPPY_PAUSE_ADX_THRESHOLD = 16`, `CHOPPY_PAUSE_MINUTES = 15` | Fires FIRST in code (before 0a). Pauses NEW entries when NIFTY ADX < 16 for ≥3 consecutive scans inside the 09:30-10:30 IST window AND ≥2 STAGNANT_EXIT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding 15-min pause; can re-arm multiple times per morning. Existing positions managed normally. Manager feeds NIFTY ADX via `engine.record_nifty_adx()` each NIFTY-recheck tick |
 | 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (6.0). Boundary-exclusive on the right |
 | 0e | **VIX intraday-spike entry pause** (#211) | `VIX_SPIKE_ENTRY_PAUSE_ENABLED = True`, `VIX_SPIKE_PCT = 10.0` | Fires immediately after 0d. `OrderEngine.is_vix_spike_active()` returns True when manager's `_check_vix_spike()` (compares current INDIA VIX vs day-open) crossed the threshold on the latest NIFTY recheck. Closes the entry-path hole left by #181 — manager already paused the opportunity scan and the all-closed re-scan, but per-trade `enter_trade()` was bypassed by initial pre-market scan and partial re-scan paths. Existing positions managed normally |

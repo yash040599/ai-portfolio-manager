@@ -123,6 +123,19 @@ class PortfolioManager:
             self.log.info("Fix config.py and re-run.")
             return
 
+        # ── Step 1c: NSE early-close shift (#193) ─────────────────
+        # On Diwali Muhurat eve / year-end days the NSE closes at
+        # 13:30 IST and Zerodha auto-squares at distress prices.
+        # If today is in NSE_EARLY_CLOSE_DATES_<year>, advance our
+        # SQUARE_OFF time so we exit cleanly first. Idempotent.
+        early = self.cfg.apply_early_close_if_today()
+        if early is not None:
+            self.log.warning(
+                f"NSE early-close day detected — SQUARE_OFF advanced to "
+                f"{early[0]:02d}:{early[1]:02d} IST to beat Zerodha "
+                f"auto-square distress prices."
+            )
+
         # ── Step 2: Login to Zerodha ──────────────────────────────
         # Login early so we can show account details even on holidays.
         self.log.section("ZERODHA LOGIN")

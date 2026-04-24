@@ -159,6 +159,17 @@ class StockScannerV2(StockScanner):
         # +5→+8 is better than one decelerating from +10→+7.
         self._prev_scan_scores: dict[str, float] = {}
 
+        # ── Sector-cascade tracking (Roadmap #149) ────────────────
+        # `last_sector_momentum`: the per-sector AVERAGE score from
+        # the most recent _prefilter_universe pass (computed during
+        # the existing sector-momentum block). Manager reads this
+        # after each scan to detect fast collapses and tighten SLs
+        # of open positions in cascading sectors. Two-tick state:
+        # `_prev_sector_momentum` is the snapshot from the previous
+        # pass — the cascade check compares prev → last.
+        self.last_sector_momentum: dict[str, float] = {}
+        self._prev_sector_momentum: dict[str, float] = {}
+
         # Cleanup old cached data on startup (keep 45 days)
         try:
             cleaned = self._cache.cleanup_old(keep_days=45)
@@ -494,6 +505,33 @@ class StockScannerV2(StockScanner):
                 f"Rs.{min_price:.0f}-{max_price:.0f} range"
             )
 
+        # Earnings/results-day blackout (Roadmap #167).
+        # Skip names announcing results today — Q1-Q4 result days
+        # produce 3-5 % gap moves intraday that no technical setup
+        # can predict. Reads from a user-maintained config dict
+        # (EARNINGS_BLACKOUT_SYMBOLS_<year>: dict[str, list[str]]
+        # keyed by "YYYY-MM-DD" → list of NSE symbols). Empty dict
+        # means no blackout active that day. Kill-switch:
+        # EARNINGS_BLACKOUT_ENABLED.
+        if getattr(self.cfg, "EARNINGS_BLACKOUT_ENABLED", True):
+            try:
+                from config import now_ist  # local import keeps top of file lean
+                today_str = now_ist().strftime("%Y-%m-%d")
+                year = today_str[:4]
+                cal = getattr(self.cfg, f"EARNINGS_BLACKOUT_SYMBOLS_{year}", {}) or {}
+                blackout_today = set(cal.get(today_str, []))
+                if blackout_today:
+                    before = len(price_filtered)
+                    price_filtered = [s for s in price_filtered if s not in blackout_today]
+                    dropped_earn = before - len(price_filtered)
+                    if dropped_earn:
+                        self.log.info(
+                            f"  Earnings blackout: skipped {dropped_earn} "
+                            f"symbol(s) announcing results today"
+                        )
+            except Exception as e:
+                self.log.debug(f"Earnings blackout check failed: {e}")
+
         scored = []
         for i, symbol in enumerate(price_filtered):
             # Progress indicator — every 25% of universe
@@ -613,6 +651,75 @@ class StockScannerV2(StockScanner):
                 f"  Sector momentum: boosted {sector_momentum_applied} stocks "
                 f"in trending sectors (+/-0.5)"
             )
+
+        # Publish per-sector AVERAGE score for the cascade-exit
+        # gate (#149). Two-tick rolling window so the manager can
+        # spot a fast collapse (prev > 0, last << 0).
+        sector_avg_now: dict[str, float] = {}
+        for sec, sc_list in sector_scores.items():
+            if sc_list:
+                sector_avg_now[sec] = sum(sc_list) / len(sc_list)
+        self._prev_sector_momentum = self.last_sector_momentum
+        self.last_sector_momentum = sector_avg_now
+
+        # Sector-rank directional bias (Roadmap #215).
+        # Rank ALL sectors with ≥1 candidate by their AVERAGE
+        # combined_score at scan time — top-ranked sectors are the
+        # day's most-bullish, bottom-ranked the most-bearish. Then
+        # nudge each candidate's |score| by
+        #   bias = (mid_rank - rank_of_my_sector) * STEP, clamped to MAX
+        # sign-aware: BUYs in top-ranked sectors get a positive nudge,
+        # SELLs in bottom-ranked sectors get a deeper-negative nudge.
+        # Counter-rank candidates are penalised. Operates on magnitude
+        # — sign is preserved (round(±mag,1) keeps direction). Skipped
+        # when fewer than SECTOR_RANK_MIN_SECTORS distinct sectors
+        # are present (sample too small to be meaningful).
+        if (
+            getattr(self.cfg, "SECTOR_RANK_BIAS_ENABLED", True)
+            and len(sector_scores) >= int(self.cfg.SECTOR_RANK_MIN_SECTORS)
+        ):
+            avg_by_sector: list[tuple[str, float]] = []
+            for sec, sc_list in sector_scores.items():
+                if not sc_list:
+                    continue
+                avg_by_sector.append((sec, sum(sc_list) / len(sc_list)))
+            # Rank descending by average score: most-bullish first.
+            avg_by_sector.sort(key=lambda t: t[1], reverse=True)
+            sector_rank = {sec: idx for idx, (sec, _) in enumerate(avg_by_sector)}
+            n_sectors = len(avg_by_sector)
+            mid_rank = (n_sectors - 1) / 2.0
+            step = float(self.cfg.SECTOR_RANK_BIAS_STEP)
+            cap  = float(self.cfg.SECTOR_RANK_BIAS_MAX)
+            rank_applied = 0
+            for s in passed_score:
+                sector = SECTOR_MAP.get(s["symbol"], "OTHER")
+                if sector not in sector_rank:
+                    continue
+                # Top sectors → positive bias; bottom → negative.
+                raw_bias = (mid_rank - sector_rank[sector]) * step
+                raw_bias = max(-cap, min(cap, raw_bias))
+                if abs(raw_bias) < 1e-9:
+                    continue
+                # Sign-aware: bullish-tape sector lifts BUY |score|
+                # (raw_bias > 0 + score > 0 → add); bearish-tape
+                # sector deepens SELL |score| (raw_bias < 0 + score
+                # < 0 → also widens magnitude). Counter-rank pairs
+                # subtract from |score|.
+                score = s["combined_score"]
+                if score == 0:
+                    continue
+                if (raw_bias > 0 and score > 0) or (raw_bias < 0 and score < 0):
+                    delta = abs(raw_bias)
+                else:
+                    delta = -abs(raw_bias)
+                mag = max(0.0, abs(score) + delta)
+                s["combined_score"] = round(mag if score > 0 else -mag, 1)
+                rank_applied += 1
+            if rank_applied:
+                self.log.info(
+                    f"  Sector-rank bias: nudged {rank_applied} candidates "
+                    f"across {n_sectors} sectors (max +/-{cap:.1f} |score|)"
+                )
 
         # Nifty trend hard filter: against-trend trades need stronger signals
         filtered = []
