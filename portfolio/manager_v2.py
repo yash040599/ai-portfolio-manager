@@ -1513,8 +1513,21 @@ class PortfolioManagerV2(PortfolioManager):
                 new_sl = self._compute_protective_sl(side, entry, current_price, old_sl)
                 if new_sl is None:
                     continue
+                # Update software SL FIRST (always succeeds, in-memory).
+                # If broker-side replace fails, software SL is the
+                # tighter fallback and _reconcile_orphan_sl_m() on the
+                # next sync repairs the broker mismatch. Wrapping the
+                # broker call ensures one position's failure cannot
+                # leave subsequent positions un-tightened.
                 pos["stop_loss"] = new_sl
-                self.engine._update_exchange_sl(pos, new_sl)
+                try:
+                    self.engine._update_exchange_sl(pos, new_sl)
+                except Exception as e:
+                    self.log.warning(
+                        f"SECTOR CASCADE {symbol}: broker SL replace failed "
+                        f"({type(e).__name__}: {e}); software SL still tightened "
+                        f"to Rs.{new_sl:.2f}, reconcile will retry next sync"
+                    )
                 tightened += 1
                 self.log.warning(
                     f"⚠ SECTOR CASCADE {symbol} {side}: {sector} avg score "
