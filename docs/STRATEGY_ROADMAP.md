@@ -48,13 +48,13 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (13 items)
+### Pending (14 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
-| 198 | Post-entry momentum kill — exit at small loss if MTM hasn't moved toward target within ~3 min of fill. Slow-bleed-to-SL is the dominant loss pattern (Apr 23 GRASIM/MAZDOCK; Apr 24 GRASIM still chopping at fill -1×ATR after 60s); caps -1.1% SL losses at ~-0.2% even with same hit rate | HIGH | High | Low |
+| 203 | Realised-P&L recovery from prior-session fills — on resume, `load_existing_positions` ignores any Zerodha `positions.net` row with `quantity == 0`. If a position opened in a prior session was closed by an exchange-side SL-M after the crash, the bot starts fresh with `realised = 0` and the MTM-aware circuit breaker (#197) + adaptive budget (`_get_adaptive_budget`) reason from the wrong baseline. Live example Apr 24: MAZDOCK SL hit while bot was down (-Rs.186 realised); on restart bot showed only Rs.-30 unrealised on GRASIM, masking actual -Rs.216 day P&L. Reconstruct closed positions from Zerodha's net-positions `pnl`/`m2m`/`average_price` fields on resume | HIGH | High | Low | — exit at small loss if MTM hasn't moved toward target within ~3 min of fill. Slow-bleed-to-SL is the dominant loss pattern (Apr 23 GRASIM/MAZDOCK; Apr 24 GRASIM still chopping at fill -1×ATR after 60s); caps -1.1% SL losses at ~-0.2% even with same hit rate | HIGH | High | Low |
 | 199 | Score-direction gate on stale-score recheck (#196 follow-up) — require fresh score ≥ entry score (or at least flat), not just ≥60% of magnitude. A *falling* score in the 5-min observation IS the market saying the edge is decaying; current gate lets MAZDOCK +6.5→+4.5 and BAJAJ-AUTO +6.5→+4.0 through. Also fix the misleading log: `"X% retained (floor 60%)"` instead of `"X% decay, floor 60%"` (today reads "59% decay floor 60%" for INFY which is actually 41% retained — confusing) | HIGH | High | Low |
 | 200 | Pattern↔tech contradiction penalty — when candle patterns directly oppose the tech verdict (e.g. NESTLEIND +5.6 STRONG_BUY with BEARISH_ENGULFING+DOJI; DMART -4.0 NEUTRAL with MARUBOZU; HCLTECH +3.5 BUY with DOJI), apply a hard score penalty (-2 suggested) or skip outright. DOJI is indecision and shouldn't contribute to either side; today the pattern engine and tech engine don't talk to each other | HIGH | Medium | Low |
 | 193 | NSE early-close calendar — hardcode the ~7 days/year NSE closes at 13:30 IST (Good Friday, Diwali eve, year-end). On those days advance `SQUARE_OFF_HOUR/MINUTE` to 13:25 so we exit ahead of Zerodha's auto-square distress prices | HIGH | Medium | Low |
@@ -296,6 +296,36 @@ In priority order, matching the Pending table above. Once an item ships,
 **delete its block from this section entirely** — the Completed table
 above is the historical record. Do not leave “✅ Completed (see #N)”
 stubs here; they bloat the Pending list and slow review.
+
+### 203. Realised-P&L Recovery from Prior-Session Fills
+- **Priority**: HIGH
+- **Today**: `services/order_engine.py:load_existing_positions` walks `zerodha.get_positions()["net"]` and **skips every row where `quantity == 0`** (line ~304: `if qty == 0: continue`). The check is correct for *open*-position adoption — a row with qty 0 is a closed trade — but it means **closed trades from the same trading day are silently lost** when the bot restarts. The in-memory `self.positions` list starts empty each session, `day_pnl()` sums only that list, so realised P&L resets to Rs.0 on every restart even though Zerodha has the full picture.
+- **Why it bites now**: 
+  1. **MTM-aware circuit breaker (#197)** computes `effective_day_pnl = closed_pnl + unrealised_pnl`. With realised stuck at 0 after a restart, the soft-stop threshold (-1.5× budget) is measured from the wrong floor. On Apr 24, true day P&L was -Rs.216 (-0.46% of Rs.46.7K) — about a third of the way to soft-stop — but bot saw -Rs.30 (-0.06%) and would happily take another ~Rs.500 of losses before pausing.
+  2. **Adaptive budget (`_get_adaptive_budget`)** reduces position size after realised losses (line ~3407). Without prior-session losses in scope, sizing stays at full budget on the second-half session of a recovery day.
+  3. **Reports / dashboard** show wrong session totals; user has to mentally reconcile against Zerodha Console.
+- **Fix**: New method `recover_prior_session_fills()` called immediately after `load_existing_positions()` in `portfolio/manager.py`. For each Zerodha `positions.net` row with `product == "MIS"`, `quantity == 0`, AND (`buy_quantity > 0` AND `sell_quantity > 0`) AND not already represented in `self.positions`:
+  - Synthesise a closed-position record: `entry_price = average_price` of opening side, `exit_price = average_price` of closing side, `qty = buy_quantity`, `pnl = pos["pnl"]` (Zerodha-authoritative), `status = "CLOSED"`, `exit_reason = "RECOVERED_FROM_ZERODHA"`, `entry_time = exit_time = None` (unknown).
+  - Append to `self.positions` so `closed_positions()` and `day_pnl()` see it.
+  - Log a banner: `"✓ Recovered N closed position(s) from Zerodha: ... (realised Rs.X)"`.
+  - Kill-switch `RECOVER_PRIOR_SESSION_FILLS_ENABLED` (default True).
+- **Effort**: Low. ~50 lines + 1 config knob. Zerodha API already returns everything needed (`pnl`, `buy_quantity`, `sell_quantity`, `buy_price`, `sell_price`).
+- **Validation**: Crash-and-resume test on a trading day with at least one closed position before crash. After restart, `engine.day_pnl()` should match Zerodha's per-instrument `pnl` sum within Rs.1 (rounding). Live confirmation: Apr 25 if today's MAZDOCK situation recurs.
+
+### 203. Realised-P&L Recovery from Prior-Session Fills
+- **Priority**: HIGH
+- **Today**: `services/order_engine.py:load_existing_positions` walks `zerodha.get_positions()["net"]` and **skips every row where `quantity == 0`** (line ~304: `if qty == 0: continue`). The check is correct for *open*-position adoption — a row with qty 0 is a closed trade — but it means **closed trades from the same trading day are silently lost** when the bot restarts. The in-memory `self.positions` list starts empty each session, `day_pnl()` sums only that list, so realised P&L resets to Rs.0 on every restart even though Zerodha has the full picture.
+- **Why it bites now**: 
+  1. **MTM-aware circuit breaker (#197)** computes `effective_day_pnl = closed_pnl + unrealised_pnl`. With realised stuck at 0 after a restart, the soft-stop threshold (-1.5× budget) is measured from the wrong floor. On Apr 24, true day P&L was -Rs.216 (-0.46% of Rs.46.7K) — about a third of the way to soft-stop — but bot saw -Rs.30 (-0.06%) and would happily take another ~Rs.500 of losses before pausing.
+  2. **Adaptive budget (`_get_adaptive_budget`)** reduces position size after realised losses (line ~3407). Without prior-session losses in scope, sizing stays at full budget on the second-half session of a recovery day.
+  3. **Reports / dashboard** show wrong session totals; user has to mentally reconcile against Zerodha Console.
+- **Fix**: New method `recover_prior_session_fills()` called immediately after `load_existing_positions()` in `portfolio/manager.py`. For each Zerodha `positions.net` row with `product == "MIS"`, `quantity == 0`, AND (`buy_quantity > 0` AND `sell_quantity > 0`) AND not already represented in `self.positions`:
+  - Synthesise a closed-position record: `entry_price = average_price` of opening side, `exit_price = average_price` of closing side, `qty = buy_quantity`, `pnl = pos["pnl"]` (Zerodha-authoritative), `status = "CLOSED"`, `exit_reason = "RECOVERED_FROM_ZERODHA"`, `entry_time = exit_time = None` (unknown).
+  - Append to `self.positions` so `closed_positions()` and `day_pnl()` see it.
+  - Log a banner: `"✓ Recovered N closed position(s) from Zerodha: ... (realised Rs.X)"`.
+  - Kill-switch `RECOVER_PRIOR_SESSION_FILLS_ENABLED` (default True).
+- **Effort**: Low. ~50 lines + 1 config knob. Zerodha API already returns everything needed (`pnl`, `buy_quantity`, `sell_quantity`, `buy_price`, `sell_price`).
+- **Validation**: Crash-and-resume test on a trading day with at least one closed position before crash. After restart, `engine.day_pnl()` should match Zerodha's per-instrument `pnl` sum within Rs.1 (rounding). Live confirmation: Apr 25 if today's MAZDOCK situation recurs.
 
 ### 198. Post-Entry Momentum Kill
 - **Priority**: HIGH
