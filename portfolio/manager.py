@@ -219,6 +219,7 @@ class PortfolioManager:
         # If the bot crashed or was stopped while positions were open,
         # resume monitoring them instead of starting fresh.
         resumed = 0
+        recovered_closed = 0
         if not self.cfg.DRY_RUN:
             resumed = self.engine.load_existing_positions()
             if resumed > 0:
@@ -226,6 +227,12 @@ class PortfolioManager:
                     f"Resumed {resumed} existing position(s) from Zerodha — "
                     f"skipping to monitor loop"
                 )
+            # Roadmap #203 — reconstruct realised P&L from prior-session
+            # round-trip closes that finished while the bot was down.
+            # Without this, day_pnl() resets to 0 on restart even when
+            # Zerodha holds the truth, breaking the MTM-aware circuit
+            # breaker (#197) and adaptive sizing.
+            recovered_closed = self.engine.recover_prior_session_fills()
 
         # ── Step 5c: Thursday F&O expiry adjustments ────────────
         self._apply_expiry_day_adjustments()
@@ -824,19 +831,44 @@ class PortfolioManager:
 
             floor = abs(entry_val) * fraction
             if abs(fresh_val) < floor:
-                decay_pct = (1 - abs(fresh_val) / abs(entry_val)) * 100
+                retained_pct = abs(fresh_val) / abs(entry_val) * 100
                 self.log.info(
                     f"  ✗ {symbol}: stale-score guard — entry {entry_val:+.1f} → "
-                    f"fresh {fresh_val:+.1f} ({decay_pct:.0f}% decay, "
+                    f"fresh {fresh_val:+.1f} ({retained_pct:.0f}% retained, "
                     f"floor {fraction*100:.0f}%), skipping"
                 )
                 continue
 
+            # Monotonic-direction gate (Roadmap #199, follow-up to #196).
+            # Even when retention floor is met, a *falling* score during
+            # the observation window is the market actively telling us the
+            # edge is decaying. Require fresh ≥ entry magnitude (within a
+            # small jitter tolerance). Kill-switch:
+            # FRESH_ENTRY_REQUIRE_MONOTONIC = False reverts to legacy
+            # (#196) behaviour where only retention floor is enforced.
+            if getattr(self.cfg, "FRESH_ENTRY_REQUIRE_MONOTONIC", False):
+                tolerance = float(
+                    getattr(self.cfg, "FRESH_ENTRY_MONOTONIC_TOLERANCE", 0.0)
+                )
+                if abs(fresh_val) + tolerance < abs(entry_val):
+                    drop = abs(entry_val) - abs(fresh_val)
+                    self.log.info(
+                        f"  ✗ {symbol}: stale-score guard — entry {entry_val:+.1f} → "
+                        f"fresh {fresh_val:+.1f} (magnitude DROPPED by {drop:.1f}, "
+                        f"tolerance {tolerance:.1f}; falling score = decaying edge), "
+                        f"skipping"
+                    )
+                    continue
+
             # Survived — refresh stored score so downstream gates use
             # the latest value.
+            retained_pct = (
+                abs(fresh_val) / abs(entry_val) * 100 if entry_val else 0
+            )
             self.log.info(
                 f"  ✓ {symbol}: stale-score recheck — entry {entry_val:+.1f} → "
-                f"fresh {fresh_val:+.1f} (within decay floor)"
+                f"fresh {fresh_val:+.1f} ({retained_pct:.0f}% retained, floor "
+                f"{fraction*100:.0f}%)"
             )
             trade["_entry_score"] = fresh_val
             survivors.append(trade)

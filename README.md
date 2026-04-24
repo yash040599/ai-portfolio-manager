@@ -471,7 +471,12 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Choppy-morning entry pause** — auto-pauses new entries (15 min, sliding) when NIFTY 15-min ADX prints weak (<16) for 3 consecutive scans in 09:30–10:30 IST AND ≥2 recent exits were STAGNANT/SIGNAL_DECAY. Re-arms each session.
 - **Whipsaw guard** — pauses entries after 3 consecutive SL hits.
 - **Per-symbol re-entry cooldown** — 30 min on same `SYMBOL_SIDE`.
-- **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped or decayed below 60% of the scan-time score.
+- **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped, decayed below 60% of the scan-time score, OR (#199) lost magnitude (`|fresh| + 0.3 < |entry|`) — catches the slow-bleed setups the magnitude-only floor missed.
+- **Post-entry momentum kill (#198)** — exits at market between 60s and 3 min after fill if the trade is unrealised-loss AND has covered <25% of the entry→target distance. Caps slow-bleed losers at ~-0.2% instead of waiting for the -1.1% SL hit.
+- **Pattern↔tech contradiction penalty (#200)** — at the scanner combine, subtracts 2.0 from `|combined_score|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_ENGULFING`) and 0.5 when patterns include `DOJI` indecision; weak-conviction conflict setups fall below `V2_MIN_SCORE` naturally.
+- **VWAP statistical-band gate (#201)** — blocks BUY at the upper 1σ/2σ VWAP band and SELL at the lower 1σ/2σ; complements the existing % VWAP-extension check with a volatility-adaptive band classifier. Override at `|score| ≥ 7.0`.
+- **Late-entry tightening (#202)** — after 10:00 IST: R:R floor raised to 1.5 (overrides adaptive relaxation and mid-day retry), `MIN_SCORE` bumped by +0.5, max concurrent positions capped at 2.
+- **Realised-P&L recovery on restart (#203)** — on init, scans Zerodha net-positions for already-closed MIS round-trips not in our session and imports them as synthetic CLOSED records so the MTM-aware safety gates and adaptive budget reason from the correct realised baseline after a mid-session restart.
 - **Lunch-lull skip** — 11:30-12:15 IST unless `|score| ≥ 6.0`.
 - **Charge-aware target** — gross target ≥ 2× round-trip charges.
 - **Budget-regime gates** — auto-tighten on TINY/SMALL accounts.

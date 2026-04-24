@@ -754,6 +754,17 @@ class Config:
     FRESH_ENTRY_RECHECK_ENABLED:        bool  = True
     FRESH_ENTRY_DECAY_FRACTION:         float = 0.6
     FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES: int = 5
+    # Monotonic-direction gate (Roadmap #199, follow-up to #196).
+    # The retention floor (FRACTION) is a magnitude check — a score
+    # that *fell* from +6.5 to +4.5 still passes 60% retention but the
+    # market is actively telling us the edge is decaying in real time.
+    # When this is True, additionally abort entries whose magnitude
+    # dropped at all between entry and recheck (|fresh| < |entry|),
+    # subject to a small tolerance to absorb scoring jitter.
+    # When False, only sign-flip and retention-floor are enforced
+    # (legacy #196 behaviour).
+    FRESH_ENTRY_REQUIRE_MONOTONIC:        bool  = True
+    FRESH_ENTRY_MONOTONIC_TOLERANCE:      float = 0.3
 
     # ── ADX + DI Entry Gate (Roadmap #157) ────────────────────────
     # ADX_ENTRY_GATE_ENABLED: require minimum ADX and directional
@@ -923,6 +934,116 @@ class Config:
     # Set PATTERN_VETO_ENABLED = False to disable.
     PATTERN_VETO_ENABLED:        bool  = True
     PATTERN_VETO_OVERRIDE_SCORE: float = 8.0
+
+    # ── Pattern↔Tech Contradiction Penalty (Roadmap #200) ─────────
+    # Patterns currently flow into combined_score as raw additive
+    # contributions. Two failure modes were observed live:
+    #   (a) Indecision noise: DOJI is a NEUTRAL candle (indecision).
+    #       It tells us "no commitment" yet today its weight survives
+    #       into a directional verdict. NESTLEIND scored +5.6
+    #       STRONG_BUY with both BEARISH_ENGULFING and DOJI present.
+    #   (b) Direct contradiction: a bearish reversal pattern on a BUY
+    #       verdict (or vice-versa) means the chart is *already*
+    #       printing the flip — the score is reading momentum that's
+    #       about to die. #190 PATTERN_VETO is a hard skip at very low
+    #       conviction; this is a softer continuous penalty applied at
+    #       SCANNER scoring time so downstream gates / Claude / sorting
+    #       all see the de-risked score.
+    # Apply at scanner combine point in stock_scanner_v2._analyse_stock,
+    # *after* pattern_score + tech_score have been summed:
+    #   - Contradiction (BUY-leaning + bearish pattern OR SELL-leaning
+    #     + bullish pattern): subtract PATTERN_CONTRADICTION_PENALTY
+    #     from |combined_score|, clamped so the score does NOT flip
+    #     sign (we already have #190 for hard veto; this is just a
+    #     conviction haircut).
+    #   - Indecision (DOJI present, regardless of side): subtract
+    #     PATTERN_INDECISION_PENALTY from |combined_score|, same
+    #     no-flip clamp.
+    # Both penalties stack — DOJI + BEARISH_ENGULFING on a BUY would
+    # take 0.5 + 2.0 = 2.5 off the score magnitude.
+    # Kill-switch: PATTERN_CONTRADICTION_PENALTY_ENABLED.
+    PATTERN_CONTRADICTION_PENALTY_ENABLED: bool  = True
+    PATTERN_CONTRADICTION_PENALTY:         float = 2.0
+    PATTERN_INDECISION_PENALTY:            float = 0.5
+
+    # ── VWAP-Extension Entry Gate (Roadmap #201) ──────────────────
+    # Buying ≥+1σ above VWAP (or selling ≤-1σ below) means entering at
+    # the top/bottom of the intraday range — there's no room to run
+    # before mean-reversion kicks in. The existing VWAP guard checks
+    # `vwap_dev` % distance only; this new gate uses the proper
+    # statistical band classification (`vwap_bands.signal` from
+    # technical_indicators) which adapts to each stock's intraday
+    # volatility instead of using a fixed 0.8% cap.
+    # Gate (read from snapshot field `vwap_band`):
+    #   BUY  blocked at AT_UPPER_1SD or AT_UPPER_2SD
+    #   SELL blocked at AT_LOWER_1SD or AT_LOWER_2SD
+    # Override at |score| ≥ VWAP_BAND_OVERRIDE_SCORE — high-conviction
+    # break-out entries can still chase the band.
+    # Kill-switch: VWAP_BAND_GATE_ENABLED.
+    VWAP_BAND_GATE_ENABLED:    bool  = True
+    VWAP_BAND_OVERRIDE_SCORE:  float = 7.0
+
+    # ── Late-Entry Tightening (Roadmap #202) ──────────────────────
+    # When the bot joins the market mid-session (or scans late after
+    # all morning candidates closed), the remaining session is
+    # shorter and the high-edge moves of the day have already played
+    # out. Late entries are *higher* risk yet today the entry pipeline
+    # actually relaxes: observation floor drops to 5 min ("opening
+    # volatility passed"), R:R floor stays the same. We invert this:
+    # past LATE_ENTRY_HOUR (default 10:00 IST), demand strictly
+    # better-than-base setups and cap concurrent positions.
+    # Effects when active:
+    #   - effective_min_score() bumped by LATE_ENTRY_MIN_SCORE_BUMP
+    #     (checked inside enter_trade against |_entry_score|)
+    #   - current_rr_floor() takes max(time_floor, LATE_ENTRY_RR_FLOOR)
+    #   - max-positions check uses min(MAX_POSITIONS, LATE_ENTRY_MAX_POSITIONS)
+    # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
+    LATE_ENTRY_TIGHTENING_ENABLED: bool  = True
+    LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
+    LATE_ENTRY_MIN_SCORE_BUMP:     float = 0.5
+    LATE_ENTRY_RR_FLOOR:           float = 1.5
+    LATE_ENTRY_MAX_POSITIONS:      int   = 2
+
+    # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
+    # The dominant loss pattern today is "slow bleed to SL" — a trade
+    # is filled, immediately turns red, and walks 8-12 minutes to its
+    # SL while we wait. If the stock had real edge in our direction
+    # the first three minutes of post-fill price action should at
+    # least *try* to move toward target. When that doesn't happen and
+    # MTM is already negative, the setup is wrong — exit at small loss
+    # rather than wait for the full -1×ATR SL hit.
+    # Logic in check_stops_and_targets per-position loop:
+    #   skip if elapsed_seconds < MOMENTUM_KILL_GRACE_SECONDS  (let order settle)
+    #   skip if elapsed_seconds > MOMENTUM_KILL_WINDOW_MINUTES*60
+    #   skip if pos["_external"]                              (manual / adopted — give grace)
+    #   skip if pos.get("_partial_taken")                     (already booking profit; trailing stop owns it)
+    #   compute progress = (current - entry) / (target - entry) for BUY (mirrored for SELL)
+    #   if progress < MOMENTUM_KILL_MIN_PROGRESS_PCT/100 AND unrealised < 0:
+    #     exit at market with reason "MOMENTUM_KILL"
+    # Kill-switch: MOMENTUM_KILL_ENABLED.
+    MOMENTUM_KILL_ENABLED:           bool  = True
+    MOMENTUM_KILL_GRACE_SECONDS:     int   = 60   # let order settle / spread tighten
+    MOMENTUM_KILL_WINDOW_MINUTES:    int   = 3
+    MOMENTUM_KILL_MIN_PROGRESS_PCT:  float = 25.0  # at least 25% of way to target
+
+    # ── Realised-P&L Recovery from Prior-Session Fills (#203) ─────
+    # On restart after a crash, load_existing_positions only adopts
+    # OPEN positions (qty != 0). Any position that opened in a prior
+    # session and was closed by an exchange-side SL-M during the crash
+    # window is silently lost — bot starts with realised = 0 even
+    # though Zerodha holds the full picture. This breaks the MTM-aware
+    # circuit breaker (#197) and adaptive sizing because both reason
+    # from a wrong P&L floor.
+    # Logic in OrderEngine.recover_prior_session_fills() (called from
+    # manager right after load_existing_positions):
+    #   For each net-position with product==MIS, quantity==0,
+    #   buy_quantity > 0 AND sell_quantity > 0, AND not already
+    #   represented in self.positions:
+    #     synthesise a CLOSED record using Zerodha's authoritative
+    #     pnl/buy_price/sell_price fields. exit_reason =
+    #     "RECOVERED_FROM_ZERODHA". entry_time / exit_time are unknown.
+    # Kill-switch: REALISED_PNL_RECOVERY_ENABLED.
+    REALISED_PNL_RECOVERY_ENABLED: bool  = True
 
     # ── Session-time-aware RVol normalization (Roadmap #147) ────
     # NSE intraday volume is U-shaped: heavy 09:15-10:30, light 11:00-
@@ -1398,6 +1519,62 @@ class Config:
             errors.append(
                 f"FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES must be ≥ 0: "
                 f"{cls.FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES!r}"
+            )
+        if cls.FRESH_ENTRY_MONOTONIC_TOLERANCE < 0:
+            errors.append(
+                f"FRESH_ENTRY_MONOTONIC_TOLERANCE must be ≥ 0: "
+                f"{cls.FRESH_ENTRY_MONOTONIC_TOLERANCE!r}"
+            )
+
+        # Pattern↔tech contradiction penalty (#200)
+        if cls.PATTERN_CONTRADICTION_PENALTY < 0:
+            errors.append(
+                f"PATTERN_CONTRADICTION_PENALTY must be ≥ 0: "
+                f"{cls.PATTERN_CONTRADICTION_PENALTY!r}"
+            )
+        if cls.PATTERN_INDECISION_PENALTY < 0:
+            errors.append(
+                f"PATTERN_INDECISION_PENALTY must be ≥ 0: "
+                f"{cls.PATTERN_INDECISION_PENALTY!r}"
+            )
+
+        # VWAP-band gate (#201)
+        _pos("VWAP_BAND_OVERRIDE_SCORE", cls.VWAP_BAND_OVERRIDE_SCORE)
+
+        # Late-entry tightening (#202)
+        if not (0 <= cls.LATE_ENTRY_HOUR <= 23):
+            errors.append(
+                f"LATE_ENTRY_HOUR out of range: {cls.LATE_ENTRY_HOUR!r}"
+            )
+        if cls.LATE_ENTRY_MIN_SCORE_BUMP < 0:
+            errors.append(
+                f"LATE_ENTRY_MIN_SCORE_BUMP must be ≥ 0: "
+                f"{cls.LATE_ENTRY_MIN_SCORE_BUMP!r}"
+            )
+        _pos("LATE_ENTRY_RR_FLOOR", cls.LATE_ENTRY_RR_FLOOR)
+        if cls.LATE_ENTRY_MAX_POSITIONS < 1:
+            errors.append(
+                f"LATE_ENTRY_MAX_POSITIONS must be ≥ 1: "
+                f"{cls.LATE_ENTRY_MAX_POSITIONS!r}"
+            )
+
+        # Post-entry momentum kill (#198)
+        if cls.MOMENTUM_KILL_GRACE_SECONDS < 0:
+            errors.append(
+                f"MOMENTUM_KILL_GRACE_SECONDS must be ≥ 0: "
+                f"{cls.MOMENTUM_KILL_GRACE_SECONDS!r}"
+            )
+        _pos("MOMENTUM_KILL_WINDOW_MINUTES", cls.MOMENTUM_KILL_WINDOW_MINUTES)
+        if cls.MOMENTUM_KILL_GRACE_SECONDS >= cls.MOMENTUM_KILL_WINDOW_MINUTES * 60:
+            errors.append(
+                f"MOMENTUM_KILL_GRACE_SECONDS ({cls.MOMENTUM_KILL_GRACE_SECONDS}) "
+                f"must be < MOMENTUM_KILL_WINDOW_MINUTES*60 "
+                f"({cls.MOMENTUM_KILL_WINDOW_MINUTES * 60})"
+            )
+        if not (0 <= cls.MOMENTUM_KILL_MIN_PROGRESS_PCT <= 100):
+            errors.append(
+                f"MOMENTUM_KILL_MIN_PROGRESS_PCT must be in [0, 100]: "
+                f"{cls.MOMENTUM_KILL_MIN_PROGRESS_PCT!r}"
             )
 
         # Choppy-morning pause (#192)

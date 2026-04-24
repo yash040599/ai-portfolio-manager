@@ -40,7 +40,14 @@ from core.logger                     import Logger
 from core.claude_client              import ClaudeClient
 from core.zerodha_client             import ZerodhaClient
 from services.stock_scanner          import StockScanner, _parse_price, _parse_int
-from services.candle_patterns        import detect_all, detect_all_with_freshness, summarise_signals
+from services.candle_patterns        import (
+    detect_all,
+    detect_all_with_freshness,
+    summarise_signals,
+    BEARISH_REVERSAL_PATTERNS,
+    BULLISH_REVERSAL_PATTERNS,
+    INDECISION_PATTERNS,
+)
 from services.technical_indicators   import (
     compute_technical_score, prev_day_sr_score,
     vwap, rsi, ema_crossover, supertrend, stoch_rsi,
@@ -327,6 +334,56 @@ class StockScannerV2(StockScanner):
 
         # Combine scores: candle patterns + technical indicators
         combined_score = pattern_summary["score"] + tech["score"]
+
+        # ── Pattern↔tech contradiction penalty (Roadmap #200) ──
+        # Apply BEFORE the RVol bonus/penalty so RVol scaling sees the
+        # de-risked score. Two stacked penalties:
+        #   (a) Indecision (DOJI present) — reduce |score| by
+        #       PATTERN_INDECISION_PENALTY (default 0.5).
+        #   (b) Direct contradiction (BUY-leaning + bearish pattern OR
+        #       SELL-leaning + bullish pattern) — reduce |score| by
+        #       PATTERN_CONTRADICTION_PENALTY (default 2.0).
+        # Both penalties shrink magnitude only; never flip sign (the
+        # hard #190 PATTERN_VETO handles the "kill it" case at
+        # entry-time when |score| is borderline).
+        # Kill-switch: PATTERN_CONTRADICTION_PENALTY_ENABLED.
+        if (
+            getattr(self.cfg, "PATTERN_CONTRADICTION_PENALTY_ENABLED", False)
+            and combined_score != 0
+        ):
+            try:
+                pset = {str(p).upper() for p in pattern_summary.get("patterns", []) or []}
+            except Exception:
+                pset = set()
+            penalty_total = 0.0
+            penalty_reasons: list[str] = []
+            if pset & INDECISION_PATTERNS:
+                p_indecision = float(self.cfg.PATTERN_INDECISION_PENALTY)
+                if p_indecision > 0:
+                    penalty_total += p_indecision
+                    penalty_reasons.append(f"DOJI -{p_indecision:.1f}")
+            opposing = (
+                BEARISH_REVERSAL_PATTERNS if combined_score > 0
+                else BULLISH_REVERSAL_PATTERNS
+            )
+            conflicts = pset & opposing
+            if conflicts:
+                p_contra = float(self.cfg.PATTERN_CONTRADICTION_PENALTY)
+                if p_contra > 0:
+                    penalty_total += p_contra
+                    penalty_reasons.append(
+                        f"{sorted(conflicts)[0]} -{p_contra:.1f}"
+                    )
+            if penalty_total > 0:
+                # Shrink magnitude, never flip sign
+                magnitude = max(0.0, abs(combined_score) - penalty_total)
+                new_score = magnitude if combined_score > 0 else -magnitude
+                self.log.debug(
+                    f"{symbol}: pattern penalty applied "
+                    f"({', '.join(penalty_reasons)}) — "
+                    f"score {combined_score:+.1f} → {new_score:+.1f}"
+                )
+                combined_score = new_score
 
         # ── Relative Volume (RVol) bonus/penalty ──────────────
         # Compare today's volume so far to the average from recent
@@ -1169,6 +1226,11 @@ class StockScannerV2(StockScanner):
             "st": tech["supertrend"]["trend"],
             "st_signal": tech["supertrend"]["signal"],
             "vwap_dev": tech["vwap"]["deviation_pct"],
+            # VWAP statistical-band classification (Roadmap #201).
+            # Read by the OrderEngine VWAP-band gate to reject BUY at
+            # AT_UPPER_1SD/2SD and SELL at AT_LOWER_1SD/2SD unless
+            # |score| ≥ VWAP_BAND_OVERRIDE_SCORE.
+            "vwap_band": tech.get("vwap_bands", {}).get("signal", "INSIDE"),
             "adx": tech.get("adx", {}).get("adx", 0),
             "adx_strength": tech.get("adx", {}).get("trend_strength", ""),
             "macd": tech.get("macd", {}).get("signal", ""),

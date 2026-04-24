@@ -186,36 +186,70 @@ class OrderEngine:
 
     def current_rr_floor(self, hour: int = 10) -> float:
         """Returns current R:R floor based on time of day, scan failures,
-        and mid-day retry state.
+        late-entry tightening, and mid-day retry state.
 
-        Priority:
-        1. Time-based floor (morning 1.3, afternoon 1.2, late 1.0)
-        2. If N scans failed → min(time_floor, RR_FLOOR_RELAXED)
-        3. If mid-day retry → time_floor - RR_RETRY_STEP
+        Resolution order:
+          1. Compute time-based floor (morning 1.3 / afternoon 1.2 / late 1.0)
+          2. Apply adaptive relaxation if N scans failed
+             (min with RR_FLOOR_RELAXED)
+          3. Apply mid-day retry step (max with RR_FLOOR_LATE)
+          4. **Late-entry tightening LAST (max with LATE_ENTRY_RR_FLOOR)**
+             so it has final say. Rationale: relaxation/retry are
+             "we're starving, lower the bar" mechanisms; late-entry
+             tightening (#202) is a hard correctness floor that says
+             "after 10:00 the remaining session is shorter, only the
+             highest-edge setups should run." Letting relaxation
+             defeat #202 would re-introduce the chop-day churn we
+             shipped #202 to prevent.
         """
         time_floor = self._time_based_rr_floor(hour)
+        floor = time_floor
 
         if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
-            # Take the more lenient (lower) of time-based and relaxed
-            return min(time_floor, self.cfg.RR_FLOOR_RELAXED)
+            # Adaptive relaxation — take more lenient (lower) floor.
+            floor = min(floor, self.cfg.RR_FLOOR_RELAXED)
+        elif self._rr_retry_active:
+            # Mid-day retry: step down from current floor (kept above
+            # RR_FLOOR_LATE so we never go below the structural floor).
+            floor = max(floor - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
 
-        # Mid-day retry: step down from current floor
-        if self._rr_retry_active:
-            return max(time_floor - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
+        # Late-entry tightening (Roadmap #202) wins over both — see
+        # docstring rationale.
+        if (
+            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
+            and hour >= int(self.cfg.LATE_ENTRY_HOUR)
+        ):
+            floor = max(floor, float(self.cfg.LATE_ENTRY_RR_FLOOR))
 
-        return time_floor
+        return floor
 
     def _rr_floor_label(self, hour: int) -> str:
-        """Returns a descriptive label for the current R:R floor state."""
+        """Returns a descriptive label for the current R:R floor state.
+        Reflects current_rr_floor() resolution order so logs match the
+        actual floor in effect."""
+        # Late-entry takes precedence (matches current_rr_floor) when
+        # the late floor would actually bind. Compute the candidate
+        # floor as current_rr_floor would and label accordingly.
+        late_active = (
+            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
+            and hour >= int(self.cfg.LATE_ENTRY_HOUR)
+        )
+        candidate = self._time_based_rr_floor(hour)
         if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
-            return "relaxed"
-        if self._rr_retry_active:
-            return "retry"
-        if hour >= self.cfg.RR_LATE_HOUR:
-            return "late"
-        if hour >= self.cfg.RR_AFTERNOON_HOUR:
-            return "afternoon"
-        return "morning"
+            candidate = min(candidate, self.cfg.RR_FLOOR_RELAXED)
+            base_label = "relaxed"
+        elif self._rr_retry_active:
+            candidate = max(candidate - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
+            base_label = "retry"
+        elif hour >= self.cfg.RR_LATE_HOUR:
+            base_label = "late"
+        elif hour >= self.cfg.RR_AFTERNOON_HOUR:
+            base_label = "afternoon"
+        else:
+            base_label = "morning"
+        if late_active and float(self.cfg.LATE_ENTRY_RR_FLOOR) > candidate:
+            return f"late-entry-tightened (overrides {base_label})"
+        return base_label
 
     def record_scan_result(self, entered: int):
         """Called after each scan+entry cycle. Tracks 0-entry streaks."""
@@ -361,6 +395,161 @@ class OrderEngine:
         self._reconcile_orphan_sl_m()
 
         return loaded
+
+    # ================================================================
+    # REALISED-P&L RECOVERY (#203) — RECONSTRUCT PRIOR-SESSION CLOSES
+    # ================================================================
+
+    def recover_prior_session_fills(self) -> int:
+        """Rebuild today's CLOSED positions from Zerodha's net-positions
+        for ones that the bot didn't record (because it crashed / was
+        restarted between fills).
+
+        Why: load_existing_positions() only adopts OPEN positions
+        (qty != 0). Any prior-session position closed by an exchange-
+        side SL-M during the crash window is invisible to the bot. The
+        in-memory `self.positions` list starts empty each session and
+        `day_pnl()` sums only what's in that list — so realised P&L
+        resets to 0 on every restart. This breaks the MTM-aware
+        circuit breaker (#197) and adaptive-budget sizing because
+        both reason from a wrong P&L floor.
+
+        Logic:
+          For each Zerodha net-positions row with:
+            - product == "MIS"  (intraday only)
+            - quantity == 0     (closed)
+            - buy_quantity > 0 AND sell_quantity > 0  (round-trip done)
+            - not already represented in self.positions  (no double-count)
+          Synthesise a CLOSED record using Zerodha's authoritative
+          buy_price / sell_price / pnl. Side is inferred from which
+          side opened first (we don't actually know — Zerodha doesn't
+          give that detail in net positions — so we mark with the
+          side that had the larger quantity at the close time, which
+          for fully-closed positions equals buy_quantity == sell_quantity
+          and we default to BUY/long convention).
+
+          Net qty for the synthetic record = buy_quantity (== sell_quantity
+          since net == 0). entry_time / exit_time are unknown.
+          exit_reason = "RECOVERED_FROM_ZERODHA". status = "CLOSED".
+
+        Returns the number of closed positions recovered.
+
+        Fail-safe: any API failure logs a warning and returns 0 — the
+        bot continues with realised = 0 on this session, same as the
+        legacy behaviour (no regression).
+
+        Kill-switch: REALISED_PNL_RECOVERY_ENABLED.
+        """
+        if not getattr(self.cfg, "REALISED_PNL_RECOVERY_ENABLED", False):
+            return 0
+        try:
+            positions_data = self.zerodha.get_positions()
+        except Exception as e:
+            self.log.warning(
+                f"#203 recovery: failed to fetch positions from Zerodha: {e}"
+            )
+            return 0
+
+        net_positions = positions_data.get("net", []) or []
+        # Symbols already in self.positions (open or closed) — skip to
+        # avoid double-booking. load_existing_positions() runs first so
+        # any OPEN MAZDOCK won't be re-recovered if it later closes mid-
+        # session (that path goes through exit_position).
+        existing_symbols = {p.get("symbol") for p in self.positions}
+
+        recovered = 0
+        recovered_pnl = 0.0
+        recovered_lines: list[str] = []
+
+        for pos in net_positions:
+            try:
+                if pos.get("product") != "MIS":
+                    continue
+                if int(pos.get("quantity", 0) or 0) != 0:
+                    continue   # still open — handled by load_existing_positions
+                buy_qty  = int(pos.get("buy_quantity", 0) or 0)
+                sell_qty = int(pos.get("sell_quantity", 0) or 0)
+                if buy_qty <= 0 or sell_qty <= 0:
+                    continue   # one-sided (carry-forward / placeholder); skip
+                symbol = pos.get("tradingsymbol", "")
+                if not symbol or symbol in existing_symbols:
+                    continue
+                buy_price  = float(pos.get("buy_price", 0) or 0)
+                sell_price = float(pos.get("sell_price", 0) or 0)
+                if buy_price <= 0 or sell_price <= 0:
+                    continue
+                # Zerodha net-positions returns matched qty; for an
+                # MIS round-trip buy_qty should equal sell_qty.
+                # Use the smaller in case of asymmetry (defensive).
+                qty = min(buy_qty, sell_qty)
+                if qty <= 0:
+                    continue
+                # We cannot reliably reconstruct whether the original
+                # trade was LONG or SHORT from net-positions alone:
+                #   buy_price < sell_price + pnl > 0  → could be LONG (bought low, sold high) OR SHORT closed in profit
+                #   buy_price > sell_price + pnl < 0  → could be LONG closed in loss OR SHORT (sold low, bought high)
+                # Two of four real combinations are ambiguous. Inferring
+                # from price ordering (an earlier draft did this) is
+                # WRONG for losing LONGs and winning SHORTs and would
+                # mis-key the per-symbol re-entry cooldown (#161, keyed
+                # SYMBOL_SIDE), letting a fresh same-direction entry
+                # through when it should be blocked.
+                # Conservative default: tag as BUY. The pnl/exit_price
+                # values flow into day_pnl() correctly regardless. Side
+                # only affects (a) cosmetic display and (b) the cooldown
+                # / sector / direction caps; defaulting to BUY blocks
+                # BUY follow-ups conservatively (cost: may also block a
+                # legitimate SELL follow-up but a fresh +score will
+                # bypass the cooldown via RE_ENTRY_SCORE_OVERRIDE).
+                # If we ever wire kite.trades() (timestamped fills) we
+                # can reconstruct the true open/close sequence and the
+                # actual side here.
+                pnl = float(pos.get("pnl", 0) or 0)
+                exchange = pos.get("exchange", "NSE")
+                side = "BUY"   # see comment above — conservative default
+                synthetic = {
+                    "symbol":        symbol,
+                    "exchange":      exchange,
+                    "side":          side,
+                    "qty":           qty,
+                    # entry_price / exit_price are display-only for
+                    # recovered records (true ordering unknown). pnl
+                    # is authoritative.
+                    "entry_price":   round(buy_price, 2),
+                    "stop_loss":     0.0,
+                    "target_price":  0.0,
+                    "exit_price":    round(sell_price, 2),
+                    "exit_reason":   "RECOVERED_FROM_ZERODHA",
+                    "status":        "CLOSED",
+                    "pnl":           round(pnl, 2),
+                    "entry_time":    None,   # unknown — pre-restart
+                    "exit_time":     None,
+                    "rationale":     "Recovered from Zerodha after restart (#203)",
+                    "order_id":      "RECOVERED",
+                    "_external":     True,   # don't attribute to bot strategy
+                }
+                self.positions.append(synthetic)
+                existing_symbols.add(symbol)
+                recovered += 1
+                recovered_pnl += pnl
+                recovered_lines.append(
+                    f"{symbol} {side} {qty}× Rs.{synthetic['entry_price']:.2f}"
+                    f"→Rs.{synthetic['exit_price']:.2f} = Rs.{pnl:+,.2f}"
+                )
+            except (ValueError, TypeError, KeyError) as e:
+                self.log.warning(
+                    f"#203 recovery: skipped malformed Zerodha row "
+                    f"({type(e).__name__}: {e})"
+                )
+                continue
+
+        if recovered > 0:
+            self.log.success(
+                f"✓ Recovered {recovered} closed position(s) from Zerodha "
+                f"(realised Rs.{recovered_pnl:+,.2f}): "
+                f"{'; '.join(recovered_lines)}"
+            )
+        return recovered
 
     # ================================================================
     # STALE SL-M RECONCILIATION — #148
@@ -1315,6 +1504,32 @@ class OrderEngine:
             )
             return False
 
+        # ── Late-entry tightening — score floor (Roadmap #202) ────
+        # Past LATE_ENTRY_HOUR, demand a stricter |score| than the
+        # base effective_min_score (regime-aware). The R:R floor and
+        # max-positions cap are enforced by their own checks below
+        # (current_rr_floor + max-positions block); this is the score
+        # half. Skip when score data is missing (don't penalise the
+        # tiny path where _entry_score is None — let other gates run).
+        if (
+            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
+            and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
+            and trade.get("_entry_score") is not None
+        ):
+            base_min  = self.effective_min_score()
+            late_bump = float(self.cfg.LATE_ENTRY_MIN_SCORE_BUMP)
+            late_min  = base_min + late_bump
+            score_abs_late = abs(float(trade.get("_entry_score") or 0))
+            if score_abs_late < late_min:
+                self.log.warning(
+                    f"{symbol}: late-entry tightening — |score| "
+                    f"{score_abs_late:.1f} < {late_min:.1f} "
+                    f"(base {base_min:.1f} + late bump {late_bump:.1f}). "
+                    f"Skipping (after {self.cfg.LATE_ENTRY_HOUR:02d}:00 IST, "
+                    f"only the highest-edge setups should run)."
+                )
+                return False
+
         # ── Lunch-lull entry skip (Roadmap #164) ──────────────────
         # Indian markets are lowest-volume + lowest-ADX during lunch.
         # Skip new entries in the window unless score is strong enough
@@ -1770,10 +1985,24 @@ class OrderEngine:
 
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
-        if open_count >= self.cfg.MAX_POSITIONS:
+        max_pos_cap = int(self.cfg.MAX_POSITIONS)
+        # Late-entry tightening (Roadmap #202): cap concurrent positions
+        # tighter past LATE_ENTRY_HOUR so a bad late read doesn't fill
+        # all slots with chop entries.
+        if (
+            getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
+            and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
+        ):
+            max_pos_cap = min(max_pos_cap, int(self.cfg.LATE_ENTRY_MAX_POSITIONS))
+        if open_count >= max_pos_cap:
             ext_count = len([p for p in self.positions if p["status"] == "OPEN" and p.get("_external")])
             bot_count = open_count - ext_count
-            msg = f"Cannot enter {symbol}: already at max {self.cfg.MAX_POSITIONS} positions"
+            cap_label = (
+                f"{max_pos_cap} (late-entry cap)"
+                if max_pos_cap < int(self.cfg.MAX_POSITIONS)
+                else f"max {self.cfg.MAX_POSITIONS}"
+            )
+            msg = f"Cannot enter {symbol}: already at {cap_label} positions"
             if ext_count:
                 msg += f" ({bot_count} bot + {ext_count} external/manual)"
             self.log.warning(msg)
@@ -2187,6 +2416,53 @@ class OrderEngine:
                     # allow the trade. R:R and other checks remain active.
                     self.log.warning(
                         f"{symbol}: VWAP guard skipped — indicator snapshot "
+                        f"parse failed ({type(e).__name__}: {e})"
+                    )
+
+        # ── VWAP statistical-band gate (Roadmap #201) ─────────────
+        # Buying ≥+1σ above VWAP (or selling ≤-1σ below) means entering
+        # at the top/bottom of the intraday range — mean-reversion risk
+        # is high, no room to run before the natural pullback. The
+        # extension-chase guard above uses a fixed 0.8% cap; this gate
+        # is volatility-adaptive (uses each stock's own intraday std).
+        # Reads `vwap_band` from the indicator snapshot:
+        #   AT_UPPER_1SD / AT_UPPER_2SD → BUY blocked
+        #   AT_LOWER_1SD / AT_LOWER_2SD → SELL blocked
+        # Override at |score| ≥ VWAP_BAND_OVERRIDE_SCORE.
+        # Fail-open if snapshot missing/malformed.
+        # Kill-switch: VWAP_BAND_GATE_ENABLED.
+        if getattr(self.cfg, "VWAP_BAND_GATE_ENABLED", False):
+            snap_str = trade.get("_indicator_snapshot", "")
+            if snap_str:
+                try:
+                    import json as _json_band
+                    snap = _json_band.loads(snap_str)
+                    vwap_band = str(snap.get("vwap_band", "INSIDE")).upper()
+                    score_abs_band = abs(trade.get("_entry_score") or 0)
+                    band_override = float(self.cfg.VWAP_BAND_OVERRIDE_SCORE)
+                    upper_bands = {"AT_UPPER_1SD", "AT_UPPER_2SD"}
+                    lower_bands = {"AT_LOWER_1SD", "AT_LOWER_2SD"}
+                    contradicts_band = (
+                        (side == "BUY"  and vwap_band in upper_bands)
+                        or (side == "SELL" and vwap_band in lower_bands)
+                    )
+                    if contradicts_band and score_abs_band < band_override:
+                        self.log.warning(
+                            f"{symbol}: {side} blocked at VWAP band "
+                            f"{vwap_band} — entering top/bottom of range "
+                            f"(|score| {score_abs_band:.1f} < "
+                            f"{band_override:.1f} override). Skipping."
+                        )
+                        return False
+                    if contradicts_band:
+                        self.log.info(
+                            f"  ✓ {symbol}: VWAP-band override — {side} at "
+                            f"{vwap_band} allowed at |score| "
+                            f"{score_abs_band:.1f} ≥ {band_override:.1f}"
+                        )
+                except Exception as e:
+                    self.log.warning(
+                        f"{symbol}: VWAP-band gate skipped — snapshot "
                         f"parse failed ({type(e).__name__}: {e})"
                     )
 
@@ -2914,6 +3190,36 @@ class OrderEngine:
                 sl_distance  = (sl - current_price) / current_price * 100
                 tgt_distance = (current_price - target) / current_price * 100
 
+            # ── Post-entry momentum kill (Roadmap #198) ───────────
+            # Slow-bleed-to-SL is the dominant loss pattern: trade
+            # fills, immediately turns red, walks 8-12 minutes to its
+            # full -1×ATR SL while we wait. If the first three minutes
+            # of post-fill action don't move at least 25% toward the
+            # target while we're underwater, the setup is wrong — exit
+            # at small loss instead of waiting for the full SL.
+            # Skipped if:
+            #   - kill-switch off
+            #   - elapsed < grace (let the order settle, spread tighten)
+            #   - elapsed > window (too late, normal SL/trail handles it)
+            #   - pos["_external"]   (manual / adopted, give grace)
+            #   - pos["_partial_taken"] (already locking profit)
+            #   - elapsed unknown (entry_time missing)
+            # Closes via exit_position(reason="MOMENTUM_KILL"). The exit
+            # itself stamps _stagnant_exits + _last_exit_score so the
+            # average-down (#195) gate prevents an instant re-entry on
+            # the same false signal.
+            if (
+                getattr(self.cfg, "MOMENTUM_KILL_ENABLED", False)
+                and not pos.get("_external")
+                and not pos.get("_partial_taken")
+            ):
+                killed = self._momentum_kill_check(
+                    pos, current_price, unrealised, side, entry, target
+                )
+                if killed:
+                    closed += 1
+                    continue  # exited; skip SL/target/trail for this pos
+
             # ── Stop-loss check ───────────────────────────────────
             if side == "BUY" and current_price <= sl:
                 loss = (sl - entry) * qty
@@ -2965,6 +3271,84 @@ class OrderEngine:
                 self._auto_trail_stop(pos, current_price)
 
         return closed
+
+    def _momentum_kill_check(
+        self,
+        pos: dict,
+        current_price: float,
+        unrealised: float,
+        side: str,
+        entry: float,
+        target: float,
+    ) -> bool:
+        """Roadmap #198 — exit at small loss when post-fill momentum
+        fails to develop in the trade direction.
+
+        Rationale: a real edge shows up in the first 1-3 minutes of
+        post-fill price action. If we're still red AND haven't moved a
+        meaningful fraction of the way to target by then, the entry
+        thesis was wrong. Take a small loss now (≪ 1×ATR SL).
+
+        Returns True if the position was exited.
+
+        Skipped (returns False) when:
+          - elapsed < MOMENTUM_KILL_GRACE_SECONDS  (let order settle)
+          - elapsed > MOMENTUM_KILL_WINDOW_MINUTES * 60  (window passed)
+          - unrealised >= 0  (trade is already winning)
+          - target == entry (degenerate; division-by-zero guard)
+          - entry_time missing or unparseable  (can't measure age)
+
+        Caller is responsible for filtering out _external and
+        _partial_taken positions before invoking.
+        """
+        entry_time_str = pos.get("entry_time", "") or ""
+        if not entry_time_str:
+            return False
+        now = now_ist()
+        try:
+            entry_dt = datetime.datetime.strptime(
+                f"{now.strftime('%Y-%m-%d')} {entry_time_str}",
+                "%Y-%m-%d %H:%M:%S",
+            )
+            # Stamp tz so tz-aware "now" subtracts cleanly
+            if now.tzinfo is not None and entry_dt.tzinfo is None:
+                entry_dt = entry_dt.replace(tzinfo=now.tzinfo)
+            elapsed = (now - entry_dt).total_seconds()
+        except (ValueError, TypeError):
+            return False
+
+        grace = int(self.cfg.MOMENTUM_KILL_GRACE_SECONDS)
+        window_sec = int(self.cfg.MOMENTUM_KILL_WINDOW_MINUTES) * 60
+        if elapsed < grace or elapsed > window_sec:
+            return False
+        if unrealised >= 0:
+            return False
+        if target == entry:
+            return False
+
+        # Progress = fraction of distance from entry to target traveled
+        # in the trade's favor. Negative when underwater.
+        if side == "BUY":
+            progress = (current_price - entry) / (target - entry)
+        else:
+            progress = (entry - current_price) / (entry - target)
+        min_progress = float(self.cfg.MOMENTUM_KILL_MIN_PROGRESS_PCT) / 100.0
+        if progress >= min_progress:
+            return False  # adequate progress, let the trade breathe
+
+        symbol = pos["symbol"]
+        elapsed_min = elapsed / 60.0
+        self.log.warning(
+            f"MOMENTUM KILL: {symbol} {side} | entry Rs.{entry:.2f} → "
+            f"Rs.{current_price:.2f} | progress {progress*100:+.1f}% "
+            f"(< {self.cfg.MOMENTUM_KILL_MIN_PROGRESS_PCT:.0f}%) after "
+            f"{elapsed_min:.1f} min | Unrealised Rs.{unrealised:+,.2f} — "
+            f"exiting at small loss (#198)"
+        )
+        # Use live current_price as the exit (no SL gaming — we want
+        # the actual market exit). exit_position handles charges + book.
+        self.exit_position(pos, current_price, "MOMENTUM_KILL")
+        return True
 
     def _auto_trail_stop(self, pos: dict, current_price: float):
         """

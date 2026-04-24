@@ -280,7 +280,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (34 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
+**Shared across both modes:** pre-filter, entry pipeline (38 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
 
 ---
 
@@ -310,7 +310,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 31 checks, in order)
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 38 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -363,6 +363,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 Every 10 seconds (5s when price is near SL/target), for each open position, the bot asks:
 
 10. **Hit SL?** → Cancel SL-M, exit at market, log `"STOP_LOSS"`. Sets cooldown timestamp (Roadmap #161).
+10a. 🆕 **Momentum kill?** (Roadmap #198) — Runs BEFORE the SL check. For positions older than `MOMENTUM_KILL_GRACE_SECONDS` (60s) but younger than `MOMENTUM_KILL_WINDOW_MINUTES` (3 min): if progress toward target `< MOMENTUM_KILL_MIN_PROGRESS_PCT` (25%) AND unrealised P&L is negative, exit at market with `exit_reason = MOMENTUM_KILL`. Skipped for `_external` and `_partial_taken` positions and for already-winning trades. Catches the slow-bleed pattern (MAZDOCK / BAJAJ-AUTO 2026-04-22) before SL is touched.
 11. **Hit target?** → Same as SL but `"TARGET_HIT"` and feeds into consecutive-SL reset.
 12. **Trailing stop trigger?** At 1.5× risk profit, book 33% qty + move SL to lock 50% of gain. Logged as `"TRAIL_PARTIAL"` + `"TRAIL_SL_MOVE"`.
 13. **Time-decay check.** After 1 PM: compress open target by 20%; after 2 PM: 25%. Adopted positions get a 10-min grace window.
@@ -376,7 +377,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 **Every 30 minutes** (if free slots):
 
-18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 29-check pipeline as above.) In AI mode Claude ranks the new shortlist.
+18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 38-check pipeline as above.) In AI mode Claude ranks the new shortlist.
 
 **Every 30 minutes** (NoAI only):
 
@@ -486,7 +487,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 2b. **Stale-score guard** (#196) — when wait ≥ `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` (5), re-run `_analyse_stock` on each survivor. Abort if sign flipped or `|fresh| < |entry| × FRESH_ENTRY_DECAY_FRACTION` (0.6). Otherwise refresh `_entry_score` so all downstream score-gated checks (lunch-lull, ADX override, gap-coherence, average-down) compare against the freshest value. Fail-open per-symbol; V1 path unaffected (no `_analyse_stock`)
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (34 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (38 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -604,7 +605,7 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 34 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 38 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
@@ -631,17 +632,21 @@ Every trade must pass these 34 checks in order. If any fails, the trade is rejec
 | 13 | **Declining re-entry block** | — | If re-entering a stock on the SAME SIDE already traded today, block when new \|score\| < previous \|score\| (setup weakening). Opposite-side re-entries (a real reversal) bypass this gate AND the per-symbol cooldown (16a, keyed by SYMBOL_SIDE); they are protected by the standard entry gates — ADX, RSI, VWAP, gap-coherence (#185) |
 | 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
 | 14b | **Pattern-direction entry veto** (#190) | `PATTERN_VETO_ENABLED = True`, override `PATTERN_VETO_OVERRIDE_SCORE = 8.0` | Mirror of SIGNAL_REVERSAL exit (#174) at ENTRY. If entry-tick patterns include an opposite-side reversal (BUY with `BEARISH_ENGULFING`/`EVENING_STAR`/`BEARISH_HARAMI`/`SHOOTING_STAR`/`HANGING_MAN`/`THREE_BLACK_CROWS`, mirror set for SELL) AND `\|score\| < 8.0`, skip. Catches PNB/TRENT-style 2026-04-22 stagnant losers where score absorbed pattern weight but the chart was printing a flip pattern |
+| 14c | **Pattern↔tech contradiction penalty** (#200, scanner-side) | `PATTERN_CONTRADICTION_PENALTY_ENABLED = True`, `PATTERN_CONTRADICTION_PENALTY = 2.0`, `PATTERN_INDECISION_PENALTY = 0.5` | Applied at scanner combine before any entry gates run. Subtracts 2.0 from `\|combined_score\|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_*`) and 0.5 when patterns include indecision (`DOJI`). Penalties stack and are clamped at 0 (sign never flips). Operates on magnitude so direction is preserved; weakens borderline conflict setups so they fail the `V2_MIN_SCORE` prefilter naturally rather than reaching the entry pipeline |
 | 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
 | 16a | **Per-symbol re-entry cooldown** (#161) | `RE_ENTRY_COOLDOWN_MINUTES = 30` | Block re-entry of same SYMBOL_SIDE within 30 min after ANY exit (SL / target / stagnant / external). Opposite direction still allowed. Override at \|score\| ≥ `RE_ENTRY_SCORE_OVERRIDE` (7.0) |
 | 16b | **Average-down prevention** (#195) | `AVG_DOWN_PREVENTION_ENABLED = True`, `AVG_DOWN_SCORE_DELTA = 1.0`, `AVG_DOWN_LOOKBACK_MINUTES = 120`, override `AVG_DOWN_OVERRIDE_SCORE = 8.0` | Runs AFTER cooldown 16a. When the prior exit of the same SYMBOL_SIDE was `STAGNANT_EXIT` or `SIGNAL_DECAY` within the last 120 min AND `\|new_score - last_exit_score\| ≤ 1.0`, reject the re-entry as same-magnitude false signal. Override at `\|score\| ≥ 8.0` for genuine reversal-strength signals. SIGNAL_DECAY callers stamp `pos['_exit_score'] = fresh_score` so the gate compares against the decayed score; STAGNANT_EXIT falls back to `_entry_score` |
 | 17 | **VWAP trend block** | ±0.3% deviation | After 10:15 AM only (VWAP needs ≥1 hour of candles for stability). Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP (fighting institutional flow) |
 | 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 0.8`, override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | Block BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move). Override allowed when \|score\| ≥ 6.0 |
+| 17d | **VWAP statistical-band gate** (#201) | `VWAP_BAND_GATE_ENABLED = True`, override `VWAP_BAND_OVERRIDE_SCORE = 7.0` | Reads `vwap_band` classification (`AT_UPPER_2SD` / `AT_UPPER_1SD` / `INSIDE` / `AT_LOWER_1SD` / `AT_LOWER_2SD`) from the entry-tick indicator snapshot. Block BUY when price sits at upper 1σ/2σ band and SELL when at lower 1σ/2σ. Stricter than 17b's % distance check because bands adapt to today's realised volatility; complementary defence (both can act). Override at \|score\| ≥ 7.0 (intentionally above 17b's 6.0 — only the strongest convictions justify chasing a statistical extension). Fails open if snapshot/band field missing |
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
 | 18a | **Charge-aware target multiple** (#162) | `MIN_PROFIT_CHARGE_MULTIPLE = 2.0` | After net R:R passes, reject when gross target profit < 2× round-trip charges. Ensures at least 1× charges as cushion for slippage |
 | 18b | **Gap-coherence gate** (#173) | `GAP_COHERENCE_GATE_ENABLED = True`, override `GAP_COHERENCE_OVERRIDE_SCORE = 7.5` | Reject `BUY` on `GAP_DOWN_STRONG` and `SELL` on `GAP_UP_STRONG` (entry direction contradicts overnight institutional flow) unless `\|score\| ≥ 7.5`. Only acts on the high-conviction STRONG gaps; WEAK / `NO_GAP` not gated. Fails open when the indicator snapshot is missing/malformed |
 | 18c | **Circuit-limit (UC/LC) entry guard** (#180) | `CIRCUIT_LIMIT_GUARD_ENABLED = True`, `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` | Reject `BUY` when intraday move ≥ +(20 - buffer)% from prev close, `SELL` when ≤ -(20 - buffer)%. Within 1% of the ±20% daily freeze the order book becomes one-sided — SL-M can't fill, MIS auto-square at 15:20 takes a distressed price. Fails open when `ohlc.close` missing in the live quote |
+| 18d | **Late-entry score-floor bump** (#202) | `LATE_ENTRY_TIGHTENING_ENABLED = True`, `LATE_ENTRY_HOUR = 10`, `LATE_ENTRY_MIN_SCORE_BUMP = 0.5` | After `LATE_ENTRY_HOUR` (10:00 IST), reject when `\|score\| < effective_min_score() + 0.5`. Stacks on top of regime/loss bumps. Tightens late entries because the remaining session is shorter — weak setups have less runway to play out |
+| 18e | **Late-entry max-positions cap** (#202) | `LATE_ENTRY_MAX_POSITIONS = 2` | After `LATE_ENTRY_HOUR`, the effective max-positions cap becomes `min(MAX_POSITIONS, 2)`. Limits over-exposure during the higher-volatility, lower-edge afternoon |
 
 ### R:R Floor System
 
@@ -656,6 +661,8 @@ The R:R (Risk:Reward) floor ensures every trade has adequate upside vs risk cons
 **Adaptive relaxation:** After `RR_RELAX_AFTER_FAILS` (3) zero-entry scans, the floor drops to `min(time_floor, RR_FLOOR_RELAXED=1.1)`. This helps when all candidates are borderline (e.g. morning 1.25:1 fails 1.3 floor). After `RR_GIVEUP_AFTER_FAILS` (5) failures, stop trying.
 
 **Mid-day retry:** On mid-day rescans (all-closed, slot-freed, opportunity), if first pass finds 0 entries, retry with floor reduced by `RR_RETRY_STEP` (0.1). Example: morning 1.3 → 1.2. Morning scan is excluded (it has observation period + multiple candidates + adaptive relaxation).
+
+**Late-entry tightening (#202)** runs LAST in `current_rr_floor()` resolution and is a hard floor: after `LATE_ENTRY_HOUR` (10:00 IST), the result is `max(computed_floor, LATE_ENTRY_RR_FLOOR=1.5)`. This intentionally **overrides adaptive relaxation and mid-day retry** — those are "we're starving, lower the bar" mechanisms; late-entry is a structural correctness floor that says "with limited remaining session, only the highest-edge setups should run." The label is logged as `late-entry-tightened (overrides relaxed/retry/...)` so it's traceable.
 
 ---
 
@@ -1027,6 +1034,23 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `FRESH_ENTRY_RECHECK_ENABLED` | True | Kill-switch for post-observation score recheck (#196) — re-runs `_analyse_stock` after the entry-delay wait and aborts trades whose score sign-flipped or decayed below `FRESH_ENTRY_DECAY_FRACTION` |
 | `FRESH_ENTRY_DECAY_FRACTION` | 0.6 | Min `|fresh| / |entry|` to allow entry after observation; e.g. +9.9 → +5.9 fires, +9.9 → +6.0 doesn't |
 | `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` | 5 | Skip the recheck when wait was shorter than this (no new candle has closed) |
+| `FRESH_ENTRY_REQUIRE_MONOTONIC` | True | Roadmap #199 — in addition to the decay-fraction floor (#196), require `\|fresh\| + tolerance ≥ \|entry\|`. Stops trades whose magnitude has dropped even within the 60% retention window |
+| `FRESH_ENTRY_MONOTONIC_TOLERANCE` | 0.3 | Score points of jitter allowed before the monotonic gate trips |
+| `PATTERN_CONTRADICTION_PENALTY_ENABLED` | True | Roadmap #200 — kill-switch for the scanner-side pattern↔tech contradiction penalty |
+| `PATTERN_CONTRADICTION_PENALTY` | 2.0 | Magnitude subtracted from `\|combined_score\|` when patterns include an opposite-direction reversal |
+| `PATTERN_INDECISION_PENALTY` | 0.5 | Magnitude subtracted from `\|combined_score\|` when patterns include `DOJI` (stacks with the contradiction penalty) |
+| `VWAP_BAND_GATE_ENABLED` | True | Roadmap #201 — kill-switch for the VWAP statistical-band entry gate (17d) |
+| `VWAP_BAND_OVERRIDE_SCORE` | 7.0 | `\|score\|` that bypasses the VWAP band gate (deliberately higher than the % extension override at 6.0) |
+| `LATE_ENTRY_TIGHTENING_ENABLED` | True | Roadmap #202 — master kill-switch for late-entry tightening (R:R floor, score-floor bump, max-positions cap) |
+| `LATE_ENTRY_HOUR` | 10 | IST hour after which late-entry rules activate |
+| `LATE_ENTRY_MIN_SCORE_BUMP` | 0.5 | Score points added to `effective_min_score()` past `LATE_ENTRY_HOUR` (gate 18d) |
+| `LATE_ENTRY_RR_FLOOR` | 1.5 | R:R floor enforced past `LATE_ENTRY_HOUR`. Overrides relaxation / retry / time-based floors via `max()` (see [R:R Floor System](#rr-floor-system)) |
+| `LATE_ENTRY_MAX_POSITIONS` | 2 | Cap on concurrent positions past `LATE_ENTRY_HOUR` (gate 18e) |
+| `MOMENTUM_KILL_ENABLED` | True | Roadmap #198 — kill-switch for the post-entry momentum-kill exit. Runs in `check_stops_and_targets()` BEFORE the SL check |
+| `MOMENTUM_KILL_GRACE_SECONDS` | 60 | Don't fire within this many seconds of entry (let spread tighten) |
+| `MOMENTUM_KILL_WINDOW_MINUTES` | 3 | After grace expires, the kill window stays open for this many minutes from entry |
+| `MOMENTUM_KILL_MIN_PROGRESS_PCT` | 25.0 | Inside the window, exit at market with `MOMENTUM_KILL` if progress toward target is below this percentage AND the position is unrealised-loss. Skipped for `_external` and `_partial_taken` positions and for already-winning trades |
+| `REALISED_PNL_RECOVERY_ENABLED` | True | Roadmap #203 — on init, scan Zerodha net-positions for already-closed MIS round-trips not in our session and import them as synthetic CLOSED records (`exit_reason = RECOVERED_FROM_ZERODHA`, `_external = True`, `entry_time/exit_time = None`). Side defaults to BUY (true direction is unrecoverable from net-positions; `pnl` is authoritative) |
 | `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
 | `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
 | `LUNCH_LULL_SCORE_OVERRIDE` | 6.0 | `|score|` that bypasses the lunch skip |

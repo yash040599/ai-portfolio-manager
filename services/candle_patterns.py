@@ -46,6 +46,14 @@ BULLISH_REVERSAL_PATTERNS: frozenset[str] = frozenset({
     "HAMMER", "INVERTED_HAMMER", "THREE_WHITE_SOLDIERS",
 })
 
+# Indecision patterns (no directional conviction). Used by the
+# pattern↔tech contradiction penalty (#200) to take a small bite out
+# of |combined_score| when one of these is present — a DOJI tells us
+# the market is undecided and our score should reflect that.
+INDECISION_PATTERNS: frozenset[str] = frozenset({
+    "DOJI",
+})
+
 
 def body(c: dict) -> float:
     """Absolute size of the real body."""
