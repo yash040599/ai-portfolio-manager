@@ -92,6 +92,69 @@
       pattern where individual scores look fine but the tape is
       bearish. (scanner-side; surfaces as gate 14d in the entry
       table because it operates on score before any entry gate runs)
+
+  2026-04-25 sync — Pre-code-freeze profitability + hardening batch
+  (#217–#226). Pre-trade check count: 41 → 41 (no new entry gates;
+  changes are scanner-side, monitor-side, or simplification).
+    • #217 NSE early-close calendar — `Config.NSE_EARLY_CLOSE_DATES_2026`
+      (user-maintained `"YYYY-MM-DD" → (HH, MM)` map) plus
+      `Config.apply_early_close_if_today()` invoked at manager startup
+      tightens `SQUARE_OFF_HOUR/MINUTE` on Diwali-Muhurat / Good-Friday-eve
+      / year-end half-sessions so MIS exits print before the forced-close
+      auction. Idempotent — only tightens, never loosens. Empty by default.
+    • #218 Sector-relative-strength directional bias — scanner ranks all
+      sectors by average score at scan time, then biases each candidate
+      `±SECTOR_RANK_BIAS_STEP × (mid_rank − sector_rank)` capped at
+      `±SECTOR_RANK_BIAS_MAX`. Sign-aware (helps only when score sign
+      already matches sector direction). Skipped when fewer than
+      `SECTOR_RANK_MIN_SECTORS` distinct sectors. Surfaces as a score
+      adjustment upstream of every entry gate (no new gate row).
+    • #219 Earnings/results-day blackout (config framework) — scanner
+      pre-filter (gate -1) drops symbols listed in
+      `Config.EARNINGS_BLACKOUT_SYMBOLS_2026["YYYY-MM-DD"]` before scoring.
+      Empty by default; user populates each Friday. Kill-switch
+      `EARNINGS_BLACKOUT_ENABLED`.
+    • #220 Sector-cascade exit (defensive SL tightening) — new
+      `_sector_cascade_protect()` in `manager_v2` runs once per candle
+      re-scan after per-position checks. When a sector's two-tick rolling
+      avg-score drops by ≥ `SECTOR_CASCADE_DROP_THRESHOLD`, current avg
+      is ≤ `−SECTOR_CASCADE_OPPOSITE_FLOOR`, and ≥
+      `SECTOR_CASCADE_MIN_OPEN` open positions in that side, tighten SLs
+      via `_compute_protective_sl()` + `engine._update_exchange_sl()`.
+      Defensive only — never opens a new trade. Per-position try/except
+      hardened by #222.
+    • #221 Lunch-lull score-override LOWERED 6.0 → 5.7 (data-driven;
+      3-day rejection-audit showed gate was net-negative at 6.0). Sister
+      proposal #175 (raise to 7.0) moved to Removed.
+    • #222/#223 SL-tightening try/except hardening — `_sector_cascade_protect`,
+      `_auto_protect_on_contrary_signal`, and `_regime_shift_protect` now
+      wrap `engine._update_exchange_sl()` in try/except so a transient
+      broker error on position N doesn't crash the monitor loop and leave
+      remaining positions unmonitored. Software SL is updated first
+      (always succeeds); broker mismatch repaired on next sync via
+      `_reconcile_orphan_sl_m()`.
+    • #224/#225 Late-entry tightening recalibration + simplification —
+      `LATE_ENTRY_RR_FLOOR` deleted; the always-on `RR_HARD_FLOOR = 1.3`
+      now enforces `max(computed_floor, RR_HARD_FLOOR)` in
+      `current_rr_floor()` (covers post-10am identically + protects pre-10am
+      from over-relaxation). `LATE_ENTRY_MAX_POSITIONS` and
+      `dynamic_late_entry_max_positions()` deleted — concurrency now fully
+      owned by `dynamic_max_positions(budget)` all day. Late-entry score
+      bump (gate 18d) retained.
+    • #226 Dead-knob removal — `MIN_BUDGET_UTILISATION_PCT` (was 0.0,
+      disabled) and its `_boost_underdeployed()` helper + 2 Claude-prompt
+      fragments deleted. Behaviour unchanged.
+
+  2026-04-26 sync — Pre-code-freeze review pass 2 (#230). Documentation
+  accuracy fix: pre-trade gate count was claimed as 41 in 8 places
+  (STRATEGY_V2 prose × 4, README × 3, OrderEngine.enter_trade docstring × 1)
+  but the canonical inventory table in this doc only enumerates 40 rows.
+  Most likely root cause: when #225 collapsed two late-entry sub-gates
+  (R:R floor + concurrent-positions cap) into the always-on `RR_HARD_FLOOR`
+  and `dynamic_max_positions(budget)`, the count headers were missed.
+  All eight references reconciled to 40; cleaned a stray "rather than
+  reaching the entry pipeline" table-cell artefact in row 14d. No
+  behavioural change.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -315,7 +378,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (41 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
+**Shared across both modes:** pre-filter, entry pipeline (40 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
 
 ---
 
@@ -345,7 +408,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 41 checks, in order)
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 40 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -522,7 +585,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 2b. **Stale-score guard** (#196) — when wait ≥ `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` (5), re-run `_analyse_stock` on each survivor. Abort if sign flipped or `|fresh| < |entry| × FRESH_ENTRY_DECAY_FRACTION` (0.6). Otherwise refresh `_entry_score` so all downstream score-gated checks (lunch-lull, ADX override, gap-coherence, average-down) compare against the freshest value. Fail-open per-symbol; V1 path unaffected (no `_analyse_stock`)
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (41 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (40 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -640,7 +703,7 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 41 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 40 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
@@ -670,7 +733,7 @@ Every trade must pass these 41 checks in order. If any fails, the trade is rejec
 | 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
 | 14b | **Pattern-direction entry veto** (#190) | `PATTERN_VETO_ENABLED = True`, override `PATTERN_VETO_OVERRIDE_SCORE = 8.0` | Mirror of SIGNAL_REVERSAL exit (#174) at ENTRY. If entry-tick patterns include an opposite-side reversal (BUY with `BEARISH_ENGULFING`/`EVENING_STAR`/`BEARISH_HARAMI`/`SHOOTING_STAR`/`HANGING_MAN`/`THREE_BLACK_CROWS`, mirror set for SELL) AND `\|score\| < 8.0`, skip. Catches PNB/TRENT-style 2026-04-22 stagnant losers where score absorbed pattern weight but the chart was printing a flip pattern |
 | 14c | **Pattern↔tech contradiction penalty** (#200, scanner-side) | `PATTERN_CONTRADICTION_PENALTY_ENABLED = True`, `PATTERN_CONTRADICTION_PENALTY = 2.0`, `PATTERN_INDECISION_PENALTY = 0.5` | Applied at scanner combine before any entry gates run. Subtracts 2.0 from `\|combined_score\|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_*`) and 0.5 when patterns include indecision (`DOJI`). Penalties stack and are clamped at 0 (sign never flips). Operates on magnitude so symmetric for BUY/SELL. Same-direction patterns are not boosted (zero is the floor). Closes the gap where high tech score outvoted contradicting visual structure |
-| 14d | **Tape-breadth filter** (#212, scanner-side) | `BREADTH_FILTER_ENABLED = True`, `BREADTH_BEARISH_BUY_RATIO = 0.30`, `BREADTH_BULLISH_SELL_RATIO = 0.30`, `BREADTH_PENALTY = 0.5`, `BREADTH_MIN_CANDIDATES = 5` | After the V2_MIN_SCORE filter, count BUYs vs SELLs in `passed_score`. If `buy_ratio ≤ 0.30` (bearish tape), subtract 0.5 from `\|combined_score\|` of every remaining BUY (mirror for bullish tape and SELLs). Operates on magnitude so sign is preserved. Re-applies the score floor afterwards so penalised-below-floor candidates drop out naturally before the entry pipeline ever sees them. Skipped when `len(passed_score) < 5`. Closes the FII-heavy-sell day pattern where individual scores look fine but the broader tape is one-directional | so direction is preserved; weakens borderline conflict setups so they fail the `V2_MIN_SCORE` prefilter naturally rather than reaching the entry pipeline |
+| 14d | **Tape-breadth filter** (#212, scanner-side) | `BREADTH_FILTER_ENABLED = True`, `BREADTH_BEARISH_BUY_RATIO = 0.30`, `BREADTH_BULLISH_SELL_RATIO = 0.30`, `BREADTH_PENALTY = 0.5`, `BREADTH_MIN_CANDIDATES = 5` | After the V2_MIN_SCORE filter, count BUYs vs SELLs in `passed_score`. If `buy_ratio ≤ 0.30` (bearish tape), subtract 0.5 from `\|combined_score\|` of every remaining BUY (mirror for bullish tape and SELLs). Operates on magnitude so sign is preserved. Re-applies the score floor afterwards so penalised-below-floor candidates drop out naturally before the entry pipeline ever sees them. Skipped when `len(passed_score) < 5`. Closes the FII-heavy-sell day pattern where individual scores look fine but the broader tape is one-directional |
 | 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
 | 16a | **Per-symbol re-entry cooldown** (#161) | `RE_ENTRY_COOLDOWN_MINUTES = 30` | Block re-entry of same SYMBOL_SIDE within 30 min after ANY exit (SL / target / stagnant / external). Opposite direction still allowed. Override at \|score\| ≥ `RE_ENTRY_SCORE_OVERRIDE` (7.0) |

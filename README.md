@@ -81,7 +81,7 @@ Loop, in plain English:
    apply price filter, run candlestick + indicator detectors, score, pick
    the best candidates.
 2. **Execute** — LIMIT entry at LTP + 1 tick (MARKET fallback), ATR-based
-   SL/target with min-distance floor, **41-check pre-trade pipeline** (see
+   SL/target with min-distance floor, **40-check pre-trade pipeline** (see
    [STRATEGY_V2.md](docs/STRATEGY_V2.md#risk-management--entry-pre-checks)
    for the full table), risk-budget position sizing.
 3. **Monitor** — adaptive polling, auto-trail SL, partial profits,
@@ -156,7 +156,7 @@ their content.
 
 | Doc | What it covers |
 |-----|----------------|
-| [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 41-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
+| [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 40-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
 | [docs/STRATEGY_V1.md](docs/STRATEGY_V1.md) | V1 architecture (deprecated, frozen) |
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
 | [docs/STRATEGY_EVOLUTION.md](docs/STRATEGY_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
@@ -284,7 +284,7 @@ ai-portfolio-manager/
 │   ├── candle_patterns.py        # 14 pure-math pattern detectors
 │   ├── candle_cache.py           # SQLite cache for candles
 │   ├── technical_indicators.py   # Indicators + composite scoring
-│   ├── order_engine.py           # 41-check entry pipeline + monitoring
+│   ├── order_engine.py           # 40-check entry pipeline + monitoring
 │   ├── report_writer.py          # txt + json reports
 │   └── performance_tracker.py    # SQLite trades + analyses
 ├── scripts/                      # see Sections 9 + 10 for tables

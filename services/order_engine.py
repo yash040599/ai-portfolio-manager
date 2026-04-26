@@ -1049,7 +1049,9 @@ class OrderEngine:
                     exit_price = p["entry_price"]
                     self.log.error(
                         f"EXTERNAL_CLOSE exit price unknown for {p['symbol']} — "
-                        f"using entry price Rs.{exit_price:.2f} (P&L calculation will be INCORRECT)"
+                        f"using entry price Rs.{exit_price:.2f} as placeholder "
+                        f"(live P&L will read 0; EOD verify_trades.py will "
+                        f"reconcile the true fill price from broker tax P&L)."
                     )
                 else:
                     exit_price = round(exit_price, 2)
@@ -1066,8 +1068,23 @@ class OrderEngine:
                     try:
                         self.zerodha.cancel_order(sl_oid)
                         self.log.info(f"Cancelled orphaned SL-M {sl_oid} for {p['symbol']}")
-                    except Exception:
-                        pass  # order may already be cancelled/completed
+                    except Exception as e:
+                        # The cancel can legitimately fail when the order has
+                        # already filled / been cancelled by the user / expired.
+                        # `cancel_order()` itself already demotes the common
+                        # "does not exist" / "already" message to DEBUG (#208);
+                        # mirror that here so unexpected failures still surface.
+                        msg = str(e).lower()
+                        if "does not exist" in msg or "already" in msg:
+                            self.log.debug(
+                                f"Orphan SL-M cancel for {p['symbol']} "
+                                f"({sl_oid}) — terminal state: {e}"
+                            )
+                        else:
+                            self.log.warning(
+                                f"Orphan SL-M cancel failed for {p['symbol']} "
+                                f"({sl_oid}): {type(e).__name__}: {e}"
+                            )
                 if sl_oid:
                     self._pending_order_ids.discard(sl_oid)
                     p["_sl_order_id"] = None
@@ -1433,7 +1450,16 @@ class OrderEngine:
                     [{"symbol": symbol, "exchange": exchange}]
                 ) or {}
                 ltp = quotes.get(f"{exchange}:{symbol}", {}).get("last_price", 0)
-            except Exception:
+            except Exception as e:
+                # Fail-open: fall back to the planned entry price below.
+                # Logging visibility so a sustained Zerodha quote outage is
+                # diagnosable from logs (otherwise the LIMIT-vs-LTP buffer
+                # silently degrades to a stale-price MARKET-equivalent fill).
+                self.log.warning(
+                    f"LIMIT entry attempt {attempt}: get_quotes failed for "
+                    f"{symbol} ({type(e).__name__}: {e}) — falling back to "
+                    f"planned entry price."
+                )
                 ltp = 0
 
             if ltp <= 0:
@@ -1550,7 +1576,7 @@ class OrderEngine:
 
         Returns True if the order was placed/logged successfully.
 
-        Entry pipeline (each step can reject the trade). Total = 41
+        Entry pipeline (each step can reject the trade). Total = 40
         checks across the V2 design (see docs/STRATEGY_V2.md §"Risk
         Management — Entry Pre-Checks" for the canonical inventory):
         3 scanner-side pre-filter gates (#-1 earnings blackout, #14c
@@ -3675,11 +3701,30 @@ class OrderEngine:
             )
             if new_id:
                 pos["_sl_order_id"] = new_id
+                pos["_sl_m_failed"] = False
                 self._pending_order_ids.add(new_id)
+            else:
+                # Cancel succeeded but Kite returned no order_id for the
+                # replacement — position is now unprotected at the
+                # exchange level. Flag it so EOD reports / restart logic
+                # know software SL is the only line of defence.
+                pos["_sl_m_failed"] = True
+                self.log.error(
+                    f"*** EXCHANGE SL-M REPLACE FAILED for {pos['symbol']} *** "
+                    f"Old SL cancelled, new SL not placed (Kite returned no ID). "
+                    f"Position is protected only by software SL monitoring — "
+                    f"a bot crash before exit would leave this position NAKED."
+                )
         except Exception as e:
-            self.log.warning(
-                f"Failed to place replacement SL-M for {pos['symbol']}: {e} — "
-                f"software SL still active"
+            # Same fault-class as the no-id branch above. Set the flag so
+            # downstream code (EOD reports, restart safety) sees the
+            # position is no longer exchange-protected.
+            pos["_sl_m_failed"] = True
+            self.log.error(
+                f"*** EXCHANGE SL-M REPLACE FAILED for {pos['symbol']} *** "
+                f"Old SL cancelled, new SL placement raised "
+                f"{type(e).__name__}: {e}. Software SL still active; "
+                f"a bot crash before exit would leave this position NAKED."
             )
 
     # ================================================================

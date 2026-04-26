@@ -527,16 +527,27 @@ class ZerodhaClient:
         Fail-safe: any exception fetching orders returns None (caller
         falls back to retrying — accepting the duplicate-risk on top of
         whatever original failure motivated the retry, which is no
-        worse than the legacy behaviour).
+        worse than the legacy behaviour). The exception is logged at
+        WARNING because duplicate-order detection is safety-critical;
+        a silent failure would mask degraded protection.
         """
         try:
             orders = self._kite.orders() or []
-        except Exception:
+        except Exception as e:
+            self.log.warning(
+                f"_find_recent_matching_order: kite.orders() failed "
+                f"({type(e).__name__}: {e}) — duplicate-order detection "
+                f"degraded for this retry. Caller will fall back to plain retry."
+            )
             return None
         try:
             import datetime as _dt
             now = _dt.datetime.now()
-        except Exception:
+        except Exception as e:
+            self.log.warning(
+                f"_find_recent_matching_order: clock read failed "
+                f"({type(e).__name__}: {e}) — skipping duplicate check."
+            )
             return None
         # Match exchange transaction type
         wanted_txn = (
