@@ -541,8 +541,8 @@ class ZerodhaClient:
             )
             return None
         try:
-            import datetime as _dt
-            now = _dt.datetime.now()
+            from config import now_ist
+            now = now_ist()
         except Exception as e:
             self.log.warning(
                 f"_find_recent_matching_order: clock read failed "
@@ -577,7 +577,7 @@ class ZerodhaClient:
                 # Kite returns naive datetime in IST (or string).
                 if isinstance(ts, str):
                     try:
-                        ts = _dt.datetime.fromisoformat(ts)
+                        ts = datetime.datetime.fromisoformat(ts)
                     except Exception:
                         continue
                 age = (now - ts).total_seconds()
