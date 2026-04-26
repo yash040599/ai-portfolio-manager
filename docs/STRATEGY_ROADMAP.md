@@ -48,7 +48,7 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (5 items)
+### Pending (6 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
@@ -219,7 +219,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 42 | Pre-open auction data (9:08 gap detection) | Market Intel |
 | 76 | Smart direction diversification (score-aware) | Market Intel |
 | 78 | FII/DII flow bias (pre-market intelligence) | Market Intel |
-| **Infrastructure (13)** | | |
+| **Infrastructure (14)** | | |
 | 25 | Trade journaling + performance analytics | Infra |
 | 38 | Improved slippage model for dry run | Infra |
 | 43 | Real-time trade verification script | Infra |
@@ -290,7 +290,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 203 | **Realised-P&L recovery from prior-session fills** — new `OrderEngine.recover_prior_session_fills()` called once from `manager.run()` after `load_existing_positions()`. Scans Zerodha `positions.net` for `product == "MIS"` AND `quantity == 0` AND `buy_quantity > 0` AND `sell_quantity > 0` AND symbol not already tracked. Synthesises a CLOSED record (`exit_reason = "RECOVERED_FROM_ZERODHA"`, `_external = True`, `entry_time = exit_time = None`, `pnl` from Zerodha which is authoritative). Side defaults to `BUY` (true direction is unrecoverable from net-positions; price-comparison inference is fundamentally broken for losing LONGs / winning SHORTs and would mis-key the per-symbol re-entry cooldown — comment explains the trade-off). Restores correct baseline for MTM-aware circuit breaker (#197), adaptive budget, and reports after a mid-session restart. Kill-switch `REALISED_PNL_RECOVERY_ENABLED`. | Bug Fix |
 | 204 | **Square-off log-noise cleanup** — every clean SQUARE_OFF / CIRCUIT_BREAKER previously emitted two stray WARNINGs per open position (`"Orphan pending ID detected: SYMBOL has _sl_order_id …"` from `OrderEngine.exit_position()` and `"Could not cancel order …: does not exist"` from `ZerodhaClient.cancel_order()`). Root cause: `square_off_all()` called `cancel_all_pending_orders()` first, which discarded each oid from `_pending_order_ids` AND cancelled it on the exchange — but left `position["_sl_order_id"]` set on every position. The downstream `exit_position()` then saw a "stale" ID, fired the orphan warning, and tried to cancel an already-gone order. Fix: after the bulk cancel in `square_off_all()`, walk every open position and clear `_sl_order_id`. Defensive secondary: in `exit_position()`, if the orphan-pending check trips on a SQUARE_OFF/CIRCUIT_BREAKER reason, log at DEBUG instead of WARNING (the bulk path is the legitimate caller). MAZDOCK / GRASIM / UNITDSPR 2026-04-24 — observed 4 noise WARNINGs in the user-facing log; gone post-fix. | Bug Fix |
 | 205 | **Shutdown-handler empty-WARNING fix + roadmap-number scrubbing** — `_setup_signal_handler()` in `portfolio/manager.py` previously emitted `self.log.warning("\nShutdown requested — will square off and exit...")`. The leading `\n` produced a blank `WARNING — ` line in the log file followed by the actual text on the next line, breaking every regex/grep that anchors on the `^YYYY-MM-DD` timestamp prefix and confusing users reading `tail -f`. Fix: drop the leading `\n` and add a comment explaining why. Same pass: scrubbed two leftover `"#203 recovery: …"` strings from `OrderEngine.recover_prior_session_fills()` user-facing warnings — replaced with descriptive `"Realised-P&L recovery: …"` text. Roadmap convention re-stated in `copilot/code-map.md`: internal `#NNN` work-item numbers are for code comments / docs only, never for `log.info/warning/error` payloads. | Bug Fix |
-| 206 | **Skip wasted R:R retry pass when no R:R-floor rejections** — `_enter_positions()` in `portfolio/manager.py` previously fired a second 15-candidate retry batch at a `RR_RETRY_STEP`-lower floor whenever the first batch returned `entered == 0`. Problem: when the first-batch failures were RSI / VWAP / pattern / liquidity / +DI gate rejections (which don't depend on the R:R floor), the retry processed the exact same 15 stocks with the exact same rejections, doubling Kite + Claude API spend and emitting 15 duplicate WARNING lines. Observed on 2026-04-24 between 11:00:56 → 11:01:13 — 30 rejections logged for the same 15-symbol set. Fix: new per-batch counter `OrderEngine._rr_rejection_count` increments inside the gross-R:R and net-of-charges-R:R rejection branches in `enter_trade()`. `_enter_positions()` resets the counter before the first pass and now requires `rr_rejections > 0` as an additional gate before triggering the retry. No behaviour change when R:R is genuinely the blocker; full skip when it isn't. | Performance |
+| 206 | **Skip wasted R:R retry pass when no R:R-floor rejections** — `_enter_positions()` in `portfolio/manager.py` previously fired a second 15-candidate retry batch at a `RR_RETRY_STEP`-lower floor whenever the first batch returned `entered == 0`. Problem: when the first-batch failures were RSI / VWAP / pattern / liquidity / +DI gate rejections (which don't depend on the R:R floor), the retry processed the exact same 15 stocks with the exact same rejections, doubling Kite + Claude API spend and emitting 15 duplicate WARNING lines. Observed on 2026-04-24 between 11:00:56 → 11:01:13 — 30 rejections logged for the same 15-symbol set. Fix: new per-batch counter `OrderEngine._rr_rejection_count` increments inside the gross-R:R and net-of-charges-R:R rejection branches in `enter_trade()`. `_enter_positions()` resets the counter before the first pass and now requires `rr_rejections > 0` as an additional gate before triggering the retry. No behaviour change when R:R is genuinely the blocker; full skip when it isn't. | Infra |
 | 207 | **Rejection audit: IST-aware default date** — `scripts/rejection_audit.py` defaulted to `dt.datetime.now().date()` in two places (`run_audit()` programmatic entry-point and CLI `__main__`). Naive `datetime.now()` returns the host's local date, which on a UTC VM is wrong between 18:30 IST → 05:30 IST next day (the rolling window where IST date != UTC date). Late-night cron runs would pull the wrong day's log section and produce an empty audit. Fix: import `now_ist` from `config` and use `now_ist().date()` everywhere. | Bug Fix |
 | 208 | **Demote "order does not exist" to debug** — `ZerodhaClient.cancel_order()` previously emitted `WARNING — Could not cancel order …` for every terminal-state order (already filled, already cancelled, or expired). On a clean square-off, `cancel_all_pending_orders()` iterates every tracked SL-M and tries to cancel; any SL-M that was filled by the exchange in the same second the bot fired its software exit becomes a "does not exist" warning the user can do nothing about. Fix: detect `"does not exist"` / `"already"` substrings in the Kite exception message and log at DEBUG instead of WARNING; still WARN on novel failures. Pairs with #204 (square-off log noise). | Bug Fix |
 | 209 | **Recovery rationale: drop internal #203 tag** — synthetic positions created by `recover_prior_session_fills()` previously carried `rationale="Recovered from Zerodha after restart (#203)"`. That string surfaces in trading reports under TRADE RATIONALES, exposing an internal work-item number to the user. Replaced with descriptive `"Recovered from Zerodha after restart"`. Continuation of the #205 / #206 user-facing-text scrubbing. | Bug Fix |
@@ -329,18 +329,6 @@ stubs here; they bloat the Pending list and slow review.
 - **Effort**: Medium. ~80 lines (cross-platform key reader + flag plumbing + UI banners + status line). 1 config knob (`OPERATOR_PAUSE_HOTKEY` default `"ctrl+t"`).
 - **Validation**: Manual smoke test in a paper-trading session — open a position, press Ctrl+T, verify (a) entry rejection logs fire on the next scan, (b) open position still gets trailing-stop ratchet / momentum kill / SL-M monitoring, (c) Ctrl+T again resumes entries.
 
-### 193. NSE Early-Close Calendar
-- **Priority**: HIGH
-- **Today**: `SQUARE_OFF_HOUR=15, SQUARE_OFF_MINUTE=10` is hardcoded. NSE closes early at 13:30 IST on ~7 days/year (Good Friday, Diwali Muhurat days that double as half-day, year-end half-day, occasional Budget-day half-sessions). On those dates Zerodha auto-squares MIS at 13:25; positions held to our 15:10 routine never get exited by us — we get the broker's distress price (typically 0.5–2% slippage on illiquid names).
-- **Fix**: New `NSE_EARLY_CLOSE_CALENDAR: dict[tuple[int,int,int], tuple[int,int]]` in `config.py` mapping `(YYYY, MM, DD) → (close_HH, close_MM)`. At startup, `Config.apply_session_overrides()` checks today's date; if early-close, override `SQUARE_OFF_HOUR/MINUTE` to `(close_HH, close_MM - 5)` and log a banner. Maintain only the upcoming calendar year (rotate annually like `NSE_HOLIDAYS_2026`). Also tighten `LAST_TRADE_TIME` proportionally. Kill-switch `EARLY_CLOSE_DETECTION_ENABLED`.
-- **Effort**: Low. ~30 lines + dict + startup hook. Calendar maintained manually (Zerodha API doesn't expose it).
-
-### 181. India VIX Intraday Spike Pause
-- **Priority**: MEDIUM
-- **Today**: VIX *regime* is read at scanner level (#23) and adjusts thresholds, but there's no detector for an *intraday* VIX shock. A 12% VIX spike inside a single 15-min window means a black-swan move is in progress (RBI surprise, geopolitical headline, gap-down on a constituent that's dragging the index). New entries during that window have terrible risk/reward — the volatility gets priced into spreads before a trend establishes.
-- **Fix**: Cache `vix_open` once per session. On each scan, fetch `vix_now`. If `(vix_now - vix_open) / vix_open >= VIX_SPIKE_THRESHOLD_PCT` (default 10) OR `vix_now >= VIX_SPIKE_ABSOLUTE_LEVEL` (default 25), set `_vix_pause_until = now + 15 min` and skip new entries until then. Existing positions managed normally (SL-M, trailing, exits all unaffected). Kill-switch via `VIX_SPIKE_PAUSE_ENABLED`.
-- **Effort**: Low. ~25 lines in `_check_vix_spike()` helper + entry-pipeline call.
-
 ### 144. Bracket Orders (Atomic Entry + SL + Target)
 - **Priority**: MEDIUM (safety upgrade, not a miss-profit fix)
 - **Today**: For every trade we submit three separate things — the entry order, then a stop-loss order after the entry fills, then a software-side target watcher. If the bot crashes in between any of these, the position can be left un-protected. If the user manually closes the position in the Kite app, the SL-M can still be alive and mis-trigger later.
@@ -353,23 +341,17 @@ stubs here; they bloat the Pending list and slow review.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
 - **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
 
-### 167. Earnings / Results-Day Blackout
-- **Priority**: MEDIUM
-- **Today**: NSE quarterly results clusters (mid-Jan, mid-Apr, mid-Jul, mid-Oct) routinely produce ±5–10% one-day moves on individual stocks the day of (or after) the announcement. The bot has no awareness of which stock reports today — it can size into INFY 30 minutes before the company drops Q-results. ATR is meaningless on those days.
-- **Fix**: Maintain `EARNINGS_BLACKOUT` (date → list of symbols), populated either manually each quarter or scraped from BSE corporate-actions feed. Scanner drops symbols whose blackout date ∈ {today, today−1} (post-announcement gap day also dangerous). Possibly extend to −1 day for known volatile names.
-- **Effort**: Medium. Data source + config + scanner filter. ~50 lines.
-
-### 149. Sector-Cascade Exit
-- **Priority**: MEDIUM (protects against correlated sector-wide drops)
-- **Today**: If 3 banking positions are all bleeding because the banking sector is dropping 2% in 15 min, each position waits for its own individual SL. By the time the 3rd hits, the 1st has lost much more than necessary.
-- **Fix**: Every scan, roll up per-sector open P&L. If a sector's exposure is ≤ −1% of budget in ≤ 15 min, tighten SLs on **all** positions in that sector to breakeven immediately — don't wait for individual SLs.
-- **Effort**: Medium. Needs sector P&L rollup + a new "panic-tighten" path in the engine. Research the threshold first.
-
 ### 158. Regime-Shift Opportunity Window
 - **Priority**: LOW (small but non-zero alpha)
 - **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
 - **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
 - **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
+
+### 216. Intraday Correlation-Flip Detector
+- **Priority**: LOW
+- **Today**: Most NIFTY100 stocks have ~0.7–0.9 rolling correlation to NIFTY on a normal trading day. When a stock's intraday rolling correlation drops below ~0.5 (or sign-flips negative), it usually signals either sector rotation or a stock-specific catalyst — pro desks treat the divergence itself as confirmation. We have no such gate or flag today.
+- **Fix**: In `services/technical_indicators.py`, add a rolling 15-min correlation between the candidate's 1-min returns and NIFTY's 1-min returns; expose as `corr_flip` flag on the indicator snapshot when correlation drops by ≥ 0.3 vs the day's baseline. Two consumption paths: (a) gentle — add as a tiebreaker score boost (+0.5) for the side aligned with the divergence direction; (b) aggressive — hard-block contra-divergence entries below score 6.5. Start with (a). Kill-switch: `CORR_FLIP_DETECTOR_ENABLED`.
+- **Effort**: Low. ~40 lines indicator + 1 scanner read site + 1 kill-switch + glossary entry.
 
 ### 24. Backtesting Framework
 - **Priority**: LOW (deferred — use live trade analytics first)
