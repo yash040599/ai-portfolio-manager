@@ -1814,7 +1814,10 @@ class OrderEngine:
                     return False
 
         # ── Bid-ask spread check ──────────────────────────────────
-        max_spread = self.cfg.MAX_SPREAD_PCT
+        # #236: budget-adaptive cap via effective_max_spread() so
+        # small-budget accounts (where spread alone can rival the
+        # charge hurdle) get a stricter cap automatically.
+        max_spread = self.effective_max_spread()
         if max_spread > 0 and not self.cfg.DRY_RUN:
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
             depth = quote_data.get("depth", {})
@@ -2096,17 +2099,19 @@ class OrderEngine:
         # ── Pre-trade minimum profit check ────────────────────────
         # Skip trades where expected profit doesn't cover charges.
         # Round-trip charges for small intraday trades ~Rs.40-50.
-        min_profit = self.cfg.MIN_EXPECTED_PROFIT
+        # #237: budget-adaptive via effective_min_profit() so larger
+        # accounts (where per-slot charges grow) raise the bar.
+        min_profit = self.effective_min_profit()
         expected_profit = abs(target - entry) * qty
         if expected_profit < min_profit:
             self.log.warning(
                 f"{symbol}: expected profit Rs.{expected_profit:.0f} "
-                f"< min Rs.{min_profit} (charges will eat it). Skipping."
+                f"< min Rs.{min_profit:.0f} (charges will eat it). Skipping."
             )
             return False
         self.log.info(
             f"  ✓ {symbol}: expected profit Rs.{expected_profit:.0f} OK "
-            f"(min Rs.{min_profit})"
+            f"(min Rs.{min_profit:.0f})"
         )
 
         # ── Apply slippage in dry-run mode for realism ────────────
@@ -4345,6 +4350,42 @@ class OrderEngine:
             return base
         delta = self.cfg.BUDGET_MIN_SCORE_DELTA.get(self.budget_regime(), 0.0)
         return max(0.0, base + float(delta))
+
+    def effective_max_spread(self) -> float:
+        """MAX_SPREAD_PCT with regime delta applied (Roadmap #236).
+
+        Smaller accounts have a higher per-trade charge hurdle
+        (~0.27% on Rs.50K), so the spread cap is tightened so the
+        spread alone cannot eat the edge. NORMAL/LARGE accounts
+        keep the 0.30% default. Floor at 0 (= disabled).
+        """
+        base = float(self.cfg.MAX_SPREAD_PCT)
+        if base <= 0 or not self.cfg.BUDGET_REGIME_ENABLED:
+            return base
+        delta = float(
+            getattr(self.cfg, "BUDGET_SPREAD_DELTA", {}).get(
+                self.budget_regime(), 0.0
+            )
+        )
+        return max(0.0, base + delta)
+
+    def effective_min_profit(self) -> float:
+        """MIN_EXPECTED_PROFIT with regime delta applied (Roadmap #237).
+
+        Charges scale with trade value, so a Rs.135 floor that is 3×
+        round-trip charges on a Rs.16K slot becomes only ~1.5× on a
+        Rs.50K slot. The regime delta preserves the 3× ratio as the
+        budget grows. Floor at 0 (= disabled).
+        """
+        base = float(self.cfg.MIN_EXPECTED_PROFIT)
+        if base <= 0 or not self.cfg.BUDGET_REGIME_ENABLED:
+            return base
+        delta = float(
+            getattr(self.cfg, "BUDGET_MIN_PROFIT_DELTA", {}).get(
+                self.budget_regime(), 0.0
+            )
+        )
+        return max(0.0, base + delta)
 
     # ================================================================
     # MTM / SESSION-STATE INPUTS (Roadmap #166, #192, #194)

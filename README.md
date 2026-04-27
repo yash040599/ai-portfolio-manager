@@ -515,14 +515,17 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Whipsaw guard** — pauses entries after 3 consecutive SL hits.
 - **Per-symbol re-entry cooldown** — 30 min on same `SYMBOL_SIDE`.
 - **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped, decayed below 60% of the scan-time score, OR (#199) lost magnitude (`|fresh| + 0.3 < |entry|`) — catches the slow-bleed setups the magnitude-only floor missed.
-- **Post-entry momentum kill (#198)** — exits at market between 60s and 3 min after fill if the trade is unrealised-loss AND has covered <25% of the entry→target distance. Caps slow-bleed losers at ~-0.2% instead of waiting for the -1.1% SL hit.
+- **Post-entry momentum kill (#198, retuned by #233)** — exits at market between 3 and 5 min after fill if the trade is unrealised-loss, has moved adversely by ≥0.40% (≈4× typical NSE intraday spread), AND has covered <25% of the entry→target distance. Caps slow-bleed losers at ~-0.4% instead of waiting for the -1.1% SL hit. The 3-min grace + adverse-move floor were added on 2026-04-27 after the original 60s/no-floor settings killed 4/4 morning entries on sub-spread micro-moves.
 - **Pattern↔tech contradiction penalty (#200)** — at the scanner combine, subtracts 2.0 from `|combined_score|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_ENGULFING`) and 0.5 when patterns include `DOJI` indecision; weak-conviction conflict setups fall below `V2_MIN_SCORE` naturally.
 - **VWAP statistical-band gate (#201)** — blocks BUY at the upper 1σ/2σ VWAP band and SELL at the lower 1σ/2σ; complements the existing % VWAP-extension check with a volatility-adaptive band classifier. Override at `|score| ≥ 7.0`.
-- **Late-entry tightening (#202)** — after 10:00 IST: R:R floor raised to 1.5 (overrides adaptive relaxation and mid-day retry), `MIN_SCORE` bumped by +0.5, max concurrent positions capped at 2.
+- **Late-entry tightening (#202, retuned by #239)** — after 10:00 IST: `MIN_SCORE` bumped by +1.0 (raised 0.5 → 1.0 by #239 after first live day showed +0.5 was too gentle). R:R floor and concurrency are owned by always-on `RR_HARD_FLOOR` + `dynamic_max_positions(budget)` (simplified by #225).
 - **Realised-P&L recovery on restart (#203)** — on init, scans Zerodha net-positions for already-closed MIS round-trips not in our session and imports them as synthetic CLOSED records so the MTM-aware safety gates and adaptive budget reason from the correct realised baseline after a mid-session restart.
 - **Lunch-lull skip** — 11:30-12:15 IST unless `|score| ≥ 5.7`.
-- **Charge-aware target** — gross target ≥ 2× round-trip charges.
-- **Budget-regime gates** — auto-tighten on TINY/SMALL accounts.
+- **Charge-aware target (retuned by #238)** — gross target ≥ 3× round-trip charges (was 2×), so every trade carries 2× charges of slippage cushion.
+- **Budget-adaptive minimum profit (#237)** — `effective_min_profit()` floor: Rs.135 on TINY/SMALL (3× typical round-trip charges), Rs.200 NORMAL, Rs.400 LARGE. Auto-scales when you raise `--max`.
+- **Budget-adaptive spread cap (#236)** — `effective_max_spread()`: 0.20% on TINY/SMALL, 0.30% NORMAL/LARGE. Tighter cap on small budgets where spread eats a large share of the per-trade charge hurdle.
+- **Budget-regime trade cap** — `MAX_TRADES_PER_DAY` is regime-tightened: 8 on TINY/SMALL (#240), 12 NORMAL, 15 LARGE. Forces fewer-and-better trades at small budgets where charge hurdle is high.
+- **Budget-regime gates** — ADX, score floor, and trade-cap auto-tighten on TINY/SMALL accounts (#165).
 - **Loss-adjusted sizing** — shrinks position size after losses.
 - **ATR-based SL/target** — pure ATR with structural-level cap.
 - **Bid-ask spread + impact-cost check** — skips paper-thin books.

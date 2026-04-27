@@ -66,8 +66,11 @@
       volatility using rolling SD bands instead of fixed % distance.
       (gate 17d)
     • #202 Late-entry tightening bundle — past LATE_ENTRY_HOUR, raises
-      score floor by LATE_ENTRY_MIN_SCORE_BUMP, R:R floor to 1.5, and
-      bumps the score floor by 0.5. (gate 18d only — the late-entry-only R:R floor and concurrent-position cap were removed by #225 because they were redundant with the always-on `RR_HARD_FLOOR` and the budget-scaled `dynamic_max_positions(budget)`.)
+      score floor by LATE_ENTRY_MIN_SCORE_BUMP (1.0 since #239, was
+      0.5). (gate 18d only — the late-entry-only R:R floor and
+      concurrent-position cap were removed by #225 because they were
+      redundant with the always-on `RR_HARD_FLOOR` and the
+      budget-scaled `dynamic_max_positions(budget)`.)
     • #203 Recover-prior-session-fills — synthetic CLOSED records built
       on restart from Zerodha order history when local DB is missing.
     • #204-208 Log-noise + naive-datetime cleanup (square-off SL clear,
@@ -270,7 +273,7 @@ This is the single place to look up any unfamiliar term used in the rest of the 
 | **LTP** | Last Traded Price — the current live price. | Used for live-quote checks, LIMIT order pricing, SL/target monitoring. |
 | **Tick** | The smallest price increment allowed for a stock (Rs.0.05 for most, Rs.0.50 for high-priced). | LIMIT orders are rounded to the nearest valid tick. |
 | **Bid / Ask** | Highest price a buyer will pay (bid) / lowest a seller will accept (ask). | Fetched from quote depth to compute spread. |
-| **Spread** | `(ask − bid) / LTP × 100`. Cost of instantly entering + exiting. | If spread > `MAX_SPREAD_PCT` (0.3%), skip trade — spread eats profit. |
+| **Spread** | `(ask − bid) / LTP × 100`. Cost of instantly entering + exiting. | If spread > `effective_max_spread()` (0.20% on TINY/SMALL accounts via #236, 0.30% on NORMAL/LARGE), skip trade — spread eats profit. |
 | **Impact cost** | How much our *full order qty* moves the fill price vs LTP. Formula: `(weighted_avg_fill − LTP) / LTP × 100`, computed by walking the top-5 order-book levels on the side we'd hit. | If impact cost > `MAX_IMPACT_COST_PCT` (0.2%), or visible depth across top-5 levels is smaller than our qty, skip the trade. Catches cases where spread looks tight but only a handful of shares are at the top, with a big gap to the next level. |
 | **Volume** | Number of shares traded in a candle. | High volume confirms patterns; low volume warns of weak signal. |
 | **RVol** | Relative Volume = today's volume ÷ 20-period average volume. | `RVol ≥ 0.7` required for entry (low-volume entries often reverse). |
@@ -429,7 +432,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 > - **Compute ATR SL/target.** If ATR available: SL = entry ± 1.5·ATR, target = entry ± 1.5·ATR·R:R. Otherwise fall back to config defaults. SL is then clamped to `MIN_SL_DISTANCE_PCT` (0.8%) floor so tight SLs don't wick on noise.
 > - **Late-entry reduction.** After 1 PM target compressed −20%, after 2 PM −25%.
 > - **R:R floor check.** Morning needs ≥ 1.3:1, afternoon 1.2:1, late 1.0:1. Adaptive relaxation after 3 scans with 0 entries.
-> - **Min profit.** `|target − entry| × qty ≥ Rs.75`.
+> - **Min profit.** `|target − entry| × qty ≥ effective_min_profit()` (Rs.135 on TINY/SMALL, Rs.200 NORMAL, Rs.400 LARGE — #237).
 >
 > **Portfolio-state gates:**
 >
@@ -461,7 +464,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 Every 10 seconds (5s when price is near SL/target), for each open position, the bot asks:
 
 10. **Hit SL?** → Cancel SL-M, exit at market, log `"STOP_LOSS"`. Sets cooldown timestamp (Roadmap #161).
-10a. 🆕 **Momentum kill?** (Roadmap #198) — Runs BEFORE the SL check. For positions older than `MOMENTUM_KILL_GRACE_SECONDS` (60s) but younger than `MOMENTUM_KILL_WINDOW_MINUTES` (3 min): if progress toward target `< MOMENTUM_KILL_MIN_PROGRESS_PCT` (25%) AND unrealised P&L is negative, exit at market with `exit_reason = MOMENTUM_KILL`. Skipped for `_external` and `_partial_taken` positions and for already-winning trades. Catches the slow-bleed pattern (MAZDOCK / BAJAJ-AUTO 2026-04-22) before SL is touched.
+10a. 🆕 **Momentum kill?** (Roadmap #198, retuned by #233 on 2026-04-27) — Runs BEFORE the SL check. For positions older than `MOMENTUM_KILL_GRACE_SECONDS` (180s — 3-min settlement window) but younger than `MOMENTUM_KILL_WINDOW_MINUTES` (5 min): if adverse move from entry `≥ MOMENTUM_KILL_MIN_ADVERSE_PCT` (0.40%, ≈4× typical NSE intraday spread) AND progress toward target `< MOMENTUM_KILL_MIN_PROGRESS_PCT` (25%) AND unrealised P&L is negative, exit at market with `exit_reason = MOMENTUM_KILL`. Skipped for `_external` and `_partial_taken` positions and for already-winning trades. Catches the slow-bleed pattern (MAZDOCK / BAJAJ-AUTO 2026-04-22) before SL is touched. The adverse-move noise floor was added after the original 60s / no-floor settings killed 4/4 morning entries on 2026-04-27 with adverse moves of −0.018% to −0.15% (inside or just outside the bid-ask spread).
 11. **Hit target?** → Same as SL but `"TARGET_HIT"` and feeds into consecutive-SL reset.
 12. **Trailing stop trigger?** At 1.5× risk profit, book 33% qty + move SL to lock 50% of gain. Logged as `"TRAIL_PARTIAL"` + `"TRAIL_SL_MOVE"`.
 13. **Time-decay check.** After 1 PM: compress open target by 20%; after 2 PM: 25%. Adopted positions get a 10-min grace window.
@@ -714,14 +717,14 @@ Every trade must pass these 40 checks in order. If any fails, the trade is rejec
 | 0b | **Daily-loss soft stop** (#163, MTM-aware via #166) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5`, `MTM_AWARE_CB_ENABLED = True` | Reject new entries when `effective_day_pnl()` (closed P&L + open-position MTM, when MTM-aware kill-switch on) ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
 | 0c | **Peak-drawdown stop** (#168, MTM-aware via #166) | `PEAK_DRAWDOWN_STOP_PCT = 1.5`, `PEAK_DRAWDOWN_MIN_PEAK_PCT = 0.5`, `MTM_AWARE_CB_ENABLED = True` | Tracks intraday equity high-water mark using `effective_day_pnl()` so open-position MTM contributes to both peak and current. Reject new entries when (peak − current effective P&L) ≥ 1.5% of budget AND peak itself was ≥ 0.5% of budget (so tiny early swings don't trip). Catches the "+2% by 11 AM, give it back by 13:00" pattern that soft-stop misses (closed-only day P&L never crosses zero). Existing positions still managed |
 | 1 | **Price validation** | — | If Claude's price deviates >5% from Zerodha live, use live price |
-| 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` | Skip if spread > 0.3% |
+| 2 | **Bid-ask spread** | `MAX_SPREAD_PCT = 0.3` (base), regime-tightened via `BUDGET_SPREAD_DELTA` to 0.20% on TINY/SMALL (#236) | Skip if spread > `effective_max_spread()`. Smaller accounts have a tighter cap because spread eats a larger share of the per-trade charge hurdle |
 | 2a | **Impact-cost / depth check** | `MAX_IMPACT_COST_PCT = 0.2` | Walk top-5 order-book levels on the side we'd hit (asks for BUY, bids for SELL); compute weighted-average fill for our full qty. Skip if slippage vs LTP > 0.2%, or if visible top-5 depth < our qty. Fail-open (log warning, let trade through) when depth data is missing/malformed. Catches paper-thin top-of-book traps that spread-only misses |
 | 2b | **Volume confirmation** | RVol ≥ 0.7× avg | Live mode: skip if volume too low. Falls back to scan-time RVol when live average unavailable (Kite API doesn't provide average_volume) |
 | 3 | **ATR SL/target** | `ATR_MULTIPLIER = 1.5`, `RR_TARGET_RATIO = 1.5` | Pure ATR when available (1.5:1 R:R). Config defaults fallback only. SL capped at 2.5% |
 | 3b | **Min SL distance floor** | `MIN_SL_DISTANCE_PCT = 0.8`, expiry `1.0` | ATR on high-priced stocks can produce 0.4-0.6% SLs that wick on normal noise. Widens SL to floor and proportionally widens target to preserve R:R |
 | 3c | **R:R safety floor** | Time-based + adaptive | See [R:R Floor System](#rr-floor-system) below |
 | 4 | **Late-entry reduction** | After 1 PM: −20%, 2 PM: −25% | Target compressed. R:R floor per time period ensures compressed R:R is still worth trading |
-| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.75` | Skip if `\|target − entry\| × qty < Rs.75` (2× round-trip charges) |
+| 5 | **Min profit check** | `MIN_EXPECTED_PROFIT = Rs.135` (base), regime-bumped via `BUDGET_MIN_PROFIT_DELTA` (#237) | Skip if `\|target − entry\| × qty < effective_min_profit()` (3× round-trip charges; budget-adaptive: Rs.135 TINY/SMALL, Rs.200 NORMAL, Rs.400 LARGE) |
 | 6 | **Budget check** | `MAX_POSITION_PCT = 40%` | Auto-reduce qty to fit. If qty < 1 → skip |
 | 7 | **Max positions** | Dynamic (2-5 from budget) | Includes external/manual positions |
 | 8 | **Duplicate guard** | — | No two positions in same stock |
@@ -746,7 +749,7 @@ Every trade must pass these 40 checks in order. If any fails, the trade is rejec
 | 18a | **Charge-aware target multiple** (#162) | `MIN_PROFIT_CHARGE_MULTIPLE = 2.0` | After net R:R passes, reject when gross target profit < 2× round-trip charges. Ensures at least 1× charges as cushion for slippage |
 | 18b | **Gap-coherence gate** (#173) | `GAP_COHERENCE_GATE_ENABLED = True`, override `GAP_COHERENCE_OVERRIDE_SCORE = 7.5` | Reject `BUY` on `GAP_DOWN_STRONG` and `SELL` on `GAP_UP_STRONG` (entry direction contradicts overnight institutional flow) unless `\|score\| ≥ 7.5`. Only acts on the high-conviction STRONG gaps; WEAK / `NO_GAP` not gated. Fails open when the indicator snapshot is missing/malformed |
 | 18c | **Circuit-limit (UC/LC) entry guard** (#180) | `CIRCUIT_LIMIT_GUARD_ENABLED = True`, `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` | Reject `BUY` when intraday move ≥ +(20 - buffer)% from prev close, `SELL` when ≤ -(20 - buffer)%. Within 1% of the ±20% daily freeze the order book becomes one-sided — SL-M can't fill, MIS auto-square at 15:20 takes a distressed price. Fails open when `ohlc.close` missing in the live quote |
-| 18d | **Late-entry score-floor bump** (#202, simplified by #225) | `LATE_ENTRY_TIGHTENING_ENABLED = True`, `LATE_ENTRY_HOUR = 10`, `LATE_ENTRY_MIN_SCORE_BUMP = 0.5` | After `LATE_ENTRY_HOUR` (10:00 IST), reject when `\|score\| < effective_min_score() + 0.5`. Stacks on top of regime/loss bumps. Tightens late entries because the remaining session is shorter — weak setups have less runway to play out. (The original #202 also added a late-only R:R floor and a late-only concurrent-positions cap; both were removed by #225 — the R:R guard now lives in always-on `RR_HARD_FLOOR`, and concurrency is fully owned by `dynamic_max_positions(budget)` all day.) |
+| 18d | **Late-entry score-floor bump** (#202, simplified by #225, retuned by #239) | `LATE_ENTRY_TIGHTENING_ENABLED = True`, `LATE_ENTRY_HOUR = 10`, `LATE_ENTRY_MIN_SCORE_BUMP = 1.0` | After `LATE_ENTRY_HOUR` (10:00 IST), reject when `\|score\| < effective_min_score() + 1.0`. Stacks on top of regime/loss bumps. Tightens late entries because the remaining session is shorter — weak setups have less runway to play out. (Bump raised 0.5 → 1.0 by #239 after first live day showed +0.5 was too gentle; the original #202 also added a late-only R:R floor and a late-only concurrent-positions cap, both removed by #225 — the R:R guard now lives in always-on `RR_HARD_FLOOR`, and concurrency is fully owned by `dynamic_max_positions(budget)` all day.) |
 
 ### R:R Floor System
 
@@ -758,7 +761,7 @@ The R:R (Risk:Reward) floor ensures every trade has adequate upside vs risk cons
 | Afternoon (1-2 PM) | 1.2:1 | `RR_FLOOR_AFTERNOON` | 20% target compression → R:R drops to ~1.2 |
 | Late (>2 PM) | 1.0:1 | `RR_FLOOR_LATE` | 25% compression → R:R ~1.1, safety net only |
 
-**Adaptive relaxation:** After `RR_RELAX_AFTER_FAILS` (3) zero-entry scans, the floor drops to `min(time_floor, RR_FLOOR_RELAXED=1.1)`. This helps when all candidates are borderline (e.g. morning 1.25:1 fails 1.3 floor). After `RR_GIVEUP_AFTER_FAILS` (5) failures, stop trying.
+**Adaptive relaxation (DEPRECATED — #235):** Originally, after `RR_RELAX_AFTER_FAILS` (3) zero-entry scans, the floor would drop to `min(time_floor, RR_FLOOR_RELAXED=1.1)`. The 2026-04-27 analyst pass classified this as the same instinct that bankrupts retail traders ("I haven't traded in an hour, I need to be in something") and noted that `RR_HARD_FLOOR=1.3` already wins last in the resolution — so the relaxation step was already a no-op for any trade that actually entered. Fix: pinned `RR_FLOOR_RELAXED = RR_HARD_FLOOR = 1.3` so the relaxation step yields zero relaxation in practice while the log labels remain consistent. After `RR_GIVEUP_AFTER_FAILS` (5) failures we still stop trading — that's the keeper.
 
 **Mid-day retry:** On mid-day rescans (all-closed, slot-freed, opportunity), if first pass finds 0 entries, retry with floor reduced by `RR_RETRY_STEP` (0.1). Example: morning 1.3 → 1.2. Morning scan is excluded (it has observation period + multiple candidates + adaptive relaxation).
 
@@ -1041,7 +1044,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `RR_FLOOR_MORNING` | 1.3 | R:R floor before 1 PM |
 | `RR_FLOOR_AFTERNOON` | 1.2 | R:R floor 1-2 PM |
 | `RR_FLOOR_LATE` | 1.0 | R:R floor after 2 PM |
-| `RR_FLOOR_RELAXED` | 1.1 | R:R floor after 3 failed scans |
+| `RR_FLOOR_RELAXED` | 1.3 | DEPRECATED by #235 — pinned to `RR_HARD_FLOOR` so adaptive relaxation is a no-op. Kept only for log-label compatibility |
 | `RR_RETRY_STEP` | 0.1 | Mid-day retry step-down (0 = off) |
 | `RR_RELAX_AFTER_FAILS` | 3 | Scans before relaxing |
 | `RR_GIVEUP_AFTER_FAILS` | 5 | Scans before giving up |
@@ -1056,7 +1059,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `TRAIL_STEP_PCT` | 50% | Trail lock % of unrealised profit |
 | `TARGET_DECAY_PCT` | 25% | After 2 PM target reduction |
 | `TARGET_DECAY_AFTER_HOUR` | 14 | 2:00 PM IST |
-| `MIN_EXPECTED_PROFIT` | Rs.75 | Min viable profit (2× round-trip charges, ~Rs.40-50) |
+| `MIN_EXPECTED_PROFIT` | Rs.135 | Base absolute floor (3× typical round-trip charges, #237). Read via `OrderEngine.effective_min_profit()` to apply `BUDGET_MIN_PROFIT_DELTA` |
 | `USE_EXCHANGE_SL` | True | SL-M on NSE |
 | `USE_LIMIT_ORDERS` | True | LIMIT at LTP + 1 tick buffer for entries |
 | `LIMIT_ORDER_TIMEOUT` | 8s | Wait for LIMIT fill before cancel |
@@ -1072,7 +1075,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `SHORT_ENTRY_CUTOFF_HOUR` | 13 | No shorts after 1 PM |
 | `MIN_MINUTES_FOR_ENTRY` | 45 | Late entry guard |
 | `MAX_REENTRIES_PER_STOCK` | 2 | Per stock per day |
-| `MAX_SPREAD_PCT` | 0.3% | Bid-ask spread filter |
+| `MAX_SPREAD_PCT` | 0.3% | Base bid-ask spread filter. Read via `OrderEngine.effective_max_spread()` to apply `BUDGET_SPREAD_DELTA` (TINY/SMALL get 0.20%, #236) |
 | `MAX_IMPACT_COST_PCT` | 0.2% | Impact-cost / depth filter (walks top-5 levels, skips thin books) |
 
 ### Scanner / Indicators
@@ -1124,7 +1127,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `RE_ENTRY_COOLDOWN_ENABLED` | True | Kill-switch for per-symbol re-entry cooldown (#161) |
 | `RE_ENTRY_COOLDOWN_MINUTES` | 30 | Block re-entry of same SYMBOL_SIDE within this window after any exit |
 | `RE_ENTRY_SCORE_OVERRIDE` | 7.0 | `|score|` that bypasses the cooldown |
-| `MIN_PROFIT_CHARGE_MULTIPLE` | 2.0 | Gross target profit must be ≥ this × round-trip charges (#162). Set 0 to disable |
+| `MIN_PROFIT_CHARGE_MULTIPLE` | 3.0 | Gross target profit must be ≥ this × round-trip charges (#162, retuned by #238 from 2.0). Set 0 to disable |
 | `DAILY_LOSS_SOFT_STOP_PCT` | 1.5% | Soft-stop new entries when day loss crosses this; existing positions still managed (#163). Set 0 to disable |
 | `LUNCH_LULL_ENABLED` | True | Kill-switch for lunch-lull entry skip (#164) |
 | `CHOPPY_MORNING_PAUSE_ENABLED` | True | Kill-switch for choppy-morning entry pause (#192) — NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits → 15-min pause |
@@ -1143,12 +1146,13 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `VWAP_BAND_OVERRIDE_SCORE` | 7.0 | `\|score\|` that bypasses the VWAP band gate (deliberately higher than the % extension override at 6.0) |
 | `LATE_ENTRY_TIGHTENING_ENABLED` | True | Roadmap #202 — master kill-switch for the late-entry score-floor bump (gate 18d). After #225, this no longer governs an R:R floor or position cap; those are owned by `RR_HARD_FLOOR` and `dynamic_max_positions` respectively |
 | `LATE_ENTRY_HOUR` | 10 | IST hour after which late-entry rules activate |
-| `LATE_ENTRY_MIN_SCORE_BUMP` | 0.5 | Score points added to `effective_min_score()` past `LATE_ENTRY_HOUR` (gate 18d) |
+| `LATE_ENTRY_MIN_SCORE_BUMP` | 1.0 | Score points added to `effective_min_score()` past `LATE_ENTRY_HOUR` (gate 18d). Raised 0.5 → 1.0 by #239 after first live day showed +0.5 didn't materially change which trades passed |
 | `RR_HARD_FLOOR` | 1.3 | Always-on R:R floor. `current_rr_floor()` returns `max(computed_floor, RR_HARD_FLOOR)` so adaptive relaxation, mid-day retry, and afternoon/late time-floors can never undercut it. Replaces the late-entry-only `LATE_ENTRY_RR_FLOOR` (#225 simplification) |
 | `MOMENTUM_KILL_ENABLED` | True | Roadmap #198 — kill-switch for the post-entry momentum-kill exit. Runs in `check_stops_and_targets()` BEFORE the SL check |
-| `MOMENTUM_KILL_GRACE_SECONDS` | 60 | Don't fire within this many seconds of entry (let spread tighten) |
-| `MOMENTUM_KILL_WINDOW_MINUTES` | 3 | After grace expires, the kill window stays open for this many minutes from entry |
-| `MOMENTUM_KILL_MIN_PROGRESS_PCT` | 25.0 | Inside the window, exit at market with `MOMENTUM_KILL` if progress toward target is below this percentage AND the position is unrealised-loss. Skipped for `_external` and `_partial_taken` positions and for already-winning trades |
+| `MOMENTUM_KILL_GRACE_SECONDS` | 180 | Don't fire within this many seconds of entry (3-min settlement window — first 15-min candle of a trade is sacred, only hard SL fires). Raised 60 → 180 by #233 after first live day showed 60s wasn't enough to clear bid-ask spread + first-minute fade |
+| `MOMENTUM_KILL_WINDOW_MINUTES` | 5 | After grace expires, the kill window stays open for this many minutes from entry. Raised 3 → 5 by #233 to keep the kill window the same width (~2 min) once grace was extended |
+| `MOMENTUM_KILL_MIN_ADVERSE_PCT` | 0.40 | Roadmap #233 — adverse move (`|entry − current| / entry × 100`, only on the red side) must exceed this percentage before the kill is even considered. Set to 4× typical NSE intraday spread so the rule cannot fire on sub-spread micro-moves. On 2026-04-27 data this gate alone would have prevented all 4 morning false-positive kills |
+| `MOMENTUM_KILL_MIN_PROGRESS_PCT` | 25.0 | Inside the window, exit at market with `MOMENTUM_KILL` if progress toward target is below this percentage AND `MOMENTUM_KILL_MIN_ADVERSE_PCT` has tripped AND the position is unrealised-loss. Skipped for `_external` and `_partial_taken` positions and for already-winning trades |
 | `REALISED_PNL_RECOVERY_ENABLED` | True | Roadmap #203 — on init, scan Zerodha net-positions for already-closed MIS round-trips not in our session and import them as synthetic CLOSED records (`exit_reason = RECOVERED_FROM_ZERODHA`, `_external = True`, `entry_time/exit_time = None`). Side defaults to BUY (true direction is unrecoverable from net-positions; `pnl` is authoritative) |
 | `LUNCH_LULL_START_HOUR` / `_MINUTE` | 11:30 | Lunch-lull window start (inclusive) |
 | `LUNCH_LULL_END_HOUR` / `_MINUTE` | 12:15 | Lunch-lull window end (exclusive) |
@@ -1156,7 +1160,9 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `BUDGET_REGIME_ENABLED` | True | Master kill-switch for regime-adjusted gates (#165) |
 | `BUDGET_TIER_SMALL` / `_NORMAL` / `_LARGE` | 30k / 1L / 5L | Regime boundaries |
 | `BUDGET_ADX_THRESHOLD_DELTA` | {TINY: +2, SMALL: +1, NORMAL: 0, LARGE: -1} | Regime delta on `ADX_MIN_THRESHOLD` |
-| `BUDGET_TRADE_CAP_DELTA` | {TINY: -4, SMALL: -2, NORMAL: 0, LARGE: +3} | Regime delta on `MAX_TRADES_PER_DAY` (floor at 1) |
+| `BUDGET_TRADE_CAP_DELTA` | {TINY: -4, SMALL: -4, NORMAL: 0, LARGE: +3} | Regime delta on `MAX_TRADES_PER_DAY` (floor at 1). SMALL tightened −2 → −4 by #240 — at Rs.50K budget the per-trade charge hurdle (~0.27%) makes 10+ trades/day unsustainable without >55% win rate |
+| `BUDGET_SPREAD_DELTA` | {TINY: −0.10, SMALL: −0.10, NORMAL: 0, LARGE: 0} | Regime delta on `MAX_SPREAD_PCT` (#236). TINY/SMALL get a 0.20% effective cap so spread cannot rival the per-trade charge hurdle |
+| `BUDGET_MIN_PROFIT_DELTA` | {TINY: 0, SMALL: 0, NORMAL: +65, LARGE: +265} | Regime delta on `MIN_EXPECTED_PROFIT` (#237). Preserves the 3×-round-trip-charges ratio as slot value (and therefore charges) grows: Rs.135 → Rs.200 → Rs.400 |
 | `BUDGET_MIN_SCORE_DELTA` | {TINY: +1.0, SMALL: +0.5, NORMAL: 0, LARGE: 0} | Regime delta on `V2_MIN_SCORE` (stacks with LOSS bump; max wins) |
 
 ### VIX / Expiry
@@ -1239,7 +1245,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | **ORB 2nd candle** | 1st candle (9:15-9:30) includes auction noise. 2nd candle (9:30-9:45) is first market-driven range. |
 | **Fibonacci directional** | Near support in uptrend = bounce (+0.5). Near resistance in downtrend = rejection (-0.5). Unsigned was ambiguous. |
 | **Short cutoff 1 PM** | Short delivery penalties Rs.500-5000+. 2+ hours buffer before Zerodha's 3:25 PM auto-square. |
-| **Min profit Rs.75** | Round-trip charges ~Rs.40-50. Threshold = 2× charges ensures cushion for slippage; raised from Rs.50 after 2026-04 review found razor-thin trades still slipped to net loss. |
+| **Min profit Rs.135** | Round-trip charges ~Rs.40-50 on Rs.16K slots. Threshold = 3× charges ensures 2× charges of cushion for slippage (industry retail-intraday rule of thumb). Raised Rs.75 → Rs.135 by #237 after 2026-04-27 analyst pass found 2× cushion was thin once first-tick slippage was factored in. Budget-adaptive via `effective_min_profit()`. |
 | **DEFAULT_TARGET 1.2%** | Was 1.5%. 26/63 trades hit SQUARE_OFF (target never reached). 1.2% more achievable for NSE intraday. |
 | **NoAI as default** | Zero cost, instant execution, deterministic. Claude adds marginal value for position reviews but costs Rs.20-40/day. |
 | **Stagnant exit 45 min** | Replaces Claude reviews in NoAI. Dead positions waste slots — exit them to try stronger setups. |

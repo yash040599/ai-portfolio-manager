@@ -235,10 +235,18 @@ class Config:
     #   │ Late (>2 PM)    │ 1.0:1     │ 25% compress → R:R ~1.1, tight │
     #   └─────────────────┴───────────┴─────────────────────────────────┘
     #
-    # FAILURE RELAXATION:
-    #   After RR_RELAX_AFTER_FAILS (3) zero-entry scans → floor drops
-    #   to min(current_time_floor, RR_FLOOR_RELAXED). This helps when
-    #   ALL candidates are borderline (e.g. morning 1.25:1 fails 1.3).
+    # FAILURE RELAXATION (DEPRECATED — see #235):
+    #   The original design dropped the floor to RR_FLOOR_RELAXED after
+    #   N zero-entry scans ("we're starving, lower the bar"). Roadmap
+    #   #235 (analyst pass, 2026-04-27) flagged this as the same instinct
+    #   that bankrupts retail traders — when the market won't give you
+    #   1.3:1, you don't trade, you wait. RR_HARD_FLOOR (1.3) already
+    #   wins last in current_rr_floor() resolution, so setting
+    #   RR_FLOOR_RELAXED = RR_HARD_FLOOR neutralises the relaxation
+    #   without ripping out call-sites in the engine. Kept for log-line
+    #   compatibility ('relaxed' label still reads true when N scans
+    #   fail). RR_GIVEUP_AFTER_FAILS still works and is the keeper:
+    #   after that many zero-entry scans we stop trading entirely.
     #   After RR_GIVEUP_AFTER_FAILS (5) failures → stop trading.
     #
     # MID-DAY RETRY:
@@ -254,7 +262,7 @@ class Config:
     RR_FLOOR_MORNING:      float = 1.3   # before 1 PM — strict
     RR_FLOOR_AFTERNOON:    float = 1.2   # 1 PM to 2 PM
     RR_FLOOR_LATE:         float = 1.0   # after 2 PM — safety net only
-    RR_FLOOR_RELAXED:      float = 1.1   # after N failed scans (any time)
+    RR_FLOOR_RELAXED:      float = 1.3   # #235: pinned to RR_HARD_FLOOR — relaxation neutralised
     # Always-on hard floor: current_rr_floor() returns max(computed, this).
     # Wins over time-based floors AND adaptive relaxation AND mid-day
     # retry — those are "we're starving, lower the bar" mechanisms; this
@@ -305,6 +313,13 @@ class Config:
     #   Wide spreads eat into tight ATR targets. 0.3% is typical for
     #   NIFTY100 stocks; illiquid small-caps can be 0.5-1%.
     #   Set to 0 to disable the check.
+    #
+    #   #236 (analyst pass, 2026-04-27): this is the BASE value. Use
+    #   `OrderEngine.effective_max_spread()` instead of reading this
+    #   directly so BUDGET_SPREAD_DELTA tightens it for TINY/SMALL
+    #   accounts where the per-trade charge hurdle (~0.27% on Rs.50K)
+    #   is dangerously close to the spread itself — trades that pay the
+    #   spread alone eat the edge before the position even moves.
     MAX_SPREAD_PCT: float = 0.3
 
     # ── Impact-Cost / Depth Liquidity Check (Roadmap #146) ───────
@@ -559,8 +574,15 @@ class Config:
     # distance × qty) is less than this amount in Rs.. Prevents
     # entering trades where brokerage + STT eats all the profit.
     # Round-trip charges for small intraday trades ~Rs.40-50.
-    # Set to 2× charges to ensure trades are economically viable.
-    MIN_EXPECTED_PROFIT: float = 75.0
+    #
+    # #237 (analyst pass, 2026-04-27): 75 was 2× round-trip charges —
+    # too thin once typical NSE 0.05-0.20% spread + first-tick fade is
+    # factored in. Industry rule of thumb: hard floor at 3× round-trip
+    # charges. Raised to Rs.135. Use OrderEngine.effective_min_profit()
+    # instead of reading this constant directly — the helper combines
+    # this absolute floor with BUDGET_MIN_PROFIT_DELTA so larger
+    # accounts (where charges grow with slot value) raise the bar.
+    MIN_EXPECTED_PROFIT: float = 135.0
 
     # V2_MIN_SCORE: minimum absolute technical score for a stock to
     # pass the pre-filter. Lower = more candidates for Claude to
@@ -810,15 +832,22 @@ class Config:
     RE_ENTRY_COOLDOWN_MINUTES:  int   = 30
     RE_ENTRY_SCORE_OVERRIDE:    float = 7.0
 
-    # ── Charge-Aware Minimum Target (Roadmap #162) ────────────────
+    # ── Charge-Aware Minimum Target (Roadmap #162, retuned by #238) ─
     # MIN_PROFIT_CHARGE_MULTIPLE: reject trades where expected gross
     #   profit at target is less than round-trip charges × this multiple.
     #   A Rs.2000 stock with Rs.5 SL + Rs.6.5 target on 1 share ≈ Rs.4
     #   round-trip charges, leaving Rs.2.5 net — not worth the risk.
-    #   Setting 2.0 means target must yield ≥ 2× round-trip charges of
-    #   net profit (so at least 1× of charges as cushion).
+    #
+    # #238 (analyst pass, 2026-04-27): raised 2.0 → 3.0. With multiple=2
+    # the rule guaranteed only 1× charges as cushion for slippage —
+    # which is exactly the expected NSE first-minute slippage on a
+    # liquid NIFTY100 entry, leaving zero true-profit cushion. 3.0
+    # gives 2× charges of cushion (industry rule of thumb for retail
+    # intraday). Combined with #237 (Rs.135 absolute floor) this kills
+    # the marginal trades that are the bulk of loss days at small
+    # budgets.
     # Kill-switch: MIN_PROFIT_CHARGE_MULTIPLE <= 0 disables.
-    MIN_PROFIT_CHARGE_MULTIPLE: float = 2.0
+    MIN_PROFIT_CHARGE_MULTIPLE: float = 3.0
 
     # ── Daily Loss Soft-Stop Hysteresis (Roadmap #163) ────────────
     # DAILY_LOSS_SOFT_STOP_PCT: when day P&L ≤ -this% of budget, stop
@@ -1119,7 +1148,13 @@ class Config:
     # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
     LATE_ENTRY_TIGHTENING_ENABLED: bool  = True
     LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
-    LATE_ENTRY_MIN_SCORE_BUMP:     float = 0.5
+    # #239 (analyst pass, 2026-04-27): 0.5 → 1.0. Today's session-2
+    # entries (HINDZINC/ADANIENSOL/HINDALCO at 10:27) all passed the
+    # +0.5 bump and all faded — the bump was too gentle to materially
+    # change which trades clear the bar. Post-10:00 trades have less
+    # than half the session left; they need a visibly higher bar, not
+    # marginally higher.
+    LATE_ENTRY_MIN_SCORE_BUMP:     float = 1.0
 
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
     # The dominant loss pattern today is "slow bleed to SL" — a trade
@@ -1233,8 +1268,31 @@ class Config:
     BUDGET_ADX_THRESHOLD_DELTA = {"TINY": 2.0, "SMALL": 1.0, "NORMAL": 0.0, "LARGE": -1.0}
 
     # Trade-cap bump (base MAX_TRADES_PER_DAY = 12):
-    #   tiny = -4 (max 8), small = -2 (max 10), normal = 0, large = +3.
-    BUDGET_TRADE_CAP_DELTA = {"TINY": -4, "SMALL": -2, "NORMAL": 0, "LARGE": 3}
+    #   tiny = -4 (max 8), small = -4 (max 8), normal = 0, large = +3.
+    #   #240 (analyst pass, 2026-04-27): SMALL tightened -2 → -4. With
+    #   Rs.50K budget the per-trade charge hurdle is ~0.27%; sustaining
+    #   10+ trades/day at that hurdle requires a >55% win rate that we
+    #   have not yet demonstrated. 8 trades is the safe ceiling until
+    #   the live ledger shows otherwise.
+    BUDGET_TRADE_CAP_DELTA = {"TINY": -4, "SMALL": -4, "NORMAL": 0, "LARGE": 3}
+
+    # Bid-ask spread tightening (base MAX_SPREAD_PCT = 0.3):
+    #   tiny/small subtract 0.10 → effective 0.20% cap (charge hurdle
+    #     at small budgets is ~0.27%; trades whose spread alone is
+    #     >70% of the hurdle have no edge before they start).
+    #   normal/large = 0 (default 0.30% suffices once slot value is
+    #     large enough that 0.30% is well below the charge hurdle).
+    #   #236 (analyst pass, 2026-04-27).
+    BUDGET_SPREAD_DELTA = {"TINY": -0.10, "SMALL": -0.10, "NORMAL": 0.0, "LARGE": 0.0}
+
+    # Min-expected-profit floor bump (base MIN_EXPECTED_PROFIT = 135):
+    #   tiny/small = 0 (Rs.135 floor = 3× typical round-trip charges
+    #     at Rs.16-25K slot value).
+    #   normal = +65 (Rs.200 floor) — with Rs.50K+ slots, charges grow
+    #     to Rs.65-90; preserve the 3× ratio.
+    #   large = +265 (Rs.400 floor) — Rs.1L+ slots see Rs.130+ charges.
+    #   #237 (analyst pass, 2026-04-27).
+    BUDGET_MIN_PROFIT_DELTA = {"TINY": 0.0, "SMALL": 0.0, "NORMAL": 65.0, "LARGE": 265.0}
 
     # MIN_SCORE bump (base V2_MIN_SCORE = 2.0):
     #   tiny = +1.0, small = +0.5, normal = 0, large = 0.
