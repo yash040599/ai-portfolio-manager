@@ -1,0 +1,4 @@
+# Always check out shell scripts with LF endings, regardless of host OS.
+# Without this, a Windows checkout commits CRLF and the script fails on
+# the Linux VM with: /usr/bin/env: 'bash\r': No such file or directory
+*.sh text eol=lf
