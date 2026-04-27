@@ -56,7 +56,7 @@ When in doubt: terser is better. Long-form belongs in docs/STRATEGY_V2.md.
 
 ## 1. What it does
 
-Two modes, one binary. Pick a mode at the CLI.
+Three surfaces, one CLI. Pick a mode at the CLI.
 
 ### Phase 1 — Portfolio analysis (read-only)
 
@@ -99,7 +99,7 @@ python main.py --mode trade           # NoAI (default)
 python main.py --mode trade --ai      # with Claude
 ```
 
-### Phase 3 — Profitability dashboard (D1 + D1.1 + D13 shipped)
+### Phase 3 — Profitability dashboard (D1 + D1.1 + D13 + D16 + D17 shipped)
 
 A dedicated **read-only analytics layer** that answers one question:
 *"is the bot profitable enough to scale capital?"*. Default launch
@@ -124,7 +124,7 @@ python main.py --mode dashboard --text             # legacy plain-text
 python main.py --mode dashboard --port 8765        # fixed port
 ```
 
-Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory-pages done; D2–D12, D14–D23 pending).
+Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D23 pending).
 
 ### Historical candle cache
 
@@ -163,8 +163,8 @@ their content.
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
 | [docs/STRATEGY_EVOLUTION.md](docs/STRATEGY_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [docs/STRATEGY_STATISTICS.md](docs/STRATEGY_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
-| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 + theory pages shipped)** — Profitability dashboard roadmap; lives in its own `Dashboard/` folder |
-| [docs/IDEATIONS.md](docs/IDEATIONS.md) | V3 research ideas (ML scoring, options chain, Claude narrative) |
+| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 + D13 + D16 + D17 shipped)** — Profitability dashboard roadmap; lives in its own `Dashboard/` folder |
+| [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
 | [docs/TAX_GUIDE.md](docs/TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 
 ---
