@@ -41,6 +41,7 @@ from Dashboard.metrics import (
     headline_pnl,
 )
 from Dashboard.render_html import build_payload, render_shell
+from Dashboard.theory_page import render_theory_page
 from Dashboard.verdict import LadderRung, verdict_for
 
 
@@ -124,6 +125,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         try:
             if url.path == "/":
                 self._serve_shell()
+            elif url.path == "/theory":
+                self._serve_theory()
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -143,6 +146,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             granularity="daily", include_provisional=True,
         )
         body = render_shell(payload, server_mode=True).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_theory(self) -> None:
+        body = render_theory_page().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

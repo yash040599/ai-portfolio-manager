@@ -210,10 +210,23 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
   .static-banner { background: #fff4e0; border: 1px solid #f0d28a; padding: 8px 14px;
                    border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+  nav.topnav { display: flex; gap: 14px; align-items: center;
+               padding: 10px 16px; background: var(--card);
+               border: 1px solid var(--line); border-radius: 8px;
+               margin-bottom: 18px; font-size: 14px; }
+  nav.topnav a { color: var(--fg); text-decoration: none; font-weight: 500; }
+  nav.topnav a:hover { text-decoration: underline; }
+  nav.topnav .here { color: var(--muted); cursor: default; }
+  nav.topnav .sep { color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="wrap">
+  <nav class="topnav">
+    <span class="here">Dashboard (Live P&amp;L)</span>
+    <span class="sep">·</span>
+    <a href="/theory">Theory &amp; Statistics →</a>
+  </nav>
   <h1>AI Portfolio Manager — Profitability Dashboard</h1>
   <div class="sub" id="window-sub">…</div>
 
