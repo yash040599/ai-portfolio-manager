@@ -1514,19 +1514,14 @@ class StockScannerV2(StockScanner):
         elif hour < 13:
             time_phase = "MIDDAY LULL (11:00 AM-1:00 PM): Volume drops, ranges narrow. Favour mean-reversion setups near VWAP. Reduce conviction on breakout trades."
         elif hour < 14:
-            time_phase = f"AFTERNOON (1:00-2:00 PM): European markets opening can bring fresh volatility. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_1:.0f}% for afternoon entries."
+            time_phase = "AFTERNOON (1:00-2:00 PM): European markets opening can bring fresh volatility. Less session time means tighter trade selection but no automatic target compression — the entry target is what you're trading for."
         else:
-            time_phase = f"LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% for late entries."
+            time_phase = "LATE SESSION (after 2:00 PM): Only take HIGH conviction setups (score >= 5 with 3+ confluences). Targets are honoured at entry — closure is governed by stagnant-exit, momentum kill, and 3:10 PM square-off."
 
         # R:R floor varies with time — align Claude's rejection with code
-        afternoon_hour = self.cfg.RR_AFTERNOON_HOUR
-        late_hour = self.cfg.RR_LATE_HOUR
-        if hour >= late_hour:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_LATE}"
-        elif hour >= afternoon_hour:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_AFTERNOON}"
-        else:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_MORNING}"
+        # R:R floor is uniform across the trading day since #243
+        # (collapsed from the deprecated time-tiered floors).
+        rr_min_text = f"1:{self.cfg.RR_HARD_FLOOR}"
 
         return f"""You are an expert Indian stock market intraday trader (NSE) specialising in NIFTY F&O stocks.
 You have 15 years of experience with deep knowledge of Indian market microstructure — FII/DII flow dynamics, weekly F&O expiry effects, sector rotation, and NSE intraday volume patterns.
@@ -1942,7 +1937,7 @@ REVIEW RULES — MUST FOLLOW:
    • 60-120 min: No new trades unless score ≥5.
    • 30-60 min: EXIT any position that is underwater. HOLD only profitable positions with strong momentum.
    • <30 min: EXIT ALL positions unless they are within 0.3% of target. Do NOT hold into square-off hoping for last-minute moves.
-   NOTE: The system already compresses targets automatically ({self.cfg.LATE_TARGET_CUT_PCT_1:.0f}-{self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% reduction at late entry, {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00). Targets shown above reflect these adjustments. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
+   NOTE: The system applies a {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay target compression on OPEN positions after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00. Targets shown above reflect this adjustment. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
 
 5. CUT LOSERS: If position is underwater AND 5-min candle shows a reversal pattern forming (e.g. HAMMER on your SHORT), EXIT immediately. Dead positions that drift sideways for 2+ reviews should also be exited — capital is better used elsewhere.
 

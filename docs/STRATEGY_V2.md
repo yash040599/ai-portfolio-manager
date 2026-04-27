@@ -430,8 +430,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 > **Sizing & target gates:**
 >
 > - **Compute ATR SL/target.** If ATR available: SL = entry ± 1.5·ATR, target = entry ± 1.5·ATR·R:R. Otherwise fall back to config defaults. SL is then clamped to `MIN_SL_DISTANCE_PCT` (0.8%) floor so tight SLs don't wick on noise.
-> - **Late-entry reduction.** After 1 PM target compressed −20%, after 2 PM −25%.
-> - **R:R floor check.** Morning needs ≥ 1.3:1, afternoon 1.2:1, late 1.0:1. Adaptive relaxation after 3 scans with 0 entries.
+> - **R:R floor check.** Always-on `RR_HARD_FLOOR = 1.3` (#225) — uniform across the trading day. Time-of-day floors (`RR_FLOOR_MORNING/AFTERNOON/LATE`) all pinned to 1.3 since #242; the labels remain in logs (`morning/afternoon/late/relaxed/hard-floor`) only for traceability. The earlier auto-target compression after 1 PM / 2 PM was removed by #242 — pre-shrinking entry targets while the hard floor rejected the resulting R:R was a self-defeating loop. Drift on open positions is owned by stagnant-exit (#172), momentum kill (#198/#233), open-position time-decay (`TARGET_DECAY_PCT`), and the 3:10 PM hard square-off.
 > - **Min profit.** `|target − entry| × qty ≥ effective_min_profit()` (Rs.135 on TINY/SMALL, Rs.200 NORMAL, Rs.400 LARGE — #237).
 >
 > **Portfolio-state gates:**
@@ -467,7 +466,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 10a. 🆕 **Momentum kill?** (Roadmap #198, retuned by #233 on 2026-04-27) — Runs BEFORE the SL check. For positions older than `MOMENTUM_KILL_GRACE_SECONDS` (180s — 3-min settlement window) but younger than `MOMENTUM_KILL_WINDOW_MINUTES` (5 min): if adverse move from entry `≥ MOMENTUM_KILL_MIN_ADVERSE_PCT` (0.40%, ≈4× typical NSE intraday spread) AND progress toward target `< MOMENTUM_KILL_MIN_PROGRESS_PCT` (25%) AND unrealised P&L is negative, exit at market with `exit_reason = MOMENTUM_KILL`. Skipped for `_external` and `_partial_taken` positions and for already-winning trades. Catches the slow-bleed pattern (MAZDOCK / BAJAJ-AUTO 2026-04-22) before SL is touched. The adverse-move noise floor was added after the original 60s / no-floor settings killed 4/4 morning entries on 2026-04-27 with adverse moves of −0.018% to −0.15% (inside or just outside the bid-ask spread).
 11. **Hit target?** → Same as SL but `"TARGET_HIT"` and feeds into consecutive-SL reset.
 12. **Trailing stop trigger?** At 1.5× risk profit, book 33% qty + move SL to lock 50% of gain. Logged as `"TRAIL_PARTIAL"` + `"TRAIL_SL_MOVE"`.
-13. **Time-decay check.** After 1 PM: compress open target by 20%; after 2 PM: 25%. Adopted positions get a 10-min grace window.
+13. **Time-decay check (open positions only).** `TARGET_DECAY_PCT` shaves a small slice off the *target* of an already-open position as the day ages — never off entry math. Adopted positions get a 10-min grace window. (The earlier entry-time compression after 1 PM / 2 PM was removed by #242.)
 
 **Every 15 minutes** (background):
 
@@ -572,7 +571,7 @@ Sends enriched snapshot per candidate — price, RSI, EMA signal, VWAP, SuperTre
 
 - Time-phase context (Opening / Morning Trend / Midday Lull / Afternoon / Late Session)
 - 14-indicator confluence checklist (SuperTrend, EMA, RSI, pattern, VWAP, VWAP Bands, MACD, ORB, Gap, RVol, Hourly EMA, BB Squeeze, ADX, Fib, StochRSI, Prev-Day S&R, Daily EMA Bias)
-- All config values derived from `config.py` (R:R floors, target compression %, SL range, trail params) — no hardcoded numbers in prompts
+- All config values derived from `config.py` (R:R floor, SL range, trail params) — no hardcoded numbers in prompts
 - Rank/veto role: Claude must rank and filter from pre-filtered candidates, not generate new ones
 - Hard rejection filters (extended move >2%, RSI extremes, R:R below time-based floor, against-SuperTrend without reversal)
 - Indian market awareness (NIFTY regime, F&O expiry, sector clustering)
@@ -753,19 +752,17 @@ Every trade must pass these 40 checks in order. If any fails, the trade is rejec
 
 ### R:R Floor System
 
-The R:R (Risk:Reward) floor ensures every trade has adequate upside vs risk considering time of day:
+The R:R (Risk:Reward) floor is **a single uniform value all day** as of #243:
 
-| Period | R:R Floor | Config | Why |
-|--------|-----------|--------|-----|
-| Morning (<1 PM) | 1.3:1 | `RR_FLOOR_MORNING` | Full ATR target available, be selective |
-| Afternoon (1-2 PM) | 1.2:1 | `RR_FLOOR_AFTERNOON` | 20% target compression → R:R drops to ~1.2 |
-| Late (>2 PM) | 1.0:1 | `RR_FLOOR_LATE` | 25% compression → R:R ~1.1, safety net only |
+| Setting | Value | Config | Why |
+|---------|-------|--------|-----|
+| Always-on hard floor | 1.3:1 | `RR_HARD_FLOOR` | Single floor; no time-tiered or adaptive variants |
 
-**Adaptive relaxation (DEPRECATED — #235):** Originally, after `RR_RELAX_AFTER_FAILS` (3) zero-entry scans, the floor would drop to `min(time_floor, RR_FLOOR_RELAXED=1.1)`. The 2026-04-27 analyst pass classified this as the same instinct that bankrupts retail traders ("I haven't traded in an hour, I need to be in something") and noted that `RR_HARD_FLOOR=1.3` already wins last in the resolution — so the relaxation step was already a no-op for any trade that actually entered. Fix: pinned `RR_FLOOR_RELAXED = RR_HARD_FLOOR = 1.3` so the relaxation step yields zero relaxation in practice while the log labels remain consistent. After `RR_GIVEUP_AFTER_FAILS` (5) failures we still stop trading — that's the keeper.
+**Why single-floor now (#243):** the previous time-tiered floors (`RR_FLOOR_MORNING/AFTERNOON/LATE`), the adaptive relaxation knobs (`RR_FLOOR_RELAXED`, `RR_RELAX_AFTER_FAILS`), and the mid-day retry step (`RR_RETRY_STEP`) were already neutralised by #235 and #242. After those two changes every code path resolved to `RR_HARD_FLOOR=1.3`. #243 collapsed the dead complexity: deleted the seven decorative knobs, deleted `_time_based_rr_floor()`, simplified `current_rr_floor()` to a single `return RR_HARD_FLOOR`, deleted the manager's mid-day-retry pass (re-running with the same floor was guaranteed to reject the same candidates), and removed the `_rr_retry_active` engine state. The `RR_GIVEUP_AFTER_FAILS=5` keeper remains: after 5 consecutive zero-entry scans the bot stops trading for the day ("today is not a trading day").
 
-**Mid-day retry:** On mid-day rescans (all-closed, slot-freed, opportunity), if first pass finds 0 entries, retry with floor reduced by `RR_RETRY_STEP` (0.1). Example: morning 1.3 → 1.2. Morning scan is excluded (it has observation period + multiple candidates + adaptive relaxation).
+**Industry rationale:** Pro intraday desks treat *"the market won't give us our edge"* as a signal, not a problem to solve by lowering thresholds. Adaptive relaxation ("we haven't traded in an hour, drop the bar") is the same instinct that bankrupts retail traders. The single hard floor enforces that discipline structurally.
 
-**Always-on hard floor (`RR_HARD_FLOOR = 1.3`, simplified from #202 by #225)** runs LAST in `current_rr_floor()` resolution: the result is `max(computed_floor, RR_HARD_FLOOR=1.3)`. This intentionally **overrides adaptive relaxation and mid-day retry** — those are "we're starving, lower the bar" mechanisms; the hard floor is a structural correctness floor that says "we never trade an R:R worse than 1.3, full stop." The label is logged as `hard-floor (overrides relaxed/retry/...)` so it's traceable. The floor sits just below `RR_TARGET_RATIO = 1.5` (which is what default ATR geometry produces) so ATR trades survive tick-rounding noise (computed R:R may print as 1.48-1.49). Replaces the late-entry-only `LATE_ENTRY_RR_FLOOR` from #202/#224 — once both values converged on 1.3, the time-gating was redundant complexity, and applying the floor pre-10am too plugs the only window where adaptive relaxation could undercut morning standards.
+**Always-on hard floor (`RR_HARD_FLOOR = 1.3`).** Computed gross R:R must be ≥ 1.3, and net-of-charges R:R must be ≥ 1.0 (the second gate is charge-aware so cheap-charge trades clear it easily; #227 in Awaiting-Data tracks whether the two gates can be merged). Default ATR geometry produces R:R = `RR_TARGET_RATIO = 1.5`, leaving ~0.2 of headroom for tick-rounding noise. Custom-target Claude trades (AI flow) and rule-based ATR trades (no-AI flow) hit the **same** gate inside `enter_trade()` — no asymmetric enforcement.
 
 ---
 
@@ -1041,15 +1038,13 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `ATR_MULTIPLIER` | 1.5 | SL = 1.5×ATR |
 | `RR_TARGET_RATIO` | 1.5 | Base R:R from ATR |
 | `MAX_INTRADAY_SL_PCT` | 2.5% | SL hard cap |
-| `RR_FLOOR_MORNING` | 1.3 | R:R floor before 1 PM |
-| `RR_FLOOR_AFTERNOON` | 1.2 | R:R floor 1-2 PM |
-| `RR_FLOOR_LATE` | 1.0 | R:R floor after 2 PM |
-| `RR_FLOOR_RELAXED` | 1.3 | DEPRECATED by #235 — pinned to `RR_HARD_FLOOR` so adaptive relaxation is a no-op. Kept only for log-label compatibility |
-| `RR_RETRY_STEP` | 0.1 | Mid-day retry step-down (0 = off) |
-| `RR_RELAX_AFTER_FAILS` | 3 | Scans before relaxing |
-| `RR_GIVEUP_AFTER_FAILS` | 5 | Scans before giving up |
-| `LATE_TARGET_CUT_PCT_1` | 20% | Target reduction after 1 PM |
-| `LATE_TARGET_CUT_PCT_2` | 25% | Target reduction after 2 PM |
+| `RR_HARD_FLOOR` | 1.3 | Always-on R:R floor (uniform all day since #243) |
+| `RR_GIVEUP_AFTER_FAILS` | 5 | Zero-entry scans before stopping for the day |
+| ~~`RR_FLOOR_MORNING/AFTERNOON/LATE/RELAXED`~~ | — | REMOVED by #243 — collapsed into `RR_HARD_FLOOR` |
+| ~~`RR_RETRY_STEP`, `RR_RELAX_AFTER_FAILS`~~ | — | REMOVED by #243 — retry/relax branches were no-ops since #235 |
+| ~~`RR_AFTERNOON_HOUR`, `RR_LATE_HOUR`~~ | — | REMOVED by #243 — only consumer was the deleted log-label selector |
+| ~~`LATE_TARGET_CUT_PCT_1`~~ | ~~20%~~ | REMOVED by #242 — entry-time target compression abandoned as self-defeating |
+| ~~`LATE_TARGET_CUT_PCT_2`~~ | ~~25%~~ | REMOVED by #242 — entry-time target compression abandoned as self-defeating |
 
 ### Trailing / Exit
 

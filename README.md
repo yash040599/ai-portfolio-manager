@@ -234,7 +234,7 @@ Open [config.py](config.py). Common settings:
 | `DRY_RUN` | False | Simulate without real orders (or use `--dryrun`) |
 | `CLAUDE_PLAN` | pro | Claude tier: `free`, `pro`, `max` |
 | `RR_TARGET_RATIO` | 1.5 | Base R:R from ATR |
-| `RR_FLOOR_MORNING/AFTERNOON/LATE` | 1.3 / 1.2 / 1.0 | R:R floors by session window |
+| `RR_HARD_FLOOR` | 1.3 | Always-on R:R floor — uniform across the trading day (collapsed from the deprecated time-tiered floors by #243) |
 
 ---
 

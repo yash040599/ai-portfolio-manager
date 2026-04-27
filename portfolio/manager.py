@@ -467,37 +467,14 @@ class PortfolioManager:
         # same set (RSI / VWAP / pattern / liquidity rejections don't
         # depend on the floor) — wasting Claude/Kite calls and log
         # noise. Observed 2026-04-24 11:00:56 → 11:01:13 batch.
+        # NOTE (#243): the actual mid-day retry pass was removed once
+        # the R:R floor became uniform 1.3 all day — a "step-down"
+        # retry would re-run with the SAME floor and reject the same
+        # candidates. The reset is kept so future floor-tiering work
+        # has the counter ready, and so #206's no-retry skip-condition
+        # remains observable in the logs.
         self.engine._rr_rejection_count = 0
         entered = self._attempt_entries(plans)
-
-        # ── Mid-day retry step-down ────────────────────────────────
-        # If all candidates failed and we haven't relaxed yet,
-        # retry with floor reduced by RR_RETRY_STEP. Only fires on
-        # mid-day rescans (after the morning entry completes).
-        retry_step = getattr(self.cfg, "RR_RETRY_STEP", 0)
-        relax_after = getattr(self.cfg, "RR_RELAX_AFTER_FAILS", 3)
-        at_normal = self.engine._zero_entry_scans < relax_after
-        rr_rejections = self.engine._rr_rejection_count
-        if (
-            entered == 0
-            and retry_step > 0
-            and at_normal
-            and plans
-            and self._initial_entry_done
-            and rr_rejections > 0   # NEW: only retry if R:R floor was the blocker
-        ):
-            hour_now = now_ist().hour
-            current_floor = self.engine.current_rr_floor(hour=hour_now)
-            retry_floor = max(current_floor - retry_step, 1.0)
-            self.log.info(
-                f"R:R retry: all candidates failed at {current_floor:.1f}:1 "
-                f"— retrying at {retry_floor:.1f}:1"
-            )
-            self.engine._rr_retry_active = True
-            try:
-                entered = self._attempt_entries(plans)
-            finally:
-                self.engine._rr_retry_active = False
 
         self.log.success(f"Entered {entered} position(s)")
 

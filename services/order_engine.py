@@ -177,11 +177,13 @@ class OrderEngine:
         self._tape_breadth: dict | None = None
 
         # ── Adaptive R:R tracking ─────────────────────────────────
-        # Counts scans that produced 0 entries (all candidates failed
-        # R:R or other checks). After N failures, R:R floor relaxes.
+        # Counts scans that produced 0 entries (every candidate rejected).
+        # After RR_GIVEUP_AFTER_FAILS consecutive empty scans we stop
+        # trading entirely — "today is not a trading day". The previous
+        # adaptive-relaxation and mid-day-retry branches were collapsed
+        # by #243 (always-on RR_HARD_FLOOR=1.3 made them no-ops).
         self._zero_entry_scans: int = 0
         self._rr_giveup: bool = False  # True = stop trading for the day
-        self._rr_retry_active: bool = False  # True = within-scan step-down active
 
         # Per-batch counter of R:R-related rejections (gross R:R below
         # `current_rr_floor()` OR net-of-charges R:R below 1.0). The
@@ -196,97 +198,40 @@ class OrderEngine:
 
     # ── Adaptive R:R methods ──────────────────────────────────
 
-    def _time_based_rr_floor(self, hour: int) -> float:
-        """Returns the R:R floor for the given hour of day.
-
-        Morning (<1 PM): RR_FLOOR_MORNING  (1.3)
-        Afternoon (1-2):  RR_FLOOR_AFTERNOON (1.2)
-        Late (>2 PM):     RR_FLOOR_LATE     (1.0)
-        """
-        if hour >= self.cfg.RR_LATE_HOUR:
-            return self.cfg.RR_FLOOR_LATE
-        if hour >= self.cfg.RR_AFTERNOON_HOUR:
-            return self.cfg.RR_FLOOR_AFTERNOON
-        return self.cfg.RR_FLOOR_MORNING
-
     def current_rr_floor(self, hour: int = 10) -> float:
-        """Returns current R:R floor based on time of day, scan failures,
-        mid-day retry state, and the always-on RR_HARD_FLOOR.
+        """Returns the R:R floor that every trade must clear.
 
-        Resolution order:
-          1. Compute time-based floor (morning 1.3 / afternoon 1.2 / late 1.0)
-          2. Apply adaptive relaxation if N scans failed
-             (min with RR_FLOOR_RELAXED)
-          3. Apply mid-day retry step (max with RR_FLOOR_LATE)
-          4. **Always-on hard floor LAST (max with RR_HARD_FLOOR)** so it
-             has final say. Rationale: relaxation/retry are "we're
-             starving, lower the bar" mechanisms; the hard floor is a
-             structural correctness floor that says "we never trade an
-             R:R worse than 1.3, full stop." Replaces the late-entry-
-             only floor (#202, removed by #225) — same effect on
-             post-10am entries, plus pre-10am entries also get
-             protection from over-aggressive relaxation.
+        Single uniform floor since #243 — collapsed from the previous
+        time-tiered + relaxation + retry resolution, which #235/#242
+        had already neutralised. The `hour` parameter is kept for call-
+        site signature compatibility but is no longer consulted.
         """
-        time_floor = self._time_based_rr_floor(hour)
-        floor = time_floor
-
-        if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
-            # Adaptive relaxation — take more lenient (lower) floor.
-            floor = min(floor, self.cfg.RR_FLOOR_RELAXED)
-        elif self._rr_retry_active:
-            # Mid-day retry: step down from current floor (kept above
-            # RR_FLOOR_LATE so we never go below the structural floor).
-            floor = max(floor - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
-
-        # Always-on hard floor wins over both — see docstring rationale.
-        floor = max(floor, float(getattr(self.cfg, "RR_HARD_FLOOR", 1.3)))
-
-        return floor
+        return float(getattr(self.cfg, "RR_HARD_FLOOR", 1.3))
 
     def _rr_floor_label(self, hour: int) -> str:
-        """Returns a descriptive label for the current R:R floor state.
-        Reflects current_rr_floor() resolution order so logs match the
-        actual floor in effect."""
-        candidate = self._time_based_rr_floor(hour)
-        if self._zero_entry_scans >= self.cfg.RR_RELAX_AFTER_FAILS:
-            candidate = min(candidate, self.cfg.RR_FLOOR_RELAXED)
-            base_label = "relaxed"
-        elif self._rr_retry_active:
-            candidate = max(candidate - self.cfg.RR_RETRY_STEP, self.cfg.RR_FLOOR_LATE)
-            base_label = "retry"
-        elif hour >= self.cfg.RR_LATE_HOUR:
-            base_label = "late"
-        elif hour >= self.cfg.RR_AFTERNOON_HOUR:
-            base_label = "afternoon"
-        else:
-            base_label = "morning"
-        hard_floor = float(getattr(self.cfg, "RR_HARD_FLOOR", 1.3))
-        if hard_floor > candidate:
-            return f"hard-floor (overrides {base_label})"
-        return base_label
+        """Returns a descriptive label for the active R:R floor.
+
+        Always `hard-floor` since #243 (single-floor regime). The
+        `hour` parameter is kept for call-site signature compatibility.
+        """
+        return "hard-floor"
 
     def record_scan_result(self, entered: int):
-        """Called after each scan+entry cycle. Tracks 0-entry streaks."""
+        """Called after each scan+entry cycle. Tracks 0-entry streaks
+        so the manager can stop trading entirely after RR_GIVEUP_AFTER_FAILS
+        consecutive empty scans (#243 keeper — relaxation/retry are gone)."""
         if entered > 0:
-            # Success — reset counter
             self._zero_entry_scans = 0
             return
 
         self._zero_entry_scans += 1
 
-        if self._zero_entry_scans == self.cfg.RR_RELAX_AFTER_FAILS:
-            hour_now = now_ist().hour
-            new_floor = self.current_rr_floor(hour=hour_now)
-            label = self._rr_floor_label(hour=hour_now)
-            self.log.warning(
-                f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries — "
-                f"relaxing R:R floor to {new_floor:.1f}:1 ({label})"
-            )
-        elif self._zero_entry_scans >= self.cfg.RR_GIVEUP_AFTER_FAILS:
+        if self._zero_entry_scans >= self.cfg.RR_GIVEUP_AFTER_FAILS:
             self._rr_giveup = True
             self.log.warning(
                 f"R:R adaptive: {self._zero_entry_scans} scans with 0 entries "
-                f"even at relaxed floor — no viable setups today, stopping"
+                f"at the {self.cfg.RR_HARD_FLOOR:.1f}:1 floor — no viable "
+                f"setups today, stopping"
             )
 
     def is_rr_giveup(self) -> bool:
@@ -2008,31 +1953,18 @@ class OrderEngine:
                 f"reset to default {default_sl_pct}%: SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
             )
 
-        # ── Late-entry target reduction ───────────────────────────
-        # Two-tier cutoffs based on time remaining before 3:10 PM square-off:
-        #   13:00+ → 20% target reduction (still ~2h to hit target)
-        #   14:00+ → 25% target reduction (only ~1h, aggressive trades fail)
-        # This prevents entering with unreachable targets that end up
-        # hitting time-decay or square-off instead of target.
-        hour_now = now.hour
-        late_reduction = 0.0
-        if hour_now >= self.cfg.RR_LATE_HOUR:
-            late_reduction = self.cfg.LATE_TARGET_CUT_PCT_2
-        elif hour_now >= self.cfg.RR_AFTERNOON_HOUR:
-            late_reduction = self.cfg.LATE_TARGET_CUT_PCT_1
-
-        if late_reduction > 0:
-            if side == "BUY":
-                distance = target - entry
-                target = round(entry + distance * (1 - late_reduction / 100), 2)
-            else:
-                distance = entry - target
-                target = round(entry - distance * (1 - late_reduction / 100), 2)
-            self.log.info(
-                f"Late entry ({hour_now}:xx): target reduced by {late_reduction:.0f}% → Rs.{target:.2f}"
-            )
-            # Mark position so time-decay doesn't stack on top
-            trade["_late_entry_reduced"] = True
+        # NOTE (Roadmap #242, 2026-04-27): the late-entry target reduction
+        # block (20% cut after 1 PM, 25% after 2 PM) was removed. With the
+        # always-on `RR_HARD_FLOOR = 1.3` (#225), default-ATR trades (raw
+        # R:R = 1.5) cut to 1.20 / 1.125 fell below the floor and were
+        # systematically rejected after 1 PM — a self-defeating loop where
+        # we engineered the target down then rejected for low R:R. The
+        # underlying concern (unreachable targets) is already addressed by
+        # stagnant-exit Tier-1/2 (#172), momentum kill (#198), time-decay
+        # target compression (TARGET_DECAY_PCT, separate mechanism for
+        # *open* positions), and the hard square-off at 3:10 PM. Pro
+        # intraday desks don't compress entry targets; they let
+        # stop/timing rules close drifters.
 
         # ── ATR-based position sizing (Roadmap #145) ──────────────
         # Reduce qty for high-volatility stocks so every trade risks
@@ -2070,12 +2002,13 @@ class OrderEngine:
                 trade["qty"] = qty
 
         # ── R:R safety floor (time-aware + adaptive) ─────────────
-        # One unified check. Floor depends on time of day:
-        #   Morning (<1 PM): RR_FLOOR_MORNING (1.3)
-        #   Afternoon (1-2): RR_FLOOR_AFTERNOON (1.2)
-        #   Late (>2 PM):    RR_FLOOR_LATE (1.0)
-        # After N zero-entry scans: min(time_floor, RR_FLOOR_RELAXED)
-        # Mid-day retry: time_floor - RR_RETRY_STEP
+        # One unified check. Time-of-day labels remain (morning /
+        # afternoon / late) for log readability, but with the always-on
+        # RR_HARD_FLOOR (#225, 1.3) the effective floor is 1.3 across
+        # the entire trading day. Adaptive relaxation is also pinned
+        # to 1.3 (#235), so the relaxation/retry steps are no-ops in
+        # practice. The hard floor is the structural correctness gate.
+        hour_now = now.hour
         rr_floor = self.current_rr_floor(hour=hour_now)
         floor_label = self._rr_floor_label(hour=hour_now)
         sl_dist = abs(entry - sl)
@@ -2809,7 +2742,6 @@ class OrderEngine:
             "_entry_time":  now.strftime("%H:%M:%S"),
             "_indicator_snapshot": trade.get("_indicator_snapshot"),
             # Late-entry flag — prevents time-decay from stacking
-            "_late_entry_reduced": trade.get("_late_entry_reduced", False),
             # Store initial SL at entry for correct trailing risk calculation
             "initial_sl": sl,
             # Roadmap #152: flag set True if exchange SL-M placement fails.
@@ -3762,11 +3694,6 @@ class OrderEngine:
 
         # Already adjusted — don't decay again
         if "original_target" in pos:
-            return
-
-        # Skip if late-entry reduction was already applied at entry —
-        # stacking both reductions makes the R:R unviable.
-        if pos.get("_late_entry_reduced"):
             return
 
         # Skip if position was just adopted / resumed — give the user's

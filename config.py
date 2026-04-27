@@ -223,63 +223,35 @@ class Config:
     # ── R:R (Risk:Reward) Settings ────────────────────────────────
     # R:R = (target distance) / (stop distance).
     # ATR produces a base R:R of RR_TARGET_RATIO (1.5:1).
-    # Late targets are compressed (less time left in the day).
-    # The floor ensures the compressed R:R is still worth the trade.
     #
-    # TIME-BASED FLOORS — which floor applies depends on time of day:
-    #   ┌─────────────────┬───────────┬─────────────────────────────────┐
-    #   │ Period          │ R:R Floor │ Why                             │
-    #   ├─────────────────┼───────────┼─────────────────────────────────┤
-    #   │ Morning (<1 PM) │ 1.3:1     │ Full ATR target, be selective   │
-    #   │ Afternoon (1-2) │ 1.2:1     │ 20% target compress → R:R ~1.2 │
-    #   │ Late (>2 PM)    │ 1.0:1     │ 25% compress → R:R ~1.1, tight │
-    #   └─────────────────┴───────────┴─────────────────────────────────┘
+    # SINGLE FLOOR — UNIFORM ALL DAY (#242 / #243).
+    # Roadmap #242 removed entry-time target compression (the previous
+    # 20%/25% target cuts after 1 PM / 2 PM). Roadmap #243 followed
+    # through by collapsing the time-tiered floors and the dead
+    # relaxation/retry knobs into a single always-on floor:
     #
-    # FAILURE RELAXATION (DEPRECATED — see #235):
-    #   The original design dropped the floor to RR_FLOOR_RELAXED after
-    #   N zero-entry scans ("we're starving, lower the bar"). Roadmap
-    #   #235 (analyst pass, 2026-04-27) flagged this as the same instinct
-    #   that bankrupts retail traders — when the market won't give you
-    #   1.3:1, you don't trade, you wait. RR_HARD_FLOOR (1.3) already
-    #   wins last in current_rr_floor() resolution, so setting
-    #   RR_FLOOR_RELAXED = RR_HARD_FLOOR neutralises the relaxation
-    #   without ripping out call-sites in the engine. Kept for log-line
-    #   compatibility ('relaxed' label still reads true when N scans
-    #   fail). RR_GIVEUP_AFTER_FAILS still works and is the keeper:
-    #   after that many zero-entry scans we stop trading entirely.
-    #   After RR_GIVEUP_AFTER_FAILS (5) failures → stop trading.
+    #   RR_HARD_FLOOR = 1.3   ← the only knob that matters
     #
-    # MID-DAY RETRY:
-    #   After the first entry fills, if a mid-day rescan finds 0
-    #   entries, retries once with floor reduced by RR_RETRY_STEP
-    #   (e.g. morning 1.3 → 1.2). Morning scan never retries.
+    # Rationale (analyst lens — copilot/analyst-review.md):
+    #   1. Pre-shrinking entry targets while the always-on hard floor
+    #      then rejected the resulting R:R was a self-defeating loop —
+    #      both x and y were ours. Removed by #242.
+    #   2. After #242 every time-of-day floor (afternoon/late) was
+    #      already pinned to 1.3 = RR_HARD_FLOOR; the time-routing
+    #      added zero behavioural value, only log-label noise.
+    #   3. Adaptive relaxation ("we haven't traded in an hour, drop the
+    #      bar") is the same instinct that bankrupts retail traders
+    #      (see #235). RR_HARD_FLOOR always won last anyway, so the
+    #      relaxation branch never produced a different outcome.
     #
-    # TARGET COMPRESSION (late entries, separate from floor):
-    #   After 1 PM: target reduced by LATE_TARGET_CUT_PCT_1 (20%).
-    #   After 2 PM: target reduced by LATE_TARGET_CUT_PCT_2 (25%).
-    #   The floor values above are calibrated to these compressions.
+    # KEPT: RR_GIVEUP_AFTER_FAILS — after N zero-entry scans we stop
+    # trading entirely. That's the keeper, the "today is not a trading
+    # day" signal. RR_TARGET_RATIO sets the default ATR target so
+    # default-ATR trades produce R:R = 1.5 (clears the 1.3 floor with
+    # ~0.2 of headroom for tick-rounding noise).
     RR_TARGET_RATIO:       float = 1.5   # base R:R from ATR (target = SL × this)
-    RR_FLOOR_MORNING:      float = 1.3   # before 1 PM — strict
-    RR_FLOOR_AFTERNOON:    float = 1.2   # 1 PM to 2 PM
-    RR_FLOOR_LATE:         float = 1.0   # after 2 PM — safety net only
-    RR_FLOOR_RELAXED:      float = 1.3   # #235: pinned to RR_HARD_FLOOR — relaxation neutralised
-    # Always-on hard floor: current_rr_floor() returns max(computed, this).
-    # Wins over time-based floors AND adaptive relaxation AND mid-day
-    # retry — those are "we're starving, lower the bar" mechanisms; this
-    # is a structural correctness floor that says "we never run a trade
-    # whose computed R:R is worse than 1.3, full stop." Set just below
-    # RR_TARGET_RATIO (1.5) so default-ATR trades survive tick-rounding
-    # noise (computed R:R may print as 1.48-1.49 after rounding).
-    # Replaces the late-entry-only LATE_ENTRY_RR_FLOOR removed by #225 —
-    # the late-only gate was redundant once the floor matched morning.
-    RR_HARD_FLOOR:         float = 1.3
-    RR_RETRY_STEP:         float = 0.1   # mid-day retry step-down (1.3 → 1.2)
-    RR_RELAX_AFTER_FAILS:  int   = 3     # zero-entry scans before relaxing
-    RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before giving up
-    RR_AFTERNOON_HOUR:     int   = 13    # 1 PM — afternoon rules start
-    RR_LATE_HOUR:          int   = 14    # 2 PM — late rules start
-    LATE_TARGET_CUT_PCT_1: float = 20.0  # target % reduction after 1 PM
-    LATE_TARGET_CUT_PCT_2: float = 25.0  # target % reduction after 2 PM
+    RR_HARD_FLOOR:         float = 1.3   # always-on R:R floor (uniform all day)
+    RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before stopping for the day
 
     # ── Trailing Stop-Loss (auto, rule-based) ──────────────────
     # TRAIL_AFTER_RISK_MULTIPLE: how many multiples of initial risk
@@ -354,8 +326,8 @@ class Config:
     # this many minutes remain until square-off. Prevents entering
     # too late when full-day targets are impossible.
     # 45 min = won't enter after ~2:25 PM (with 3:10 square-off).
-    # Safe because late-entry target reduction + late-day loser exit
-    # already protect against late-day risk.
+    # Safe because the late-day loser exit (LOSER_EXIT_HOUR/MINUTE)
+    # already protects against late-day drift on open positions.
     MIN_MINUTES_FOR_ENTRY: int = 45
 
     # ── Late-Day Loser Exit ─────────────────────────────────────
@@ -368,12 +340,13 @@ class Config:
     LOSER_EXIT_HOUR:   int = 14   # 2:45 PM IST
     LOSER_EXIT_MINUTE: int = 45
 
-    # ── Late Entry Target Compression ─────────────────────────────
-    # Trades entered after 1 PM get reduced targets (less time to hit).
-    # Uses RR_AFTERNOON_HOUR / RR_LATE_HOUR and LATE_TARGET_CUT_PCT_*
-    # defined in the R:R Settings section above.
-    # After compression, the R:R floor for that time period decides
-    # whether the trade is still worth entering.
+    # ── Late Entry Target Compression — REMOVED (Roadmap #242) ────
+    # Removed 2026-04-27: with always-on RR_HARD_FLOOR=1.3 (#225),
+    # cutting default-ATR R:R from 1.5 → 1.20 (afternoon) or 1.125
+    # (late) caused systematic rejection of every afternoon entry.
+    # Drift control is owned by stagnant-exit (#172), momentum kill
+    # (#198), and the open-position TARGET_DECAY_PCT — pre-shrinking
+    # entry targets is a retail superstition with no statistical edge.
 
     # ── Short Position Safety ─────────────────────────────────────
     # SHORT_ENTRY_CUTOFF_HOUR: don't open new SHORT positions after

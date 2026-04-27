@@ -339,19 +339,13 @@ class StockScanner:
         elif hour < 13:
             time_phase = "MIDDAY (11 AM-1 PM): Volume drops. Favour mean-reversion near day's VWAP."
         elif hour < 14:
-            time_phase = f"AFTERNOON (1-2 PM): European market opens — fresh volatility but less time. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_1:.0f}% for afternoon entries."
+            time_phase = "AFTERNOON (1-2 PM): European market opens — fresh volatility. Less session time means tighter trade selection but no automatic target compression (the entry target is what you're trading for)."
         else:
-            time_phase = f"LATE SESSION (after 2 PM): Only high-conviction setups. The system auto-compresses targets {self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% for late entries."
+            time_phase = "LATE SESSION (after 2 PM): Only high-conviction setups. Targets are honoured at entry — closure is governed by stagnant-exit, momentum kill, and 3:10 PM square-off."
 
-        # R:R floor varies with time — align Claude's rejection with code
-        afternoon_hour = self.cfg.RR_AFTERNOON_HOUR
-        late_hour = self.cfg.RR_LATE_HOUR
-        if hour >= late_hour:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_LATE}"
-        elif hour >= afternoon_hour:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_AFTERNOON}"
-        else:
-            rr_min_text = f"1:{self.cfg.RR_FLOOR_MORNING}"
+        # R:R floor is uniform across the trading day since #243
+        # (collapsed from the deprecated time-tiered floors).
+        rr_min_text = f"1:{self.cfg.RR_HARD_FLOOR}"
 
         return f"""You are an expert Indian stock market intraday trader (NSE) with 15 years of experience in price action, sector rotation, and NSE microstructure.
 Today is {today}, current time is {now} IST. All positions MUST be closed by 3:10 PM IST today.
@@ -556,7 +550,7 @@ REVIEW RULES — MUST FOLLOW:
    • 60-120 min: No new trades unless strong setup.
    • 30-60 min: EXIT underwater positions. HOLD only profitable positions with strong momentum.
    • <30 min: EXIT ALL positions unless within 0.3% of target.
-   NOTE: The system already compresses targets automatically ({self.cfg.LATE_TARGET_CUT_PCT_1:.0f}-{self.cfg.LATE_TARGET_CUT_PCT_2:.0f}% reduction at late entry, {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00). Targets shown above reflect these adjustments. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
+   NOTE: The system applies a {self.cfg.TARGET_DECAY_PCT:.0f}% time-decay target compression on OPEN positions after {self.cfg.TARGET_DECAY_AFTER_HOUR}:00. Targets shown above reflect this adjustment. Only suggest ADJUST_TARGET for trend-based reasons, not for time alone.
 
 3. CUT LOSERS: Positions underwater that have been drifting sideways for 2+ review cycles → EXIT. Dead money is worse than a small loss.
 
