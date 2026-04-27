@@ -18,6 +18,35 @@
 
 ---
 
+## 0. Quick snapshot — theoretical vs live
+
+This table mirrors the **summary card on the dashboard's Statistics page**
+(`/theory/statistics`). What the strategy *should* deliver versus what the
+live ledger currently shows. Live numbers are auto-refreshed by
+`Dashboard/live_stats.py` and cover the **current FY** (verified +
+provisional intraday trades).
+
+> Live snapshot below was captured on **2026-04-27** for FY 2026-04-01 →
+> 2027-03-31 (121 closed trades across 17 trading days). Refresh the
+> dashboard for the live read.
+
+| Metric | Theoretical (target) | Live (current FY) | Status |
+|---|---|---|---|
+| Win rate                  | 55%                       | **34.7%** (42 W / 79 L of 121)        | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.76** (GP Rs.3,118 / GL Rs.4,113)  | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.8.23** (Net −Rs.996 / 121)      | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **35.3%** (6 of 17 days)              | 🔴 below |
+| Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29)             | 🔴 below |
+| Max drawdown              | < 10% of capital          | **Rs.1,120** peak-to-trough           | 🟢 within |
+
+**Read this as reference only.** The 121 trades above were taken across
+multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #243).
+Gates were added, removed, tightened, and loosened in flight — so this is
+**not** a clean backtest of the current code. The clean-strategy benchmark
+only starts from now (post-#243). Full caveat in §4.
+
+---
+
 ## 1. Industry-standard metrics we track
 
 Most quant desks and retail platforms (TradeStation, NinjaTrader, MultiCharts,
@@ -219,25 +248,49 @@ not a prediction or guarantee. Live distribution will differ because:
 
 ## 4. Live trade analysis (reference only — strategy mix varied)
 
-> **Disclaimer.** The trades captured in `data/trades.db` were taken across
-> **multiple iterations of the strategy** (V1 → V2 → V2 + Roadmap #161 …
-> #243). Gates were added, removed, tightened, and loosened in flight.
-> **Do NOT read these numbers as a clean backtest of the current code.**
-> They are useful for two narrow purposes:
+> **Disclaimer.** The trades captured in the SQLite ledger
+> (`data/trades.db`, table `intraday_tax_ledger`) were taken across **multiple iterations of the strategy** (V1 → V2 → V2 +
+> Roadmap #161 … #243). Gates were added, removed, tightened, and
+> loosened in flight. **Do NOT read these numbers as a clean backtest of
+> the current code.** They are useful for two narrow purposes:
 >
 > 1. Sanity-check: are the live numbers in the *same order of magnitude*
 >    as the §3 theoretical snapshot?
 > 2. Spot anomalies: any metric that's wildly off-prediction is a flag
 >    for a hidden bug (charge mis-attribution, exit-reason mis-tagging, …).
->
-> Live numbers are auto-computed and refreshed by the dashboard
-> (`Dashboard/metrics.py → headline_pnl`). To inspect any specific
-> window, open the dashboard and select the date range.
 
-A summary table of live metrics (auto-rendered from the dashboard) lives at
-[reports/dashboard/](../reports/dashboard/). The key metrics we cross-check
-against §3 are: **win rate**, **profit factor**, **expectancy per trade**,
-and **maximum drawdown**.
+### 4.1 Where to read the live numbers
+
+- **Top of this page (§0 Quick snapshot)** — the table at the very top is
+  auto-rendered on the dashboard from `Dashboard/live_stats.py` and shows
+  the current FY in real time. That is the canonical live read.
+- **Dashboard home** ([`/`](/)) — interactive day-by-day P&L, per-trade
+  drilldown, exit-reason split. Use this to inspect any specific window.
+- **CLI** — `python scripts/tax_summary.py --intraday` prints the same
+  numbers as a flat report (handy when the dashboard server is not running).
+- **Source of truth** — `Dashboard/data_layer.py::fetch_trades()` reads
+  the ledger; `Dashboard/live_stats.py::compute_live_stats()` aggregates
+  it. Both are pure functions with no side effects, so re-running them
+  always produces the current snapshot.
+
+### 4.2 Cross-check rules
+
+When the §0 numbers and the §3 theoretical snapshot diverge by more than
+**±20 %** on any of the four core metrics (win rate, profit factor,
+expectancy, max drawdown), open an analyst-review pass:
+
+1. Was a gate removed or loosened in the last 30 trading days without an
+   entry in §2.5?
+2. Are recent trades skewed toward one exit reason (e.g., `LOSER_EXIT`
+   spike → entry quality drift, or `MOMENTUM_KILL` spike → trend regime
+   change)? Inspect via `python scripts/view_trades.py --recent 30`.
+3. Has the trade count per day collapsed (< 2/day rolling)? That's a
+   "gates over-rejecting" signal (the #242 anti-pattern).
+
+**Why this section is short.** The numbers themselves live in §0 above
+and on the dashboard — repeating them here would just go stale. This
+section exists to define the *contract* between the live data and the
+theoretical model, not to mirror the data.
 
 ---
 

@@ -57,7 +57,11 @@ def _inline(text: str) -> str:
     """Render inline markdown after HTML-escaping the raw text."""
     out = html.escape(text, quote=False)
     out = _INLINE_RE_CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
-    out = _MATH_INLINE_RE.sub(lambda m: f'<span class="math-inline">{m.group(1)}</span>', out)
+    # Inline math: stash raw TeX in a data-tex attribute; KaTeX renders client-side.
+    out = _MATH_INLINE_RE.sub(
+        lambda m: f'<span class="math-inline" data-tex="{html.escape(m.group(1), quote=True)}"></span>',
+        out,
+    )
     out = _INLINE_RE_LINK.sub(
         lambda m: f'<a href="{m.group(2)}" target="_blank" rel="noopener">{m.group(1)}</a>',
         out,
@@ -132,7 +136,11 @@ def _markdown_to_html(md: str) -> str:
                 m = _MATH_BLOCK_RE.match(line)
                 inner = m.group(1) if m else line.strip().strip("$")
                 j = i + 1
-            out.append('<pre class="math-block"><code>' + html.escape(inner.strip()) + "</code></pre>")
+            out.append(
+                '<div class="math-block" data-tex="'
+                + html.escape(inner.strip(), quote=True)
+                + '"></div>'
+            )
             i = j
             continue
 
@@ -332,6 +340,9 @@ _TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>__TITLE__ — AI Portfolio Manager</title>
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <style>
   :root {
     --bg: #f7f8fa; --fg: #1c1f23; --muted: #6a7280;
@@ -413,12 +424,14 @@ _TEMPLATE = r"""<!doctype html>
   .doc-section pre { background: #1c1f23; color: #e5e7eb; padding: 12px 16px;
                      border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
   .doc-section pre code { background: transparent; color: inherit; padding: 0; }
-  .doc-section pre.math-block { background: #f4f6fa; color: #1c1f23;
-                                font-family: ui-monospace, Menlo, Consolas, monospace;
-                                border-left: 3px solid #c7d2fe; }
-  .doc-section .math-inline { font-family: ui-monospace, Menlo, Consolas, monospace;
-                              font-size: 12.5px; background: var(--soft);
-                              padding: 1px 4px; border-radius: 3px; }
+  .doc-section .math-block { background: #f4f6fa; color: #1c1f23;
+                              border-left: 3px solid #c7d2fe;
+                              padding: 12px 16px; border-radius: 0 6px 6px 0;
+                              margin: 12px 0; overflow-x: auto;
+                              text-align: center; font-size: 15px; }
+  .doc-section .math-inline { font-size: 14px; padding: 0 1px; }
+  .doc-section .katex { font-size: 1em; }
+  .doc-section .katex-display { margin: 0; }
   .doc-section a { color: #1f4ed8; }
   .doc-section .table-scroll { overflow-x: auto; margin: 12px 0; }
   .doc-section table.md-table { width: 100%; border-collapse: collapse;
@@ -475,6 +488,23 @@ _TEMPLATE = r"""<!doctype html>
 <script>
   document.getElementById("now").textContent =
     new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+
+  // Render KaTeX into every element that has a data-tex attribute.
+  function renderAllMath() {
+    if (typeof katex === "undefined") { setTimeout(renderAllMath, 30); return; }
+    document.querySelectorAll("[data-tex]").forEach(function (el) {
+      try {
+        katex.render(el.dataset.tex, el, {
+          displayMode: el.classList.contains("math-block"),
+          throwOnError: false,
+          output: "html",
+        });
+      } catch (e) {
+        el.textContent = el.dataset.tex;
+      }
+    });
+  }
+  renderAllMath();
 </script>
 </body>
 </html>
