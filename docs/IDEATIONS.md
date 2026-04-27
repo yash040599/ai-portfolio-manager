@@ -1,246 +1,602 @@
-# Ideations -- V3 Vision & Future Work
+# Ideations -- Future Money Engines
 
-> **Status**: Planning / Research only -- no code changes.
-> **Context**: V2 improvements are tracked in STRATEGY_ROADMAP.md. This file contains V3 architectural changes and future research ideas.
-
----
-
-## What belongs in this file (and what does NOT)
-
-**This file is strictly for V3-and-beyond ideas. V3 has a specific identity: it is the version where AI earns its keep.**
-
-V2 today runs in NoAI mode by default because — with the current rule-based scoring — Claude did not improve results enough to justify the cost. V3 is the plan to change that. Every V3 idea must be an **AI-centric add-on** that lets the bot make better decisions by learning from data or reading unstructured context (news, earnings, macro narrative) — not something a hand-written formula could do.
-
-### Qualification checklist for adding an idea here
-
-An idea qualifies as a V3 / "Future" ideation if **at least one** is true:
-
-1. It requires machine learning — the bot learns weights/patterns from historical trades instead of using fixed formulas.
-2. It uses an LLM (Claude) for text/narrative understanding — news, earnings transcripts, macro context, sentiment.
-3. It introduces a new data dimension that only makes sense paired with ML or LLM reasoning (options chain, order-book microstructure, multi-asset correlation regimes).
-4. It is genuinely research-grade — needs experimentation, labelled data, or model training before it can be coded.
-
-### If an idea does NOT meet any of the above
-
-It is a **V2 improvement**, even if the work is large. Add it to [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md) under **Pending** with priority/impact/effort, and a plain-English explanation in **Pending — Details**. Examples of things that feel "big" but are NOT V3:
-- Order-engine refactors (bracket orders, atomic SL+target)
-- Better position sizing math (volatility-adjusted, ATR-based)
-- Order-book depth checks that follow fixed rules
-- Crash-recovery / reconciliation improvements
-- Rule-based sector or basket exit logic
-
-Size does not make an idea V3 — **AI dependency** does. Keep this file focused so V3 vision does not drown in generic backlog.
+> **Status:** Planning / research only -- no code changes implied.
+> **Context:** V2 intraday improvements stay in [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md).
+> This file is for broader future product directions that can make money beyond
+> the current intraday bot.
 
 ---
 
-## In Plain English — Where V3 Is Going
+## Hard Constraints Added 2026-04-28
 
-V2 is "a calculator that picks trades". Every score is computed from fixed formulas a human wrote in code. V3 shifts the bot in three big ways:
+These constraints override older V3/Future ideas in this file.
 
-1. **The scorer becomes a learner.** Instead of us saying "RSI under 30 = +2 points", a machine-learning model looks at every past trade, figures out what combinations of indicators actually led to profit, and assigns its own weights. The indicators themselves stay the same — only the formula that combines them changes.
-2. **A new data source: options.** Today V2 only reads the stock's own price and volume. Options data tells you what **other traders are betting** — how many people bought insurance (puts) vs. speculation (calls), where the "pain point" is for option sellers, where institutions put their largest bets. This is sentiment data the bot is currently blind to.
-3. **AI gets a new job.** Today Claude's role (in `--ai` mode) is picking stocks from a short list — a math-heavy task. In V3, the pure-math work goes to machine learning, and Claude is promoted to reading **text**: news headlines, earnings announcements, budget-day rhetoric, macro context. Each tool does what it's naturally best at.
-
-None of this breaks V2. V3 is additive — you'd still be able to run V2 (the fast, deterministic, Rs.0/day mode) while V3 experiments in parallel.
-
-Beyond V3, "Future Work" below covers bigger ideas (reinforcement learning, pairs trading, interactive terminal) that need much more data or research before they're worth building.
-
----
-
-## Version Distinction
-
-| Version | Core Identity |
-|---------|--------------|
-| **V1** | Claude picks stocks from raw candle snapshots. Human intuition encoded as prompts. **Retired.** |
-| **V2** | Quantitative scoring engine (14 indicators + candle patterns). Claude or NoAI selects from scored candidates. Hand-tuned weights. **Current.** |
-| **V3** | **ML scores, Options sense, Claude narrates.** ML learns weights from trade history. Options chain adds institutional sentiment. Claude shifts from number-picker to narrative analyst (news, earnings, macro). |
-
-> **V3 Key Insight**: LLMs are best at text, context, and narrative. ML is best at numerical patterns. V2 uses Claude for the math part (picking from numbers). V3 flips this -- **ML for numbers, Claude for narrative** -- each does what it is best at.
+1. **No F&O ideas.** Do not propose options, futures, options-chain execution,
+   covered calls, futures hedges, options selling, pledged-margin F&O, or
+   overnight shorting workflows.
+2. **Phase 1 remains FYI-only.** It may analyse the existing Zerodha portfolio,
+   but it must not generate executable orders for long-term holdings.
+3. **Long-term invested stocks are not touched.** New money engines must use a
+   separate capital bucket and a separate ledger/reporting namespace.
+4. **Scanner/paper mode first.** Any new engine starts as recommendation-only
+   and paper-tracked for at least 30-60 days before live order placement.
+5. **Execution through Kite API still needs the static-IP VM.** Advisory scans
+   can run anywhere if they do not use Kite APIs; automated order placement must
+   run from a whitelisted machine/IP.
 
 ---
 
-## V3 -- Core Architecture Changes
+## In Plain English -- The Three Broad Ideas
 
-### 1. ML Scoring Model (V3 Headline Feature)
+The repo now has three broad future tracks:
 
-**What it is**: Replace the hand-tuned composite score (14 indicators with manual weights) with a trained ML model.
+| Track | Purpose | Execution Boundary |
+|---|---|---|
+| **A1. V3 AI Intraday Research** | Make the existing intraday bot smarter using ML/news/order-book context. | Still Phase 2 intraday; no F&O. |
+| **A2. Delivery Swing Trading Engine** | Buy separate CNC positions, hold for days/weeks, sell on target/stop/trend failure. | Separate short/medium-term bucket; never touches Phase 1 holdings. |
+| **A3. ETF Rotation Engine** | Rotate a separate capital bucket between liquid ETFs based on trend/momentum. | Separate CNC ETF bucket; low-turnover allocation engine. |
 
-**Approach**:
-- **Model**: XGBoost or LightGBM -- fast, handles tabular data well, interpretable feature importance.
-- **Features**: Same 14 indicators V2 already computes, plus candle pattern scores, time-of-day, day-of-week, NIFTY regime, sector strength.
-- **Label**: Trade outcome -- profit/loss from V2 actual trades (available in trading reports).
-- **Output**: Probability of profitable trade (0.0 to 1.0) instead of a composite score.
-
-**Why it is better than hand-tuned scores**:
-- Learns non-linear interactions (e.g., RSI + VWAP together matter more than either alone).
-- Adapts weights from actual outcomes instead of guessing.
-- Feature importance tells you which indicators actually predict profitability.
-
-**Requirements**: Need enough trade history for training. V2 trading data files are the training set. Minimum ~200-500 trades for a basic model.
-
-**Depends on**: Backtesting framework (V2 Roadmap #24) to validate before deploying.
+The important pivot: at Rs.50k, pure intraday fights regulatory charges,
+brokerage, spread, and slippage. The next money-making experiments should
+therefore emphasize **lower turnover**, **larger expected move per decision**,
+and **separate accounting**.
 
 ---
 
-### 2. Options Chain Signals (V3 Headline Feature)
+## Existing Assets We Can Reuse
 
-**What it is**: Use NSE options chain data to gauge institutional sentiment -- a completely new data dimension V2 does not touch.
-
-**Signals**:
-- **Put-Call Ratio (PCR)**: Volume of puts / volume of calls. Baseline ~0.7 is neutral. PCR > 1.2 = bearish. PCR < 0.5 = bullish. Contrarian at extremes.
-- **Open Interest (OI) Buildup**: Rising OI + rising price = strong trend. Rising OI + falling price = bearish pressure.
-- **Max Pain**: The strike price where maximum options expire worthless. NIFTY/BANKNIFTY gravitate toward max pain on expiry day.
-- **OI-based Support/Resistance**: High put OI at a strike = support. High call OI at a strike = resistance.
-
-**Data source**: NSE provides options chain snapshots. Zerodha API may have some access. Polling every 3-5 minutes is sufficient.
-
----
-
-### 3. AI for News / Sentiment (Claude New Role)
-
-**What it is**: Instead of Claude picking stocks from numbers, use Claude to process text that ML cannot handle.
-
-**Use cases**:
-- **Pre-market news scan**: Feed Claude morning headlines. "HDFC Bank Q4 results beat estimates" = bullish bias for HDFCBANK.
-- **Earnings calendar awareness**: Know which stocks report today. Avoid entering positions before results.
-- **Corporate action detection**: Beyond V2 gap detection -- Claude reads corporate action text (splits, bonuses, buybacks).
-- **Macro sentiment**: Budget day, election results, global cues -- Claude reads narrative and outputs market-level bias.
-
-**Why V3**: This redefines Claude entire role. In V2, Claude picks from scored snapshots (a math task). In V3, Claude processes unstructured text (a language task). Requires new data sources (news APIs, earnings calendars) and new prompts.
+| Asset | Reuse |
+|---|---|
+| `core/zerodha_client.py` | Login, funds, holdings, quotes, historical candles, order placement. Needs `product=CNC` support before live delivery/ETF execution. |
+| `services/technical_indicators.py` | Trend, RSI, ADX, VWAP, and other indicators can be reused on daily/60-min candles. |
+| `services/candle_cache.py` | Historical candle store can support swing/ETF scans and paper backtests. |
+| `services/report_writer.py` | Pattern for writing JSON/text reports can be copied into `reports/swing/` and `reports/rotation/`. |
+| `Dashboard/` | Existing read-only analytics layer can grow separate panels for swing and rotation P&L. |
+| Tax ledger/scripts | Delivery and ETF trades become capital gains, not speculative intraday income; they need separate tax handling from MIS trades. |
 
 ---
 
-### 4. Order Flow / Market Depth
+## A1 -- V3 AI Intraday Research (Existing Future Track)
 
-**What it is**: Analyse the live order book (bid-ask depth) to detect institutional intent before price moves.
+### Plain English
 
-**Signals**:
-- **Bid-Ask Imbalance**: If total bid volume >> total ask volume across top 5 levels, buyers are more aggressive.
-- **Volume at Price (VAP)**: Where most volume traded today -- high-volume price zones act as magnets / support.
-- **Trade Flow Direction**: Classify each trade as buyer-initiated (at ask) or seller-initiated (at bid).
-- **Large Order Detection**: Unusual order sizes at specific levels signal institutional interest.
+V3 keeps the current intraday engine but changes what AI is used for. Today V2
+mostly uses deterministic formulas. V3 should use ML for numeric pattern
+learning and Claude for narrative/context reading.
 
-**Data source**: Zerodha provides 5-level market depth via API. Start with bid-ask imbalance ratio as a simple entry confirmation signal.
+This track is still about improving Phase 2 intraday. It is **not** the main
+answer to the small-budget charge problem, because it remains on the same
+intraday cost battlefield.
 
-**Ideally depends on**: WebSocket (V2 Roadmap #44) for real-time data.
+### What Stays In Scope
+
+1. **ML scoring model** -- learn weights from historical trades instead of
+   hand-tuned indicator weights.
+2. **Claude for news/sentiment** -- read headlines, earnings announcements,
+   corporate action text, and macro context.
+3. **Order-book/depth context** -- cash-equity depth/imbalance only, no F&O
+   chain or options OI.
+4. **Multi-asset context** -- use gold, USD/INR, crude, global index cues, or
+   sector ETFs as context; do not trade derivatives from this module.
+
+### What Is Explicitly Out Of Scope
+
+- Options chain signals.
+- Expiry-day max pain/PCR/OI strategies.
+- Covered calls.
+- Futures hedges.
+- Options strategy lab.
+- Pairs trading that needs a short/futures leg.
+
+### A1.1 ML Scoring Model
+
+**What it is:** Replace the hand-tuned composite score with a trained tabular
+model that outputs probability of profit or expected value.
+
+**Approach:**
+
+- Model: XGBoost / LightGBM / sklearn HistGradientBoosting.
+- Features: existing indicators, candle-pattern outputs, time of day, day of
+  week, NIFTY regime, sector strength, score history, entry-delay movement,
+  spread, impact cost, and opening-gap features.
+- Label: trade outcome after charges, plus exit reason and max adverse /
+  favorable excursion if available.
+- Output: probability of profitable trade, expected net Rs., or expected R.
+
+**Why it might help:**
+
+- Learns nonlinear interactions that fixed weights miss.
+- Tells us which indicators actually matter.
+- Can identify dead-weight rules that add churn but no edge.
+
+**Why not now:**
+
+- Needs #24 backtesting and enough labelled trades.
+- Minimum useful live sample: roughly 200-500 trades/candidates.
+- With too little data it will overfit and look smart while losing money.
+
+### A1.2 Claude For News / Narrative
+
+**What it is:** Move Claude away from numeric stock-picking and toward text
+understanding.
+
+**Use cases:**
+
+- Morning news scan: classify stock-specific news as bullish, bearish,
+  irrelevant, or avoid.
+- Results awareness: avoid entering right before results unless explicitly
+  event-driven.
+- Macro narrative: budget day, election day, RBI policy, global risk-off.
+- Corporate action reading: splits, buybacks, OFS, demergers, promoter pledge
+  changes, management commentary.
+
+**Guardrails:**
+
+- Claude narrative can only bias or block; it should not blindly force trades.
+- Every text-derived decision must be logged for later audit.
+- Start with a "news risk banner" rather than auto-execution.
+
+### A1.3 Order-Book / Depth Context
+
+**What it is:** Use top-of-book and 5-level depth context as an entry-quality
+filter or timing aid.
+
+**Signals:**
+
+- Bid/ask imbalance.
+- Depth evaporation before entry.
+- Spread widening.
+- Large visible orders near entry / stop levels.
+- Volume-at-price zones if enough data is collected.
+
+**Why it might help:** The current intraday engine already cares about spread
+and impact cost. Depth context could reduce bad fills and fake breakouts.
+
+**Why not now:** It is still intraday optimization, not a new money engine.
+
+### A1 Expected Money Impact
+
+This is not a separate return stream. Its value is measured as improvement to
+Phase 2 intraday:
+
+| Metric | Target Before Promotion |
+|---|---|
+| Win rate | +5-10 percentage points vs V2 baseline, or no promotion |
+| Profit factor | +0.2 or more vs V2 baseline after charges |
+| Trade count | Same or lower; no churn increase |
+| Max drawdown | Same or lower |
+| Validation | Backtest + paper/live shadow before execution |
+
+### A1 Build Steps
+
+1. Finish V2 backtesting framework (#24) first.
+2. Export labelled feature rows from live and historical trade candidates.
+3. Train an interpretable tabular model on trade outcome labels.
+4. Compare ML probability vs current composite score on historical/paper data.
+5. Add Claude news/sentiment as a separate feature, not as a direct trade picker.
+6. Deploy in shadow mode before it affects live entries.
 
 ---
 
-## Future Work -- Needs More Data / Research
+## A2 -- Delivery Swing Trading Engine (Cash Equity / CNC)
 
-These require significantly more trade history, new infrastructure, or academic-level research. Park for after V3 is stable.
+### Plain English
 
-### F1. Reinforcement Learning for Position Management
+Delivery swing trading buys stocks for delivery (`CNC`), holds them for a few
+days or weeks, and sells when the move plays out or the setup fails.
 
-**What it is**: Train an RL agent to manage open positions -- when to trail, when to partial exit, when to add to a winning position.
+Example:
 
-**Why it is powerful**: V2 trailing logic is rule-based (trail 50% at 1.5R). RL could learn optimal trailing/exit policies from historical outcomes.
+```text
+Capital bucket: Rs.50,000
+Buy: 20 shares of TATACONSUM at Rs.1,000 = Rs.20,000
+Reason: strong uptrend, pulled back to support, volume rising
+Stop: Rs.960
+Target: Rs.1,080
+Expected hold: 5-15 trading days
+Exit: target / stop / trend-failure / time-stop
+```
 
-**Why future**: Requires a simulation environment, reward shaping, thousands of trades for training, and V3 ML model must exist first.
+This is **not** Phase 1 portfolio management. It must never sell, trim, add to,
+or rebalance existing long-term holdings. It uses a separate capital bucket.
 
-### F2. Interactive Terminal Mode
+### Why This Exists
 
-**What it is**: Keyboard listener in the monitor loop allowing real-time user commands during trading.
+Intraday with Rs.50k needs many small wins and gets punished by brokerage,
+STT, GST, exchange charges, spread, and slippage. Swing trading makes fewer
+decisions and targets larger moves, so each correct decision has more room to
+pay for costs.
 
-**Design**:
-- Use `msvcrt` (Windows) / `select` (Linux) for non-blocking key reads in the poll loop
-- Commands:
-  | Key/Command | Action |
-  |---|---|
-  | `r` or `Enter` | Trigger immediate rescan (skip waiting for next interval) |
-  | `s` | Show current status summary (positions, P&L, next scan time) |
-  | `q` | Graceful shutdown (square off + EOD) |
-  | `c <KEY> <VALUE>` | Change config at runtime (e.g. `c MAX_POSITIONS 4`) |
-  | `p` | Pause new entries (toggle) |
+### Expected Money Range
 
-**Considerations**:
-- Must not block the monitor loop — keyboard polling, not a prompt
-- Config changes need a safe subset (position limits, SL%, timeouts — not things that break mid-session)
-- Must play nicely with ANSI status line overwriting
-- Start with just `r` key for manual rescan (highest value, lowest risk), add rest incrementally
+These are planning assumptions, not promises.
 
-**Why future**: Thread safety concerns, cross-platform key handling complexity.
+| Capital | Reasonable Annual Target | Monthly Shape | Drawdown Risk |
+|---:|---:|---|---|
+| Rs.50k | 12-25% if edge exists; 5-10% if average | Good months Rs.1k-Rs.3k; bad months -Rs.2k to -Rs.5k | 5-15% |
+| Rs.2L | Rs.24k-Rs.50k/year if edge exists | Good months Rs.4k-Rs.12k | 5-15% |
+| Rs.5L+ | More worthwhile as a system | Larger compounding impact | Strategy-dependent |
 
-### F3. Options Chain Intelligence (Expiry Days)
+Typical trade shape:
 
-**What it is**: Use Zerodha Kite options chain data to improve Thursday expiry-day decisions.
+| Item | Target |
+|---|---|
+| Hold time | 5-20 trading days |
+| Stop distance | 2-4% |
+| Target distance | 5-10% |
+| Minimum R:R | 1.5R-2R |
+| Positions on Rs.50k | 2-3 positions of Rs.15k-Rs.25k |
 
-**Signals**:
-- **Put-Call Ratio (PCR)**: Volume of puts / calls. PCR > 1.2 = bearish. PCR < 0.5 = bullish. Contrarian at extremes.
-- **Max Pain**: Strike price where maximum options expire worthless. NIFTY gravitates toward max pain on expiry. If NIFTY is far from max pain, direction trades are riskier.
-- **OI Buildup**: Rising OI + rising price = strong trend. Rising OI + falling price = bearish pressure.
+Example: a 6% winner on Rs.25k makes roughly Rs.1,500 gross before charges; a
+3% loser on Rs.25k loses roughly Rs.750 gross. The math is cleaner than trying
+to capture Rs.100 intraday after multiple small costs.
 
-**Data source**: Kite Connect instruments API + quotes for option strikes. Need to fetch ~40-60 strikes for NIFTY CE+PE.
+### How It Differs From Intraday
 
-**Usage**: On Thursday, compute max-pain and PCR before first scan. If NIFTY is within 0.5% of max-pain → reduce positions further or skip trading. If PCR is extreme → bias direction accordingly.
+| Intraday Bot | Delivery Swing Engine |
+|---|---|
+| MIS product | CNC delivery product |
+| Must square off same day | Holds across days/weeks |
+| Many small trades | Few larger trades |
+| Live monitor all day | Mostly EOD review + optional morning execution |
+| Speculative business income | Capital gains treatment |
+| High charge sensitivity at small budget | Lower turnover, lower churn |
 
-**Why future**: New data pipeline (options module), only relevant 1 day/week. Higher ROI to fix other gaps first.
+### EOD Workflow
 
-### F4. High-OI Stock Filter (Expiry Days)
+EOD means **end of day**, after market close, when the daily candle is final.
+The swing engine does not need to watch every tick in the MVP.
 
-**What it is**: On expiry Thursdays, stocks with massive open interest in near-strike options get "pinned" — price oscillates near the strike as option writers defend their positions. This creates fake breakouts that trap directional traders.
+Daily workflow:
 
-**Data source**: Same Kite options API. Check individual stock F&O OI levels.
+1. After 3:30 PM, fetch final daily candles.
+2. Update open swing positions.
+3. Check exits:
+   - target reached,
+   - stop/trend level violated,
+   - daily close below invalidation level,
+   - time-stop after N days without progress,
+   - NIFTY/sector regime turned hostile.
+4. Scan for new candidates.
+5. Produce tomorrow's action plan.
+6. Save a report under `reports/swing/YYYY/MM/`.
+7. Paper-track every recommendation whether or not it is executed.
 
-**Filter**: If a stock has OI > threshold at a strike within 1% of current price → skip on expiry day. Only ~30 of NIFTY100 have active F&O, so the filter is narrow.
+Morning workflow, once execution is supported:
 
-**Why future**: Requires determining what OI level counts as "high" (needs historical context). Dependent on F3 options module.
+1. Load yesterday's approved plan.
+2. Confirm available cash in the swing bucket.
+3. Place CNC buy/sell orders only if user-approved.
+4. Record fills and update the swing ledger.
+
+### VM / Static-IP Requirement
+
+| Usage | VM / Static IP Needed? | Reason |
+|---|---|---|
+| Scanner-only with public data | No | No Kite API. |
+| Scanner using Kite historical/quotes | Yes | Kite Connect app IP whitelist applies. |
+| Manual order placement in Kite app/web | No for the tool | User executes outside the API. |
+| API-based CNC execution | Yes | Same Kite/static-IP requirement as Phase 2. |
+| VM running all day | Not for MVP | Scheduled EOD/morning jobs are enough. |
+
+### Modes
+
+| Mode | Command | Behaviour |
+|---|---|---|
+| Scanner-only | `python main.py --mode swing --scan` | Generates candidates and paper-tracks outcomes. No order placement. |
+| Plan | `python main.py --mode swing --plan` | Prints next-day buy/sell/hold plan. User can execute manually. |
+| Assisted execution | `python main.py --mode swing --execute` | Places CNC orders only after explicit terminal confirmation. |
+| Full auto | Future only | VM places approved CNC orders on schedule after enough evidence. |
+
+### Signals To Consider
+
+| Signal Family | Details |
+|---|---|
+| Trend | Price above 20DMA/50DMA; 20DMA above 50DMA; rising moving averages. |
+| Relative strength | Stock outperforming NIFTY over 5/10/20 days. |
+| Breakout | Close above 20-day high with volume > 1.5x average. |
+| Pullback | Strong stock pulls back to 20EMA/50DMA and holds. |
+| Volume | Breakout/pullback confirmed by rising volume or relative volume. |
+| Sector strength | Prefer stocks in sectors beating NIFTY. |
+| Market regime | Avoid fresh longs when NIFTY is below key trend filters. |
+| Event awareness | Avoid blind entries right before results unless event-driven by design. |
+
+### Risk Rules
+
+| Rule | Starting Point |
+|---|---|
+| Separate capital | `SWING_MAX_BUDGET_INR`, independent of `MAX_BUDGET_INR`. |
+| Max positions | 2-5, depending on capital. |
+| Per-position cap | 20-40% of swing bucket. |
+| Stop | ATR-based or swing-low based. |
+| Target | Minimum 1.5R-2R. |
+| Time stop | Exit after 10-20 trading days if no progress. |
+| Averaging down | Not allowed. |
+| Long-term holdings | Never touched. |
+| MTF/leverage | Not allowed in this engine. |
+
+### Data / DB / Reporting Needed
+
+| Component | Purpose |
+|---|---|
+| `swing_candidates` table | Every scanner recommendation, including rejected/paper-only ideas. |
+| `swing_positions` table | Open/closed swing positions. |
+| `reports/swing/` | Daily action plans and results. |
+| Dashboard panel | P&L, win rate, drawdown, open positions, paper-vs-executed comparison. |
+| Capital-gains ledger integration | Delivery trades need STCG/LTCG treatment, not intraday speculative treatment. |
+
+Fields to store:
+
+- symbol, exchange, setup type,
+- scan date, planned entry, actual entry,
+- stop, target, R:R,
+- capital allocated,
+- signal features,
+- exit date, exit reason,
+- gross P&L, charges, net P&L,
+- paper vs executed flag.
+
+### Build Steps
+
+1. Add config: `SWING_MAX_BUDGET_INR`, universe, max positions, hold limit,
+   stop/target rules.
+2. Build scanner on daily candles using existing indicator infrastructure.
+3. Add `swing_candidates` and `swing_positions` DB tables.
+4. Add text/JSON reports under `reports/swing/`.
+5. Paper-track first for 30-60 days.
+6. Add dashboard comparison vs NIFTY and ETF rotation.
+7. Add `product=CNC` support in `ZerodhaClient.place_order()`.
+8. Add manual-confirm execution.
+9. Only after paper/live evidence, consider scheduled VM execution.
+
+### Promotion Criteria
+
+Do not enable live execution until the scanner has at least:
+
+| Metric | Threshold |
+|---|---|
+| Paper period | 30-60 calendar days minimum. |
+| Trade count | 20+ completed paper setups. |
+| Profit factor | > 1.3 after estimated charges. |
+| Max drawdown | < 10-12% on the swing bucket. |
+| Benchmark | Beats NIFTY buy-and-hold over the same period, or has materially lower drawdown. |
 
 ---
 
-### F5. Pairs Trading / Statistical Arbitrage
+## A3 -- ETF Rotation Engine (Cash Equity / CNC)
 
-**What it is**: Trade the spread between two correlated stocks. When the spread widens beyond historical norms, go long the underperformer and short the outperformer.
+### Plain English
 
-**Classic pairs in India**: HDFCBANK-ICICIBANK, SBIN-PNB, TCS-INFY, RELIANCE-ONGC.
+ETF rotation chooses which broad ETF baskets to hold instead of choosing
+individual stocks. It periodically rotates a separate capital bucket into the
+strongest ETF(s), and moves away from weak ones.
 
-**Why future**: Requires cointegration testing on months of historical data, separate position management logic, and a fundamentally different risk model. Build V3 directional strategy first.
+Example:
+
+```text
+This review:
+- GOLDBEES: strongest momentum, above 50DMA
+- NIFTYBEES: acceptable trend
+- BANKBEES: weak, below 50DMA
+
+Target allocation:
+- 60% GOLDBEES
+- 40% NIFTYBEES
+- 0% BANKBEES
+```
+
+### Why This Exists
+
+ETF rotation is calmer than stock swing trading. It has lower single-stock
+risk, fewer trades, and is easier to backtest. It is not the highest-upside
+idea, but it may be the most robust cash-market compounding engine.
+
+### Candidate ETF Universe
+
+Final inclusion must depend on liquidity, spread, tracking error, and enough
+history.
+
+| Bucket | Examples |
+|---|---|
+| Broad equity | `NIFTYBEES`, `JUNIORBEES` |
+| Banking | `BANKBEES` |
+| Sector ETFs | IT, pharma, auto, consumption, PSU/bank ETFs if liquid enough |
+| Defensive / alternative | `GOLDBEES`, silver ETFs |
+| Cash-like | Cash or a liquid ETF if suitable and liquid |
+
+### Expected Money Range
+
+These are planning assumptions, not promises.
+
+| Capital | Reasonable Annual Target | Monthly Shape | Drawdown Risk |
+|---:|---:|---|---|
+| Rs.50k | 8-16% | Average Rs.300-Rs.650/month, lumpy | 3-10% |
+| Rs.2L | Rs.16k-Rs.32k/year | More meaningful, still calm | 3-10% |
+| Rs.5L+ | Scales better than intraday | Smoother than stock swing | 3-12% |
+
+### ETF Rotation vs Delivery Swing
+
+| Delivery Swing | ETF Rotation |
+|---|---|
+| Picks individual stocks | Picks baskets/sectors/assets |
+| Higher return potential | Lower single-stock risk |
+| More filters/news awareness | Cleaner rules |
+| 2-20 day holds | Weekly/monthly holds |
+| More trades | Fewer trades |
+| More volatile | Easier to backtest |
+
+### Rebalance Workflow
+
+ETF rotation should run weekly or monthly, not constantly.
+
+1. Fetch ETF daily candles.
+2. Compute momentum:
+   - 1-month,
+   - 3-month,
+   - 6-month.
+3. Compute trend filters:
+   - above 50DMA,
+   - above 200DMA if enough history.
+4. Penalize high volatility / deep drawdown.
+5. Rank ETFs.
+6. Allocate to top 1-3 ETFs.
+7. If no ETF passes trend filters, hold cash/cash-like bucket.
+8. Avoid rebalancing unless allocation drift exceeds threshold.
+9. Save a report and paper-track results.
+
+### VM / Static-IP Requirement
+
+| Usage | VM / Static IP Needed? | Reason |
+|---|---|---|
+| Scanner-only with public data | No | No Kite API. |
+| Scanner using Kite data | Yes | Kite Connect app IP whitelist applies. |
+| Manual ETF orders | No for the tool | User executes outside the API. |
+| API-based CNC execution | Yes | Same Kite/static-IP requirement as Phase 2. |
+| VM running forever | No | Weekly/monthly scheduled run is enough. |
+
+### Modes
+
+| Mode | Command | Behaviour |
+|---|---|---|
+| Scanner-only | `python main.py --mode rotate --scan` | Ranks ETFs and prints target allocation. |
+| Paper portfolio | `python main.py --mode rotate --paper` | Tracks hypothetical rebalances. |
+| Plan | `python main.py --mode rotate --plan` | Prints buy/sell quantities for manual execution. |
+| Assisted execution | `python main.py --mode rotate --execute` | Places CNC ETF orders after confirmation. |
+
+### Rotation Rules To Consider
+
+| Rule | Starting Point |
+|---|---|
+| Momentum score | Weighted 1M + 3M + 6M return. |
+| Trend eligibility | Must be above 50DMA; optional 200DMA filter. |
+| Max holdings | Top 1-3 ETFs. |
+| Min allocation | Avoid tiny positions that create DP/charge noise. |
+| Min holding period | Avoid churn; e.g. no rebalance before 2-4 weeks unless risk-off. |
+| Drift threshold | Rebalance only when target/current allocation differs enough. |
+| Risk-off state | Move to cash/cash-like bucket if all candidates fail trend filter. |
+| Liquidity | Prefer liquid ETFs even if a niche ETF scores better. |
+
+### Costs / Tax Considerations
+
+- Delivery brokerage is zero at Zerodha for retail equity delivery, but statutory
+  charges still exist.
+- DP charges apply on sell per ISIN.
+- Low turnover is central to the edge.
+- Gains are capital gains, not speculative intraday income.
+- ETF rotation P&L must be tracked separately from intraday MIS reports.
+
+### Data / DB / Reporting Needed
+
+| Component | Purpose |
+|---|---|
+| ETF universe config | Defines eligible ETFs and liquidity constraints. |
+| `rotation_signals` table | Stores every rebalance recommendation. |
+| `rotation_positions` table | Tracks paper and live ETF allocations. |
+| `reports/rotation/` | Weekly/monthly allocation reports. |
+| Dashboard panel | Rotation equity curve vs NIFTY buy-and-hold. |
+
+Fields to store:
+
+- ETF symbol,
+- score components,
+- rank,
+- target allocation,
+- actual allocation,
+- rebalance reason,
+- gross/net P&L,
+- benchmark return.
+
+### Build Steps
+
+1. Add ETF universe config.
+2. Build ETF historical price loader.
+3. Build momentum/trend ranking engine.
+4. Build target allocation calculator.
+5. Add paper portfolio tracking.
+6. Add reports under `reports/rotation/`.
+7. Add dashboard comparison vs NIFTY and swing scanner.
+8. Add CNC execution only after paper tracking proves useful.
+
+### Promotion Criteria
+
+Do not enable live execution until the scanner has at least:
+
+| Metric | Threshold |
+|---|---|
+| Paper period | 2-3 months minimum. |
+| Rebalance count | 4+ completed review cycles. |
+| Benchmark | Beats NIFTY buy-and-hold on risk-adjusted basis. |
+| Max drawdown | Lower than NIFTY over the same period. |
+| Churn | Low enough that DP/statutory charges do not dominate. |
 
 ---
 
-### F6. Multi-Asset Signal Correlation
+## Out Of Scope / Removed From Ideation
 
-**What it is**: Use signals from related instruments to confirm equity trades.
+These were previously mentioned or tempting, but are now explicitly rejected
+under the 2026-04-28 constraints.
 
-**Examples**:
-- Gold rising + NIFTY falling = risk-off regime, reduce long exposure.
-- USD/INR spike = negative for IT stocks (sentiment is risk-off).
-- Crude oil move = impacts OMCs and airlines.
-- Bond yields rising = negative for growth stocks, positive for banks.
-
-**Why future**: Requires multi-asset data feeds. Correlations are regime-dependent. Needs significant historical analysis first.
+| Idea | Reason |
+|---|---|
+| Options chain signals | F&O-linked; no longer allowed. |
+| Expiry-day PCR/max-pain/OI logic | F&O-linked; no longer allowed. |
+| High-OI stock filter from options data | F&O-linked; no longer allowed. |
+| Covered calls on existing holdings | F&O and touches long-term holdings. |
+| Futures/options hedge engine | F&O; out of scope. |
+| Options strategy lab | F&O; out of scope. |
+| Pledged collateral / margin workflows | Mostly useful for F&O; out of scope. |
+| Pairs trading with short/futures leg | Requires shorting/F&O/SLB complexity; not aligned now. |
+| MTF swing trading | Adds interest drag; avoid until cash-only systems prove edge. |
 
 ---
 
 ## Summary Table
 
 | # | Feature | Category | Impact | Effort | Depends On |
-|---|---------|----------|--------|--------|------------|
-| 1 | ML Scoring Model | **V3** | High | High | Backtesting (Roadmap #24) |
-| 2 | Options Chain Signals | **V3** | High | Medium | -- |
-| 3 | Claude for News/Sentiment | **V3** | High | Medium | News data source |
-| 4 | Order Book Depth | **V3** | High | Medium | WebSocket (Roadmap #44) ideally |
-| F1 | RL Position Management | **Future** | High | Very High | V3 ML + 1000+ trades |
-| F2 | Interactive Terminal Mode | **Future** | Medium | Medium | Cross-platform key handling |
-| F3 | Options Chain Intelligence (Expiry Days) | **Future** | Medium | Medium | Kite options API |
-| F4 | High-OI Stock Filter (Expiry Days) | **Future** | Low | Medium | Depends on F3 |
-| F5 | Pairs Trading | **Future** | Medium | High | Historical cointegration data |
-| F6 | Multi-Asset Signals | **Future** | Medium | High | Multi-asset data feeds |
+|---|---|---|---|---|---|
+| A1 | V3 AI Intraday Research | Existing V3 | High | High | Backtesting #24 + 200-500 labelled trades/candidates |
+| A2 | Delivery Swing Trading Engine | New Money Engine | High | Medium | Daily candle scanner + paper ledger + CNC support |
+| A3 | ETF Rotation Engine | New Money Engine | Medium-High | Medium | ETF universe + paper ledger + benchmark dashboard |
 
 ---
 
 ## Implementation Order
 
-**V3 (after V2 is stable and generating trade data)**:
-1. Backtesting framework FIRST (V2 Roadmap #24 -- validates everything else)
-2. Options chain signals (new data, no ML dependency)
-3. ML scoring model (needs backtesting to validate, needs trade history)
-4. Claude for news/sentiment (redefines Claude role)
-5. Order book depth (entry timing refinement)
+1. Keep Phase 2 intraday stable; do not add speculative intraday tweaks without
+   evidence.
+2. Build **ETF Rotation scanner** first because it is easiest to backtest and
+   lowest stress.
+3. Build **Delivery Swing scanner** second because it has higher return
+   potential but more stock-specific risk.
+4. Paper-track both for 30-60 days minimum.
+5. Compare:
+   - paper return vs NIFTY,
+   - max drawdown,
+   - number of trades,
+   - charges/tax friction,
+   - time spent,
+   - correlation with existing intraday bot performance.
+6. Promote only the better engine to manual-confirm execution.
+7. Add full VM execution only after manual/live results are stable.
+8. Keep V3 AI Intraday research separate; it depends on backtesting and more
+   labelled trade history.
 
-**Future (after V3 is stable)**:
-1. RL position management (F1)
-2. Interactive terminal mode (F2)
-3. Options-chain intelligence + high-OI filter for expiry days (F3, F4)
-4. Pairs trading (F5)
-5. Multi-asset correlation (F6)
+---
+
+## First MVP Recommendation
+
+Build a recommendation-only mode before adding live execution:
+
+```text
+python main.py --mode opportunities
+```
+
+Sections:
+
+1. ETF rotation candidates.
+2. Delivery swing candidates.
+3. Event/corporate-action watchlist later, if still desired.
+4. Idle cash note later, if useful.
+
+No orders at first. The goal is to discover whether ETF rotation or delivery
+swing has better paper edge before spending engineering time on execution.
