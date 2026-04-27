@@ -42,7 +42,26 @@ from Dashboard.metrics import (
 )
 from Dashboard.render_html import build_payload, render_shell
 from Dashboard.theory_page import render_theory_page
+from Dashboard.tax_page import render_tax_api, render_tax_page_v2
 from Dashboard.verdict import LadderRung, verdict_for
+
+
+def _parse_int(val: str | None) -> int | None:
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_float(val: str | None, default: float = 0.0) -> float:
+    if val is None or val == "":
+        return default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
 
 
 # ── Payload assembly (shared between / and /api/data) ─────────────
@@ -134,6 +153,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             elif url.path.startswith("/theory/"):
                 slug = url.path[len("/theory/"):].strip("/")
                 self._serve_theory(slug)
+            elif url.path == "/tax" or url.path == "/tax/":
+                self._serve_tax(parse_qs(url.query))
+            elif url.path == "/api/tax":
+                self._serve_tax_api(parse_qs(url.query))
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -164,6 +187,40 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         body = render_theory_page(slug or "statistics").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    # — /tax —
+    def _serve_tax(self, qs: dict[str, list[str]]) -> None:
+        fy_start = _parse_int(qs.get("fy", [None])[0])
+        other_income = _parse_float(qs.get("other_income", ["0"])[0], 0.0)
+        is_salaried = (qs.get("is_salaried", ["1"])[0] != "0")
+        body = render_tax_page_v2(
+            other_income=other_income,
+            fy_start=fy_start,
+            is_salaried=is_salaried,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_tax_api(self, qs: dict[str, list[str]]) -> None:
+        fy_start = _parse_int(qs.get("fy", [None])[0])
+        other_income = _parse_float(qs.get("other_income", ["0"])[0], 0.0)
+        is_salaried = (qs.get("is_salaried", ["1"])[0] != "0")
+        payload = render_tax_api(
+            other_income=other_income,
+            fy_start=fy_start,
+            is_salaried=is_salaried,
+        )
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

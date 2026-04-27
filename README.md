@@ -115,6 +115,7 @@ granularity, source toggle), so the CLI is just an entry point.
 - Pending-verification banner lists trading days awaiting Zerodha sheet import.
 - Lives in its own [Dashboard/](Dashboard/) folder, isolated from the trading bot. Touches no strategy/order code; reads only.
 - **Theory & statistics pages** ([`/theory/<slug>`](Dashboard/theory_page.py)) — four reference docs rendered live from `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a theoretical-vs-live snapshot card on top), V2 Strategy reference, Strategy Evolution log, and the India Tax Guide.
+- **Tax page** ([`/tax`](Dashboard/tax_page.py)) — FY-summary + projection. Enter your other FY income; the page computes which slab you fall into under Budget-2025 new-regime rules, applies Section 87A rebate + 4% cess, and shows the headline "tax attributable to intraday this FY" (= total-tax-with-intraday minus total-tax-without). Includes click-to-copy ITR-3 Schedule BP fields, a documents checklist, and a cross-link to the Tax Guide for the regulatory reference. Backed by versioned slabs in [`Dashboard/tax/slabs.py`](Dashboard/tax/slabs.py) — adding a future FY is a one-line config.
 
 ```
 python main.py --mode dashboard                    # interactive (server + browser)
