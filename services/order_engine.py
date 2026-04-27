@@ -3502,6 +3502,20 @@ class OrderEngine:
         if target == entry:
             return False
 
+        # Noise floor (#198 production-data tuning, 2026-04-27).
+        # Without this, the rule fires on bid-ask spread / first-minute
+        # fade because the 25%-target-progress test treats any
+        # negative tick as failure. Industry practice: only consider
+        # an early exit if adverse move exceeds typical NSE intraday
+        # spread (~0.10%) by a comfortable margin (4x).
+        min_adverse = float(
+            getattr(self.cfg, "MOMENTUM_KILL_MIN_ADVERSE_PCT", 0.0)
+        )
+        if entry > 0 and min_adverse > 0:
+            adverse_pct = abs(entry - current_price) / entry * 100.0
+            if adverse_pct < min_adverse:
+                return False
+
         # Progress = fraction of distance from entry to target traveled
         # in the trade's favor. Negative when underwater.
         if side == "BUY":

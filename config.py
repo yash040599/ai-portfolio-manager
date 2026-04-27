@@ -1134,14 +1134,32 @@ class Config:
     #   skip if elapsed_seconds > MOMENTUM_KILL_WINDOW_MINUTES*60
     #   skip if pos["_external"]                              (manual / adopted — give grace)
     #   skip if pos.get("_partial_taken")                     (already booking profit; trailing stop owns it)
+    #   compute adverse_pct = |entry - current| / entry * 100  (only on red side)
+    #   skip if adverse_pct < MOMENTUM_KILL_MIN_ADVERSE_PCT     (sub-noise / inside spread)
     #   compute progress = (current - entry) / (target - entry) for BUY (mirrored for SELL)
     #   if progress < MOMENTUM_KILL_MIN_PROGRESS_PCT/100 AND unrealised < 0:
     #     exit at market with reason "MOMENTUM_KILL"
+    #
+    # 2026-04-27 production-data tuning: shipped 2026-04-24 with
+    # grace=60s and no adverse floor. First live day (2026-04-27) the
+    # rule killed 4/4 morning entries on sub-spread micro-moves
+    # (HDFCLIFE killed at -0.018% / Rs.0.11 on Rs.600). Cause: the
+    # 25%-progress-to-target test in the first minute fires on any
+    # negative tick because typical NSE bid-ask + fade is 0.05-0.20%
+    # and the +0.3% favorable bar is mathematically unreachable in
+    # under a minute. Fix: (a) grace 60s -> 180s — first 3 min is
+    # settlement, only hard SL fires (industry standard ORB practice);
+    # (b) new MOMENTUM_KILL_MIN_ADVERSE_PCT = 0.40 — adverse move must
+    # exceed 4x typical NSE intraday spread before kill is even
+    # considered. Both gates must trip with the existing 25% progress
+    # test as a third filter. On 2026-04-27 data this would have
+    # killed zero trades.
     # Kill-switch: MOMENTUM_KILL_ENABLED.
     MOMENTUM_KILL_ENABLED:           bool  = True
-    MOMENTUM_KILL_GRACE_SECONDS:     int   = 60   # let order settle / spread tighten
-    MOMENTUM_KILL_WINDOW_MINUTES:    int   = 3
+    MOMENTUM_KILL_GRACE_SECONDS:     int   = 180  # 3-min settlement window (industry std)
+    MOMENTUM_KILL_WINDOW_MINUTES:    int   = 5
     MOMENTUM_KILL_MIN_PROGRESS_PCT:  float = 25.0  # at least 25% of way to target
+    MOMENTUM_KILL_MIN_ADVERSE_PCT:   float = 0.40  # noise floor: adverse move must exceed this %
 
     # ── Realised-P&L Recovery from Prior-Session Fills (#203) ─────
     # On restart after a crash, load_existing_positions only adopts
@@ -1763,6 +1781,7 @@ class Config:
                 f"must be < MOMENTUM_KILL_WINDOW_MINUTES*60 "
                 f"({cls.MOMENTUM_KILL_WINDOW_MINUTES * 60})"
             )
+        _pos("MOMENTUM_KILL_MIN_ADVERSE_PCT", cls.MOMENTUM_KILL_MIN_ADVERSE_PCT)
         if not (0 <= cls.MOMENTUM_KILL_MIN_PROGRESS_PCT <= 100):
             errors.append(
                 f"MOMENTUM_KILL_MIN_PROGRESS_PCT must be in [0, 100]: "
