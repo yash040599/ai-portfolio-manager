@@ -3172,11 +3172,20 @@ class OrderEngine:
         
         self._log_action("EXIT", symbol, exit_side, qty, exit_price, reason)
 
-        # Track consecutive SL hits for whipsaw guard
+        # Track consecutive losing exits for whipsaw guard (#20 + #244).
+        # Pre-#244 only STOP_LOSS counted; today's MOMENTUM_KILL streak
+        # bypassed the guard. Now any pnl<0 exit (excluding EOD/operator
+        # reasons) also feeds the counter when the kill-switch is on.
         if reason == "STOP_LOSS":
             self.record_sl_hit()
         elif pnl > 0:
             self.record_profitable_close()
+        elif (
+            pnl < 0
+            and getattr(self.cfg, "LOSS_STREAK_INCLUDE_NON_SL_LOSSES", False)
+            and reason in ("MOMENTUM_KILL", "STAGNANT_EXIT", "SIGNAL_DECAY", "LOSER_EXIT")
+        ):
+            self.record_sl_hit()
 
     # ================================================================
     # PARTIAL EXIT — EXIT SUBSET OF SHARES
@@ -4185,14 +4194,21 @@ class OrderEngine:
     # ================================================================
 
     def record_sl_hit(self):
-        """Called after a stop-loss exit. Increments consecutive SL counter."""
+        """Called after a losing exit. Increments consecutive-loss counter.
+
+        Despite the legacy name, this counts more than just hard SL hits
+        when `Config.LOSS_STREAK_INCLUDE_NON_SL_LOSSES` is True (#244 —
+        also counts MOMENTUM_KILL / STAGNANT_EXIT / SIGNAL_DECAY /
+        LOSER_EXIT classes of loss). Function name retained because
+        external callers (sync path, manager loops) reference it.
+        """
         self._consecutive_sl_count += 1
         limit = self.cfg.CONSECUTIVE_SL_PAUSE_COUNT
         if limit > 0 and self._consecutive_sl_count >= limit:
             pause_min = self.cfg.CONSECUTIVE_SL_PAUSE_MINUTES
             self._sl_pause_until = time.time() + pause_min * 60
             self.log.warning(
-                f"WHIPSAW GUARD: {self._consecutive_sl_count} consecutive SL hits — "
+                f"LOSS-STREAK GUARD: {self._consecutive_sl_count} consecutive losing exits — "
                 f"pausing new entries for {pause_min} min"
             )
 

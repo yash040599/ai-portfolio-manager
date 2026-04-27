@@ -259,10 +259,21 @@ _SHELL_TEMPLATE = r"""<!doctype html>
       </select>
     </div>
     <button id="apply">Apply</button>
-    <button class="alt preset" data-preset="fy">This FY</button>
-    <button class="alt preset" data-preset="month">This month</button>
-    <button class="alt preset" data-preset="7d">Last 7d</button>
-    <button class="alt preset" data-preset="30d">Last 30d</button>
+    <div>
+      <label for="preset">Quick range</label>
+      <select id="preset">
+        <option value="">Custom — use From / To above</option>
+        <option value="fy0">This FY</option>
+        <option value="fy-1">Previous FY</option>
+        <option value="fy-2">FY before previous</option>
+        <option value="month">This month</option>
+        <option value="lastmonth">Last month</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+        <option value="all">All time</option>
+      </select>
+    </div>
   </div>
 
   <div class="card verdict" id="verdict-card">…</div>
@@ -610,26 +621,43 @@ function rebucket(cum, gran) {
 }
 
 document.getElementById("apply").addEventListener("click", refresh);
-document.querySelectorAll(".preset").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const today = new Date();
-    const fmt = d => d.toISOString().slice(0,10);
-    const from = document.getElementById("from"), to = document.getElementById("to");
-    if (btn.dataset.preset === "fy") {
-      const y = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
-      from.value = y + "-04-01"; to.value = (y+1) + "-03-31";
-    } else if (btn.dataset.preset === "month") {
-      from.value = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
-      to.value   = fmt(today);
-    } else if (btn.dataset.preset === "7d") {
-      const d = new Date(today); d.setDate(d.getDate()-6);
-      from.value = fmt(d); to.value = fmt(today);
-    } else if (btn.dataset.preset === "30d") {
-      const d = new Date(today); d.setDate(d.getDate()-29);
-      from.value = fmt(d); to.value = fmt(today);
-    }
-    refresh();
-  });
+document.getElementById("preset").addEventListener("change", (ev) => {
+  const v = ev.target.value;
+  if (!v) return;  // "Custom" — leave From/To untouched
+  const today = new Date();
+  const fmt = d => d.toISOString().slice(0, 10);
+  const from = document.getElementById("from");
+  const to   = document.getElementById("to");
+  // Indian FY: Apr 1 → Mar 31. fy0 = current FY, fy-1 = previous, fy-2 = the one before.
+  if (v.startsWith("fy")) {
+    const offset = parseInt(v.slice(2), 10) || 0;  // "fy0" → 0, "fy-1" → -1, "fy-2" → -2
+    const baseY = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+    const y = baseY + offset;
+    from.value = y + "-04-01";
+    to.value   = (y + 1) + "-03-31";
+  } else if (v === "month") {
+    from.value = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+    to.value   = fmt(today);
+  } else if (v === "lastmonth") {
+    const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const last  = new Date(today.getFullYear(), today.getMonth(), 0);  // day 0 of this month = last day of prev
+    from.value = fmt(first);
+    to.value   = fmt(last);
+  } else if (v === "7d") {
+    const d = new Date(today); d.setDate(d.getDate() - 6);
+    from.value = fmt(d); to.value = fmt(today);
+  } else if (v === "30d") {
+    const d = new Date(today); d.setDate(d.getDate() - 29);
+    from.value = fmt(d); to.value = fmt(today);
+  } else if (v === "90d") {
+    const d = new Date(today); d.setDate(d.getDate() - 89);
+    from.value = fmt(d); to.value = fmt(today);
+  } else if (v === "all") {
+    // Earliest plausible trade date for this project (well before first live run).
+    from.value = "2020-01-01";
+    to.value   = fmt(today);
+  }
+  refresh();
 });
 
 render(INITIAL);

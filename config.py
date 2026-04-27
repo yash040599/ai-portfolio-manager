@@ -1293,13 +1293,29 @@ class Config:
     #   2 = trip → cooldown → resume → trip again → done.
     MAX_CIRCUIT_BREAKER_TRIPS: int = 2
 
-    # ── Consecutive SL Pause ──────────────────────────────────────
-    # CONSECUTIVE_SL_PAUSE_COUNT: after this many consecutive SL hits
-    #   (across any stocks), pause new entries for CONSECUTIVE_SL_PAUSE_MIN.
-    #   Protects against whipsaw days when signals fail repeatedly.
+    # ── Consecutive Loss Pause (Roadmap #20 + #244 broadening) ────
+    # CONSECUTIVE_SL_PAUSE_COUNT: after this many consecutive losing
+    #   exits (across any stocks), pause new entries for
+    #   CONSECUTIVE_SL_PAUSE_MINUTES. Protects against whipsaw days when
+    #   signals fail repeatedly.
     #   Set to 0 to disable.
+    #
+    # 2026-04-27 broadening (#244): pre-#244 the counter only fired on
+    # `STOP_LOSS` exits. Today's session 1 lost 4 of 4 morning trades to
+    # `MOMENTUM_KILL` (now noise-floored by #233) — the whipsaw guard
+    # never fired because the counter ignored MOMENTUM_KILL / STAGNANT_EXIT
+    # / SIGNAL_DECAY / LOSER_EXIT classes of loss. Industry standard
+    # (prop-firm risk frameworks) is to count *any* losing exit, not just
+    # hard-SL hits. Kill-switch `LOSS_STREAK_INCLUDE_NON_SL_LOSSES`
+    # below; flip to False for one-line revert to STOP_LOSS-only behaviour.
     CONSECUTIVE_SL_PAUSE_COUNT: int = 3
     CONSECUTIVE_SL_PAUSE_MINUTES: int = 30
+
+    # When True, MOMENTUM_KILL / STAGNANT_EXIT / SIGNAL_DECAY / LOSER_EXIT
+    # exits with `pnl < 0` also feed the consecutive-loss counter. EOD
+    # reasons (SQUARE_OFF / CIRCUIT_BREAKER) and operator/external closes
+    # are excluded — they are not strategy failures.
+    LOSS_STREAK_INCLUDE_NON_SL_LOSSES: bool = True
 
     # ── Dynamic Score Threshold ───────────────────────────────────
     # After losses, raise the minimum score for new NoAI trades.

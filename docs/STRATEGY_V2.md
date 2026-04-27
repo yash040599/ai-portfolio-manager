@@ -158,6 +158,19 @@
   All eight references reconciled to 40; cleaned a stray "rather than
   reaching the entry pipeline" table-cell artefact in row 14d. No
   behavioural change.
+
+  2026-04-27 sync — Whipsaw guard scope broadening (#244). Pre-#244
+  the consecutive-loss counter (#20) only fired on `STOP_LOSS` exits.
+  Today's session-1 lost 4 consecutive morning trades (HAL/LODHA/GAIL/
+  HDFCLIFE) to `MOMENTUM_KILL` (now noise-floored by #233) — the
+  whipsaw guard never fired. Industry standard (prop-firm risk
+  frameworks) is to count any losing exit. New kill-switch
+  `LOSS_STREAK_INCLUDE_NON_SL_LOSSES = True` makes MOMENTUM_KILL /
+  STAGNANT_EXIT / SIGNAL_DECAY / LOSER_EXIT with `pnl < 0` also feed
+  the counter; EOD (SQUARE_OFF / CIRCUIT_BREAKER) and operator/external
+  closes excluded. Log message updated `WHIPSAW GUARD` →
+  `LOSS-STREAK GUARD`. Removal trigger logged as #244R: revert if the
+  broader counter blocks net-positive trades on > 2 of 10 days.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -344,7 +357,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | Term | Plain-English meaning | How the bot uses it |
 |------|----------------------|---------------------|
 | **Circuit breaker** | Automatic "stop trading" trigger when daily loss exceeds 3% of budget. | Pauses 30 min, resumes with loss-adjusted budget. Max 2 trips, then day is done. |
-| **Whipsaw** | Getting stopped out repeatedly by rapid reversals. | 3 consecutive SL exits → pause new entries for 30 min. |
+| **Whipsaw** | Getting stopped out repeatedly by rapid reversals. | 3 consecutive losing exits (any reason except EOD/operator close, post-#244) → pause new entries for 30 min. |
 | **Time decay** | The fact that late-day trades have less time to hit targets. | After 2 PM, open targets compressed by 25%. |
 | **Adopted position** | A position the bot did **not** open (you opened it manually, or bot restarted mid-day). | Skips time-decay and loser-exit for 10 min (user's intent respected). |
 | **Stagnant exit** | Closing a trade that hasn't moved meaningfully toward target. | NoAI-only, two-tier: at 45 min exit if adverse (>0.2% loss) or dead-flat (±0.1% band); at 90 min exit if progress to target <20%. See [§Stagnant Position Exit](#stagnant-position-exit-noai-only). |
@@ -489,7 +502,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 **At any time:**
 
 20. **Circuit breaker** (hard). Day P&L < -3% of budget (measured since last baseline reset) → close ALL positions, pause 30 min, resume with loss-adjusted budget. Max 2 trips/day.
-21. **Whipsaw pause.** 3 consecutive SL hits → pause new entries for 30 min.
+21. **Whipsaw pause.** 3 consecutive losing exits (STOP_LOSS, MOMENTUM_KILL, STAGNANT_EXIT, SIGNAL_DECAY, or LOSER_EXIT with `pnl < 0`; EOD/operator/external closes excluded) → pause new entries for 30 min. Pre-#244 only counted STOP_LOSS hits, which missed today's MOMENTUM_KILL streak.
 
 #### 🕝 2:45 PM — Late-day loser exit
 
@@ -839,7 +852,9 @@ Normal risk management (software SL/target, trailing stop, stagnant exit, square
 
 ### Whipsaw Guard
 
-3 consecutive SL exits (`CONSECUTIVE_SL_PAUSE_COUNT`) → pause new entries for 30 minutes (`CONSECUTIVE_SL_PAUSE_MINUTES`). Counter resets on profitable close.
+3 consecutive losing exits (`CONSECUTIVE_SL_PAUSE_COUNT`) → pause new entries for 30 minutes (`CONSECUTIVE_SL_PAUSE_MINUTES`). Counter resets on profitable close.
+
+Post-#244 (2026-04-27) the counter is fed by ANY losing exit — STOP_LOSS, MOMENTUM_KILL, STAGNANT_EXIT, SIGNAL_DECAY, or LOSER_EXIT with `pnl < 0`. EOD reasons (SQUARE_OFF / CIRCUIT_BREAKER) and operator/external closes are excluded — they are not strategy failures. Kill-switch `LOSS_STREAK_INCLUDE_NON_SL_LOSSES` (default `True`); flip to `False` for one-line revert to STOP_LOSS-only behaviour. Logs as `LOSS-STREAK GUARD: N consecutive losing exits`.
 
 ### Loss-Adjusted Budget
 

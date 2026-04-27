@@ -13,8 +13,10 @@
 >    target during the early-development weeks, so these numbers are
 >    directional, not deterministic.
 >
-> Last theoretical update: **2026-04-27** (after Roadmap #243 R:R-floor
-> collapse — no expected-value impact, all paths already used 1.3 floor).
+> Last theoretical update: **2026-04-27** (after Roadmap #244 —
+> whipsaw counter broadened to count any losing exit, not just
+> STOP_LOSS; closes coverage gap exposed when today's session-1 lost
+> 4-in-a-row to MOMENTUM_KILL with the guard never firing).
 
 ---
 
@@ -194,6 +196,7 @@ This is the table we **update on every strategy change**.
 | Average-down prevention (#195) | Hard reject | +0.02 | −4 % | Blocks low-conviction re-entries |
 | Stagnant Tier-1/2 exits (#172) | Exit rule | +0.04 | −3 % | Cuts dead positions, frees capital |
 | Momentum kill (#198/#233) | Exit rule | +0.03 | −5 % | Cuts trend-flip losers early |
+| Loss-streak guard (#20 + #244 broadening) | Risk mgmt | 0 | −4 % | Pauses 30 min after 3 consecutive losing exits (any reason); cuts whipsaw-day tail |
 | TARGET_DECAY_PCT (post-1pm tightening on open positions) | Exit rule | +0.02 | −2 % | Protects afternoon profits |
 | Late-entry score bump (+1.0, #239) | Hard reject | +0.02 | −2 % | Raises bar for limited-time-to-target trades |
 | 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |

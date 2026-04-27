@@ -515,7 +515,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Peak-drawdown stop** — blocks new entries when day P&L gives back ≥1.5% from intraday peak.
 - **MTM-aware circuit breaker** — circuit breaker, soft-stop, and peak-drawdown all include open-position unrealised MTM (not just closed P&L), so blowups are caught while positions are still open.
 - **Choppy-morning entry pause** — auto-pauses new entries (15 min, sliding) when NIFTY 15-min ADX prints weak (<16) for 3 consecutive scans in 09:30–10:30 IST AND ≥2 recent exits were STAGNANT/SIGNAL_DECAY. Re-arms each session.
-- **Whipsaw guard** — pauses entries after 3 consecutive SL hits.
+- **Whipsaw guard** — pauses entries after 3 consecutive losing exits (post-#244 broadening: any of STOP_LOSS, MOMENTUM_KILL, STAGNANT_EXIT, SIGNAL_DECAY, or LOSER_EXIT with `pnl < 0`; EOD/operator closes excluded).
 - **Per-symbol re-entry cooldown** — 30 min on same `SYMBOL_SIDE`.
 - **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped, decayed below 60% of the scan-time score, OR (#199) lost magnitude (`|fresh| + 0.3 < |entry|`) — catches the slow-bleed setups the magnitude-only floor missed.
 - **Post-entry momentum kill (#198, retuned by #233)** — exits at market between 3 and 5 min after fill if the trade is unrealised-loss, has moved adversely by ≥0.40% (≈4× typical NSE intraday spread), AND has covered <25% of the entry→target distance. Caps slow-bleed losers at ~-0.4% instead of waiting for the -1.1% SL hit. The 3-min grace + adverse-move floor were added on 2026-04-27 after the original 60s/no-floor settings killed 4/4 morning entries on sub-spread micro-moves.
