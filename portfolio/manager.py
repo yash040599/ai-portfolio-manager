@@ -772,7 +772,7 @@ class PortfolioManager:
             confirmed = self._stale_score_filter(confirmed, delay)
             if not confirmed:
                 self.log.warning(
-                    "All entries dropped by stale-score guard (#196) — "
+                    "All entries dropped by stale-score guard — "
                     "scores decayed during observation"
                 )
                 return
@@ -914,7 +914,7 @@ class PortfolioManager:
         dropped = len(trades) - len(survivors)
         if dropped > 0:
             self.log.info(
-                f"Stale-score guard (#196): dropped {dropped} of {len(trades)} "
+                f"Stale-score guard: dropped {dropped} of {len(trades)} "
                 f"entries after {wait_minutes}-min observation"
             )
         return survivors

@@ -3538,7 +3538,7 @@ class OrderEngine:
             f"Rs.{current_price:.2f} | progress {progress*100:+.1f}% "
             f"(< {self.cfg.MOMENTUM_KILL_MIN_PROGRESS_PCT:.0f}%) after "
             f"{elapsed_min:.1f} min | Unrealised Rs.{unrealised:+,.2f} — "
-            f"exiting at small loss (#198)"
+            f"exiting at small loss"
         )
         # Use live current_price as the exit (no SL gaming — we want
         # the actual market exit). exit_position handles charges + book.

@@ -221,7 +221,8 @@ class PortfolioManagerV2(PortfolioManager):
             patterns = ", ".join(ps["patterns"][:4]) if ps["patterns"] else "-"
 
             score = r["combined_score"]
-            passed = abs(score) >= self.cfg.V2_MIN_SCORE
+            min_score = self.engine.effective_min_score()
+            passed = abs(score) >= min_score
 
             marker = "*" if passed else " "
             print(
@@ -232,7 +233,10 @@ class PortfolioManagerV2(PortfolioManager):
             )
 
         # ── Step 6: Show filtered candidates ──────────────────────
-        filtered = [s for s in scored if abs(s["combined_score"]) >= self.cfg.V2_MIN_SCORE]
+        # Use effective_min_score so --test output reflects budget regime
+        # delta (BUDGET_MIN_SCORE_DELTA) — same threshold as live scan.
+        min_score = self.engine.effective_min_score()
+        filtered = [s for s in scored if abs(s["combined_score"]) >= min_score]
 
         # Apply sector diversification (same as real scan)
         sector_diversified = []

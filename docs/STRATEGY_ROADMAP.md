@@ -48,18 +48,17 @@ This document is the **history log** of every strategy improvement, the **backlo
 
 ## Status Overview
 
-### Pending (6 items)
+### Pending (5 items)
 
 Sorted by priority (HIGH → MEDIUM → LOW), then impact desc, then effort asc.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|------------|----------|--------|--------|
-| 204 | **Hot-key (Ctrl+T) graceful trading pause without square-off** — a console keypress stops new entries immediately while leaving open positions running on their existing exchange SL-M / target orders. Today the only kill is Ctrl+C which terminates the manager process; that DOES leave SL-M orders on the exchange but kills the monitor loop, so trailing-stop tightening, signal-decay exits, momentum kill, and time-decay all stop firing. User wants a softer brake: "stop opening new trades, but let what's open finish naturally with the bot still managing them." Implementation sketch: Windows-friendly non-blocking keyboard read in the manager loop (msvcrt.kbhit on Windows / select on POSIX) sets `self._entries_paused = True`; `enter_trade()` checks this flag at the very top and returns early with a logged "trading paused (Ctrl+T) — N positions still managed" message; same hotkey toggles back. Needs careful interaction with existing pauses (soft-stop, choppy-morning, lunch-lull) — the user-pause should take precedence and survive their lifting | MEDIUM | Medium | Medium |
-| 144 | Bracket orders — atomic entry + SL + target as one linked order | MEDIUM | High | High |
-| 44 | WebSocket tick data — real-time SL/target vs 10s polling | MEDIUM | High | High |
-| 158 | Regime-shift opportunity window — after NIFTY flips, pause stagnant-exit for 30–60 min and allow aligned re-entries | LOW | Medium | Low |
-| 216 | **Intraday correlation-flip detector** — most NIFTY100 stocks have ~0.7–0.9 rolling correlation to NIFTY on a normal trading day. When a stock's intraday rolling correlation drops below ~0.5 (or sign-flips negative), it usually signals either a sector rotation or a stock-specific catalyst — pro desks treat the divergence itself as confirmation. We currently have no such gate or flag. Implementation: in `services/technical_indicators.py`, add a rolling 15-min correlation between the candidate's 1-min returns and NIFTY's 1-min returns; expose as `corr_flip` flag on the indicator snapshot when correlation drops by ≥ 0.3 vs the day's baseline. Two consumption paths: (a) gentle: add as a tiebreaker score boost (+0.5) for the side aligned with the divergence direction; (b) aggressive: hard-block contra-divergence entries below score 6.5. Kill-switch: `CORR_FLIP_DETECTOR_ENABLED`. Analyst rationale: catches 1–2 false breakouts per week where a stock's correlation to NIFTY inverts and pro desks fade the consensus side | LOW | Low | Low |
-| 24 | Backtesting framework — replay V2 scoring on historical data | LOW | Highest | High |
+| 204 | **Hot-key (Ctrl+T) graceful trading pause without square-off** — a console keypress stops new entries immediately while leaving open positions running on their existing exchange SL-M / target orders. Today the only kill is Ctrl+C which terminates the manager process; that DOES leave SL-M orders on the exchange but kills the monitor loop, so trailing-stop tightening, signal-decay exits, momentum kill, and time-decay all stop firing. User wants a softer brake: "stop opening new trades, but let what's open finish naturally with the bot still managing them." Implementation sketch: Windows-friendly non-blocking keyboard read in the manager loop (msvcrt.kbhit on Windows / select on POSIX) sets `self._entries_paused = True`; `enter_trade()` checks this flag at the very top and returns early with a logged "trading paused (Ctrl+T) — N positions still managed" message; same hotkey toggles back. Needs careful interaction with existing pauses (soft-stop, choppy-morning, lunch-lull) — the user-pause should take precedence and survive their lifting. **Why not now (analyst pass 2026-04-27):** quality-of-life upgrade, not a profitability fix. Ctrl+C is a functional emergency stop and exchange SL-M orders survive it; the unmanaged-window risk only matters if user wants to attend to other things while bot keeps managing existing trades. Ship after the higher-impact items below clear or after the user reports a real Ctrl+C scenario. | MEDIUM | Medium | Medium |
+| 144 | Bracket orders — atomic entry + SL + target as one linked order. **Why not now (analyst pass 2026-04-27):** strictly-better order safety but high effort. Current 3-leg approach + #148 orphan-SL-M reconciliation + #210 double-fire guard already cover 99% of crash-recovery cases. Promote when (a) we observe an unrecoverable orphan event, OR (b) we move to a higher trade-frequency profile where atomic ordering reduces operational toil. | MEDIUM | High | High |
+| 44 | WebSocket tick data — real-time SL/target vs 10s polling. **Why not now (analyst pass 2026-04-27):** exchange SL-M (#60, #152) already gives instant SL execution at the exchange level — the 10s polling latency only affects target hits and trailing-stop ratchets, both of which give back at most 0.1-0.2% on outliers. The effort is high (new connection lifecycle, reconnect logic, tick-buffer management) and the alpha is small until trade frequency multiplies. | MEDIUM | High | High |
+| 216 | **Intraday correlation-flip detector** — most NIFTY100 stocks have ~0.7–0.9 rolling correlation to NIFTY on a normal trading day. When a stock's intraday rolling correlation drops below ~0.5 (or sign-flips negative), it usually signals either a sector rotation or a stock-specific catalyst — pro desks treat the divergence itself as confirmation. We currently have no such gate or flag. Implementation: in `services/technical_indicators.py`, add a rolling 15-min correlation between the candidate's 1-min returns and NIFTY's 1-min returns; expose as `corr_flip` flag on the indicator snapshot when correlation drops by ≥ 0.3 vs the day's baseline. Two consumption paths: (a) gentle: add as a tiebreaker score boost (+0.5) for the side aligned with the divergence direction; (b) aggressive: hard-block contra-divergence entries below score 6.5. Kill-switch: `CORR_FLIP_DETECTOR_ENABLED`. Analyst rationale: catches 1–2 false breakouts per week where a stock's correlation to NIFTY inverts and pro desks fade the consensus side. **Why not now (analyst pass 2026-04-27):** sophisticated edge but requires backtesting (#24) to validate the +0.5 weight — shipping it blind risks adding noise to combined_score. Promote once #24 lands and confirms hit-rate uplift on the historical sample. | LOW | Low | Low |
+| 24 | Backtesting framework — replay V2 scoring on historical data. **Why not now (analyst pass 2026-04-27):** highest long-term impact item on the board but high effort. Existing `scripts/rejection_audit.py` (#177) + `scripts/view_performance.py` cover most calibration questions on the live trade ledger. Full framework gets unblocked once we genuinely need to A/B parameter sweeps without burning live capital — likely after the live ledger crosses ~200 trades and the 80/20 calibration questions are exhausted. | LOW | Highest | High |
 
 ### Pending — Awaiting Trade Data (10 items)
 
@@ -94,7 +93,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 5. **If the trigger has NOT been met**, do nothing — do not nag, do not partially implement, do not lower the threshold. Just note the current count in your review summary so progress is visible (e.g. "#175: 4 / 10 lunch-lull entries collected").
 6. **If new evidence makes an item obviously wrong** (e.g. lunch-lull 6.0-6.9 trades outperform 7.0+), say so and propose moving it to **Removed** with the reason.
 
-### Removed (9 items — not worth implementing)
+### Removed (10 items — not worth implementing)
 
 | # | Item | Reason |
 |---|------|--------|
@@ -107,8 +106,9 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 57 | VWAP exclude incomplete candle | Negligible impact on cumulative VWAP. VWAP SD bands smooth noise |
 | 89 | Increase circuit breaker to 4% | Config change, not a feature. Edit `MAX_LOSS_PER_DAY_PCT` in config.py |
 | 175 | Lunch-lull score floor RAISE (6.0 → 7.0) | Counter-evidence won. Three consecutive days of `rejection_audit.py` (2026-04-22/23/24) showed lunch-lull is net-NEGATIVE: 3-day Avoided Rs.1,649 vs Missed Rs.2,656 = net **−Rs.1,007** at 1-slot hypothetical sizing. The floor was too HIGH, not too low. #221 LOWERED the floor 6.0 → 5.7 instead. |
+| 158 | Regime-shift opportunity window — pause stagnant-exit + allow aligned re-entries for 30–60 min after a NIFTY flip | Analyst pass 2026-04-27. Every desk-trader playbook treats a regime flip as *step-out-and-let-volatility-settle*, not as a window to chase aligned entries. Pausing stagnant-exit on positions held under the OLD regime adds risk to the wrong side of the flip; opening fresh aligned positions during the chop window of a flip locks in entries at the worst R:R. Marginal alpha not worth the dev surface or the conceptual exception. Existing regime-shift-protect (SL tightening on contraries) keeps the defensive half of the original idea. |
 
-### Completed (200 items)
+### Completed (201 items)
 
 > Grouped by category, not by review date. Items keep their original numbers (don't renumber — commit messages and other docs reference them). Counts are by **declared Category column** below, not by section position — some legacy rows physically sit under a different section header but still tally to their declared category. Re-grouping is deferred (high-churn cosmetic edit).
 
@@ -135,7 +135,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 61 | SuperTrend configurable (7, 2.0 for intraday) | Indicators |
 | 94 | StochRSI for entry timing (info-only) | Indicators |
 | 95 | Sector momentum filter (±0.5 boost) | Indicators |
-| **Risk Management (66)** | | |
+| **Risk Management (67)** | | |
 | 5 | NIFTY trend hard filter (against-trend needs ≥3) | Risk |
 | 8 | Sector diversification (max 2/sector) | Risk |
 | 14 | Stagnant position exit (NoAI, 45 min) | Risk |
@@ -320,6 +320,7 @@ Whenever you review this roadmap (during a code review, end-of-day analysis, wee
 | 238 | **Charge-multiple bump 2.0 → 3.0 (gate 18a).** Analyst pass calibration. With `MIN_PROFIT_CHARGE_MULTIPLE=2.0` the rule guaranteed only 1× charges as cushion for slippage — which is exactly the expected NSE first-minute slippage on a liquid NIFTY100 entry, leaving zero true-profit cushion. Bumped to 3.0 so the rule guarantees 2× charges of cushion (industry retail-intraday rule of thumb). Together with #237 this restores a real charge-cushion floor for both absolute (≥ Rs.135) and relative (≥ 3× charges) views of the same edge. No new helper needed — the multiple is already proportional to charges, which scale with trade value, so it is naturally budget-adaptive. | Risk |
 | 239 | **Late-entry score bump 0.5 → 1.0.** Analyst pass calibration. Today's session-2 entries (HINDZINC/ADANIENSOL/HINDALCO at 10:27) all passed the +0.5 bump and all faded — the bump was too gentle to materially change which trades cleared the bar. Post-10:00 trades have less than half the session left; the bar should be visibly higher, not marginally higher. Single-line config bump (`LATE_ENTRY_MIN_SCORE_BUMP = 0.5 → 1.0`); existing gate 18d ([order_engine.py:1690](../services/order_engine.py#L1690)) consumes the new value with no code change. Stacks on top of regime/loss bumps as before. | Risk |
 | 240 | **SMALL-regime trade-cap tightening (-2 → -4).** Analyst pass calibration. Math: at Rs.50K budget the per-trade charge hurdle is ~0.27% — sustaining 10+ trades/day at that hurdle requires a >55% win rate that the live ledger has not yet demonstrated. With base `MAX_TRADES_PER_DAY=12` the SMALL delta of −2 yielded a cap of 10; tightened to −4 → cap of 8, matching TINY. NORMAL (0) and LARGE (+3) unchanged — once slot value clears Rs.30-40K the charge hurdle drops below 0.10% and the original cap math holds. Today's run (14 trades, −Rs.351 net, 7% win rate) was a textbook over-trading day; this single change forces fewer-and-better at small budgets. | Risk |
+| 241 | **Document afternoon-entry conservatism as intentional.** Surfaced by analyst pass 2026-04-27. `RR_HARD_FLOOR = 1.3` (#225, all-day) combined with `LATE_TARGET_CUT_PCT_1=20` (after 1 PM) and `LATE_TARGET_CUT_PCT_2=25` (after 2 PM) means default-ATR trades (raw R:R = `RR_TARGET_RATIO = 1.5`) get cut to 1.20 (afternoon) or 1.125 (late) — both below the 1.3 hard floor → REJECTED. The only afternoon entries that pass are those where Claude returns a custom SL/target with raw R:R ≥ 1.625 (afternoon) or ≥ 1.733 (late). This is a coherent design — pro desks treat the lower-edge afternoon window with elevated bar — but it was an emergent consequence of two independent gates rather than an explicit policy. No code change; this entry is the documentation that future reviewers should read before "fixing" what looks like a bug. The two clean alternatives (drop late-target cut to 0, or lower hard floor to 1.2 in afternoon) were both considered and rejected: the current behavior is the correct one for a small-budget intraday account where every afternoon LOSER_EXIT eats 60-90% of the next morning's edge. | Risk |
 
 ---
 
@@ -350,11 +351,9 @@ stubs here; they bloat the Pending list and slow review.
 - **Fix**: Use Zerodha WebSocket (up to 3000 instruments) for real-time tick data on open position symbols. SL/target checks on every tick.
 - **Note**: Exchange SL-M orders (#60) already handle instant SL execution. WebSocket mainly improves target hits and trailing SL responsiveness.
 
-### 158. Regime-Shift Opportunity Window
-- **Priority**: LOW (small but non-zero alpha)
-- **Today**: When NIFTY flips (e.g., morning BEARISH → afternoon BULLISH), regime-shift-protect tightens SLs on contrary positions but we do not actively look for **aligned** new entries. Meanwhile, stagnant-exit keeps firing on slow-positive trades entered under the old regime.
-- **Fix**: For `REGIME_OPPORTUNITY_WINDOW_MINUTES` (default 30-60) after a flip: (a) pause stagnant-exit on positions aligned with the new regime, (b) lower the score threshold slightly for same-direction re-entries, (c) skip sector-cap for one aligned entry. Log a clear "REGIME OPPORTUNITY" banner.
-- **Effort**: Low. Config + a timestamp on regime change + gating in `check_stagnant_positions` and the entry path.
+### 158. Regime-Shift Opportunity Window — REMOVED (analyst pass 2026-04-27)
+
+Moved to **Removed** below. Rationale: every desk-trader playbook treats a NIFTY regime flip as a *step-out-and-let-volatility-settle* signal, not a window to chase aligned re-entries. Pausing stagnant-exit on positions held under the OLD regime adds risk to the wrong side of the flip; opening fresh aligned positions during the chop window of a flip locks in entries at the worst possible R:R. Marginal alpha not worth the conceptual complexity or the dev/test surface.
 
 ### 216. Intraday Correlation-Flip Detector
 - **Priority**: LOW

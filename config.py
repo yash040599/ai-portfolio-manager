@@ -1068,8 +1068,9 @@ class Config:
     # when the entry-tick pattern set contains a bearish reversal
     # (BEARISH_ENGULFING, EVENING_STAR, BEARISH_HARAMI, SHOOTING_STAR,
     # HANGING_MAN, THREE_BLACK_CROWS) — and vice-versa for SELL with
-    # the bullish set. Today's PNB BUY @ +6.1 with BEARISH_ENGULFING
-    # and TRENT BUY @ +6.4 with BEARISH_ENGULFING both stagnated.
+    # the bullish set. Live observations (2026-04-21): PNB BUY @ +6.1
+    # with BEARISH_ENGULFING and TRENT BUY @ +6.4 with
+    # BEARISH_ENGULFING both stagnated.
     #
     # Gate: if entry-tick patterns include an opposite-side reversal
     # AND |score| < PATTERN_VETO_OVERRIDE_SCORE, skip the entry.
@@ -1081,8 +1082,9 @@ class Config:
     # Patterns currently flow into combined_score as raw additive
     # contributions. Two failure modes were observed live:
     #   (a) Indecision noise: DOJI is a NEUTRAL candle (indecision).
-    #       It tells us "no commitment" yet today its weight survives
-    #       into a directional verdict. NESTLEIND scored +5.6
+    #       It tells us "no commitment" yet its weight currently
+    #       survives into a directional verdict. Live observation
+    #       (2026-04-21): NESTLEIND scored +5.6
     #       STRONG_BUY with both BEARISH_ENGULFING and DOJI present.
     #   (b) Direct contradiction: a bearish reversal pattern on a BUY
     #       verdict (or vice-versa) means the chart is *already*
@@ -1129,8 +1131,8 @@ class Config:
     # When the bot joins the market mid-session (or scans late after
     # all morning candidates closed), the remaining session is
     # shorter and the high-edge moves of the day have already played
-    # out. Late entries are *higher* risk yet today the entry pipeline
-    # actually relaxes: observation floor drops to 5 min ("opening
+    # out. Late entries are *higher* risk yet the entry pipeline
+    # currently relaxes: observation floor drops to 5 min ("opening
     # volatility passed"), R:R floor stays the same. We invert this:
     # past LATE_ENTRY_HOUR (default 10:00 IST), demand a strictly
     # better-than-base score for fresh entries.
@@ -1148,12 +1150,12 @@ class Config:
     # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
     LATE_ENTRY_TIGHTENING_ENABLED: bool  = True
     LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
-    # #239 (analyst pass, 2026-04-27): 0.5 → 1.0. Today's session-2
-    # entries (HINDZINC/ADANIENSOL/HINDALCO at 10:27) all passed the
-    # +0.5 bump and all faded — the bump was too gentle to materially
-    # change which trades clear the bar. Post-10:00 trades have less
-    # than half the session left; they need a visibly higher bar, not
-    # marginally higher.
+    # #239 (analyst pass, 2026-04-27): 0.5 → 1.0. The 2026-04-27
+    # session-2 entries (HINDZINC/ADANIENSOL/HINDALCO at 10:27) all
+    # passed the +0.5 bump and all faded — the bump was too gentle
+    # to materially change which trades clear the bar. Post-10:00
+    # trades have less than half the session left; they need a
+    # visibly higher bar, not marginally higher.
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 1.0
 
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
@@ -1218,9 +1220,9 @@ class Config:
     # ── Session-time-aware RVol normalization (Roadmap #147) ────
     # NSE intraday volume is U-shaped: heavy 09:15-10:30, light 11:00-
     # 13:00, heavy 13:30-15:30. The scanner's prorated RVol divides
-    # today's volume so far by the linear time fraction — which over-
-    # estimates expected midday volume and under-estimates morning/
-    # close volume. The 0.7× entry floor was calibrated on full-day
+    # the day's volume so far by the linear time fraction — which
+    # over-estimates expected midday volume and under-estimates
+    # morning/close volume. The 0.7× entry floor was calibrated on full-day
     # average and rejects valid trades during the lunch trough.
     #
     # Approach: scale the 0.7 floor by an hour-bucket multiplier.
