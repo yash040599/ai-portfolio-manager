@@ -24,14 +24,18 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 7. **Skip Bug Fix rows.** If the matching Roadmap row's category is `Bug Fix`, do **not** add it here — it stays in the Roadmap only.
 
 ### Good rows
-| 164 | Execution | Skip new entries between 11:30 and 12:15 IST unless the signal is very strong (\|score\| ≥ 5.7). Lunch hour is the choppiest window. |
+```
+| 164 | Execution | Skip new entries between 11:30 and 12:15 IST unless the signal is very strong (|score| ≥ 5.7). Lunch hour is the choppiest window. |
 | 217 | Risk | On NSE early-close days (e.g. Diwali Muhurat) the bot squares off before 13:30 instead of the usual 15:10. |
 | 220 | Risk | If a whole sector turns sharply against us inside one scan, tighten stop-losses on every open position in that sector right away. |
+```
 
 ### Bad rows (don't write like this)
+```
 | X | Risk | `_check_vix_spike()` reads `engine._vix_spike_active` after `set_vix_spike(True)` — see manager_v2.py L547 |
 | X | Bug Fix | Fixed crash in `_update_exchange_sl` when broker times out |
 | X | Risk | Stale-SL-M re-attribution + idempotent transactional cancel-replace inside _sector_cascade_protect |
+```
 
 > **Source of truth:** `STRATEGY_ROADMAP.md` (Completed section). When you ship a strategy item, add a row here in the same commit, following the rules above.
 > Last regenerated: 2026-04-26. Items: 142 strategy rows (#1 → #225). Bug-fix rows are intentionally excluded; see `STRATEGY_ROADMAP.md` for the full Bug Fix log.

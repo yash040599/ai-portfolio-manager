@@ -5,6 +5,7 @@ Routes:
     /theory/statistics          -> docs/STRATEGY_STATISTICS.md (+ live stats summary card)
     /theory/v2-strategy         -> docs/STRATEGY_V2.md
     /theory/evolution           -> docs/STRATEGY_EVOLUTION.md
+    /theory/tax-guide           -> docs/TAX_GUIDE.md (regulatory reference for the /tax page)
 
 UI: shared shell with a "Docs" dropdown selector at top-right for
 quick switching, plus a "Dashboard (Live P&L)" link back to home.
@@ -32,6 +33,7 @@ PAGES: dict[str, tuple[str, str, bool]] = {
     "statistics":  ("Statistical Analysis",             "STRATEGY_STATISTICS.md", True),
     "v2-strategy": ("V2 Strategy — Complete Reference", "STRATEGY_V2.md",         False),
     "evolution":   ("Strategy Evolution",               "STRATEGY_EVOLUTION.md",  False),
+    "tax-guide":   ("Tax Guide (India — Intraday)",     "TAX_GUIDE.md",           False),
 }
 
 DEFAULT_PAGE = "statistics"
@@ -50,7 +52,9 @@ _BLOCKQUOTE_RE    = re.compile(r"^>\s?(.*)$")
 _CODE_FENCE_RE    = re.compile(r"^```")
 _HTML_COMMENT_RE  = re.compile(r"<!--.*?-->", re.DOTALL)
 _MATH_BLOCK_RE    = re.compile(r"^\s*\$\$(.+?)\$\$\s*$", re.DOTALL)
-_MATH_INLINE_RE   = re.compile(r"\$([^$\n]+?)\$")
+_MATH_INLINE_RE   = re.compile(r"(?<!\\)\$([^$\n]+?)(?<!\\)\$")
+# Standard markdown escapes we honour: \| \$ \* \_ \` \\ \# \[ \] \( \)
+_MD_ESCAPE_RE     = re.compile(r"\\([|$*_`\\#\[\]()<>])")
 
 
 def _inline(text: str) -> str:
@@ -58,6 +62,7 @@ def _inline(text: str) -> str:
     out = html.escape(text, quote=False)
     out = _INLINE_RE_CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
     # Inline math: stash raw TeX in a data-tex attribute; KaTeX renders client-side.
+    # The regex above already skips \$ so authors can write a literal dollar sign.
     out = _MATH_INLINE_RE.sub(
         lambda m: f'<span class="math-inline" data-tex="{html.escape(m.group(1), quote=True)}"></span>',
         out,
@@ -68,15 +73,25 @@ def _inline(text: str) -> str:
     )
     out = _INLINE_RE_BOLD.sub(lambda m: f"<strong>{m.group(1)}</strong>", out)
     out = _INLINE_RE_ITAL.sub(lambda m: f"<em>{m.group(1)}</em>", out)
+    # Strip backslash from MD escapes last so the literal char survives the
+    # earlier regex passes (e.g. \| stays a pipe in the cell text).
+    out = _MD_ESCAPE_RE.sub(r"\1", out)
     return out
+
+
+# Splits a markdown table row on un-escaped pipes only ("\|" → literal pipe).
+_PIPE_PLACEHOLDER = "\x00ESC_PIPE\x00"
 
 
 def _render_table(header_line: str, body_lines: list[str]) -> str:
     def cells(line: str) -> list[str]:
         line = line.strip()
+        # Protect escaped pipes so they don't split the row.
+        line = line.replace(r"\|", _PIPE_PLACEHOLDER)
         if line.startswith("|"): line = line[1:]
         if line.endswith("|"):   line = line[:-1]
-        return [c.strip() for c in line.split("|")]
+        parts = [c.strip().replace(_PIPE_PLACEHOLDER, r"\|") for c in line.split("|")]
+        return parts
 
     header_cells = cells(header_line)
     rows_html = []

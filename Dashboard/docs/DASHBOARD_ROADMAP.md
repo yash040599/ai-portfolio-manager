@@ -7,6 +7,15 @@
 >
 > **Status:** Phase 3 — D1 + D1.1 shipped 2026-04-23. Interactive HTML dashboard live (Chart.js SPA + stdlib HTTP server, in-page date / granularity / source controls, per-day budget from trading reports). D2–D23 pending.
 >
+> **Companion Theory pages (shipped 2026-04-27):** `/theory/<slug>`
+> renders four reference docs as HTML with KaTeX math and the §0 live
+> snapshot card. Routes registered in
+> [`Dashboard/theory_page.py::PAGES`](../theory_page.py):
+> `statistics` (STRATEGY_STATISTICS.md), `v2-strategy` (STRATEGY_V2.md),
+> `evolution` (STRATEGY_EVOLUTION.md), `tax-guide` (TAX_GUIDE.md). The
+> upcoming `/tax` page (D17) links into `tax-guide` for the regulatory
+> reference, keeping the workflow page lean.
+>
 > **Location:** all dashboard code, docs, templates, and tests live
 > under the top-level `Dashboard/` folder, isolated from the trading
 > bot. Trading bot remains the source of truth for the SQLite DB and
