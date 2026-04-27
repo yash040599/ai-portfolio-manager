@@ -461,6 +461,19 @@ python main.py --mode login           # picks ASSISTED if KITE_USER_ID+PASSWORD 
 
 ### Daily operation
 
+One-command bring-up (recommended) — does `git pull`, pulls the latest
+data from the backup repo (`--all-remote`, auto-confirmed), and starts
+`--mode trade --noai --max 50000`:
+
+```bash
+ssh azureuser@<vm-ip>
+cd ai-portfolio-manager
+tmux new -s bot                       # detach with Ctrl+B, D
+./scripts/start_trade_vm.sh           # or pass overrides: ./scripts/start_trade_vm.sh --ai --max 30000
+```
+
+Step-by-step (if you want to see each phase):
+
 ```bash
 ssh azureuser@<vm-ip>
 cd ai-portfolio-manager
