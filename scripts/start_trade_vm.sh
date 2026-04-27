@@ -9,10 +9,13 @@
 #   python scripts/backup_data.py --ssh --all-remote   (answer y)
 #   python main.py --mode trade --noai --max 50000
 #
-# Usage (on the VM):
-#   ./scripts/start_trade_vm.sh                # defaults: --noai --max 50000
-#   ./scripts/start_trade_vm.sh --ai           # forward any extra flag to main.py
-#   ./scripts/start_trade_vm.sh --max 30000    # override budget
+# Usage (on the VM — from anywhere, including the home directory):
+#   ./ai-portfolio-manager/scripts/start_trade_vm.sh                 # defaults: --noai --max 50000
+#   ./ai-portfolio-manager/scripts/start_trade_vm.sh --ai            # forward any extra flag to main.py
+#   ./ai-portfolio-manager/scripts/start_trade_vm.sh --max 30000     # override budget
+#
+# The script cd's into the project root and activates the venv itself,
+# so you do NOT need to `cd` or `source venv/bin/activate` first.
 #
 # Any args passed to this script are forwarded verbatim to `main.py --mode trade`,
 # replacing the defaults. Pass nothing for the standard run.
