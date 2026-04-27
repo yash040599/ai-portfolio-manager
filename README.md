@@ -99,7 +99,7 @@ python main.py --mode trade           # NoAI (default)
 python main.py --mode trade --ai      # with Claude
 ```
 
-### Phase 3 — Profitability dashboard (D1 + D1.1 shipped 2026-04-23)
+### Phase 3 — Profitability dashboard (D1 + D1.1 + D13 shipped)
 
 A dedicated **read-only analytics layer** that answers one question:
 *"is the bot profitable enough to scale capital?"*. Default launch
@@ -107,8 +107,8 @@ starts a local web server and opens an interactive page in the
 browser — the **webpage itself is the config surface** (date range,
 granularity, source toggle), so the CLI is just an entry point.
 
-- Defaults to current Indian FY (Apr 1 → Mar 31); presets for FY / month / 7d / 30d, plus from/to date pickers.
-- Two charts (Chart.js via CDN, zero new Python deps): cumulative net P&L (line, daily) + per-bucket P&L (bar, daily/weekly/monthly switchable).
+- Defaults to current Indian FY (Apr 1 → Mar 31); a single Quick-range dropdown covers This FY / Previous FY / FY before previous / This month / Last month / Last 7d / Last 30d / Last 90d / All time, plus from/to date pickers.
+- Two charts (Chart.js via CDN, zero new Python deps): cumulative net P&L (line, daily) + per-bucket P&L (bar, daily/weekly/monthly switchable). Cumulative chart overlays a thin dashed vertical line at every trading day where the bot's git SHA changed (D13, shipped 2026-04-27); hover shows the commit subject so you can visually correlate strategy ships with equity-curve inflections. Toggle off via `Config.DASHBOARD_STRATEGY_VERSION_OVERLAY = False`.
 - Capital-ladder traffic-light verdict (GREEN / AMBER / RED / GREY) — D1 minimum-viable rules; D6 will plug in win-rate / profit-factor / max-DD / weeks-required gates.
 - Source toggle: **all trades** (verified + provisional, the default) or **verified only** (T+1 frozen, tax-grade). Provisional rows are clearly badged so they can never be mistaken for final numbers.
 - `% of budget` is computed against the **per-day budget actually deployed** (read from each day's `reports/trading/.../trading_data_DD.json` → `config.budget`), not a static config value — matters because `--max` varies day to day.
@@ -124,7 +124,7 @@ python main.py --mode dashboard --text             # legacy plain-text
 python main.py --mode dashboard --port 8765        # fixed port
 ```
 
-Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + theory-pages done; D2–D23 pending).
+Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory-pages done; D2–D12, D14–D23 pending).
 
 ### Historical candle cache
 

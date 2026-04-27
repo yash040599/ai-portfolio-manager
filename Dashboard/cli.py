@@ -149,6 +149,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # --no-open: write static HTML snapshot.
     from Dashboard.render_html import build_payload, render_shell, write_and_maybe_open
+    from Dashboard.strategy_versions import strategy_shas, boundaries
+    overlay_enabled = bool(getattr(Config, "DASHBOARD_STRATEGY_VERSION_OVERLAY", True))
+    sv_boundaries: list[dict] = []
+    if overlay_enabled:
+        try:
+            sv_boundaries = boundaries(strategy_shas(date_from, date_to))
+        except Exception:
+            sv_boundaries = []
     payload = build_payload(
         date_from           = date_from,
         date_to             = date_to,
@@ -161,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
         bucketed            = bucketed_pnl(trades, "daily"),
         cumulative          = cumulative_series(trades),
         include_provisional = include_provisional,
+        strategy_boundaries = sv_boundaries,
+        strategy_overlay_enabled = overlay_enabled,
     )
     html_str = render_shell(payload, server_mode=False)
     out_path = write_and_maybe_open(html_str, date_to=date_to, open_browser=False)

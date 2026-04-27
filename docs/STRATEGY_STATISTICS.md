@@ -114,9 +114,9 @@ the central design constraint behind every gate.
 
 ### 2.3 Gate-by-gate edge contribution (theoretical)
 
-The pre-trade pipeline currently runs **41 sequential gates** (post #225
-late-entry simplification, see [STRATEGY_V2.md](STRATEGY_V2.md)). Each gate
-is one of three types:
+The pre-trade pipeline currently runs **40 sequential gates** (post #225
+late-entry simplification + #243 R:R-floor collapse, see [STRATEGY_V2.md](STRATEGY_V2.md)).
+Each gate is one of three types:
 
 | Gate type | Role | EV impact (theoretical) |
 |---|---|---|
@@ -130,7 +130,7 @@ chop-tape filter and an ADX filter overlap). A reasonable model is:
 $$W_{\text{conditional}} = W_{\text{base}} + \sum_{i=1}^{N} \alpha_i \cdot (1 - \rho_i)$$
 
 where $\alpha_i$ is the marginal lift per gate (typically 0.5–1.5 % win-rate
-points) and $\rho_i$ is its overlap with prior gates. With 41 gates and an
+points) and $\rho_i$ is its overlap with prior gates. With 40 gates and an
 average marginal lift of ≈ 0.4 %-points (after overlap discount), we expect
 a conditional win rate **lift of 8–15 %-points** over the unfiltered base.
 
@@ -179,7 +179,7 @@ This is the table we **update on every strategy change**.
 
 | Strategy / Gate | Type | Δ EV (R/trade) | Δ MDD | Notes |
 |---|---|---|---|---|
-| Score floor (≥ 6.5 default) | Hard reject | +0.06 | −5 % | Removes weakest 30 % of candidates |
+| Score floor (`V2_MIN_SCORE = 2.0`, budget-adjusted: TINY +1.0, SMALL +0.5; late-entry +1.0 after 10:00 IST) | Hard reject | +0.06 | −5 % | Removes weakest candidates after pattern + technical scoring; budget regime tightens it on small accounts |
 | ATR-multiplier SL + RR_TARGET_RATIO=1.5 | R:R structure | +0.04 | −3 % | Sets the asymmetric bet shape |
 | RR_HARD_FLOOR=1.3 (post #243) | Hard reject | +0.05 | −2 % | Floor below which no trade fires |
 | ADX threshold (per-stock + chop floor) | Hard reject | +0.04 | −8 % | Avoids range-bound P&L bleeders |

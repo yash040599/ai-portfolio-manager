@@ -112,6 +112,17 @@ def compute_payload(
     bucketed   = bucketed_pnl(trades, granularity)
     cumulative = cumulative_series(trades)
 
+    # Roadmap D13 / V2 #246 — strategy-version overlay (boundary days
+    # where the bot's git SHA changed). Read-only; failure-silent.
+    from Dashboard.strategy_versions import strategy_shas, boundaries
+    overlay_enabled = bool(getattr(Config, "DASHBOARD_STRATEGY_VERSION_OVERLAY", True))
+    sv_boundaries: list[dict] = []
+    if overlay_enabled:
+        try:
+            sv_boundaries = boundaries(strategy_shas(d_from, d_to))
+        except Exception:  # never let dashboard fall over for an overlay
+            sv_boundaries = []
+
     return build_payload(
         date_from           = d_from,
         date_to             = d_to,
@@ -124,6 +135,8 @@ def compute_payload(
         bucketed            = bucketed,
         cumulative          = cumulative,
         include_provisional = include_provisional,
+        strategy_boundaries = sv_boundaries,
+        strategy_overlay_enabled = overlay_enabled,
     )
 
 

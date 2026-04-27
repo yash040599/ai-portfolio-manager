@@ -1550,7 +1550,7 @@ class OrderEngine:
          10.  Late-entry target reduction (13:00 / 14:00 cutoffs)
          11.  R:R floor check (time-based, adaptive relaxation)
          12.  Minimum profit check (must cover round-trip charges)
-         13.  Charge-aware target floor (#162) — gross target ≥ 2× charges
+         13.  Charge-aware target floor (#162, retuned by #238) — gross target ≥ 3× charges
          14.  Slippage simulation (dry-run only)
          15.  Budget cap
          16.  Max positions cap

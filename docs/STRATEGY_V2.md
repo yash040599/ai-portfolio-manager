@@ -305,8 +305,8 @@ This is the single place to look up any unfamiliar term used in the rest of the 
 | Term | Plain-English meaning | How the bot uses it |
 |------|----------------------|---------------------|
 | **Stop-Loss (SL)** | Pre-set "exit now" price to cap loss. | Every trade has an SL computed from ATR. |
-| **Target** | Pre-set "take profit" price. | Every trade has a target; also compressed late in the day. |
-| **R:R ratio** | Risk-to-Reward. `(target distance) / (SL distance)`. 1.5:1 = you risk Rs.1 to potentially win Rs.1.50. | Minimum R:R floor gates entries (1.3 in morning, 1.0 late). |
+| **Target** | Pre-set "take profit" price. | Every trade has a target; honoured uniformly across the trading day (#242 removed late-day target compression). |
+| **R:R ratio** | Risk-to-Reward. `(target distance) / (SL distance)`. 1.5:1 = you risk Rs.1 to potentially win Rs.1.50. | Minimum R:R floor gates entries (uniform `RR_HARD_FLOOR = 1.3` all day; #243 collapsed the morning-vs-late split). |
 | **Trailing stop** | An SL that moves up as the trade profits, locking in gains. | At 1.5× risk profit, take 33% off the table + move SL to lock 50% of gain. |
 | **Drawdown** | Temporary dip in account value. | Circuit breaker stops trading if daily loss > 3% of budget. |
 | **ATR** | Average True Range. Measures recent price swing size (volatility). | SL = entry ± `1.5 × ATR`; wider for volatile stocks, tighter for calm ones. |
@@ -467,7 +467,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 > **Charge-aware gates:**
 >
 > - **Net R:R ≥ 1.0:1** after round-trip charges. A gross 1.5:1 often becomes 0.9:1 on small qty.
-> - 🆕 **Gross target ≥ 2× round-trip charges** (Roadmap #162). Prevents the "Rs.10 target, Rs.4 charge → Rs.6 net" trap. Log: `"IRCTC: gross target profit Rs.12.00 < 2.0× round-trip charges Rs.8.50 — target too thin after costs. Skipping."`
+> - 🆕 **Gross target ≥ 3× round-trip charges** (Roadmap #162, retuned by #238). Prevents the "Rs.10 target, Rs.4 charge → Rs.6 net" trap, and after #238 leaves ~2× charges as a slippage cushion on every trade. Log: `"IRCTC: gross target profit Rs.12.00 < 3.0× round-trip charges Rs.8.50 — target too thin after costs. Skipping."`
 >
 > **Acceptance:** When every check above returns "yes", you see `"✓ {symbol}: ALL CHECKS PASSED [regime=NORMAL] — BUY 5x @ Rs.1,234.50 | SL Rs.1,221.00 (1.1%) | Target Rs.1,255.00 (1.7%) | Cost Rs.6,173"`. The bot then places the LIMIT entry, waits up to 8s, falls back to MARKET if unfilled, and finally places the exchange SL-M.
 
@@ -758,7 +758,7 @@ Every trade must pass these 40 checks in order. If any fails, the trade is rejec
 | 17d | **VWAP statistical-band gate** (#201) | `VWAP_BAND_GATE_ENABLED = True`, override `VWAP_BAND_OVERRIDE_SCORE = 7.0` | Reads `vwap_band` classification (`AT_UPPER_2SD` / `AT_UPPER_1SD` / `INSIDE` / `AT_LOWER_1SD` / `AT_LOWER_2SD`) from the entry-tick indicator snapshot. Block BUY when price sits at upper 1σ/2σ band and SELL when at lower 1σ/2σ. Stricter than 17b's % distance check because bands adapt to today's realised volatility; complementary defence (both can act). Override at \|score\| ≥ 7.0 (intentionally above 17b's 6.0 — only the strongest convictions justify chasing a statistical extension). Fails open if snapshot/band field missing |
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
-| 18a | **Charge-aware target multiple** (#162) | `MIN_PROFIT_CHARGE_MULTIPLE = 2.0` | After net R:R passes, reject when gross target profit < 2× round-trip charges. Ensures at least 1× charges as cushion for slippage |
+| 18a | **Charge-aware target multiple** (#162, retuned by #238) | `MIN_PROFIT_CHARGE_MULTIPLE = 3.0` | After net R:R passes, reject when gross target profit < 3× round-trip charges. Ensures ~2× charges as cushion for slippage |
 | 18b | **Gap-coherence gate** (#173) | `GAP_COHERENCE_GATE_ENABLED = True`, override `GAP_COHERENCE_OVERRIDE_SCORE = 7.5` | Reject `BUY` on `GAP_DOWN_STRONG` and `SELL` on `GAP_UP_STRONG` (entry direction contradicts overnight institutional flow) unless `\|score\| ≥ 7.5`. Only acts on the high-conviction STRONG gaps; WEAK / `NO_GAP` not gated. Fails open when the indicator snapshot is missing/malformed |
 | 18c | **Circuit-limit (UC/LC) entry guard** (#180) | `CIRCUIT_LIMIT_GUARD_ENABLED = True`, `CIRCUIT_LIMIT_BUFFER_PCT = 1.0` | Reject `BUY` when intraday move ≥ +(20 - buffer)% from prev close, `SELL` when ≤ -(20 - buffer)%. Within 1% of the ±20% daily freeze the order book becomes one-sided — SL-M can't fill, MIS auto-square at 15:20 takes a distressed price. Fails open when `ohlc.close` missing in the live quote |
 | 18d | **Late-entry score-floor bump** (#202, simplified by #225, retuned by #239) | `LATE_ENTRY_TIGHTENING_ENABLED = True`, `LATE_ENTRY_HOUR = 10`, `LATE_ENTRY_MIN_SCORE_BUMP = 1.0` | After `LATE_ENTRY_HOUR` (10:00 IST), reject when `\|score\| < effective_min_score() + 1.0`. Stacks on top of regime/loss bumps. Tightens late entries because the remaining session is shorter — weak setups have less runway to play out. (Bump raised 0.5 → 1.0 by #239 after first live day showed +0.5 was too gentle; the original #202 also added a late-only R:R floor and a late-only concurrent-positions cap, both removed by #225 — the R:R guard now lives in always-on `RR_HARD_FLOOR`, and concurrency is fully owned by `dynamic_max_positions(budget)` all day.) |

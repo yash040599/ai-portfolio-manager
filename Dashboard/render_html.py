@@ -42,6 +42,8 @@ def build_payload(
     bucketed: list[tuple[str, float, int]],
     cumulative: list[tuple[str, float]],
     include_provisional: bool,
+    strategy_boundaries: list[dict] | None = None,
+    strategy_overlay_enabled: bool = True,
 ) -> dict:
     """Shape the JSON the page consumes.
 
@@ -84,6 +86,10 @@ def build_payload(
         "charts": {
             "bucketed":   [{"label": l, "net_pnl": p, "trades": n} for l, p, n in bucketed],
             "cumulative": [{"date":  d, "cum":     v}             for d, v    in cumulative],
+        },
+        "strategy_overlay": {
+            "enabled":    bool(strategy_overlay_enabled),
+            "boundaries": list(strategy_boundaries or []),
         },
         "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M IST"),
     }
@@ -366,7 +372,7 @@ function render(payload) {
 
   document.getElementById("bucket-title").textContent =
     "Net P&L per " + w.granularity + " bucket";
-  drawCum(payload.charts.cumulative);
+  drawCum(payload.charts.cumulative, payload.strategy_overlay);
   drawBucket(payload.charts.bucketed);
   // Filter changed -> any open day-detail is now stale; collapse it.
   closeDayDetail();
@@ -400,8 +406,40 @@ function render(payload) {
   }
 }
 
-function drawCum(series) {
+function drawCum(series, overlay) {
   if (cumChart) cumChart.destroy();
+  overlay = overlay || {enabled:false, boundaries:[]};
+  const boundaryByDate = {};
+  if (overlay.enabled) {
+    for (const b of (overlay.boundaries || [])) boundaryByDate[b.date] = b;
+  }
+  // Custom Chart.js plugin: thin grey vertical line at every date in
+  // `boundaryByDate`. Drawn after the dataset so the line sits above
+  // the area fill but below the tooltip / hover point. Roadmap D13.
+  const versionLinePlugin = {
+    id: "strategyVersionLines",
+    afterDatasetsDraw(chart) {
+      if (!overlay.enabled) return;
+      const xScale = chart.scales.x, yScale = chart.scales.y;
+      if (!xScale || !yScale) return;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.strokeStyle = "rgba(80,80,80,0.45)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      const labels = chart.data.labels || [];
+      for (let i = 0; i < labels.length; i++) {
+        if (boundaryByDate[labels[i]]) {
+          const x = xScale.getPixelForValue(i);
+          ctx.beginPath();
+          ctx.moveTo(x, yScale.top);
+          ctx.lineTo(x, yScale.bottom);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    },
+  };
   cumChart = new Chart(document.getElementById("cum-chart"), {
     type: "line",
     data: {
@@ -417,9 +455,20 @@ function drawCum(series) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          afterLabel: ctx => {
+            const b = boundaryByDate[ctx.label];
+            if (!b) return "";
+            const subj = b.subject ? b.subject : "(commit subject not in local git)";
+            return "Strategy version: " + b.sha + "\n" + subj;
+          },
+        } },
+      },
       scales: { y: { ticks: { callback: v => "Rs." + v } } },
     },
+    plugins: [versionLinePlugin],
   });
 }
 function drawBucket(buckets) {

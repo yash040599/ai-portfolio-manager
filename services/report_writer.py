@@ -21,9 +21,44 @@ import re
 import json
 import glob
 import datetime
+import subprocess
 
 from config      import Config, now_ist
 from core.logger import Logger
+
+
+# Roadmap D13 / V2 #246 — git SHA at session start, stamped into
+# trading_data_DD.json so the dashboard can overlay strategy-version
+# boundaries on the cumulative-P&L chart. Cached per-process: every
+# session save in the same Python invocation reuses the value (a single
+# bot run cannot have changed its own checkout mid-session).
+_GIT_SHA_CACHE: str | None = None
+_GIT_SHA_RESOLVED: bool = False
+
+
+def _git_short_sha() -> str | None:
+    """Return the short SHA of HEAD, or None if git is unavailable.
+
+    Failure modes that return None: git not on PATH, not a git repo,
+    detached/empty repo, or any non-zero exit. Never raises.
+    """
+    global _GIT_SHA_CACHE, _GIT_SHA_RESOLVED
+    if _GIT_SHA_RESOLVED:
+        return _GIT_SHA_CACHE
+    _GIT_SHA_RESOLVED = True
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        ).strip()
+        _GIT_SHA_CACHE = out or None
+    except (FileNotFoundError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired, OSError):
+        _GIT_SHA_CACHE = None
+    return _GIT_SHA_CACHE
 
 
 class ReportWriter:
@@ -748,6 +783,7 @@ class ReportWriter:
                 "max_positions": self.cfg.MAX_POSITIONS,
                 "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
                 "target_pct":    self.cfg.DEFAULT_TARGET_PCT,
+                "git_sha":      _git_short_sha(),
             },
             "positions":  positions,
             "trade_log":  trade_log,

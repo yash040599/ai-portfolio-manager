@@ -480,6 +480,15 @@ class Config:
     # This is purely a review aid; never changes positions.
     REJECTION_AUDIT_ENABLED:     bool  = True
 
+    # Dashboard cumulative-P&L chart overlays a thin vertical line
+    # at every trading day where the bot's git SHA changed vs the
+    # previous day, with a hover tooltip showing the commit subject.
+    # Visual proof of when a strategy change inflected the equity
+    # curve. Roadmap D13 + V2 #246. Read by `Dashboard/render_html.py`
+    # via `Dashboard/strategy_versions.py`. Set False to hide overlay
+    # without breaking anything else (data still recorded either way).
+    DASHBOARD_STRATEGY_VERSION_OVERLAY: bool = True
+
     # ── Adopted / External Position Handling ─────────────────────
     # When the bot picks up a position it did not originate
     # (load_existing_positions → RESUMED, sync_external_positions
