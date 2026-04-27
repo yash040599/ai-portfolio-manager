@@ -125,8 +125,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         try:
             if url.path == "/":
                 self._serve_shell()
-            elif url.path == "/theory":
-                self._serve_theory()
+            elif url.path == "/theory" or url.path == "/theory/":
+                # Redirect to default theory page so the dropdown reflects state.
+                from Dashboard.theory_page import DEFAULT_PAGE
+                self.send_response(302)
+                self.send_header("Location", f"/theory/{DEFAULT_PAGE}")
+                self.end_headers()
+            elif url.path.startswith("/theory/"):
+                slug = url.path[len("/theory/"):].strip("/")
+                self._serve_theory(slug)
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -153,8 +160,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_theory(self) -> None:
-        body = render_theory_page().encode("utf-8")
+    def _serve_theory(self, slug: str = "") -> None:
+        body = render_theory_page(slug or "statistics").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

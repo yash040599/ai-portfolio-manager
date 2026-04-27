@@ -225,7 +225,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   <nav class="topnav">
     <span class="here">Dashboard (Live P&amp;L)</span>
     <span class="sep">·</span>
-    <a href="/theory">Theory &amp; Statistics →</a>
+    <a href="/theory/statistics">Theory &amp; Statistics →</a>
   </nav>
   <h1>AI Portfolio Manager — Profitability Dashboard</h1>
   <div class="sub" id="window-sub">…</div>

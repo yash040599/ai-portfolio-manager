@@ -1,21 +1,15 @@
-"""Theory page renderer (Roadmap addendum 2026-04-27).
+"""Theory dashboard pages — one route per source doc.
 
-Renders a separate dashboard page at /theory that explains how the
-trading tool works:
+Routes:
+    /theory                     -> redirects to /theory/statistics
+    /theory/statistics          -> docs/STRATEGY_STATISTICS.md (+ live stats summary card)
+    /theory/v2-strategy         -> docs/STRATEGY_V2.md
+    /theory/evolution           -> docs/STRATEGY_EVOLUTION.md
 
-  - V1 vs V2 strategy summary
-  - How they're used (entry pipeline, exit rules)
-  - Theoretical probability of profit (from STRATEGY_STATISTICS.md)
-  - Live reference numbers (from the same DB the home page uses)
-
-Source-of-truth philosophy: this page reads from existing docs
-(STRATEGY_STATISTICS.md, STRATEGY_V2.md, STRATEGY_EVOLUTION.md) at
-request time and renders them as HTML so editing the markdown
-auto-updates the page. No content duplication.
-
-Deps: stdlib only. Markdown rendering is intentionally minimal
-(headings, paragraphs, tables, lists, code, links, blockquotes,
-inline emphasis) to avoid pulling a new package.
+UI: shared shell with a "Docs" dropdown selector at top-right for
+quick switching, plus a "Dashboard (Live P&L)" link back to home.
+The statistics page injects an industry-standard summary card at the
+top showing theoretical-vs-live numbers side-by-side.
 """
 
 from __future__ import annotations
@@ -24,18 +18,26 @@ import html
 import re
 from pathlib import Path
 
+from Dashboard.live_stats import LiveStats, compute_live_stats
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DOCS_DIR = _PROJECT_ROOT / "docs"
 
-_DOCS_TO_RENDER = [
-    ("Statistical Analysis (Theoretical & Live)", "STRATEGY_STATISTICS.md"),
-    ("V2 Strategy — Complete Reference",          "STRATEGY_V2.md"),
-    ("Strategy Evolution — Version History",      "STRATEGY_EVOLUTION.md"),
-]
+
+# ── Page registry ────────────────────────────────────────────────
+
+# slug -> (label, source filename, includes_summary_card)
+PAGES: dict[str, tuple[str, str, bool]] = {
+    "statistics":  ("Statistical Analysis",             "STRATEGY_STATISTICS.md", True),
+    "v2-strategy": ("V2 Strategy — Complete Reference", "STRATEGY_V2.md",         False),
+    "evolution":   ("Strategy Evolution",               "STRATEGY_EVOLUTION.md",  False),
+}
+
+DEFAULT_PAGE = "statistics"
 
 
-# ── Minimal Markdown → HTML ──────────────────────────────────────
+# ── Minimal Markdown -> HTML ─────────────────────────────────────
 
 _INLINE_RE_CODE   = re.compile(r"`([^`]+)`")
 _INLINE_RE_BOLD   = re.compile(r"\*\*([^*]+)\*\*")
@@ -47,14 +49,15 @@ _LIST_RE          = re.compile(r"^(\s*)([-*+]|\d+\.)\s+(.*)$")
 _BLOCKQUOTE_RE    = re.compile(r"^>\s?(.*)$")
 _CODE_FENCE_RE    = re.compile(r"^```")
 _HTML_COMMENT_RE  = re.compile(r"<!--.*?-->", re.DOTALL)
+_MATH_BLOCK_RE    = re.compile(r"^\s*\$\$(.+?)\$\$\s*$", re.DOTALL)
+_MATH_INLINE_RE   = re.compile(r"\$([^$\n]+?)\$")
 
 
 def _inline(text: str) -> str:
     """Render inline markdown after HTML-escaping the raw text."""
     out = html.escape(text, quote=False)
-    # Code first (so * inside backticks isn't bold-ified)
     out = _INLINE_RE_CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
-    # Links — note: target text and href are already escaped
+    out = _MATH_INLINE_RE.sub(lambda m: f'<span class="math-inline">{m.group(1)}</span>', out)
     out = _INLINE_RE_LINK.sub(
         lambda m: f'<a href="{m.group(2)}" target="_blank" rel="noopener">{m.group(1)}</a>',
         out,
@@ -78,11 +81,11 @@ def _render_table(header_line: str, body_lines: list[str]) -> str:
             "<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells(body)) + "</tr>"
         )
     return (
-        '<table class="md-table"><thead><tr>'
+        '<div class="table-scroll"><table class="md-table"><thead><tr>'
         + "".join(f"<th>{_inline(c)}</th>" for c in header_cells)
         + "</tr></thead><tbody>"
         + "".join(rows_html)
-        + "</tbody></table>"
+        + "</tbody></table></div>"
     )
 
 
@@ -113,7 +116,27 @@ def _markdown_to_html(md: str) -> str:
             i += 1
             continue
 
-        # Tables: header followed by separator
+        # Block math: $$...$$
+        if line.lstrip().startswith("$$"):
+            buf = [line]
+            j = i + 1
+            if line.strip() == "$$":
+                while j < len(lines) and lines[j].strip() != "$$":
+                    buf.append(lines[j])
+                    j += 1
+                if j < len(lines):
+                    buf.append(lines[j])
+                    j += 1
+                inner = "\n".join(buf[1:-1])
+            else:
+                m = _MATH_BLOCK_RE.match(line)
+                inner = m.group(1) if m else line.strip().strip("$")
+                j = i + 1
+            out.append('<pre class="math-block"><code>' + html.escape(inner.strip()) + "</code></pre>")
+            i = j
+            continue
+
+        # Tables
         if "|" in line and i + 1 < len(lines) and _TABLE_SEP_RE.match(lines[i + 1]):
             header = line
             j = i + 2
@@ -135,8 +158,6 @@ def _markdown_to_html(md: str) -> str:
                 if m2:
                     quote_lines.append(m2.group(1))
                     j += 1
-                elif lines[j].strip() == "":
-                    break
                 else:
                     break
             out.append("<blockquote>" + _inline(" ".join(quote_lines)) + "</blockquote>")
@@ -151,7 +172,7 @@ def _markdown_to_html(md: str) -> str:
             i += 1
             continue
 
-        # Lists (flat — no nested for our needs)
+        # Lists (flat)
         if _LIST_RE.match(line):
             ordered = bool(re.match(r"^\s*\d+\.", line))
             tag = "ol" if ordered else "ul"
@@ -173,7 +194,7 @@ def _markdown_to_html(md: str) -> str:
             i += 1
             continue
 
-        # Paragraph (collect contiguous non-blank lines)
+        # Paragraph
         para = [line]
         j = i + 1
         while j < len(lines) and lines[j].strip() != "" \
@@ -181,6 +202,7 @@ def _markdown_to_html(md: str) -> str:
                 and not _LIST_RE.match(lines[j]) \
                 and not _BLOCKQUOTE_RE.match(lines[j]) \
                 and not _CODE_FENCE_RE.match(lines[j]) \
+                and not lines[j].lstrip().startswith("$$") \
                 and not ("|" in lines[j] and j + 1 < len(lines) and _TABLE_SEP_RE.match(lines[j + 1])):
             para.append(lines[j])
             j += 1
@@ -193,42 +215,185 @@ def _markdown_to_html(md: str) -> str:
     return "\n".join(out)
 
 
+# ── Summary card (theoretical vs live) ───────────────────────────
+
+def _fmt_pct(p: float | None) -> str:
+    return f"{p*100:.1f}%" if p is not None else "—"
+
+
+def _fmt_num(x: float | None, prefix: str = "", decimals: int = 2) -> str:
+    if x is None:
+        return "—"
+    return f"{prefix}{x:,.{decimals}f}"
+
+
+def _fmt_rs(x: float | None) -> str:
+    if x is None:
+        return "—"
+    sign = "+" if x >= 0 else "−"
+    return f"Rs.{sign}{abs(x):,.0f}"
+
+
+def _summary_card(stats: LiveStats) -> str:
+    """Theoretical-vs-live snapshot rendered before the doc body."""
+
+    # Theoretical numbers — mirror §3 of docs/STRATEGY_STATISTICS.md.
+    theoretical = [
+        ("Win rate",            "55%"),
+        ("Profit Factor",       "≥ 1.50"),
+        ("Expectancy / trade",  "+0.10 R (≈ +Rs.25)"),
+        ("P(profitable day)",   "≈ 60%"),
+        ("Sharpe (annualised)", "1.5 – 2.5"),
+        ("Max drawdown",        "< 10% of capital"),
+    ]
+
+    def colour_class(value: float | None, *, target: float, higher_is_better: bool = True) -> str:
+        if value is None:
+            return "muted"
+        if higher_is_better:
+            return "ok" if value >= target else "warn"
+        return "ok" if value <= target else "warn"
+
+    wr_cls   = colour_class(stats.win_rate,      target=0.50)
+    pf_cls   = colour_class(stats.profit_factor, target=1.30)
+    exp_cls  = colour_class(stats.expectancy,    target=0.0)
+    day_cls  = colour_class(stats.day_win_rate,  target=0.50)
+    sh_cls   = colour_class(stats.sharpe_daily,  target=1.0)
+
+    live_rows = [
+        ("Win rate",            f'<span class="v {wr_cls}">{_fmt_pct(stats.win_rate)}</span>',
+            f"{stats.win_count} W / {stats.loss_count} L of {stats.trade_count}"),
+        ("Profit Factor",       f'<span class="v {pf_cls}">{_fmt_num(stats.profit_factor)}</span>',
+            f"GP {_fmt_num(stats.gross_profit, 'Rs.', 0)} / GL {_fmt_num(stats.gross_loss, 'Rs.', 0)}"),
+        ("Expectancy / trade",  f'<span class="v {exp_cls}">{_fmt_rs(stats.expectancy)}</span>',
+            f"Net {_fmt_rs(stats.net_pnl)} over {stats.trade_count} trades"),
+        ("P(profitable day)",   f'<span class="v {day_cls}">{_fmt_pct(stats.day_win_rate)}</span>',
+            f"{stats.profitable_days} of {stats.total_days} days"),
+        ("Sharpe (annualised)", f'<span class="v {sh_cls}">{_fmt_num(stats.sharpe_daily)}</span>',
+            f"Sortino {_fmt_num(stats.sortino_daily)}"),
+        ("Max drawdown",        f'<span class="v warn">{_fmt_rs(-abs(stats.max_drawdown)) if stats.max_drawdown else _fmt_rs(0)}</span>',
+            "peak-to-trough on cumulative net"),
+    ]
+
+    live_html = "".join(
+        f'<tr><td class="m">{html.escape(label)}</td>'
+        f'<td class="v-cell">{value}</td>'
+        f'<td class="hint">{html.escape(hint)}</td></tr>'
+        for label, value, hint in live_rows
+    )
+
+    theory_html = "".join(
+        f'<tr><td class="m">{html.escape(k)}</td>'
+        f'<td class="v-cell"><span class="v">{html.escape(v)}</span></td></tr>'
+        for k, v in theoretical
+    )
+
+    if stats.trade_count == 0:
+        live_block = (
+            '<div class="empty-live">No closed intraday trades found in '
+            f'<code>{html.escape(stats.window_from)} to {html.escape(stats.window_to)}</code>. '
+            'Live numbers populate as trades close.</div>'
+        )
+    else:
+        live_block = f'<table class="summary-tbl"><tbody>{live_html}</tbody></table>'
+
+    return f"""
+<section class="summary-card">
+  <h2 class="summary-title">Quick snapshot — theoretical vs live</h2>
+  <p class="summary-sub">
+    What the strategy <strong>should</strong> deliver (from §3 of the doc below)
+    versus what the live ledger shows for the current FY
+    <code>{html.escape(stats.window_from)} to {html.escape(stats.window_to)}</code>
+    (verified + provisional).
+  </p>
+  <div class="summary-grid">
+    <div class="summary-col">
+      <div class="col-title">Theoretical (target)</div>
+      <table class="summary-tbl"><tbody>{theory_html}</tbody></table>
+    </div>
+    <div class="summary-col">
+      <div class="col-title">Live (current FY)</div>
+      {live_block}
+    </div>
+  </div>
+  <div class="summary-disclaimer">
+    Live numbers are <strong>reference only</strong> — strategy mix has changed
+    materially during early development. Treat them as sanity-check, not as a
+    clean backtest. Full caveat in "Live trade analysis" below.
+  </div>
+</section>
+"""
+
+
 # ── Page assembly ────────────────────────────────────────────────
 
-_THEORY_TEMPLATE = r"""<!doctype html>
+_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>AI Portfolio Manager — Theory & Statistics</title>
+<title>__TITLE__ — AI Portfolio Manager</title>
 <style>
   :root {
-    --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
+    --bg: #f7f8fa; --fg: #1c1f23; --muted: #6a7280;
     --card: #ffffff; --line: #e5e7eb; --accent: #1c1f23;
+    --ok: #1b8e3a; --warn: #c62828; --soft: #f0f1f3;
   }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
+
   nav.topnav { display: flex; gap: 14px; align-items: center;
                padding: 10px 16px; background: var(--card);
                border: 1px solid var(--line); border-radius: 8px;
-               margin-bottom: 18px; font-size: 14px; }
+               margin-bottom: 18px; font-size: 14px; flex-wrap: wrap; }
   nav.topnav a { color: var(--accent); text-decoration: none; font-weight: 500; }
   nav.topnav a:hover { text-decoration: underline; }
-  nav.topnav .here { color: var(--muted); cursor: default; }
   nav.topnav .sep { color: var(--muted); }
-  h1 { font-size: 24px; margin: 4px 0 4px; }
+  nav.topnav .spacer { flex: 1; }
+  nav.topnav .docs-pick label { font-size: 11px; color: var(--muted);
+                                text-transform: uppercase; letter-spacing: 0.05em;
+                                margin-right: 8px; }
+  nav.topnav select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
+                      border-radius: 5px; background: white; cursor: pointer; }
+
+  h1.page-title { font-size: 24px; margin: 4px 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
-  .toc { background: var(--card); border: 1px solid var(--line);
-         border-radius: 8px; padding: 14px 20px; margin-bottom: 18px; font-size: 14px; }
-  .toc h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
-            color: var(--muted); margin: 0 0 8px; font-weight: 600; }
-  .toc a { display: inline-block; margin-right: 16px; color: var(--accent);
-           text-decoration: none; }
-  .toc a:hover { text-decoration: underline; }
+
+  .summary-card { background: linear-gradient(180deg, #ffffff, #fbfcfe);
+                  border: 1px solid var(--line); border-radius: 10px;
+                  padding: 22px 26px; margin-bottom: 22px;
+                  box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+  .summary-title { font-size: 17px; margin: 0 0 4px; }
+  .summary-sub { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+  .summary-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 22px; }
+  @media (max-width: 720px) { .summary-grid { grid-template-columns: 1fr; } }
+  .summary-col .col-title { font-size: 11px; color: var(--muted);
+                            text-transform: uppercase; letter-spacing: 0.08em;
+                            font-weight: 600; margin-bottom: 8px; }
+  table.summary-tbl { width: 100%; border-collapse: collapse;
+                      font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  table.summary-tbl td { padding: 7px 6px; border-bottom: 1px dashed var(--line);
+                         vertical-align: top; }
+  table.summary-tbl tr:last-child td { border-bottom: none; }
+  table.summary-tbl td.m { color: var(--muted); white-space: nowrap; }
+  table.summary-tbl td.v-cell { font-weight: 600; text-align: right; white-space: nowrap; }
+  table.summary-tbl td.hint { color: var(--muted); font-size: 12px;
+                              padding-left: 12px; text-align: right; }
+  span.v { font-weight: 600; }
+  span.v.ok    { color: var(--ok); }
+  span.v.warn  { color: var(--warn); }
+  span.v.muted { color: var(--muted); font-weight: 500; }
+  .empty-live { padding: 18px; background: var(--soft); border-radius: 6px;
+                color: var(--muted); font-size: 13px; }
+  .summary-disclaimer { margin-top: 14px; padding: 8px 12px;
+                        background: #fff8e1; border-left: 3px solid #f0c75a;
+                        font-size: 12.5px; color: #5b4a18; border-radius: 0 4px 4px 0; }
+
   .doc-section { background: var(--card); border: 1px solid var(--line);
-                 border-radius: 8px; padding: 22px 28px; margin-bottom: 24px; }
+                 border-radius: 10px; padding: 22px 30px; margin-bottom: 24px;
+                 box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
   .doc-section > h1:first-child,
   .doc-section > h2:first-child { margin-top: 0; }
   .doc-section h1 { font-size: 22px; border-bottom: 2px solid var(--line);
@@ -243,14 +408,21 @@ _THEORY_TEMPLATE = r"""<!doctype html>
   .doc-section blockquote { border-left: 3px solid #c7d2fe; background: #eef2ff;
                             margin: 10px 0; padding: 8px 14px; color: #1c2942;
                             border-radius: 0 4px 4px 0; }
-  .doc-section code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px;
+  .doc-section code { background: var(--soft); padding: 1px 6px; border-radius: 3px;
                       font-size: 12.5px; font-family: ui-monospace, Menlo, Consolas, monospace; }
   .doc-section pre { background: #1c1f23; color: #e5e7eb; padding: 12px 16px;
                      border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
   .doc-section pre code { background: transparent; color: inherit; padding: 0; }
+  .doc-section pre.math-block { background: #f4f6fa; color: #1c1f23;
+                                font-family: ui-monospace, Menlo, Consolas, monospace;
+                                border-left: 3px solid #c7d2fe; }
+  .doc-section .math-inline { font-family: ui-monospace, Menlo, Consolas, monospace;
+                              font-size: 12.5px; background: var(--soft);
+                              padding: 1px 4px; border-radius: 3px; }
   .doc-section a { color: #1f4ed8; }
+  .doc-section .table-scroll { overflow-x: auto; margin: 12px 0; }
   .doc-section table.md-table { width: 100%; border-collapse: collapse;
-                                font-size: 13.5px; margin: 12px 0;
+                                font-size: 13.5px;
                                 font-variant-numeric: tabular-nums; }
   .doc-section table.md-table th { text-align: left; padding: 8px 10px;
                                    border-bottom: 2px solid var(--line);
@@ -261,9 +433,10 @@ _THEORY_TEMPLATE = r"""<!doctype html>
                                    vertical-align: top; }
   .doc-section table.md-table tr:hover td { background: #fafbfc; }
   .doc-section hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
-  .source-banner { background: #fff4e0; border: 1px solid #f0d28a;
-                   padding: 10px 14px; border-radius: 6px; font-size: 13px;
-                   margin-bottom: 14px; color: #6b4a00; }
+  .source-banner { font-size: 12px; color: var(--muted);
+                   margin-bottom: 12px; padding: 6px 10px;
+                   background: var(--soft); border-radius: 4px;
+                   display: inline-block; }
   footer { color: var(--muted); font-size: 12px; margin-top: 32px;
            text-align: center; }
 </style>
@@ -273,28 +446,30 @@ _THEORY_TEMPLATE = r"""<!doctype html>
   <nav class="topnav">
     <a href="/">← Dashboard (Live P&amp;L)</a>
     <span class="sep">·</span>
-    <span class="here">Theory &amp; Statistics</span>
+    <span style="color:var(--muted)">Theory</span>
+    <span class="spacer"></span>
+    <div class="docs-pick">
+      <label for="docs-select">Docs</label>
+      <select id="docs-select" onchange="window.location.href=this.value">
+        __OPTIONS__
+      </select>
+    </div>
   </nav>
 
-  <h1>Theory &amp; Statistics</h1>
+  <h1 class="page-title">__TITLE__</h1>
   <div class="sub">
-    How the tool works, what edge we expect to deliver, and what the live
-    numbers say so far. Content rendered live from the docs in
-    <code>docs/</code> — edit those files to update this page.
+    Rendered live from <code>docs/__FILENAME__</code>. Edit the markdown to update this page.
   </div>
 
-  <div class="toc">
-    <h2>On this page</h2>
-    __TOC__
-  </div>
+  __SUMMARY__
 
-  __SECTIONS__
+  <section class="doc-section">
+    <div class="source-banner">Source: <code>docs/__FILENAME__</code></div>
+    __BODY__
+  </section>
 
   <footer>
-    Generated <span id="now"></span> from
-    <code>docs/STRATEGY_STATISTICS.md</code>,
-    <code>docs/STRATEGY_V2.md</code>,
-    <code>docs/STRATEGY_EVOLUTION.md</code>.
+    Generated <span id="now"></span>.
   </footer>
 </div>
 <script>
@@ -306,50 +481,55 @@ _THEORY_TEMPLATE = r"""<!doctype html>
 """
 
 
-def _slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+def _options_html(active_slug: str) -> str:
+    parts = []
+    for slug, (label, _filename, _has_summary) in PAGES.items():
+        sel = " selected" if slug == active_slug else ""
+        href = f"/theory/{slug}"
+        parts.append(f'<option value="{href}"{sel}>{html.escape(label)}</option>')
+    return "".join(parts)
 
 
-def render_theory_page() -> str:
-    """Build the /theory HTML by rendering each source markdown doc."""
-    sections_html: list[str] = []
-    toc_html: list[str] = []
+def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
+    """Render a single theory page identified by slug."""
+    if slug not in PAGES:
+        slug = DEFAULT_PAGE
+    label, filename, has_summary = PAGES[slug]
 
-    for title, filename in _DOCS_TO_RENDER:
-        slug = _slug(filename)
-        toc_html.append(f'<a href="#{slug}">{html.escape(title)}</a>')
-
-        path = _DOCS_DIR / filename
-        if not path.exists():
-            sections_html.append(
-                f'<section id="{slug}" class="doc-section">'
-                f'<h1>{html.escape(title)}</h1>'
-                f'<div class="source-banner">Source file <code>docs/{filename}</code> '
-                f'not found — render skipped.</div></section>'
-            )
-            continue
-
+    path = _DOCS_DIR / filename
+    if path.exists():
         try:
             md = path.read_text(encoding="utf-8")
+            body = _markdown_to_html(md)
         except Exception as exc:  # noqa: BLE001
-            sections_html.append(
-                f'<section id="{slug}" class="doc-section">'
-                f'<h1>{html.escape(title)}</h1>'
-                f'<div class="source-banner">Failed to read <code>docs/{filename}</code>: '
-                f'{html.escape(str(exc))}</div></section>'
+            body = (
+                f'<p class="source-banner">Failed to read <code>docs/{html.escape(filename)}</code>: '
+                f'{html.escape(str(exc))}</p>'
             )
-            continue
-
-        body = _markdown_to_html(md)
-        sections_html.append(
-            f'<section id="{slug}" class="doc-section">'
-            f'<div class="source-banner">Source: <code>docs/{filename}</code></div>'
-            f'{body}</section>'
+    else:
+        body = (
+            f'<p class="source-banner">Source file <code>docs/{html.escape(filename)}</code> '
+            'not found.</p>'
         )
 
-    return (_THEORY_TEMPLATE
-            .replace("__TOC__", " ".join(toc_html))
-            .replace("__SECTIONS__", "\n".join(sections_html)))
+    summary_html = ""
+    if has_summary:
+        try:
+            stats = compute_live_stats()
+            summary_html = _summary_card(stats)
+        except Exception as exc:  # noqa: BLE001
+            summary_html = (
+                '<section class="summary-card">'
+                f'<p class="summary-sub">Live summary unavailable: {html.escape(str(exc))}</p>'
+                '</section>'
+            )
+
+    return (_TEMPLATE
+            .replace("__TITLE__", html.escape(label))
+            .replace("__FILENAME__", html.escape(filename))
+            .replace("__OPTIONS__", _options_html(slug))
+            .replace("__SUMMARY__", summary_html)
+            .replace("__BODY__", body))
 
 
-__all__ = ["render_theory_page"]
+__all__ = ["render_theory_page", "PAGES", "DEFAULT_PAGE"]
