@@ -78,6 +78,17 @@ class Config:
     ZERODHA_API_SECRET: str = os.getenv("ZERODHA_API_SECRET", "")
     CLAUDE_API_KEY:     str = os.getenv("CLAUDE_API_KEY",     "")
 
+    # ── Programmatic Kite login (optional) ───────────────────────
+    # If KITE_USER_ID + KITE_PASSWORD are set, the bot tries the
+    # streamlined login flow before falling back to the b/m prompt.
+    #   - Both set, no TOTP seed  -> ASSISTED  (prompts for 6-digit code only)
+    #   - All three set            -> AUTO      (zero-touch; security trade-off,
+    #                                            see README §5.4)
+    # On any failure the bot falls back to the legacy browser/manual prompt.
+    KITE_USER_ID:     str = os.getenv("KITE_USER_ID",     "")
+    KITE_PASSWORD:    str = os.getenv("KITE_PASSWORD",    "")
+    KITE_TOTP_SECRET: str = os.getenv("KITE_TOTP_SECRET", "").replace(" ", "")
+
     # ══════════════════════════════════════════════════════════════
     # PHASE 2 — INTRADAY TRADING BOT SETTINGS
     # ══════════════════════════════════════════════════════════════

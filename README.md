@@ -196,15 +196,25 @@ pip install -r requirements.txt
 | `kiteconnect` | Zerodha Kite trading API (≥ 5.1.0 required for `market_protection`) |
 | `python-dotenv` | Loads keys from `.env` |
 | `openpyxl` | Reads Zerodha Tax P&L xlsx files |
+| `requests` | Programmatic Kite login (AUTO / ASSISTED modes — §5.4) |
+| `pyotp` | Optional, only if you opt-in to AUTO login (§5.4) |
 
 ### 5.2 API keys
 
 Create `.env` in the project root:
 
 ```env
+# Required
 ZERODHA_API_KEY=...
 ZERODHA_API_SECRET=...
 CLAUDE_API_KEY=...
+
+# Optional — enable streamlined login (§5.4)
+KITE_USER_ID=AB1234              # your Zerodha client id
+KITE_PASSWORD=your_kite_password # web login password (NOT the API secret)
+
+# Optional — only if you want fully unattended login (security trade-off!)
+KITE_TOTP_SECRET=JBSWY3DPEHPK...  # base32 TOTP seed (§5.4)
 ```
 
 #### Zerodha Kite Connect
@@ -238,6 +248,103 @@ Open [config.py](config.py). Common settings:
 | `CLAUDE_PLAN` | pro | Claude tier: `free`, `pro`, `max` |
 | `RR_TARGET_RATIO` | 1.5 | Base R:R from ATR |
 | `RR_HARD_FLOOR` | 1.3 | Always-on R:R floor — uniform across the trading day (collapsed from the deprecated time-tiered floors by #243) |
+
+---
+
+### 5.4 Zerodha login modes
+
+Kite access tokens expire daily at midnight, so the bot has to re-login
+once a day. Four flows are supported — **the bot picks the most
+automated one your `.env` allows, then falls back automatically**:
+
+| Mode | Trigger | Human action per day | Security |
+|---|---|---|---|
+| **AUTO** | `KITE_USER_ID` + `KITE_PASSWORD` + `KITE_TOTP_SECRET` set | none | ⚠️ password **and** TOTP seed both on disk — effectively single-factor (§5.4.3) |
+| **ASSISTED** | `KITE_USER_ID` + `KITE_PASSWORD` set, no seed | type the 6-digit code from your authenticator app or Kite mobile app | password on disk; TOTP stays on phone (§5.4.4) |
+| **Browser (`b`)** | none of the above, you press `b` | log in via the browser tab the bot opens; redirect is auto-caught on `localhost:8080` | nothing on disk; native browser flow |
+| **Manual (`m`)** | press `m` (default for SSH-only / VM setups) | open the printed URL on a phone/laptop, log in, paste the **full** redirect URL back into the terminal | nothing on disk; works headless |
+
+The order of attempts is: cached token → AUTO/ASSISTED (if env permits) →
+on failure or missing env, the legacy `b/m/q` prompt.
+
+#### 5.4.1 ASSISTED setup (recommended for most users)
+
+Add two lines to `.env`:
+
+```env
+KITE_USER_ID=AB1234
+KITE_PASSWORD=your_kite_web_password
+```
+
+Next run will detect them, drive the login form itself, and prompt:
+
+```
+  Open your authenticator app (Apple Passwords / Authy / Google Auth)
+  or read the 6-digit code from your Kite mobile app.
+
+  Enter 6-digit code: ______
+```
+
+Works whether you have External TOTP enabled (code from Authy / Apple
+Passwords / Google Auth) or not (PIN from the Kite mobile app login
+screen). Total user input: 6 digits.
+
+#### 5.4.2 AUTO setup (zero-touch — read the security note first)
+
+AUTO needs the base32 **TOTP seed** that Zerodha shows once at
+enrollment. If you used the QR-scan path (Apple Passwords, Authy etc.
+scanning the QR directly), the seed is buried inside the QR image and
+you have to re-enroll to see it as text:
+
+1. Kite web → **Profile → Password & Security → Disable External TOTP**
+   (asks for password + current TOTP).
+2. **Enable External TOTP** again.
+3. On the QR screen click **“Can’t scan? Copy the key”** — a long
+   base32 string (letters A–Z + digits 2–7, no spaces) appears.
+4. **Copy it into `.env`** as `KITE_TOTP_SECRET=...` immediately. You
+   only see it once.
+5. Then re-add the same secret to your phone authenticator (Apple
+   Passwords / Authy support a “manual entry” option that takes the
+   same string). This keeps your phone working as a backup.
+6. Verify everything wired up:
+
+   ```
+   python main.py --mode login
+   ```
+
+   With all three env vars present the bot logs `Attempting Kite AUTO
+   login (env-driven)…` and finishes without prompting.
+
+#### 5.4.3 Security trade-offs of AUTO mode
+
+> 🚨 **AUTO mode reduces 2FA to single-factor.** Anyone who can read
+> `.env` (malware, stolen laptop, accidental git commit, OneDrive
+> sync, screen share) can place trades on your account. The TOTP seed
+> is **non-rotating** — a leak is silent until trades start happening.
+
+Only opt-in if you also do at minimum:
+
+- Confirm `.env` is gitignored: `git check-ignore -v .env` should print `.gitignore`.
+- **BitLocker** on the laptop drive (Win Pro built-in, free).
+- **Exclude the project folder from OneDrive / iCloud** (Settings →
+  Choose folders).
+- Restrict `.env` ACL to your Windows user only (Properties → Security
+  → disable inheritance, remove all but your account).
+- Keep your Zerodha bank-withdrawal whitelist set to **only your
+  primary account** so a hijacker can’t move funds out cleanly.
+
+If any of those feel like too much hassle, **stay on ASSISTED** —
+you’ve given up almost nothing and kept real 2FA.
+
+#### 5.4.4 Security trade-offs of ASSISTED mode
+
+Mild: your Kite **password** sits in `.env` next to your existing
+`ZERODHA_API_SECRET`. The TOTP factor still requires your phone, so a
+`.env` leak alone cannot log in. Same minimum hygiene applies
+(gitignore + BitLocker + no cloud sync).
+
+For maximum hygiene store the password in Windows Credential Manager
+via the `keyring` package instead of `.env` — a future enhancement.
 
 ---
 
@@ -338,9 +445,18 @@ cat > .env <<'EOF'
 ZERODHA_API_KEY=...
 ZERODHA_API_SECRET=...
 CLAUDE_API_KEY=...
+# Optional but recommended on a VM — enables ASSISTED login so you only
+# type a 6-digit code once a day (vs pasting the full redirect URL).
+KITE_USER_ID=AB1234
+KITE_PASSWORD=your_kite_web_password
+# Optional — fully unattended login (read §5.4.3 first; on a VM the
+# .env risk is similar but the blast radius is the VM, not your laptop).
+# KITE_TOTP_SECRET=JBSWY3DPEHPK...
 EOF
+chmod 600 .env                      # restrict to your VM user
 python scripts/backup_data.py --ssh   # pull data from your private backup repo
-python main.py --mode login           # manual mode (option 'm')
+python main.py --mode login           # picks ASSISTED if KITE_USER_ID+PASSWORD set,
+                                       # else falls back to manual mode (option 'm')
 ```
 
 ### Daily operation

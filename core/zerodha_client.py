@@ -67,6 +67,23 @@ class ZerodhaClient:
         # No valid token — need OAuth flow
         login_url = self._kite.login_url()
 
+        # ---------- Programmatic flows (AUTO / ASSISTED) ----------
+        # If the user has put KITE_USER_ID + KITE_PASSWORD in .env we can
+        # drive the login form ourselves and skip the browser entirely.
+        # On any failure we silently fall through to the legacy b/m prompt.
+        user_id  = getattr(self.cfg, "KITE_USER_ID", "") or ""
+        password = getattr(self.cfg, "KITE_PASSWORD", "") or ""
+        seed     = getattr(self.cfg, "KITE_TOTP_SECRET", "") or ""
+
+        if user_id and password:
+            mode = "AUTO" if seed else "ASSISTED"
+            self.log.info(f"Attempting Kite {mode} login (env-driven)…")
+            try:
+                self._login_programmatic(login_url, user_id, password, seed, mode)
+                return
+            except Exception as e:
+                self.log.warning(f"{mode} login failed: {e}. Falling back to browser/manual prompt.")
+
         if interactive:
             self.log.info("Zerodha login required (token expired or missing).")
             print()
@@ -191,6 +208,110 @@ class ZerodhaClient:
             )
 
         self._exchange_and_save(request_token)
+
+    # ---- Programmatic login (AUTO + ASSISTED) ---------------------
+
+    KITE_LOGIN_HOST = "https://kite.zerodha.com"
+
+    def _login_programmatic(
+        self,
+        login_url: str,
+        user_id: str,
+        password: str,
+        totp_seed: str,
+        mode: str,
+    ):
+        """
+        Drives the Kite web login form ourselves. Two modes:
+          AUTO     — totp_seed is set; we compute the 6-digit code via pyotp.
+          ASSISTED — totp_seed is empty; we prompt for the code (user reads it
+                     from their authenticator app or Kite mobile PIN screen).
+        On success: caches the access token and returns.
+        On any failure raises RuntimeError so the caller can fall back.
+        """
+        try:
+            import requests   # only required for the programmatic flow
+        except ImportError:
+            raise RuntimeError("`requests` not installed (pip install requests)")
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (kite-login)"})
+
+        # Step 1 — password
+        r = session.post(
+            f"{self.KITE_LOGIN_HOST}/api/login",
+            data={"user_id": user_id, "password": password},
+            timeout=10,
+        )
+        if r.status_code != 200 or r.json().get("status") != "success":
+            raise RuntimeError(f"step 1 (password) HTTP {r.status_code}: {r.text[:200]}")
+        d1 = r.json().get("data") or {}
+        request_id = d1.get("request_id")
+        twofa_type = (d1.get("twofa_type") or "totp").lower()
+
+        # Step 2 — 2FA code
+        twofa_value = self._two_factor_code(totp_seed, mode)
+        r = session.post(
+            f"{self.KITE_LOGIN_HOST}/api/twofa",
+            data={
+                "user_id":      user_id,
+                "request_id":   request_id,
+                "twofa_value":  twofa_value,
+                "twofa_type":   twofa_type,
+                "skip_session": "",
+            },
+            timeout=10,
+        )
+        if r.status_code != 200 or r.json().get("status") != "success":
+            raise RuntimeError(f"step 2 (2FA) HTTP {r.status_code}: {r.text[:200]}")
+
+        # Step 3 — walk redirect chain to capture request_token
+        from urllib.parse import parse_qs as _qs, urlparse as _up
+        r = session.get(login_url, allow_redirects=False, timeout=10)
+        request_token = None
+        for _ in range(6):
+            if r.status_code not in (301, 302, 303, 307, 308):
+                break
+            loc = r.headers.get("Location", "")
+            params = _qs(_up(loc).query)
+            if "request_token" in params:
+                request_token = params["request_token"][0]
+                break
+            if loc.startswith("/"):
+                loc = self.KITE_LOGIN_HOST + loc
+            if not loc.startswith(self.KITE_LOGIN_HOST):
+                raise RuntimeError(f"step 3 redirect left kite.zerodha.com: {loc[:120]}")
+            r = session.get(loc, allow_redirects=False, timeout=10)
+
+        if not request_token:
+            raise RuntimeError("step 3 (redirect) no request_token captured")
+
+        # Step 4 — exchange + cache (reuses existing helper)
+        self._exchange_and_save(request_token)
+
+    def _two_factor_code(self, totp_seed: str, mode: str) -> str:
+        """AUTO mode computes via pyotp; ASSISTED mode prompts the user."""
+        if mode == "AUTO":
+            try:
+                import pyotp
+            except ImportError:
+                raise RuntimeError("AUTO mode needs pyotp (pip install pyotp)")
+            return pyotp.TOTP(totp_seed).now()
+
+        # ASSISTED — prompt for 6 digits
+        print()
+        print("  Open your authenticator app (Apple Passwords / Authy / Google Auth)")
+        print("  or read the 6-digit code from your Kite mobile app.")
+        print()
+        for _attempt in range(3):
+            try:
+                code = input("  Enter 6-digit code: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                raise RuntimeError("user cancelled assisted login")
+            if code.isdigit() and len(code) == 6:
+                return code
+            print(f"  -> '{code}' is not 6 digits, try again.")
+        raise RuntimeError("3 invalid codes entered")
 
     def force_relogin(self):
         """Deletes the cached token and triggers a fresh browser login."""

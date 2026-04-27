@@ -3,3 +3,5 @@ kiteconnect>=5.1.0
 python-dotenv
 openpyxl
 tzdata
+requests
+pyotp
