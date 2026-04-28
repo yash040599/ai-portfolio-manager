@@ -38,7 +38,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 ```
 
 > **Source of truth:** `STRATEGY_ROADMAP.md` (Completed section). When you ship a strategy item, add a row here in the same commit, following the rules above.
-> Last regenerated: 2026-04-27. Items: 143 strategy rows (#1 → #244). Bug-fix rows are intentionally excluded; see `STRATEGY_ROADMAP.md` for the full Bug Fix log.
+> Last regenerated: 2026-04-28. Items: 144 strategy rows (#1 → #246). Bug-fix rows are intentionally excluded; see `STRATEGY_ROADMAP.md` for the full Bug Fix log.
 
 ## Timeline
 
@@ -198,3 +198,4 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | 242 | Risk | Removed the late-entry target compression at entry. The 20%/25% target cuts after 1 PM/2 PM were dropping default R:R below the always-on 1.3 hard floor, so every default afternoon trade was rejected by our own arithmetic. Pro intraday desks don't pre-shrink entry targets — drift on open positions is owned by stagnant-exit, momentum kill, open-position time-decay, and the 3:10 PM hard square-off. Targets are now honoured at entry across the day. |
 | 243 | Infra | Collapsed the R:R floor system into a single uniform `RR_HARD_FLOOR = 1.3`. After #235 / #242, every code path was already returning 1.3 — the seven decorative knobs (morning/afternoon/late/relaxed floors, retry step, relax-after, hour selectors) and the dead relaxation/retry branches in the engine and the manager added zero behaviour, only readability cost. Same 1.3 floor everywhere; the give-up-after-5-empty-scans signal is the keeper. |
 | 244 | Risk | The 30-minute "pause new entries after 3 losses in a row" guard now counts ANY losing exit (stop-loss, momentum kill, stagnant exit, signal decay, or late-day loser exit), not just hard stop-losses. End-of-day square-offs and operator closes still don't count. Today's session-1 lost 4 morning trades in a row and the old guard never fired because none were stop-losses; the broader counter would have paused the bot at exit #3. |
+| 246 | Risk | After 10:00 IST the bot will no longer open trades unless the technical score is at least 7. Below that, the in-trade rescue exits cannot save the trade if the thesis breaks, so taking it would be admitting a position only the hard stop-loss can close. (Motivated by JIOFIN 2026-04-28 — entered at score 3.8, flipped to −5.5 within 15 min, ran to stop-loss for −Rs.183.) Morning entries (09:30-10:00) still allow lower scores because a fresh trend gives the position room to recover. |
