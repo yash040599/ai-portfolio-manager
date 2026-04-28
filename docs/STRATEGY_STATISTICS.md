@@ -1,5 +1,31 @@
 # Strategy Statistics — Theoretical & Live
 
+> **Maintenance contract (read before editing).**
+>
+> This document has two halves and they have *different* refresh
+> rules:
+>
+> 1. **Live numbers (§0 "Quick snapshot" Live column, the "Live snapshot
+>    captured on YYYY-MM-DD" line, and any other live row).** Refresh
+>    on every daily review pass via `copilot/daily-trade-review.md`
+>    Step 6. Source of truth: `python scripts/tax_summary.py --intraday`
+>    (matches `intraday_tax_ledger`, which is what the dashboard
+>    `/tax` and `/theory/statistics` pages also read). The dashboard
+>    `/theory/statistics` Live column is rendered LIVE from
+>    `Dashboard/live_stats.py` so it self-refreshes — the
+>    user-visible mismatch only happens when this static §0 mirror
+>    is stale.
+> 2. **Theoretical numbers (§3 probability snapshot, §2.5 per-strategy
+>    EV table, §0 Theoretical column).** Refresh whenever a strategy
+>    item ships per `copilot/update-strategy-v2.md` and
+>    `copilot/update-roadmap.md`. The §0 Theoretical column AND
+>    `Dashboard/theory_page.py::_summary_card()`'s `theoretical = [...]`
+>    list are hand-mirrored — update both in the same commit. Bump
+>    the "Last theoretical update" header date below.
+>
+> Skipping either refresh = stale doc + stale dashboard. Both are
+> P0 in the daily-review and any strategy-change review.
+
 > **Purpose.** This document gives an honest, industry-standard probabilistic
 > view of how this trading tool is *expected* to perform. It is split into two
 > sections:
@@ -17,6 +43,9 @@
 > whipsaw counter broadened to count any losing exit, not just
 > STOP_LOSS; closes coverage gap exposed when today's session-1 lost
 > 4-in-a-row to MOMENTUM_KILL with the guard never firing).
+>
+> Last live snapshot refresh: **2026-04-28** (post-2026-04-28 trading
+> session; sign-flip decay-exit fix `09483df` shipped same day).
 
 ---
 
