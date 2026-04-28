@@ -59,8 +59,12 @@ def _intraday_summary(fy_start: int) -> bool:
     pat = round(net_after_claude - tax, 2)
     spec_turnover = sum(abs(r["gross_pnl"]) for r in rows)
 
-    months = len({r["date"][:7] for r in rows})
-    zerodha_sub = Config.ZERODHA_MONTHLY_COST * months
+    # Zerodha Kite Connect subscription — billed monthly on a fixed
+    # day-of-month anchor (Config.ZERODHA_BILLING_START_DATE). Counts
+    # every paid cycle whose end-date falls in this FY, so we capture
+    # cycles that started in March (FY-end) and rolled into April
+    # (FY-start) without double-counting at year boundaries.
+    zerodha_sub, sub_cycles = Config.zerodha_subscription_for_fy(fy_start)
 
     day_map: dict[str, dict] = {}
     for r in rows:
@@ -114,7 +118,7 @@ def _intraday_summary(fy_start: int) -> bool:
     print(f"  SEBI charges              : Rs.{total_sebi:>12,.4f}")
     print(f"  Stamp duty                : Rs.{total_stamp:>12,.2f}")
     print(f"  Claude AI costs           : Rs.{total_claude:>12,.2f}")
-    print(f"  Zerodha subscription      : Rs.{zerodha_sub:>12,.2f}  ({months} mo × Rs.{Config.ZERODHA_MONTHLY_COST:,.0f})")
+    print(f"  Zerodha subscription      : Rs.{zerodha_sub:>12,.2f}  ({sub_cycles} mo × Rs.{Config.ZERODHA_MONTHLY_COST:,.0f}, billed on day {Config.ZERODHA_BILLING_START_DATE[-2:]} since {Config.ZERODHA_BILLING_START_DATE})")
     print(f"  Total deductible          : Rs.{total_charges + total_claude + zerodha_sub:>12,.2f}")
 
     _section("DAY-WISE BREAKDOWN")

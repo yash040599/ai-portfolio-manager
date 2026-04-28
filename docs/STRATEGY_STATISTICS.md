@@ -28,24 +28,27 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-04-27** for FY 2026-04-01 →
-> 2027-03-31 (121 closed trades across 17 trading days). Refresh the
-> dashboard for the live read.
+> Live snapshot below was captured on **2026-04-28** for FY 2026-04-01 →
+> 2027-03-31 (129 trades across 18 trading days, source: `intraday_tax_ledger`
+> via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
+> live read.
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **34.7%** (42 W / 79 L of 121)        | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **0.76** (GP Rs.3,118 / GL Rs.4,113)  | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.8.23** (Net −Rs.996 / 121)      | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **35.3%** (6 of 17 days)              | 🔴 below |
-| Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29)             | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.1,120** peak-to-trough           | 🟢 within |
+| Win rate                  | 55%                       | **41.9%** (54 W / 73 L of 129, 2 scratched) | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **1.14** (GP Rs.4,058 / GL Rs.3,569)  | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.9.20** (Net −Rs.1,187 / 129)    | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **33.3%** (6 of 18 days)              | 🔴 below |
+| Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
+| Max drawdown              | < 10% of capital          | **Rs.1,311** peak-to-trough           | 🟢 within |
 
-**Read this as reference only.** The 121 trades above were taken across
-multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #243).
-Gates were added, removed, tightened, and loosened in flight — so this is
-**not** a clean backtest of the current code. The clean-strategy benchmark
-only starts from now (post-#243). Full caveat in §4.
+**Read this as reference only.** The 129 trades above were taken across
+multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #245
+plus today's #188 sign-flip-decay fix in commit `09483df`). Gates were
+added, removed, tightened, and loosened in flight — so this is **not** a
+clean backtest of the current code. The clean-strategy benchmark only
+starts from now (post-#245 plus the #188 sign-flip patch). Full caveat
+in §4.
 
 ---
 

@@ -1443,10 +1443,17 @@ class Config:
     #   This is a MONTHLY cost, NOT deducted from daily P&L.
     #   It's shown as an informational line in the report so you can
     #   gauge whether the bot is covering subscription costs over time.
+    # ZERODHA_BILLING_START_DATE: anchor date for the monthly billing
+    #   cycle. Cycles are exactly one calendar month each (anchored on
+    #   this day-of-month) and a cycle is "paid" the moment it starts.
+    #   Used by `Config.zerodha_subscription_for_fy()` so deductible
+    #   reports count actual paid cycles instead of a naive
+    #   "distinct months that had trades" proxy. Format: "YYYY-MM-DD".
     # CLAUDE_COST_PER_CALL: estimated Rs. per Claude API call on Pro plan.
     #   This IS deducted from daily P&L because it's a per-use cost.
-    ZERODHA_MONTHLY_COST:  float = 500.0
-    CLAUDE_COST_PER_CALL:  float = 3.0   # avg Rs.3 per Claude API call on Pro
+    ZERODHA_MONTHLY_COST:        float = 500.0
+    ZERODHA_BILLING_START_DATE:  str   = "2026-03-14"
+    CLAUDE_COST_PER_CALL:        float = 3.0   # avg Rs.3 per Claude API call on Pro
 
     # ══════════════════════════════════════════════════════════════
     # INCOME TAX SETTINGS
@@ -1606,6 +1613,75 @@ class Config:
     def zerodha(cls) -> dict:
         """Returns the resolved Zerodha plan settings dict."""
         return cls._ZERODHA_RULES[cls.ZERODHA_PLAN]
+
+    @classmethod
+    def zerodha_subscription_for_fy(
+        cls,
+        fy_start_year: int,
+        today: "datetime.date | None" = None,
+    ) -> tuple[float, int]:
+        """Total Zerodha Kite Connect subscription cost attributable to
+        an Indian financial year (Apr 1 → Mar 31), and the number of
+        billing cycles counted.
+
+        Each cycle is one calendar month, anchored on the
+        day-of-month of ``ZERODHA_BILLING_START_DATE``. A cycle is
+        considered *paid* the moment it starts (Kite bills
+        in-advance). To avoid double-counting cycles that straddle a
+        FY boundary, each cycle is assigned to the FY containing its
+        **end date** (`start + 1 month`).
+
+        Example: anchor 2026-03-14, today 2026-04-28, FY 2026-27 →
+          cycle [2026-03-14, 2026-04-14): end date in FY 2026-27 → count.
+          cycle [2026-04-14, 2026-05-14): end date in FY 2026-27 → count.
+          cycle [2026-05-14, ...):       not yet started      → skip.
+        Result: 2 cycles × Rs.500 = Rs.1,000.
+
+        Returns ``(total_rs, num_cycles)``.
+        """
+        if today is None:
+            today = now_ist().date()
+
+        try:
+            anchor = datetime.datetime.strptime(
+                cls.ZERODHA_BILLING_START_DATE, "%Y-%m-%d"
+            ).date()
+        except (TypeError, ValueError):
+            return 0.0, 0
+
+        fy_start = datetime.date(fy_start_year, 4, 1)
+        fy_end   = datetime.date(fy_start_year + 1, 3, 31)
+        horizon  = min(today, fy_end)
+
+        if anchor > horizon:
+            return 0.0, 0
+
+        def _add_one_month(d: datetime.date) -> datetime.date:
+            # Kite bills monthly on the same day-of-month. If next
+            # month doesn't have that day (e.g. anchor 31 → Feb),
+            # clamp to month-end.
+            year, month = d.year, d.month + 1
+            if month > 12:
+                year, month = year + 1, 1
+            day = d.day
+            # Find last valid day in target month.
+            for d_try in (day, 30, 29, 28):
+                try:
+                    return datetime.date(year, month, d_try)
+                except ValueError:
+                    continue
+            return datetime.date(year, month, 28)  # safety net
+
+        n = 0
+        cycle_start = anchor
+        while cycle_start <= horizon:
+            cycle_end = _add_one_month(cycle_start)
+            # Assign to FY containing cycle_end.
+            if fy_start <= cycle_end <= fy_end:
+                n += 1
+            cycle_start = cycle_end
+
+        return n * cls.ZERODHA_MONTHLY_COST, n
 
     @classmethod
     def apply_early_close_if_today(cls) -> tuple[int, int] | None:
@@ -1793,6 +1869,16 @@ class Config:
         _pos("SIGNAL_REVERSAL_SCORE",   cls.SIGNAL_REVERSAL_SCORE)
         _pos("SIGNAL_DECAY_MIN_ENTRY_SCORE", cls.SIGNAL_DECAY_MIN_ENTRY_SCORE)
         _pos("SIGNAL_DECAY_MIN_HOLD_MINUTES", cls.SIGNAL_DECAY_MIN_HOLD_MINUTES)
+
+        # Subscription billing anchor (Kite Connect monthly cycles).
+        try:
+            datetime.datetime.strptime(cls.ZERODHA_BILLING_START_DATE, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            errors.append(
+                f"ZERODHA_BILLING_START_DATE must be 'YYYY-MM-DD' "
+                f"(got {cls.ZERODHA_BILLING_START_DATE!r})"
+            )
+
         if cls.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE < 0:
             errors.append(
                 f"SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE must be ≥ 0: "
