@@ -1186,24 +1186,29 @@ class PortfolioManagerV2(PortfolioManager):
         quotes: dict,
     ) -> bool:
         """
-        Same-direction thesis decay exit (#188). Companion to
-        `_signal_reversal_exit`: catches positions whose entry signal
-        hasn't flipped to the opposite side (which #174 covers) but
-        has decayed to a small fraction of its entry strength, AND
-        the trade isn't yet in profit.
+        Thesis-collapse exit (#188). Companion to
+        `_signal_reversal_exit` — together they close the gap between
+        "entry signal still healthy" and "entry signal is dead".
 
-        Without this gate, weak-but-not-flipped trades sit in the
-        slow-positive corridor for hours and only exit on LOSER_EXIT
-        (BHARTIARTL 2026-04-21: 5h 3min held flat for entry score
-        +10.1 → +3.6 at the 10:31 re-scan; nothing else fired).
+        Two trigger paths:
 
-        Triggers (BUY position, mirrored for SELL):
+        1. **Same-direction decay** — sign held but magnitude collapsed
+           below SIGNAL_DECAY_FRACTION × entry magnitude. Catches the
+           "+10 → +3" drift case (BHARTIARTL 2026-04-21: 5h 3min held
+           flat for entry score +10.1 → +3.6 at the 10:31 re-scan).
+
+        2. **Sign-flip decay** — sign reversed at all. Catches the
+           dead-zone between this gate's old same-sign requirement and
+           the strict #174 trigger (which needs |fresh|≥7 AND a
+           confirming reversal candle pattern). Without this path a
+           BUY entered at +10 that re-scored at -3, -5, or -6 (or any
+           flip without a candle pattern) was caught by neither gate
+           and sat live until SL or LOSER_EXIT.
+
+        Common guards apply to both paths:
           - feature enabled
           - abs(entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE — only
             act on trades that started with real conviction
-          - fresh_score has the SAME sign as entry_score (true flips
-            are #174's job, NOT this one)
-          - abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
           - elapsed >= SIGNAL_DECAY_MIN_HOLD_MINUTES (don't act on
             one bad re-score immediately after entry)
           - pnl < initial_risk * SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
@@ -1241,15 +1246,19 @@ class PortfolioManagerV2(PortfolioManager):
         except (TypeError, ValueError):
             return False
 
-        # Same-sign requirement (opposite flips are #174's domain).
-        if (entry_score > 0) != (fresh_score > 0):
-            return False
-        # Edge case: fresh_score == 0 also disqualifies same-sign,
-        # caught above (0 > 0 is False on both sides).
+        # Sign-flip vs same-direction-decay classification.
+        # Both paths exit the position; only the magnitude check and
+        # log line differ.
+        sign_flipped = (entry_score > 0) != (fresh_score > 0)
 
-        # Decay magnitude check.
-        if abs(fresh_score) >= abs(entry_score) * self.cfg.SIGNAL_DECAY_FRACTION:
-            return False
+        if not sign_flipped:
+            # Same-sign decay magnitude check.
+            if abs(fresh_score) >= abs(entry_score) * self.cfg.SIGNAL_DECAY_FRACTION:
+                return False
+        # else: sign flipped — any flip qualifies. The strict #174
+        # reversal gate needs |fresh|≥SIGNAL_REVERSAL_SCORE AND a
+        # confirming candle pattern, which left flips like +10 → -3
+        # silently uncaught. Bug observed live 2026-04-28.
 
         # Hold-time guard: avoid acting on the very first re-scan
         # after entry. parse entry_time HH:MM:SS against today.
@@ -1311,9 +1320,10 @@ class PortfolioManagerV2(PortfolioManager):
         r_multiple_str = (
             f"{pnl / initial_risk:+.2f}R" if initial_risk > 0 else "n/a"
         )
+        flip_tag = "SIGN FLIP" if sign_flipped else f"{decay_pct:.0f}% decay"
         self.log.warning(
             f"⚠ SIGNAL DECAY {symbol} {side}: entry score {entry_score:+.1f} "
-            f"→ {fresh_score:+.1f} ({decay_pct:.0f}% decay) after {elapsed_min:.0f} min, "
+            f"→ {fresh_score:+.1f} ({flip_tag}) after {elapsed_min:.0f} min, "
             f"P&L Rs.{pnl:+,.2f} ({r_multiple_str}) — exiting at Rs.{current_price:.2f}"
         )
         # Stamp the fresh re-score so #195 average-down prevention can

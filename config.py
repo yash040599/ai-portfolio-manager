@@ -709,20 +709,22 @@ class Config:
     SIGNAL_REVERSAL_REQUIRE_PATTERN: bool  = True
 
     # ── Signal-Decay Exit (#188) ──────────────────────────────────
-    # Companion to signal-reversal: catches *same-direction thesis
-    # decay* — the entry signal hasn't flipped to the opposite side
-    # (which #174 would already catch), but its strength has collapsed
-    # to a small fraction of what it was at entry. Without this gate
-    # such trades sit in the slow-positive corridor for hours and
-    # only exit on LOSER_EXIT, burning a slot the whole time.
+    # Companion to signal-reversal: catches both *same-direction
+    # thesis decay* AND *sign-flip* cases that the strict #174
+    # reversal gate (which requires |fresh|≥SIGNAL_REVERSAL_SCORE
+    # AND a confirming candle pattern) silently misses. Without
+    # this gate weak-but-not-flipped trades sit in the slow-positive
+    # corridor for hours, AND any soft sign flip (e.g. +10 → -3
+    # without a candle pattern) sits live until SL or LOSER_EXIT.
     #
     # Triggers (BUY position, mirrored for SELL):
     #   abs(entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE   (only act
     #     on trades that started with real conviction — a +3 → +1
     #     drift is statistical noise, not decay)
-    #   AND fresh_score is still SAME-SIGN as entry      (opposite
-    #     flips are #174's job)
-    #   AND abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
+    #   AND one of:
+    #     a) SAME-SIGN path: fresh_score keeps the entry sign AND
+    #        abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
+    #     b) SIGN-FLIP path: fresh_score sign reversed (any magnitude)
     #   AND elapsed_minutes >= SIGNAL_DECAY_MIN_HOLD_MINUTES
     #   AND pnl < initial_risk * SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
     #     (book-and-go below 1R: sub-1R profit has no trailing-stop
@@ -732,15 +734,23 @@ class Config:
     #     restart-rehydrated position — fall back to the conservative
     #     `pnl > 0` skip so we never dump a profitable legacy trade.)
     #
-    # MOTIVATING CASE: BHARTIARTL 2026-04-21 — entered BUY @ +10.1 at
-    #   09:42, re-scored +3.6 (Δ-6.5) at 10:31, sat in the slow-
-    #   positive corridor for 5h 3min and exited LOSER_EXIT @ -Rs.16
-    #   at 14:45. Max favourable was +Rs.109 at 11:05 (0.72R). Initial
-    #   #188 with a strict `pnl > 0` skip would NOT have fired between
-    #   09:57 and 13:30 because the trade was always in small profit.
-    #   With the 1R winner-skip the gate fires at the 10:31 re-scan
-    #   (pnl Rs.+41 = 0.27R < 1R) and books +Rs.41 instead of drifting
-    #   to -Rs.16 at LOSER_EXIT.
+    # MOTIVATING CASES:
+    #   BHARTIARTL 2026-04-21 (same-sign decay) — entered BUY @ +10.1
+    #     at 09:42, re-scored +3.6 (Δ-6.5) at 10:31, sat in the slow-
+    #     positive corridor for 5h 3min and exited LOSER_EXIT @ -Rs.16
+    #     at 14:45. Max favourable was +Rs.109 at 11:05 (0.72R). With
+    #     the 1R winner-skip the gate fires at the 10:31 re-scan
+    #     (pnl Rs.+41 = 0.27R < 1R) and books +Rs.41.
+    #   Sign-flip dead zone (added 2026-04-28) — held BUY at entry
+    #     score +X re-scoring to a small negative value (e.g. -3, -5)
+    #     was previously caught by NEITHER gate: #174 needs |fresh|≥7
+    #     and a confirming pattern; #188 (old) had a same-sign
+    #     requirement that returned False on any flip. Bug observed
+    #     live on 2026-04-28 — losing trade kept running. Fix: the
+    #     same-sign requirement was removed; any sign flip now
+    #     qualifies as decay, subject to the unchanged hold-time and
+    #     winner-skip guards. The strict #174 path is unchanged and
+    #     still fires first when its conditions hold.
     SIGNAL_DECAY_EXIT_ENABLED:          bool  = True
     SIGNAL_DECAY_FRACTION:              float = 0.4
     SIGNAL_DECAY_MIN_ENTRY_SCORE:       float = 7.0
