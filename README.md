@@ -531,6 +531,8 @@ gitignored except `candle_cache.db` (public market data is committed).
 | `scripts/view_candle_cache.py` | Inspect candle cache contents |
 | `scripts/verify_trades.py` | EOD trade verification vs Zerodha API |
 | `scripts/rejection_audit.py --append-report` | Verdict on every skipped entry |
+| `scripts/exit_coverage_check.py` | Truth-table guard — fails if any thesis-broken in-loss `(entry, fresh, pattern)` cell is uncovered by both `_signal_reversal_exit` and `_signal_decay_exit`. Run as part of the smoke triple after any exit-pipeline change to catch cross-gate dead zones (the 2026-04-28 sign-flip class) before they ship. |
+| `scripts/strategy_stability_check.py [--lookback N] [--window-days N]` | Reads `git log` and reports (a) currently-open 10-trading-day no-tune windows opened by recent strategy commits, (b) any tuning commit that landed inside another commit's window without an exempt token. Informational only — never blocks a commit or push. Roadmap #245. **Bug-fix commits that touch tracked strategy files MUST include `bugfix-during-stability-window` in the subject** so the script doesn't spuriously open a fresh window; `#NNNR` removal commits use `removal-trigger-fired`. See `copilot/review-cycle.md` Wrap-up table for the full classification rules. |
 | `scripts/import_reports_to_db.py` | One-time backfill of old JSON reports |
 
 All scripts support `--help`.
