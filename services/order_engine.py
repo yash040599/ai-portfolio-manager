@@ -1619,13 +1619,23 @@ class OrderEngine:
             )
             return False
 
-        # ── Late-entry tightening — score floor (Roadmap #202) ────
+        # ── Late-entry tightening — score floor (Roadmap #202, #246) ────
         # Past LATE_ENTRY_HOUR, demand a stricter |score| than the
         # base effective_min_score (regime-aware). The R:R floor and
         # max-positions cap are enforced by their own checks below
         # (current_rr_floor + max-positions block); this is the score
         # half. Skip when score data is missing (don't penalise the
         # tiny path where _entry_score is None — let other gates run).
+        #
+        # #246 (2026-04-28) couples this floor to the rescue-gate
+        # floor: the effective late-entry minimum is
+        #     max(base_min + late_bump, SIGNAL_DECAY_MIN_ENTRY_SCORE)
+        # so the entry side cannot admit trades the rescue gates
+        # cannot save (the "no-rescue zone"). The constant is REUSED
+        # from `_signal_decay_exit` / `_signal_reversal_exit`
+        # intentionally — no new threshold knob — so the two stay
+        # coupled by code review. Kill-switch:
+        # LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED.
         if (
             getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
             and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
@@ -1633,15 +1643,33 @@ class OrderEngine:
         ):
             base_min  = self.effective_min_score()
             late_bump = float(self.cfg.LATE_ENTRY_MIN_SCORE_BUMP)
-            late_min  = base_min + late_bump
+            bump_min  = base_min + late_bump
+            rescue_floor = float(
+                getattr(self.cfg, "SIGNAL_DECAY_MIN_ENTRY_SCORE", 0.0)
+            )
+            no_rescue_active = bool(
+                getattr(self.cfg, "LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED", False)
+            )
+            late_min = max(bump_min, rescue_floor) if no_rescue_active else bump_min
             score_abs_late = abs(float(trade.get("_entry_score") or 0))
             if score_abs_late < late_min:
+                # Tag whichever floor was binding so the rejection-audit
+                # and EOD review can grade #246 separately from #202.
+                if no_rescue_active and rescue_floor > bump_min and late_min == rescue_floor:
+                    reason_tag = (
+                        f"NO_RESCUE_ZONE (rescue floor {rescue_floor:.1f} "
+                        f"> bump floor {bump_min:.1f})"
+                    )
+                else:
+                    reason_tag = (
+                        f"late-entry tightening "
+                        f"(base {base_min:.1f} + late bump {late_bump:.1f})"
+                    )
                 self.log.warning(
-                    f"{symbol}: late-entry tightening — |score| "
-                    f"{score_abs_late:.1f} < {late_min:.1f} "
-                    f"(base {base_min:.1f} + late bump {late_bump:.1f}). "
+                    f"{symbol}: {reason_tag} — |score| "
+                    f"{score_abs_late:.1f} < {late_min:.1f}. "
                     f"Skipping (after {self.cfg.LATE_ENTRY_HOUR:02d}:00 IST, "
-                    f"only the highest-edge setups should run)."
+                    f"only entries the rescue gates can save should run)."
                 )
                 return False
 

@@ -1161,6 +1161,33 @@ class Config:
     # visibly higher bar, not marginally higher.
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 1.0
 
+    # ── No-Rescue-Zone alignment (Roadmap #246, 2026-04-28) ──────
+    # The in-trade rescue gates (`_signal_decay_exit` and
+    # `_signal_reversal_exit`) refuse to act on entries with
+    # |entry_score| < SIGNAL_DECAY_MIN_ENTRY_SCORE (= 7.0) — that
+    # threshold is a STATISTICAL noise floor on the score model, not
+    # a budget knob (a +5 → +2 drift is jitter regardless of account
+    # size). Meanwhile the late-entry score floor on a SMALL Rs.50K
+    # budget is only ~3.5 (V2_MIN_SCORE 2.0 + BUDGET_MIN_SCORE_DELTA
+    # +0.5 + LATE_ENTRY_MIN_SCORE_BUMP +1.0). So entries between 3.5
+    # and 7.0 after 10:00 IST live in a permanent "no-rescue zone":
+    # if the thesis breaks, only SL / LOSER_EXIT / SQUARE_OFF can
+    # close them. JIOFIN 2026-04-28 (entry +3.8, sign-flipped to
+    # -5.5, ran to STOP_LOSS for -Rs.183) is the motivating case.
+    #
+    # Fix (analyst lens, NOT "lower the rescue floor"): align the
+    # entry side with the rescue side by clamping the late-entry
+    # floor to >= SIGNAL_DECAY_MIN_ENTRY_SCORE inside the existing
+    # late-entry block in `enter_trade`. The threshold is REUSED
+    # from the rescue gate — there is intentionally no new
+    # `*_MIN_SCORE` constant to keep the two coupled by code review.
+    # Morning entries (09:30-10:00) are unaffected: a fresh trend
+    # plus the 30-min decay-hold guard supplies a de-facto rescue
+    # path even on lower-conviction entries.
+    #
+    # Kill-switch only — disable to revert to pure +bump behaviour.
+    LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED: bool = True
+
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
     # The dominant loss pattern today is "slow bleed to SL" — a trade
     # is filled, immediately turns red, and walks 8-12 minutes to its

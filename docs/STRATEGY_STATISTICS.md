@@ -231,6 +231,7 @@ This is the table we **update on every strategy change**.
 | Loss-streak guard (#20 + #244 broadening) | Risk mgmt | 0 | −4 % | Pauses 30 min after 3 consecutive losing exits (any reason); cuts whipsaw-day tail |
 | TARGET_DECAY_PCT (post-1pm tightening on open positions) | Exit rule | +0.02 | −2 % | Protects afternoon profits |
 | Late-entry score bump (+1.0, #239) | Hard reject | +0.02 | −2 % | Raises bar for limited-time-to-target trades |
+| Late-entry no-rescue-zone clamp (#246, 2026-04-28) | Hard reject | +0.04 | −3 % | Couples late-entry floor to `SIGNAL_DECAY_MIN_ENTRY_SCORE = 7.0` so we never admit trades the in-trade rescue gates cannot save. Eliminates the JIOFIN-class loss (∼1×/week, ~Rs.150-200 of pure SL bleed) at the cost of skipping ~3-5 marginal afternoon entries/week. No new threshold knob — reuses the existing rescue constant |
 | 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |
 | **Estimated cumulative theoretical edge** | | **≈ +0.46 R** | **−74 %** | But independent gates overlap, so see §2.3 |
 | **After overlap discount (×0.25)** | | **≈ +0.11 R** | **−40 %** | Matches §2.3 base case |
