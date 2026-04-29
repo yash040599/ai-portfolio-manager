@@ -71,6 +71,29 @@ NIFTY100_EXTRA = [
     "PNB", "RECLTD", "SHREECEM", "SIEMENS", "SOLARINDS",
     "TATACAP", "TATAPOWER", "TMCV", "TORNTPHARM", "TVSMOTOR",
     "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "ZYDUSLIFE",
+    # ----------------------------------------------------------------
+    # HEADS-UP — VEDL demerger (record date 2026-05-01, ex-date
+    # 2026-04-30). Vedanta board approved a 1:1 split into 4 newly
+    # carved-out listed entities (Vedanta Aluminium Metal, Talwandi
+    # Sabo Power, Malco Energy, Vedanta Iron and Steel) plus the
+    # residual VEDL. Listings of the new tickers are expected to
+    # roll out from early-to-mid-May 2026 (NSE/BSE circular pending).
+    #
+    # Action items when demerger goes live:
+    #   1. On the ex-date, expect a large overnight price gap on VEDL
+    #      (the carve-out value drops out). The scanner's GAP_DOWN_*
+    #      detection will fire — DO NOT treat that gap as a tradable
+    #      signal; it's a corporate-action artifact, not flow.
+    #   2. Once the new tickers list, decide whether each one belongs
+    #      in NIFTY100_EXTRA (NSE will rejig NIFTY 100 constituents
+    #      at the next semi-annual reshuffle; until then the new
+    #      symbols are NOT in NIFTY 100). Default: leave them OUT
+    #      until the official NSE reconstitution circular.
+    #   3. Verify VEDL stays in NIFTY 100 post-demerger (likely yes,
+    #      free-float just shrinks). If NSE replaces it, drop it
+    #      from this list and add the replacement.
+    # Tracking: see daily-review note for 2026-04-29.
+    # ----------------------------------------------------------------
 ]
 
 # Nifty 150 = Nifty 100 + Next 50 mid caps (50 symbols)
