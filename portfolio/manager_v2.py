@@ -598,9 +598,19 @@ class PortfolioManagerV2(PortfolioManager):
                     if self._check_vix_spike():
                         self.engine.set_vix_spike(True)
                         self._clear_status_line()
+                        vix_open = self._india_vix_open
+                        vix_now  = self._india_vix
+                        vix_change_pct = (
+                            (vix_now - vix_open) / vix_open * 100
+                            if vix_open > 0 else 0.0
+                        )
+                        clear_at = vix_open * (1 + self.cfg.VIX_SPIKE_PCT / 100)
                         self.log.info(
                             f"All positions closed but VIX (Volatility Index) spike active — "
-                            f"waiting for VIX to settle before re-scanning"
+                            f"VIX {vix_now:.2f} ({vix_change_pct:+.1f}% vs open {vix_open:.2f}, "
+                            f"threshold +{self.cfg.VIX_SPIKE_PCT:.0f}%). "
+                            f"Re-scan resumes when VIX < {clear_at:.2f}. "
+                            f"Next VIX refresh in ≤ {self.cfg.NIFTY_RECHECK_MINUTES} min."
                         )
                         time.sleep(base_poll)
                         continue
@@ -879,10 +889,17 @@ class PortfolioManagerV2(PortfolioManager):
                     self.engine.set_vix_spike(spike)
                     if spike:
                         self._clear_status_line()
+                        vix_change_pct = (
+                            (self._india_vix - self._india_vix_open)
+                            / self._india_vix_open * 100
+                            if self._india_vix_open > 0 else 0.0
+                        )
+                        clear_at = self._india_vix_open * (1 + self.cfg.VIX_SPIKE_PCT / 100)
                         self.log.warning(
-                            f"⚠ VIX (Volatility Index) SPIKE detected: {self._india_vix:.1f} "
-                            f"(opened at {self._india_vix_open:.1f}) — "
-                            f"pausing new entries"
+                            f"⚠ VIX (Volatility Index) SPIKE detected: {self._india_vix:.2f} "
+                            f"({vix_change_pct:+.1f}% vs open {self._india_vix_open:.2f}, "
+                            f"threshold +{self.cfg.VIX_SPIKE_PCT:.0f}%) — "
+                            f"pausing new entries. Clears when VIX < {clear_at:.2f}."
                         )
                     self._last_nifty_check = time.time()
 
