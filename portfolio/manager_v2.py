@@ -732,9 +732,17 @@ class PortfolioManagerV2(PortfolioManager):
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
                         if self._trade_plans:
-                            self._enter_positions()
+                            entered = self._enter_positions() or 0
                             last_review_time = time.time()
-                            self._last_candle_scan = time.time()
+                            # Only reset the candle-rescan timer when a fresh
+                            # position actually opened. If every candidate was
+                            # rejected (e.g. NO_RESCUE_ZONE post-#246), the
+                            # surviving N-1 positions still need decay-gate
+                            # monitoring on their original schedule. Silently
+                            # delaying it 15 min cost SIEMENS ~Rs.130 on
+                            # 2026-05-04. (#250 bugfix)
+                            if entered > 0:
+                                self._last_candle_scan = time.time()
                         else:
                             self.log.info("V2 partial re-scan: no replacement trades found")
                         self._last_partial_rescan = time.time()
@@ -950,9 +958,17 @@ class PortfolioManagerV2(PortfolioManager):
                         self._trade_plans = []
                         self._run_pre_market_scan(session_context=session_ctx)
                         if self._trade_plans:
-                            self._enter_positions()
+                            entered = self._enter_positions() or 0
                             last_review_time = time.time()
-                            self._last_candle_scan = time.time()
+                            # Only reset the candle-rescan timer when a fresh
+                            # position actually opened. Otherwise the existing
+                            # open positions get their decay-gate monitor
+                            # silently deferred 15 min — confirmed root cause
+                            # of the SIEMENS 2026-05-04 12:32:09 SL hit at
+                            # score +0.0 (decay would have fired at 12:21:21
+                            # if this reset were skipped). (#250 bugfix)
+                            if entered > 0:
+                                self._last_candle_scan = time.time()
                         else:
                             self.log.info("Periodic opportunity scan: no new trades found")
                     self._last_opportunity_scan = time.time()

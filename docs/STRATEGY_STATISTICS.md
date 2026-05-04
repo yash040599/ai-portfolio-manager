@@ -63,6 +63,23 @@ provisional intraday trades).
 > 2027-03-31 (144 trades across 20 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
+>
+> **Trade-count caveat (added 2026-05-04 review).** The 144 figure is the
+> tax-canonical row count from `intraday_tax_ledger`, where the broker
+> records each fill as a separate row — a single MARKET exit on an illiquid
+> name like HDFCLIFE 2026-04-27 fragmented into nine 600.00/600.10
+> rows that collectively close one logical position. The bot's own
+> `data/trades.db` shows ~131 logical trades for the same window
+> (~13 fewer; HDFCLIFE 04-27 alone contributes 8 of the gap, with smaller
+> deltas on 03-25 and 04-09). The metrics above use the tax-ledger
+> count to stay aligned with the dashboard's tax page (the canonical
+> rule per `copilot/daily-trade-review.md` Step 6). On the logical
+> count the WR is closer to ~43% (still 🔴 below the 55% target) and
+> expectancy is still negative — the *direction* of every verdict above
+> is unchanged, but the magnitudes are slightly less harsh than the
+> raw row count implies. SQUARE_OFF_RECOVERED entries (3 rows on
+> 04-27) are real synthetic positions reconstructed by `recover_prior_session_fills`
+> after restart, not duplicates — they belong in both ledgers.
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|

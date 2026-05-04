@@ -497,6 +497,13 @@ class PortfolioManager:
         # Mark initial entry done — subsequent calls are mid-day rescans
         self._initial_entry_done = True
 
+        # Return so callers can distinguish a no-op entry pass (every
+        # candidate rejected by a gate, e.g. NO_RESCUE_ZONE post-#246)
+        # from one that actually opened a fresh position. Critical for
+        # the V2 monitor loop's `_last_candle_scan` bookkeeping — see
+        # manager_v2.py callers. (#250 bugfix)
+        return entered
+
     def _attempt_entries(self, plans: list[dict]) -> int:
         """Run through trade plans and attempt to enter each. Returns count."""
         entered = 0
