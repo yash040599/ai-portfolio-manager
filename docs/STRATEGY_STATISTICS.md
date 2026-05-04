@@ -44,10 +44,10 @@
 > STOP_LOSS; closes coverage gap exposed when today's session-1 lost
 > 4-in-a-row to MOMENTUM_KILL with the guard never firing).
 >
-> Last live snapshot refresh: **2026-04-29** (post-2026-04-29 trading
+> Last live snapshot refresh: **2026-05-04** (post-2026-05-04 trading
 > session; no code shipped today — review-only pass while every
 > tracked subsystem sits inside a #245 no-tune window opened by
-> `f87dd95` on 2026-04-28).
+> `f87dd95` on 2026-04-28, closing 2026-05-12).
 
 ---
 
@@ -59,21 +59,21 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-04-29** for FY 2026-04-01 →
-> 2027-03-31 (133 trades across 19 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-04** for FY 2026-04-01 →
+> 2027-03-31 (144 trades across 20 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **42.0%** (55 W / 76 L of 133, 2 scratched) | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **1.09** (GP Rs.4,072 / GL Rs.3,724)  | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.10.45** (Net −Rs.1,389 / 133)   | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **31.6%** (6 of 19 days)              | 🔴 below |
+| Win rate                  | 55%                       | **39.4%** (56 W / 86 L of 144, 2 scratched) | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **1.05** (GP Rs.4,124 / GL Rs.3,914)  | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.11.00** (Net −Rs.1,584 / 144)   | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **30.0%** (6 of 20 days)              | 🔴 below |
 | Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.1,513** peak-to-trough           | 🟢 within |
+| Max drawdown              | < 10% of capital          | **Rs.1,707** peak-to-trough           | 🟢 within |
 
-**Read this as reference only.** The 133 trades above were taken across
+**Read this as reference only.** The 144 trades above were taken across
 multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
 including the #188 sign-flip-decay fix in commit `09483df` and the
 #246 no-rescue-zone late-entry floor in `f87dd95`, both shipped
