@@ -1374,6 +1374,55 @@ class Config:
     # are excluded — they are not strategy failures.
     LOSS_STREAK_INCLUDE_NON_SL_LOSSES: bool = True
 
+    # ── Entry-burst cap (Roadmap #179) ───────────────────────────
+    # MAX_ENTRIES_PER_60S: hard cap on how many positions the bot
+    #   may open inside any rolling 60-second window. Same-direction
+    #   sub-60s bursts had ~92% lose-together correlation across 3
+    #   qualifying days (Apr-22, Apr-23, May-05; 11 of 12 burst entries
+    #   were losers). Cap-2 means the third-and-later burst entry is
+    #   skipped with a logged BURST_CAP rejection.
+    #   Set to 0 to disable (no cap).
+    ENTRY_BURST_CAP_ENABLED: bool = True
+    ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S: int = 2
+
+    # ── BUY-side directional auto-pause (Roadmap #251) ───────────
+    # When the rolling 7-day BUY-side win-rate collapses AND NIFTY's
+    # rolling-7-day return is negative, disable BUY entries for the
+    # session. Symmetric SELL side is wired but defaults disabled
+    # (no SELL-bleed regime observed yet).
+    #
+    # Origin: 2026-04-22 → 2026-05-05 9-day audit. BUY 5/40 wins
+    # (12.5%), SELL 6/14 wins (42.9%). BUY-side net negative on 8/8
+    # days across BEARISH/NEUTRAL/BULLISH regimes — not a
+    # regime-classifier bug, a structural scoring/scanner-side bias.
+    # The pause clears at next session start when conditions recover.
+    DIRECTIONAL_PAUSE_ENABLED: bool = True
+    DIRECTIONAL_PAUSE_LOOKBACK_DAYS: int = 7
+    DIRECTIONAL_PAUSE_MIN_TRADES: int = 10        # need ≥ N trades on the side in lookback to act
+    DIRECTIONAL_PAUSE_WR_THRESHOLD: float = 0.30  # arm if rolling WR ≤ 30%
+    DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT: float = 0.0  # arm if NIFTY 7d return ≤ this %
+    DIRECTIONAL_PAUSE_RECOVER_WR: float = 0.40    # not used in same-session logic; documented for skill files
+
+    # ── Rolling profit-factor circuit breaker (Roadmap #253) ─────
+    # Multi-day analogue of CONSECUTIVE_SL_PAUSE_COUNT. Computed at
+    # session start from intraday_tax_ledger. When the rolling N-day
+    # net is below ROLLING_PF_PAUSE_NET_FLOOR AND rolling-N-day PF
+    # is below ROLLING_PF_PAUSE_THRESHOLD, the bot blocks all NEW
+    # entries for the session. Existing positions are managed
+    # normally. Reuses scripts/tax_summary.py's intraday_tax_ledger
+    # as the canonical source so the gate matches the dashboard /
+    # tax page numbers.
+    #
+    # Origin: 2026-04-22 → 2026-05-05 9-day audit. 8 consecutive
+    # losing days; FY-cumulative profit factor crossed below 1.0
+    # for the first time. No multi-day protection existed; only
+    # intra-day soft-stop / peak-DD / loss-streak guards.
+    ROLLING_PF_PAUSE_ENABLED: bool = True
+    ROLLING_PF_PAUSE_LOOKBACK_DAYS: int = 3
+    ROLLING_PF_PAUSE_THRESHOLD: float = 0.5       # PF = Σwins / |Σlosses|
+    ROLLING_PF_PAUSE_NET_FLOOR: float = -500.0    # rupees; both must hold
+    ROLLING_PF_PAUSE_MIN_TRADES: int = 5          # need ≥ N trades in lookback to act
+
     # ── Dynamic Score Threshold ───────────────────────────────────
     # After losses, raise the minimum score for new NoAI trades.
     # LOSS_SCORE_BUMP_PCT: day loss threshold (as % of budget)
@@ -2110,6 +2159,52 @@ class Config:
         # Tax / charges
         _pct("TAX_RATE_PCT", cls.TAX_RATE_PCT)
         _pct("TAX_CESS_PCT", cls.TAX_CESS_PCT)
+
+        # Entry-burst cap (#179)
+        if cls.ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S < 0:
+            errors.append(
+                f"ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S must be ≥ 0: "
+                f"{cls.ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S!r}"
+            )
+
+        # Directional auto-pause (#251)
+        if not (0.0 <= cls.DIRECTIONAL_PAUSE_WR_THRESHOLD <= 1.0):
+            errors.append(
+                f"DIRECTIONAL_PAUSE_WR_THRESHOLD must be in [0, 1]: "
+                f"{cls.DIRECTIONAL_PAUSE_WR_THRESHOLD!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_LOOKBACK_DAYS <= 0:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_LOOKBACK_DAYS must be > 0: "
+                f"{cls.DIRECTIONAL_PAUSE_LOOKBACK_DAYS!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_MIN_TRADES <= 0:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_MIN_TRADES must be > 0: "
+                f"{cls.DIRECTIONAL_PAUSE_MIN_TRADES!r}"
+            )
+
+        # Rolling-PF pause (#253)
+        if cls.ROLLING_PF_PAUSE_THRESHOLD < 0:
+            errors.append(
+                f"ROLLING_PF_PAUSE_THRESHOLD must be ≥ 0: "
+                f"{cls.ROLLING_PF_PAUSE_THRESHOLD!r}"
+            )
+        if cls.ROLLING_PF_PAUSE_NET_FLOOR > 0:
+            errors.append(
+                f"ROLLING_PF_PAUSE_NET_FLOOR must be ≤ 0 (it is a loss "
+                f"floor): {cls.ROLLING_PF_PAUSE_NET_FLOOR!r}"
+            )
+        if cls.ROLLING_PF_PAUSE_LOOKBACK_DAYS <= 0:
+            errors.append(
+                f"ROLLING_PF_PAUSE_LOOKBACK_DAYS must be > 0: "
+                f"{cls.ROLLING_PF_PAUSE_LOOKBACK_DAYS!r}"
+            )
+        if cls.ROLLING_PF_PAUSE_MIN_TRADES <= 0:
+            errors.append(
+                f"ROLLING_PF_PAUSE_MIN_TRADES must be > 0: "
+                f"{cls.ROLLING_PF_PAUSE_MIN_TRADES!r}"
+            )
 
         return errors
 

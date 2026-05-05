@@ -247,6 +247,15 @@ class PortfolioManager:
             # breaker (#197) and adaptive sizing.
             recovered_closed = self.engine.recover_prior_session_fills()
 
+        # ── Step 5b': Multi-day pause arming (#251 + #253) ──────
+        # Query the canonical intraday_tax_ledger for the trailing
+        # rolling-PF and rolling-side-WR windows; fetch a NIFTY
+        # rolling-7d return; arm the engine's session-wide pauses.
+        # This runs ONCE per session (next session = fresh engine,
+        # fresh arming). Pauses are session-sticky on purpose — a
+        # cold streak does not warm up by lunch.
+        self._arm_multiday_pauses()
+
         # ── Step 5c: Thursday F&O expiry adjustments ────────────
         self._apply_expiry_day_adjustments()
 
@@ -1272,6 +1281,121 @@ class PortfolioManager:
         returned funds amount for budget calculation.
         """
         self._available_funds = self.zerodha.print_account_snapshot()
+
+    # ================================================================
+    # MULTI-DAY PAUSE ARMING (Roadmap #251 + #253)
+    # ================================================================
+
+    def _arm_multiday_pauses(self) -> None:
+        """Read the trailing N-day intraday_tax_ledger and NIFTY
+        history; arm session-wide pauses on the engine.
+
+        This runs ONCE at session start. Both pauses are sticky for
+        the session (a cold streak does not warm up by lunch); they
+        clear naturally when a fresh OrderEngine is constructed for
+        the next session.
+
+        Failure modes are non-blocking — if the DB read or NIFTY
+        fetch fails, neither pause arms and the bot trades normally.
+        """
+        cfg = self.cfg
+        rolling_pf_enabled = getattr(cfg, "ROLLING_PF_PAUSE_ENABLED", True)
+        directional_enabled = getattr(cfg, "DIRECTIONAL_PAUSE_ENABLED", True)
+        if not rolling_pf_enabled and not directional_enabled:
+            return
+
+        # ── Choose the longest lookback so we read the DB once ────
+        pf_lookback = int(getattr(cfg, "ROLLING_PF_PAUSE_LOOKBACK_DAYS", 3))
+        dir_lookback = int(getattr(cfg, "DIRECTIONAL_PAUSE_LOOKBACK_DAYS", 7))
+        lookback = max(pf_lookback, dir_lookback)
+        today = now_ist().date()
+        # Pull a comfortable calendar buffer (lookback × 2 + weekends)
+        # so we have enough rows to count back N *trading* days.
+        calendar_floor = today - datetime.timedelta(days=lookback * 2 + 7)
+
+        # ── Read the canonical ledger (read-only) ─────────────────
+        rolling_pf = rolling_net = None
+        rolling_n_trades = 0
+        side_stats: dict[str, dict] = {}
+        try:
+            from scripts.tax_db import get_db
+            conn = get_db()
+            rows = conn.execute(
+                "SELECT date, side, gross_pnl FROM intraday_tax_ledger "
+                "WHERE date >= ? ORDER BY date",
+                (calendar_floor.isoformat(),),
+            ).fetchall()
+            conn.close()
+        except Exception as e:
+            self.log.warning(
+                f"Multi-day pause arming: skipped (DB read failed: {e})"
+            )
+            rows = []
+
+        if rows:
+            # Group by date so we can count trading days, not rows.
+            by_date: dict[str, list] = {}
+            for r in rows:
+                by_date.setdefault(r["date"], []).append(r)
+            sorted_dates = sorted(by_date.keys())
+
+            # ── Rolling-PF window (pf_lookback trading days) ──────
+            pf_dates = sorted_dates[-pf_lookback:]
+            pf_rows = [r for d in pf_dates for r in by_date[d]]
+            if pf_rows:
+                wins = sum(r["gross_pnl"] for r in pf_rows if r["gross_pnl"] > 0)
+                losses = sum(r["gross_pnl"] for r in pf_rows if r["gross_pnl"] < 0)
+                rolling_net = wins + losses
+                rolling_n_trades = len(pf_rows)
+                if losses < 0:
+                    rolling_pf = wins / abs(losses)
+                else:
+                    # No losses in the window — PF is undefined / huge.
+                    # Treat as "definitely not a cold streak"; leave
+                    # rolling_pf at a value above any threshold.
+                    rolling_pf = 999.0
+
+            # ── Directional window (dir_lookback trading days) ────
+            dir_dates = sorted_dates[-dir_lookback:]
+            dir_rows = [r for d in dir_dates for r in by_date[d]]
+            for side in ("BUY", "SELL"):
+                side_rows = [r for r in dir_rows if r["side"] == side]
+                wins = sum(1 for r in side_rows if r["gross_pnl"] > 0)
+                side_stats[side] = {"n": len(side_rows), "wins": wins}
+
+        # ── Fetch rolling NIFTY return for the directional check ──
+        nifty_return_pct: float | None = None
+        if directional_enabled:
+            try:
+                to_date = today
+                from_date = to_date - datetime.timedelta(days=dir_lookback * 2 + 5)
+                candles = self.zerodha.get_historical(
+                    "NIFTY 50", "NSE", from_date, to_date, "day"
+                )
+                if candles and len(candles) >= 2:
+                    # Use the last `dir_lookback` daily closes.
+                    series = candles[-(dir_lookback + 1):]
+                    if len(series) >= 2 and series[0]["close"] > 0:
+                        first_close = float(series[0]["close"])
+                        last_close = float(series[-1]["close"])
+                        nifty_return_pct = (
+                            (last_close - first_close) / first_close * 100
+                        )
+            except Exception as e:
+                self.log.warning(
+                    f"Multi-day pause arming: NIFTY history fetch "
+                    f"failed ({e}); directional pause stays disabled "
+                    f"this session."
+                )
+
+        # ── Hand off to engine ────────────────────────────────────
+        self.engine.arm_multiday_pauses(
+            rolling_pf=rolling_pf,
+            rolling_net=rolling_net,
+            rolling_n_trades=rolling_n_trades,
+            side_stats=side_stats,
+            nifty_return_pct=nifty_return_pct,
+        )
 
     # ================================================================
     # THURSDAY F&O EXPIRY ADJUSTMENTS

@@ -168,6 +168,26 @@ class OrderEngine:
         # opportunity / re-scan paths. Default False = no pause.
         self._vix_spike_active: bool = False
 
+        # ── Entry-burst cap state (#179) ───────────────────────────
+        # Rolling timestamps of recent entries (any side, any symbol).
+        # `enter_trade()` consults this to enforce
+        # `ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S` — the third entry inside
+        # any 60-second window is rejected with `BURST_CAP`. Stamped at
+        # the END of `enter_trade()` so only successful entries count.
+        self._recent_entry_times: collections.deque = collections.deque(maxlen=32)
+
+        # ── Multi-day pause state (#251 directional + #253 rolling-PF) ──
+        # Both are armed at session start by the manager via the
+        # `arm_multiday_pauses(...)` helper below, which queries
+        # `intraday_tax_ledger` once and stamps these attributes.
+        # `_directional_pause_side` is None / "BUY" / "SELL".
+        # `_rolling_pf_pause_armed` is False / True.
+        # Both clear naturally at next session (fresh OrderEngine).
+        self._directional_pause_side: str | None = None
+        self._directional_pause_reason: str = ""
+        self._rolling_pf_pause_armed: bool = False
+        self._rolling_pf_pause_reason: str = ""
+
         # ── Tape-breadth state (#212) ──────────────────────────────
         # Scanner stamps this dict each scan with {"buys": int,
         # "sells": int, "ratio": float, "tape": "BULLISH"/"BEARISH"
@@ -1521,7 +1541,7 @@ class OrderEngine:
 
         Returns True if the order was placed/logged successfully.
 
-        Entry pipeline (each step can reject the trade). Total = 40
+        Entry pipeline (each step can reject the trade). Total = 43
         checks across the V2 design (see docs/STRATEGY_V2.md §"Risk
         Management — Entry Pre-Checks" for the canonical inventory):
         3 scanner-side pre-filter gates (#-1 earnings blackout, #14c
@@ -1537,6 +1557,9 @@ class OrderEngine:
         this numbered summary to keep the walkthrough readable. When
         adding/removing gates, update STRATEGY_V2.md FIRST (it is the
         source of truth), then patch this summary if helpful.
+          0a. Rolling-PF circuit breaker (#253) — session-wide pause when last 3 trading days' PF < 0.5 AND net < -Rs.500
+          0b. Directional auto-pause (#251) — session-wide BUY (or SELL) pause when 7d side-WR ≤ 30% AND NIFTY 7d return on contra side
+          0c. Entry-burst cap (#179) — block third-and-later entry inside any rolling 60s window
           0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
           1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥5.7 (LUNCH_LULL_SCORE_OVERRIDE; stepped down from 6.0 by #221)
           2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl
@@ -1585,6 +1608,48 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = now_ist()
+
+        # ── Rolling-PF circuit breaker (Roadmap #253) ─────────────
+        # Multi-day analogue of the intra-day soft-stop. Armed once at
+        # session start by the manager via `arm_multiday_pauses()` when
+        # the trailing N-day intraday_tax_ledger shows both a sub-0.5
+        # profit factor AND a net loss exceeding ROLLING_PF_PAUSE_NET_FLOOR.
+        # Existing positions managed normally. Kill-switch:
+        # ROLLING_PF_PAUSE_ENABLED.
+        if self.is_rolling_pf_paused():
+            self.log.warning(
+                f"{symbol}: rolling-PF pause active "
+                f"({self._rolling_pf_pause_reason}) — new entries "
+                f"blocked for the session. Skipping (existing "
+                f"positions still managed)."
+            )
+            return False
+
+        # ── Directional auto-pause (Roadmap #251) ─────────────────
+        # Side-specific session-wide pause when the trailing-7-day
+        # WR for `side` collapsed below threshold AND NIFTY's rolling
+        # 7-day return is on the contra side. Armed by manager at
+        # session start. Kill-switch: DIRECTIONAL_PAUSE_ENABLED.
+        if self.is_directional_paused(side):
+            self.log.warning(
+                f"{symbol}: directional pause active for {side} "
+                f"({self._directional_pause_reason}) — {side} entries "
+                f"blocked for the session. Skipping (other-side and "
+                f"existing positions still managed)."
+            )
+            return False
+
+        # ── Entry-burst cap (Roadmap #179) ────────────────────────
+        # Hard cap on entries per rolling 60s. Same-direction sub-60s
+        # bursts had ~92% lose-together correlation across 3 qualifying
+        # days. Kill-switch: ENTRY_BURST_CAP_ENABLED.
+        if self.is_burst_capped(now):
+            cap = int(getattr(self.cfg, "ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S", 2))
+            self.log.warning(
+                f"{symbol}: entry-burst cap reached ({cap} entries in "
+                f"trailing 60s). Skipping (existing positions still managed)."
+            )
+            return False
 
         # ── Choppy-morning entry pause (Roadmap #192) ─────────────
         # Pause new entries when NIFTY ADX has been weak for several
@@ -2825,6 +2890,10 @@ class OrderEngine:
 
         self.positions.append(position)
         self._log_action("ENTRY", symbol, side, qty, entry, rationale)
+        # Stamp the entry timestamp for the burst-cap window (#179).
+        # Done at the very end so only successful entries count toward
+        # the rolling-60s cap; rejected attempts are not penalised.
+        self.record_entry(now)
         return True
 
     # ================================================================
@@ -4253,6 +4322,156 @@ class OrderEngine:
             self._consecutive_sl_count = 0
             return False
         return True
+
+    # ================================================================
+    # ENTRY-BURST CAP (Roadmap #179)
+    # ================================================================
+
+    def is_burst_capped(self, now: datetime.datetime | None = None) -> bool:
+        """True if `MAX_ENTRIES_PER_60S` successful entries are already
+        recorded in the trailing 60 seconds.
+
+        Cap-2 means the third entry inside any rolling 60-second window
+        is blocked. Same-direction sub-60s bursts had ~92% lose-together
+        correlation across 3 qualifying days (Apr-22 / Apr-23 / May-05).
+        Kill-switch: ENTRY_BURST_CAP_ENABLED.
+        """
+        if not getattr(self.cfg, "ENTRY_BURST_CAP_ENABLED", True):
+            return False
+        cap = int(getattr(self.cfg, "ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S", 0))
+        if cap <= 0:
+            return False
+        t = now or now_ist()
+        cutoff = t - datetime.timedelta(seconds=60)
+        recent = sum(1 for ts in self._recent_entry_times if ts >= cutoff)
+        return recent >= cap
+
+    def record_entry(self, now: datetime.datetime | None = None) -> None:
+        """Stamp a successful entry timestamp for the burst-cap window.
+
+        Called from the END of `enter_trade()` after the order placement
+        succeeds. Only recording successful entries (not rejections)
+        keeps the cap honest — a rejected attempt should not count.
+        """
+        self._recent_entry_times.append(now or now_ist())
+
+    # ================================================================
+    # MULTI-DAY PAUSES (#251 directional, #253 rolling-PF)
+    # ================================================================
+
+    def arm_multiday_pauses(
+        self,
+        rolling_pf: float | None,
+        rolling_net: float | None,
+        rolling_n_trades: int,
+        side_stats: dict[str, dict] | None,
+        nifty_return_pct: float | None,
+    ) -> None:
+        """Called once at session start by the manager.
+
+        `rolling_pf`, `rolling_net`, `rolling_n_trades` describe the
+        last `ROLLING_PF_PAUSE_LOOKBACK_DAYS` of intraday_tax_ledger
+        rows. `side_stats` is `{"BUY": {"n": int, "wins": int}, "SELL":
+        {...}}` over the directional lookback. `nifty_return_pct` is
+        the rolling-N-day NIFTY total return in %.
+
+        Either argument can be None when the manager couldn't compute
+        it (e.g. fresh DB, no prior trades) — in that case the
+        corresponding pause stays unarmed and the bot trades normally.
+        """
+        # ── Rolling-PF circuit breaker (#253) ─────────────────────
+        if (
+            getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", True)
+            and rolling_pf is not None
+            and rolling_net is not None
+            and rolling_n_trades >= int(getattr(self.cfg, "ROLLING_PF_PAUSE_MIN_TRADES", 5))
+            and rolling_pf < float(getattr(self.cfg, "ROLLING_PF_PAUSE_THRESHOLD", 0.5))
+            and rolling_net < float(getattr(self.cfg, "ROLLING_PF_PAUSE_NET_FLOOR", -500.0))
+        ):
+            lookback = int(getattr(self.cfg, "ROLLING_PF_PAUSE_LOOKBACK_DAYS", 3))
+            self._rolling_pf_pause_armed = True
+            self._rolling_pf_pause_reason = (
+                f"rolling-{lookback}d PF={rolling_pf:.2f} (threshold "
+                f"{self.cfg.ROLLING_PF_PAUSE_THRESHOLD:.2f}), "
+                f"net=Rs.{rolling_net:.0f} (floor "
+                f"Rs.{self.cfg.ROLLING_PF_PAUSE_NET_FLOOR:.0f}), "
+                f"n={rolling_n_trades}"
+            )
+            self.log.warning(
+                f"ROLLING-PF PAUSE ARMED: {self._rolling_pf_pause_reason}. "
+                f"All NEW entries blocked for the session; existing "
+                f"positions managed normally."
+            )
+
+        # ── Directional auto-pause (#251) ─────────────────────────
+        if (
+            getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True)
+            and side_stats
+            and nifty_return_pct is not None
+        ):
+            min_trades = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_MIN_TRADES", 10))
+            wr_threshold = float(getattr(self.cfg, "DIRECTIONAL_PAUSE_WR_THRESHOLD", 0.30))
+            nifty_floor = float(getattr(self.cfg, "DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT", 0.0))
+            lookback = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_LOOKBACK_DAYS", 7))
+
+            # BUY-side check: contra-NIFTY (NIFTY ≤ floor)
+            buy = side_stats.get("BUY") or {}
+            buy_n = int(buy.get("n", 0))
+            buy_wr = (int(buy.get("wins", 0)) / buy_n) if buy_n > 0 else None
+            if (
+                buy_n >= min_trades
+                and buy_wr is not None
+                and buy_wr <= wr_threshold
+                and nifty_return_pct <= nifty_floor
+            ):
+                self._directional_pause_side = "BUY"
+                self._directional_pause_reason = (
+                    f"rolling-{lookback}d BUY-WR={buy_wr*100:.1f}% "
+                    f"({buy['wins']}/{buy_n}, threshold "
+                    f"{wr_threshold*100:.0f}%) AND NIFTY-{lookback}d-return="
+                    f"{nifty_return_pct:+.2f}% (floor {nifty_floor:+.2f}%)"
+                )
+                self.log.warning(
+                    f"DIRECTIONAL PAUSE ARMED (BUY): {self._directional_pause_reason}. "
+                    f"All NEW BUY entries blocked for the session; SELL "
+                    f"side and existing positions managed normally."
+                )
+                return
+
+            # SELL-side check: contra-NIFTY (NIFTY ≥ -floor for upside trend)
+            sell = side_stats.get("SELL") or {}
+            sell_n = int(sell.get("n", 0))
+            sell_wr = (int(sell.get("wins", 0)) / sell_n) if sell_n > 0 else None
+            if (
+                sell_n >= min_trades
+                and sell_wr is not None
+                and sell_wr <= wr_threshold
+                and nifty_return_pct >= -nifty_floor
+            ):
+                self._directional_pause_side = "SELL"
+                self._directional_pause_reason = (
+                    f"rolling-{lookback}d SELL-WR={sell_wr*100:.1f}% "
+                    f"({sell['wins']}/{sell_n}, threshold "
+                    f"{wr_threshold*100:.0f}%) AND NIFTY-{lookback}d-return="
+                    f"{nifty_return_pct:+.2f}% (floor {-nifty_floor:+.2f}%)"
+                )
+                self.log.warning(
+                    f"DIRECTIONAL PAUSE ARMED (SELL): {self._directional_pause_reason}. "
+                    f"All NEW SELL entries blocked for the session; BUY "
+                    f"side and existing positions managed normally."
+                )
+
+    def is_directional_paused(self, side: str) -> bool:
+        """True if a session-wide directional pause is armed for `side`."""
+        if not getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True):
+            return False
+        return self._directional_pause_side == side
+
+    def is_rolling_pf_paused(self) -> bool:
+        """True if the rolling-PF session-wide pause is armed."""
+        if not getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", True):
+            return False
+        return self._rolling_pf_pause_armed
 
     # ================================================================
     # BUDGET-REGIME HELPERS (Roadmap #165)

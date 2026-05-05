@@ -394,7 +394,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **API cost** | **Rs.0** | ~Rs.20-40/day (5-15 Claude calls) |
 | **Latency** | Instant | 10-30s per Claude call |
 
-**Shared across both modes:** pre-filter, entry pipeline (40 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
+**Shared across both modes:** pre-filter, entry pipeline (43 checks), SL-M exchange orders, trailing stop, circuit breaker + cooldown, time-decay, late-day loser exit, direction diversification, sector guard, VIX adjustments, expiry adjustments (incl. holiday-shifted Wednesday expiry, #41), NIFTY regime tracking, FII/DII bias, fallback candidate promotion, manual trade adoption with grace window, crash recovery, lunch-lull skip (#164), per-symbol re-entry cooldown (#161), charge-aware target (#162), daily-loss soft-stop (#163), peak-drawdown stop (#168), budget-regime gate deltas (#165).
 
 ---
 
@@ -424,7 +424,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 40 checks, in order)
+#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 43 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -530,7 +530,7 @@ Only three decisions change in `--ai` mode — everything else is identical:
 | **Review open positions (every 30 min)** | Stagnant-exit rule only | Claude sees 5-min candles + StochRSI, can HOLD / TIGHTEN / EXIT / BREAKEVEN |
 | **Opportunity re-scan** | Auto-select from shortlist | Claude picks from shortlist |
 
-Every entry/exit gate (all 41 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
+Every entry/exit gate (all 43 pre-trade checks, trailing, circuit breaker, SL-M, cooldown, lunch-lull, soft-stop, peak-drawdown, charge-aware target, ADX/regime gates) runs **identically** in both modes. Claude can never bypass safety rails.
 
 ---
 
@@ -600,7 +600,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 2. Confirm `ENTRY_MIN_MOVE_PCT` (0.3%) directional move from open price
 2b. **Stale-score guard** (#196) — when wait ≥ `FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES` (5), re-run `_analyse_stock` on each survivor. Abort if sign flipped or `|fresh| < |entry| × FRESH_ENTRY_DECAY_FRACTION` (0.6). Otherwise refresh `_entry_score` so all downstream score-gated checks (lunch-lull, ADX override, gap-coherence, average-down) compare against the freshest value. Fail-open per-symbol; V1 path unaffected (no `_analyse_stock`)
 3. ATR-based SL/target calculation — uses **pure ATR** when available (config defaults are fallback only). Computed via `_compute_atr_sl_target()` helper (single source of truth)
-4. Pre-trade checks pass (40 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
+4. Pre-trade checks pass (43 checks — see [Risk Management — Entry Pre-Checks](#risk-management--entry-pre-checks))
 5. **Fallback on rejection:** if a trade fails any check, the entry loop tries the next candidate from the plan. Loop stops when all position slots are filled or all candidates exhausted
 6. Place entry order on Zerodha: LIMIT at LTP + 1 tick buffer (tick size fetched per instrument via `zerodha.get_tick_size()` — Rs.0.05 for most stocks, Rs.0.50 for high-priced scripts). Price is rounded to the nearest valid tick multiple. BUY bids 1 tick above LTP, SELL asks 1 tick below. Wait full `LIMIT_ORDER_TIMEOUT` (8s) polling filled qty every second — don't exit early on first partial fill. If fully filled → done. If partially filled after full timeout → cancel remainder, accept partial. If zero filled → cancel, retry with fresh LTP (up to `LIMIT_MAX_RETRIES`). Fall back to MARKET after all LIMIT attempts fail. Exits always MARKET for guaranteed fill. (DRY_RUN simulates without orders)
 7. Fetch actual fill price — scale SL/target proportionally around fill
@@ -718,12 +718,17 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 ## Risk Management — Entry Pre-Checks
 
-Every trade must pass these 40 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+Every trade must pass these 43 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
+
+**Note on ordering** — gates are listed in the order they actually run in `enter_trade()`. The first three gates (`0aa`, `0ab`, `0ac`) are session-wide / cross-day risk circuit breakers added 2026-05-05 in response to the 04-22 → 05-05 multi-day losing streak; they fire BEFORE the legacy intra-day gates (`0d` choppy-morning onward).
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
 | -1 | **Earnings/results-day blackout** (#219, was #167) | `EARNINGS_BLACKOUT_ENABLED = True`, `EARNINGS_BLACKOUT_SYMBOLS_2026: dict[str, list[str]]` | Scanner-side pre-filter inside `_prefilter_universe()` — runs BEFORE scoring, so the symbol never reaches `enter_trade()` at all. Reads today's `"YYYY-MM-DD"` key and drops listed symbols from `price_filtered`. User-maintained dict (empty by default = zero behaviour change); user updates each Friday from the next week's NSE corp-action calendar. Earnings-day moves are dominated by surprise content, not technicals — our setups underperform on these days |
-| 0d | **Choppy-morning entry pause** (#192) | `CHOPPY_MORNING_PAUSE_ENABLED = True`, `CHOPPY_PAUSE_ADX_THRESHOLD = 16`, `CHOPPY_PAUSE_MINUTES = 15` | Fires FIRST in code (before 0a). Pauses NEW entries when NIFTY ADX < 16 for ≥3 consecutive scans inside the 09:30-10:30 IST window AND ≥2 STAGNANT_EXIT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding 15-min pause; can re-arm multiple times per morning. Existing positions managed normally. Manager feeds NIFTY ADX via `engine.record_nifty_adx()` each NIFTY-recheck tick |
+| 0aa | **Rolling-PF circuit breaker** (#253) | `ROLLING_PF_PAUSE_ENABLED = True`, `ROLLING_PF_PAUSE_LOOKBACK_DAYS = 3`, `ROLLING_PF_PAUSE_THRESHOLD = 0.5`, `ROLLING_PF_PAUSE_NET_FLOOR = -500.0`, `ROLLING_PF_PAUSE_MIN_TRADES = 5` | Session-wide pause armed at startup by `manager._arm_multiday_pauses()` (reads `intraday_tax_ledger` for the trailing 3 trading days). Arms when ALL of: PF (sum-wins / abs(sum-losses)) < 0.5 AND net P&L ≤ −Rs.500 AND n_trades ≥ 5. Once armed, blocks every new entry for the entire session; existing positions managed normally. Reset at next session start. Origin: 2026-04-22 → 2026-05-05 8-day losing streak that no intra-day circuit breaker (#163 / #168 / #244) caught — each individual day's loss was below the soft-stop trigger but the cumulative drift was unambiguous. Fail-safe = over-pause: if the DB read fails we leave the gate disabled and log a warning |
+| 0ab | **Directional auto-pause** (#251) | `DIRECTIONAL_PAUSE_ENABLED = True`, `DIRECTIONAL_PAUSE_LOOKBACK_DAYS = 7`, `DIRECTIONAL_PAUSE_MIN_TRADES = 10`, `DIRECTIONAL_PAUSE_WR_THRESHOLD = 0.30`, `DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT = 0.0`, `DIRECTIONAL_PAUSE_RECOVER_WR = 0.40` | Session-wide BUY-only OR SELL-only pause armed at startup. Arms when, over the trailing 7 trading days for one side: n_trades ≥ 10 AND WR ≤ 30% AND NIFTY 7d return is on the contra side (BUY pause needs NIFTY 7d ≤ 0% / SELL pause needs ≥ 0%). Origin: 2026-04-23 → 2026-05-05 BUY-side WR collapsed to 12.5% (5/40) while SELL held 42.9% (6/14). Existing positions on the paused side are managed normally. The contra side trades unimpeded; this is intentionally a directional gate, not a global one. Fails open on DB or NIFTY-fetch failure |
+| 0ac | **Entry-burst cap** (#179) | `ENTRY_BURST_CAP_ENABLED = True`, `ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S = 2` | Rolling-60-second window cap. Engine maintains a `deque[maxlen=32]` of recent successful-entry timestamps; reject any third-or-later entry inside any 60-second window. Origin: 2026-04-22 → 2026-05-05 audit found that 12 of 13 entry-bursts (≥3 entries inside 60s) ended with all trades on the burst losing together — suggesting the burst itself is a regime signature (correlated tape pressure) rather than independent setups. The cap is intentionally conservative (allows 2 entries per minute = 120/hr theoretical max, well above our 12-trade daily cap) so it only bites genuine bursts |
+| 0d | **Choppy-morning entry pause** (#192) | `CHOPPY_MORNING_PAUSE_ENABLED = True`, `CHOPPY_PAUSE_ADX_THRESHOLD = 16`, `CHOPPY_PAUSE_MINUTES = 15` | Pauses NEW entries when NIFTY ADX < 16 for ≥3 consecutive scans inside the 09:30-10:30 IST window AND ≥2 STAGNANT_EXIT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding 15-min pause; can re-arm multiple times per morning. Existing positions managed normally. Manager feeds NIFTY ADX via `engine.record_nifty_adx()` each NIFTY-recheck tick |
 | 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (currently 5.7, lowered from 6.0 by #221 then nudged 5.5 → 5.7 in the review-pass-1 fix; well above the V2_MIN_SCORE base of 2.0). Boundary-exclusive on the right |
 | 0e | **VIX intraday-spike entry pause** (#211) | `VIX_SPIKE_ENTRY_PAUSE_ENABLED = True`, `VIX_SPIKE_PCT = 10.0` | Fires immediately after 0d. `OrderEngine.is_vix_spike_active()` returns True when manager's `_check_vix_spike()` (compares current INDIA VIX vs day-open) crossed the threshold on the latest NIFTY recheck. Closes the entry-path hole left by #181 — manager already paused the opportunity scan and the all-closed re-scan, but per-trade `enter_trade()` was bypassed by initial pre-market scan and partial re-scan paths. Existing positions managed normally |
 | 0b | **Daily-loss soft stop** (#163, MTM-aware via #166) | `DAILY_LOSS_SOFT_STOP_PCT = 1.5`, `MTM_AWARE_CB_ENABLED = True` | Reject new entries when `effective_day_pnl()` (closed P&L + open-position MTM, when MTM-aware kill-switch on) ≤ -1.5% of budget. Existing positions still managed. Hard circuit breaker at 3% still closes all |
