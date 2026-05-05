@@ -1417,10 +1417,22 @@ class Config:
     # losing days; FY-cumulative profit factor crossed below 1.0
     # for the first time. No multi-day protection existed; only
     # intra-day soft-stop / peak-DD / loss-streak guards.
+    #
+    # Threshold tuning (2026-05-05 backtest replay over trailing
+    # 30 calendar days, 16 evaluable session-starts):
+    #   Variant                     Arms  Net-saved  Comment
+    #   PF<0.5  AND net<−500    →    1    Rs.+47    too strict; missed 04-29/05-04/05-05
+    #   PF<0.6  AND net<−300    →    6    Rs.+387   sweet spot; arms during cold streaks
+    #   PF<0.7  AND net<−300    →    6    Rs.+387   identical (PF<0.6 was the binding constraint)
+    #   PF<0.5  OR  net<−500    →    5    Rs.+56    over-pauses on solitary deep-loss days
+    # Picked PF<0.6 AND net<−300 as the EV-positive variant. Per
+    # the trailing-30d sweep, this would have armed on the start
+    # of 2026-04-23, 04-24, 04-27, 04-28, 04-29, 05-04 — catching
+    # the bulk of the 8-day losing streak, not just the tail.
     ROLLING_PF_PAUSE_ENABLED: bool = True
     ROLLING_PF_PAUSE_LOOKBACK_DAYS: int = 3
-    ROLLING_PF_PAUSE_THRESHOLD: float = 0.5       # PF = Σwins / |Σlosses|
-    ROLLING_PF_PAUSE_NET_FLOOR: float = -500.0    # rupees; both must hold
+    ROLLING_PF_PAUSE_THRESHOLD: float = 0.6       # PF = Σwins / |Σlosses|
+    ROLLING_PF_PAUSE_NET_FLOOR: float = -300.0    # rupees; both must hold
     ROLLING_PF_PAUSE_MIN_TRADES: int = 5          # need ≥ N trades in lookback to act
 
     # ── Dynamic Score Threshold ───────────────────────────────────
