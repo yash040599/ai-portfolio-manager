@@ -44,10 +44,15 @@
 > STOP_LOSS; closes coverage gap exposed when today's session-1 lost
 > 4-in-a-row to MOMENTUM_KILL with the guard never firing).
 >
-> Last live snapshot refresh: **2026-05-04** (post-2026-05-04 trading
-> session; no code shipped today — review-only pass while every
-> tracked subsystem sits inside a #245 no-tune window opened by
-> `f87dd95` on 2026-04-28, closing 2026-05-12).
+> Last live snapshot refresh: **2026-05-05** (post-2026-05-05 trading
+> session; six new closed trades — 1 W (LODHA SELL +Rs.50.40,
+> sign-flip decay caught the winner) + 5 L (SHRIRAMFIN/ABB/IRFC/ENRIN/RECLTD).
+> Net −Rs.434 on a BEARISH_NORMAL day with two same-direction sub-60s
+> entry bursts; LOSS-STREAK GUARD #244 fired correctly at 10:44:42 and
+> paused entries 30 min between sessions. Code change shipped today:
+> none beyond yesterday's `7ee34fe` decay-gate-suppression bugfix
+> (regression check green-by-absence — no opportunity-scan-with-zero-entries
+> coincided with an open position today).
 
 ---
 
@@ -59,36 +64,37 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-05-04** for FY 2026-04-01 →
-> 2027-03-31 (144 trades across 20 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-05** for FY 2026-04-01 →
+> 2027-03-31 (150 trades across 21 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 >
-> **Trade-count caveat (added 2026-05-04 review).** The 144 figure is the
-> tax-canonical row count from `intraday_tax_ledger`, where the broker
-> records each fill as a separate row — a single MARKET exit on an illiquid
-> name like HDFCLIFE 2026-04-27 fragmented into nine 600.00/600.10
-> rows that collectively close one logical position. The bot's own
-> `data/trades.db` shows ~131 logical trades for the same window
-> (~13 fewer; HDFCLIFE 04-27 alone contributes 8 of the gap, with smaller
-> deltas on 03-25 and 04-09). The metrics above use the tax-ledger
+> **Trade-count caveat (added 2026-05-04 review, still applies).** The 150
+> figure is the tax-canonical row count from `intraday_tax_ledger`, where
+> the broker records each fill as a separate row — a single MARKET exit
+> on an illiquid name like HDFCLIFE 2026-04-27 fragmented into nine
+> 600.00/600.10 rows that collectively close one logical position. The
+> bot's own `data/trades.db` shows ~137 logical trades for the same
+> window (~13 fewer; HDFCLIFE 04-27 alone contributes 8 of the gap, with
+> smaller deltas on 03-25 and 04-09). The metrics above use the tax-ledger
 > count to stay aligned with the dashboard's tax page (the canonical
 > rule per `copilot/daily-trade-review.md` Step 6). On the logical
-> count the WR is closer to ~43% (still 🔴 below the 55% target) and
+> count the WR is closer to ~42% (still 🔴 below the 55% target) and
 > expectancy is still negative — the *direction* of every verdict above
 > is unchanged, but the magnitudes are slightly less harsh than the
-> raw row count implies. SQUARE_OFF_RECOVERED entries (3 rows on
-> 04-27) are real synthetic positions reconstructed by `recover_prior_session_fills`
-> after restart, not duplicates — they belong in both ledgers.
+> raw row count implies. SQUARE_OFF_RECOVERED entries (3 rows on 04-27,
+> 4 rows on 05-05 from today's restart at 10:09) are real synthetic
+> positions reconstructed by `recover_prior_session_fills` after restart,
+> not duplicates — they belong in both ledgers.
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **39.4%** (56 W / 86 L of 144, 2 scratched) | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **1.05** (GP Rs.4,124 / GL Rs.3,914)  | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.11.00** (Net −Rs.1,584 / 144)   | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **30.0%** (6 of 20 days)              | 🔴 below |
+| Win rate                  | 55%                       | **38.5%** (57 W / 91 L of 150, 2 scratched) | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.97** (GP Rs.4,175 / GL Rs.4,295)  | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.13.45** (Net −Rs.2,017 / 150)   | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **28.6%** (6 of 21 days)              | 🔴 below |
 | Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.1,707** peak-to-trough           | 🟢 within |
+| Max drawdown              | < 10% of capital          | **Rs.2,141** peak-to-trough           | 🟢 within |
 
 **Read this as reference only.** The 144 trades above were taken across
 multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
