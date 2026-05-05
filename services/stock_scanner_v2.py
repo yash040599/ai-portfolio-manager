@@ -1003,9 +1003,10 @@ class StockScannerV2(StockScanner):
                     f"({len(strong_buys)} BUY candidates with score ≥ 4.0)"
                 )
             else:
+                dropped = sell_slots
                 sell_slots = 0
                 self.log.info(
-                    f"Post {short_cutoff}:00 short cutoff: dropped {sell_slots} "
+                    f"Post {short_cutoff}:00 short cutoff: dropped {dropped} "
                     f"SELL slot(s) (no BUY candidates with score ≥ 4.0)"
                 )
 
