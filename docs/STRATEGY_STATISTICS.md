@@ -39,12 +39,14 @@
 >    target during the early-development weeks, so these numbers are
 >    directional, not deterministic.
 >
-> Last theoretical update: **2026-05-05** (after Roadmap #179
+> Last theoretical update: **2026-05-06** (after Roadmap #179
 > entry-burst cap shipped, #251 BUY/SELL directional auto-pause
 > shipped, #253 rolling-PF circuit breaker shipped-then-disabled,
-> and #246 late-entry no-rescue floor disabled. Net theoretical
-> Δ across the four items ≈ **+0.11 R/trade pre-overlap-discount,
-> +0.03 R/trade after** — the largest single-day theoretical lift
+> #246 late-entry no-rescue floor disabled, then on 2026-05-06
+> #179a per-budget burst-cap delta and #251a fractional-Kelly
+> opposing-side cap added as follow-ups. Net theoretical
+> Δ across the six items ≈ **+0.13 R/trade pre-overlap-discount,
+> +0.04 R/trade after** — the largest single-week theoretical lift
 > since the §2.5 table was first built. §3 headline numbers
 > unchanged because they derive from the §2.2 base-WR ladder,
 > not the §2.5 sum, and the base-rate ladder is unaffected.)
@@ -264,10 +266,12 @@ This is the table we **update on every strategy change**.
 | Late-entry score bump (+1.0, #239) | Hard reject | +0.02 | −2 % | Raises bar for limited-time-to-target trades |
 | Late-entry no-rescue-zone clamp (#246, 2026-04-28 — DISABLED 2026-05-05) | Risk mgmt | 0 (disabled) | 0 (disabled) | Originally rated +0.04 R / −3 % MDD on its predicted JIOFIN-class loss profile. Phase-2 EV audit on 2026-05-05 over 24 sessions / 157 bot-only positions falsified that prediction: **pre-ship counterfactual cohort the gate would now block** (n=39, |score|<7 post-10:00, all dates ≤ 2026-04-28) was net **Rs.+618 at 53.8 % WR** with EVERY score sub-bin net-positive; **post-ship admitted cohort** (n=9, |score|≥7 post-10:00) was net **Rs.−451 at 33 % WR**. Disabled via `LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False`; re-enable trigger documented in Awaiting-Data #254. Code retained — flip the flag to re-arm |
 | Entry-burst cap (#179, 2026-05-05) | Hard reject | +0.05 | −4 % | Blocks 3rd-and-later entries in any rolling 60s window. Trigger evidence: 92% of burst-entries (11 of 12) across 3 days lost together — the burst itself is a regime signature. Conservative cap (theoretical max ~120/hr) only bites genuine bursts |
+| Per-budget burst-cap delta (#179a, 2026-05-06) | Hard reject | +0.01 | −1 % | Adds `BUDGET_BURST_CAP_DELTA = {SMALL:0, NORMAL:+1, LARGE:+2}` so the audit-validated SMALL cap-2 doesn't single-thread NORMAL/LARGE accounts that genuinely have 5-8 morning slots. Net effect: same EV preservation on SMALL (where the audit was), modest EV+ on NORMAL/LARGE by avoiding false-positive 3rd-entry blocks. Industry parallel: prop-firm risk frameworks tier max-concurrent caps by account size |
 | Directional auto-pause #251 (BUY/SELL side-skew, 2026-05-05) | Risk mgmt | +0.10 | −12 % | Session-wide pause of one side when 7d WR ≤ 30% over n ≥ 10 trades AND NIFTY 7d return is contra. Trigger: 04-23 → 05-05 BUY-WR collapsed to 12.5% across all 3 NIFTY regimes (not regime-explained). Blocking a 12.5%-WR side is structural EV-recovery; contra side preserved |
+| Fractional-Kelly opposing-side cap (#251a, 2026-05-06) | Risk mgmt | +0.02 | −2 % | When #251 arms against one side, caps the OPPOSING (un-paused) side at 3 entries/session whenever its history has < 20 trades (binomial CI at n=14 is ±26pp — statistical noise; Kelly criterion advises reduced stake under edge uncertainty, not full play). Reduces concentration tail-risk on the un-validated side without disabling it. Direct EV+ comes from skipping low-EV opposing-side trades after the 3rd; MDD↓ comes from capping the worst-case tail when the surviving side's small-sample edge is illusory |
 | Rolling-PF circuit breaker #253 (DISABLED 2026-05-05) | Risk mgmt | 0 (disabled) | 0 (disabled) | Shipped then disabled same day after counterfactual replay revealed #251 alone captures Rs.+503 of recovery vs baseline while #253 on top adds Rs.−116 (net-negative incremental). False-pause on 04-10 cost Rs.+488 (single big-loss day armed the gate, blocked a winning session); SELL side was profitable on multiple paused days. Industry rationale: Kelly criterion advises reducing stake when uncertain about edge, not betting zero. Code retained for future re-enable with longer post-#251 history |
 | 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |
-| **Estimated cumulative theoretical edge** | | **≈ +0.77 R** | **−107 %** | But independent gates overlap, so see §2.3. (Was +0.81 R / −110 % when #246 was active; -0.04 R and +3 % MDD recovered when #246 disabled 2026-05-05.) |
+| **Estimated cumulative theoretical edge** | | **≈ +0.80 R** | **−110 %** | But independent gates overlap, so see §2.3. (Was +0.81 R / −110 % when #246 was active; -0.04 R and +3 % MDD recovered when #246 disabled 2026-05-05; +0.03 R / −3 % MDD added by #179a + #251a follow-ups on 2026-05-06.) |
 | **After overlap discount (×0.25)** | | **≈ +0.19 R** | **−53 %** | Matches §2.3 base case (multi-day breakers + directional pause are largely orthogonal to per-trade gates so the discount is gentler than for the per-trade family) |
 
 ### 2.6 What raises vs harms theoretical probability

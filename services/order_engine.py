@@ -188,6 +188,18 @@ class OrderEngine:
         self._rolling_pf_pause_armed: bool = False
         self._rolling_pf_pause_reason: str = ""
 
+        # ── Opposing-side fractional-Kelly cap (#251a) ────────────
+        # When `_directional_pause_side` is set, the OPPOSING side may
+        # have thin evidence (n < OPPOSING_MIN_TRADES). In that case
+        # we cap entries on the un-paused side at
+        # OPPOSING_THIN_MAX_ENTRIES per session per Kelly best-practice
+        # (reduce stake when uncertain about edge). Stamped by
+        # `arm_multiday_pauses()`; counter incremented in `record_entry()`.
+        self._opposing_thin_side: str | None = None  # the side TO BE CAPPED
+        self._opposing_thin_reason: str = ""
+        self._opposing_thin_count: int = 0
+        self._opposing_thin_max: int = 0
+
         # ── Tape-breadth state (#212) ──────────────────────────────
         # Scanner stamps this dict each scan with {"buys": int,
         # "sells": int, "ratio": float, "tape": "BULLISH"/"BEARISH"
@@ -1639,12 +1651,31 @@ class OrderEngine:
             )
             return False
 
-        # ── Entry-burst cap (Roadmap #179) ────────────────────────
+        # ── Opposing-thin fractional-Kelly cap (Roadmap #251a) ───
+        # When the directional pause armed against the OTHER side based
+        # on a thin opposing-side sample (typically the SELL n=14 case),
+        # cap entries on this surviving side at OPPOSING_THIN_MAX_ENTRIES
+        # per session. Reduces concentration risk on the un-validated
+        # side per Kelly best-practice (Investopedia: 50-60 trades is the
+        # typical lookback for win-prob estimation; binomial CI at n=14
+        # is ±26pp). Kill-switch: DIRECTIONAL_PAUSE_ENABLED (shared with
+        # #251 — disabling that gate also disables this one).
+        if self.is_opposing_thin_capped(side):
+            self.log.warning(
+                f"{symbol}: opposing-thin cap reached for {side} "
+                f"({self._opposing_thin_count}/{self._opposing_thin_max} "
+                f"entries this session; {self._opposing_thin_reason}). "
+                f"Skipping (existing positions still managed)."
+            )
+            return False
+
+        # ── Entry-burst cap (Roadmap #179, budget-tiered #179a) ──
         # Hard cap on entries per rolling 60s. Same-direction sub-60s
         # bursts had ~92% lose-together correlation across 3 qualifying
-        # days. Kill-switch: ENTRY_BURST_CAP_ENABLED.
+        # days. Per-budget delta from BUDGET_BURST_CAP_DELTA tunes the
+        # cap to account size. Kill-switch: ENTRY_BURST_CAP_ENABLED.
         if self.is_burst_capped(now):
-            cap = int(getattr(self.cfg, "ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S", 2))
+            cap = self.effective_burst_cap()
             self.log.warning(
                 f"{symbol}: entry-burst cap reached ({cap} entries in "
                 f"trailing 60s). Skipping (existing positions still managed)."
@@ -2893,7 +2924,8 @@ class OrderEngine:
         # Stamp the entry timestamp for the burst-cap window (#179).
         # Done at the very end so only successful entries count toward
         # the rolling-60s cap; rejected attempts are not penalised.
-        self.record_entry(now)
+        # Side passed in to drive the #251a opposing-thin counter.
+        self.record_entry(now, side=side)
         return True
 
     # ================================================================
@@ -4335,10 +4367,15 @@ class OrderEngine:
         is blocked. Same-direction sub-60s bursts had ~92% lose-together
         correlation across 3 qualifying days (Apr-22 / Apr-23 / May-05).
         Kill-switch: ENTRY_BURST_CAP_ENABLED.
+
+        Cap is budget-tiered (#179a) — `effective_burst_cap()` adds
+        `BUDGET_BURST_CAP_DELTA[regime]` so NORMAL/LARGE accounts that
+        run 5-8 morning slots aren't single-threaded by the SMALL-cohort
+        audit value.
         """
         if not getattr(self.cfg, "ENTRY_BURST_CAP_ENABLED", True):
             return False
-        cap = int(getattr(self.cfg, "ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S", 0))
+        cap = self.effective_burst_cap()
         if cap <= 0:
             return False
         t = now or now_ist()
@@ -4346,14 +4383,51 @@ class OrderEngine:
         recent = sum(1 for ts in self._recent_entry_times if ts >= cutoff)
         return recent >= cap
 
-    def record_entry(self, now: datetime.datetime | None = None) -> None:
+    def effective_burst_cap(self) -> int:
+        """Base ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S with budget-regime
+        delta applied (#179a).
+
+        The 92% lose-together evidence was on a Rs.50K SMALL account,
+        so SMALL/TINY get delta=0 (audit-validated cap-2). NORMAL/LARGE
+        get +1 / +2 to allow morning slot fills without single-threading.
+        Floored at 0 (a negative effective cap is meaningless).
+        """
+        base = int(getattr(self.cfg, "ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S", 0))
+        delta = 0
+        if getattr(self.cfg, "BUDGET_REGIME_ENABLED", True):
+            delta_map = getattr(self.cfg, "BUDGET_BURST_CAP_DELTA", {}) or {}
+            try:
+                delta = int(delta_map.get(self.budget_regime(), 0))
+            except (TypeError, ValueError):
+                delta = 0
+        return max(0, base + delta)
+
+    def record_entry(
+        self,
+        now: datetime.datetime | None = None,
+        side: str | None = None,
+    ) -> None:
         """Stamp a successful entry timestamp for the burst-cap window.
 
         Called from the END of `enter_trade()` after the order placement
         succeeds. Only recording successful entries (not rejections)
         keeps the cap honest — a rejected attempt should not count.
+
+        When `side` is supplied AND the #251a opposing-thin cap is
+        armed AND this entry is on the opposing (un-paused) side,
+        bump the per-session counter so the cap can fire on subsequent
+        attempts.
         """
         self._recent_entry_times.append(now or now_ist())
+        if side is not None and self._opposing_thin_side == side:
+            self._opposing_thin_count += 1
+            if self._opposing_thin_count >= self._opposing_thin_max:
+                self.log.warning(
+                    f"OPPOSING-THIN CAP REACHED ({side}): "
+                    f"{self._opposing_thin_count}/{self._opposing_thin_max} "
+                    f"entries this session. Further {side} entries blocked "
+                    f"until next session (fractional-Kelly per #251a)."
+                )
 
     # ================================================================
     # MULTI-DAY PAUSES (#251 directional, #253 rolling-PF)
@@ -4436,6 +4510,7 @@ class OrderEngine:
                     f"All NEW BUY entries blocked for the session; SELL "
                     f"side and existing positions managed normally."
                 )
+                self._maybe_arm_opposing_thin("BUY", side_stats)
                 return
 
             # SELL-side check: contra-NIFTY (NIFTY ≥ -floor for upside trend)
@@ -4460,12 +4535,75 @@ class OrderEngine:
                     f"All NEW SELL entries blocked for the session; BUY "
                     f"side and existing positions managed normally."
                 )
+                self._maybe_arm_opposing_thin("SELL", side_stats)
+
+    def _maybe_arm_opposing_thin(
+        self,
+        paused_side: str,
+        side_stats: dict[str, dict],
+    ) -> None:
+        """After a directional pause arms against `paused_side`, check
+        whether the OPPOSING (un-paused) side has thin evidence (n <
+        OPPOSING_MIN_TRADES). If so, arm a per-session entry cap on
+        the opposing side per Roadmap #251a (fractional-Kelly).
+
+        Industry priors (Investopedia / Kelly criterion): typical
+        win-prob lookback is 50-60 trades. With n=14 the binomial CI
+        at p=0.5 is ±26pp — statistical noise. Without this gate the
+        bot would lean its full per-session quota on an unverified
+        side just because the OTHER side broke down.
+        """
+        opposing = "SELL" if paused_side == "BUY" else "BUY"
+        n_threshold = int(
+            getattr(self.cfg, "DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES", 20)
+        )
+        max_entries = int(
+            getattr(self.cfg, "DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES", 3)
+        )
+        if max_entries <= 0 or n_threshold <= 0:
+            return
+        opposing_stats = side_stats.get(opposing) or {}
+        opposing_n = int(opposing_stats.get("n", 0))
+        if opposing_n >= n_threshold:
+            return
+        self._opposing_thin_side = opposing
+        self._opposing_thin_max = max_entries
+        self._opposing_thin_count = 0
+        self._opposing_thin_reason = (
+            f"opposing-side {opposing} n={opposing_n} below "
+            f"OPPOSING_MIN_TRADES={n_threshold}; capping {opposing} "
+            f"entries at {max_entries}/session per #251a fractional-Kelly"
+        )
+        self.log.warning(
+            f"OPPOSING-THIN CAP ARMED ({opposing}): "
+            f"{self._opposing_thin_reason}"
+        )
 
     def is_directional_paused(self, side: str) -> bool:
         """True if a session-wide directional pause is armed for `side`."""
         if not getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True):
             return False
         return self._directional_pause_side == side
+
+    def is_opposing_thin_capped(self, side: str) -> bool:
+        """True if `side` is the un-paused opposing side AND its
+        evidence was thin (n < OPPOSING_MIN_TRADES) at session start
+        AND we already entered OPPOSING_THIN_MAX_ENTRIES this session.
+
+        Implements #251a fractional-Kelly cap on the surviving side
+        when the directional-pause armed against the other side based
+        on a thin opposing-side sample. Industry rule of thumb (Kelly
+        criterion lookback) is 50-60 trades for win-prob estimation;
+        binomial CI at n=14 is ±26pp — noise. We don't go full Kelly
+        on a noisy edge.
+        """
+        if not getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True):
+            return False
+        if self._opposing_thin_side != side:
+            return False
+        if self._opposing_thin_max <= 0:
+            return False
+        return self._opposing_thin_count >= self._opposing_thin_max
 
     def is_rolling_pf_paused(self) -> bool:
         """True if the rolling-PF session-wide pause is armed."""

@@ -1405,6 +1405,14 @@ class Config:
     #   Set to 0 to disable (no cap).
     ENTRY_BURST_CAP_ENABLED: bool = True
     ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S: int = 2
+    # Roadmap #179a (2026-05-06): per-budget delta on the base cap.
+    # The 92% lose-together evidence was on a Rs.50K SMALL account, so
+    # SMALL/TINY stay at the audit-validated cap. NORMAL/LARGE accounts
+    # have 5-8 morning slots and the cap-2 single-threads them with no
+    # contradicting evidence — industry prop-firm risk frameworks
+    # (TopstepTrader, FTMO, MyForexFunds) tier max-concurrent caps by
+    # account size. Effective cap = base + delta, floored at 0.
+    BUDGET_BURST_CAP_DELTA = {"TINY": 0, "SMALL": 0, "NORMAL": 1, "LARGE": 2}
 
     # ── BUY-side directional auto-pause (Roadmap #251) ───────────
     # When the rolling 7-day BUY-side win-rate collapses AND NIFTY's
@@ -1423,6 +1431,17 @@ class Config:
     DIRECTIONAL_PAUSE_WR_THRESHOLD: float = 0.30  # arm if rolling WR ≤ 30%
     DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT: float = 0.0  # arm if NIFTY 7d return ≤ this %
     DIRECTIONAL_PAUSE_RECOVER_WR: float = 0.40    # not used in same-session logic; documented for skill files
+    # Roadmap #251a (2026-05-06): fractional-Kelly opposing-side cap.
+    # When a side's pause arms, the OPPOSING (un-paused) side may have
+    # thin evidence (n < OPPOSING_MIN_TRADES). Per Kelly criterion
+    # (Investopedia: typical lookback is 50-60 trades for win-prob
+    # estimation; binomial CI at n=14 is ±26pp — noise) and prop-firm
+    # risk practice, when the surviving side has < OPPOSING_MIN_TRADES
+    # of history we cap entries on it at OPPOSING_THIN_MAX_ENTRIES per
+    # session. This is fractional-Kelly: keep playing the un-paused
+    # side, but with reduced concentration until evidence accumulates.
+    DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES: int = 20
+    DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES: int = 3
 
     # ── Rolling profit-factor circuit breaker (Roadmap #253) ─────
     # Multi-day analogue of CONSECUTIVE_SL_PAUSE_COUNT. Computed at
@@ -2244,6 +2263,29 @@ class Config:
                 f"DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT must be in [-100, 100]: "
                 f"{cls.DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT!r}"
             )
+        # Roadmap #251a opposing-side fractional-Kelly cap.
+        if cls.DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES < 0:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES must be ≥ 0: "
+                f"{cls.DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES < 0:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES must be ≥ 0: "
+                f"{cls.DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES!r}"
+            )
+        # Roadmap #179a per-budget burst-cap delta.
+        if not isinstance(cls.BUDGET_BURST_CAP_DELTA, dict):
+            errors.append(
+                f"BUDGET_BURST_CAP_DELTA must be a dict: "
+                f"{type(cls.BUDGET_BURST_CAP_DELTA).__name__}"
+            )
+        else:
+            for regime in ("TINY", "SMALL", "NORMAL", "LARGE"):
+                if regime not in cls.BUDGET_BURST_CAP_DELTA:
+                    errors.append(
+                        f"BUDGET_BURST_CAP_DELTA missing regime {regime!r}"
+                    )
 
         # Rolling-PF pause (#253)
         if cls.ROLLING_PF_PAUSE_THRESHOLD < 0:

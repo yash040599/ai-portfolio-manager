@@ -201,6 +201,35 @@
   in Awaiting-Data #254. Pre-trade check count: 41 → 43 (entry-burst
   cap + directional pause; rolling-PF gate code present but skipped
   by kill-switch).
+
+  2026-05-06 sync — Per-budget burst-cap delta + fractional-Kelly
+  opposing-side cap (Roadmap #179a + #251a). Two follow-up gates
+  shipped one day after #179/#251 in response to user financial-analyst
+  questions on the live behaviour. **#179a per-budget burst-cap delta**
+  (`BUDGET_BURST_CAP_DELTA = {"TINY": 0, "SMALL": 0, "NORMAL": 1,
+  "LARGE": 2}`, new `OrderEngine.effective_burst_cap()` returns
+  `base + delta` floored at 0; `is_burst_capped()` consumes it):
+  the 92% lose-together evidence in #179 was sourced exclusively from
+  a Rs.50K SMALL account, so SMALL/TINY stay at the audit-validated
+  cap-2 while NORMAL/LARGE accounts that genuinely have 5-8 morning
+  slots get +1 / +2 deltas (effective cap 3 / 4). Industry parallel:
+  prop-firm risk frameworks (TopstepTrader, FTMO, MyForexFunds) tier
+  max-concurrent caps by account size.
+  **#251a fractional-Kelly opposing-side cap** (`DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES = 20`,
+  `DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES = 3`; new
+  `OrderEngine._maybe_arm_opposing_thin()` called from both BUY and
+  SELL arming branches in `arm_multiday_pauses()`; new
+  `is_opposing_thin_capped(side)` gate inserted in `enter_trade()`
+  immediately after `is_directional_paused(side)`): when #251 arms
+  against one side, the OPPOSING (un-paused) side may have thin
+  evidence (e.g. SELL n=14 in the 04-23 → 05-05 trigger audit). Per
+  Kelly criterion (Investopedia: typical lookback is 50-60 trades for
+  win-prob estimation; binomial CI at n=14 with p≈0.5 is ±26pp —
+  statistical noise) we cap entries on the surviving side at 3 per
+  session whenever its history has < 20 trades. Reduces concentration
+  risk on the un-validated side without disabling it. Pre-trade check
+  count: 43 → 44 (opposing-thin gate inserted between directional-pause
+  and burst-cap; burst-cap is now budget-tiered, count itself unchanged).
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -750,14 +779,15 @@ All indicators computed on 15-min candles. Total composite score range: **-24 to
 
 Every trade must pass these 43 checks in order. If any fails, the trade is rejected and the next fallback candidate is tried.
 
-**Note on ordering** — gates are listed in the order they actually run in `enter_trade()`. The first three gates (`0aa`, `0ab`, `0ac`) are session-wide / cross-day risk circuit breakers added 2026-05-05 in response to the 04-22 → 05-05 multi-day losing streak; they fire BEFORE the legacy intra-day gates (`0d` choppy-morning onward).
+**Note on ordering** — gates are listed in the order they actually run in `enter_trade()`. The first four gates (`0aa`, `0ab`, `0abc`, `0ac`) are session-wide / cross-day risk circuit breakers added 2026-05-05 / 2026-05-06 in response to the 04-22 → 05-05 multi-day losing streak; they fire BEFORE the legacy intra-day gates (`0d` choppy-morning onward).
 
 | # | Check | Config | Behaviour |
 |---|-------|--------|-----------|
 | -1 | **Earnings/results-day blackout** (#219, was #167) | `EARNINGS_BLACKOUT_ENABLED = True`, `EARNINGS_BLACKOUT_SYMBOLS_2026: dict[str, list[str]]` | Scanner-side pre-filter inside `_prefilter_universe()` — runs BEFORE scoring, so the symbol never reaches `enter_trade()` at all. Reads today's `"YYYY-MM-DD"` key and drops listed symbols from `price_filtered`. User-maintained dict (empty by default = zero behaviour change); user updates each Friday from the next week's NSE corp-action calendar. Earnings-day moves are dominated by surprise content, not technicals — our setups underperform on these days |
 | 0aa | **Rolling-PF circuit breaker** (#253) — **DISABLED 2026-05-05** | `ROLLING_PF_PAUSE_ENABLED = False`, `ROLLING_PF_PAUSE_LOOKBACK_DAYS = 3`, `ROLLING_PF_PAUSE_THRESHOLD = 0.6`, `ROLLING_PF_PAUSE_NET_FLOOR = -300.0`, `ROLLING_PF_PAUSE_MIN_TRADES = 5` | Same-day post-ship audit found this gate is net-negative once #251 (directional pause) is also active. Counterfactual replay over 17 evaluable sessions: #251 alone gains Rs.+503 vs baseline; adding #253 on top yields Rs.+387 (incremental Rs.−6). The full-session blackout (a) costs +Rs.488 on the 04-10 false-pause where a single big-loss day on 04-09 armed the gate and blocked a Rs.+488 winner; (b) blocks the SELL side that's been profitable during the BUY collapse (e.g. 05-05 SELL net was +Rs.28). Industry standard (Kelly criterion, fractional Kelly): when uncertain about edge, REDUCE bet size, do NOT bet zero. Bet-zero is justified only when edge is provably ≤ 0, which 24 days of data cannot establish. Code, ledger reading, and PF computation are kept intact for future re-enable; current behaviour is no-op. To re-enable, validate thresholds against ≥ 60-90 days of post-#251 data and confirm there is incremental EV above #251. |
 | 0ab | **Directional auto-pause** (#251) | `DIRECTIONAL_PAUSE_ENABLED = True`, `DIRECTIONAL_PAUSE_LOOKBACK_DAYS = 7`, `DIRECTIONAL_PAUSE_MIN_TRADES = 10`, `DIRECTIONAL_PAUSE_WR_THRESHOLD = 0.30`, `DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT = 0.0`, `DIRECTIONAL_PAUSE_RECOVER_WR = 0.40` | Session-wide BUY-only OR SELL-only pause armed at startup. Arms when, over the trailing 7 trading days for one side: n_trades ≥ 10 AND WR ≤ 30% AND NIFTY 7d return is on the contra side (BUY pause needs NIFTY 7d ≤ 0% / SELL pause needs ≥ 0%). Origin: 2026-04-23 → 2026-05-05 BUY-side WR collapsed to 12.5% (5/40) while SELL held 42.9% (6/14). Existing positions on the paused side are managed normally. The contra side trades unimpeded; this is intentionally a directional gate, not a global one. Fails open on DB or NIFTY-fetch failure |
-| 0ac | **Entry-burst cap** (#179) | `ENTRY_BURST_CAP_ENABLED = True`, `ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S = 2` | Rolling-60-second window cap. Engine maintains a `deque[maxlen=32]` of recent successful-entry timestamps; reject any third-or-later entry inside any 60-second window. Origin: 2026-04-22 → 2026-05-05 audit found that 12 of 13 entry-bursts (≥3 entries inside 60s) ended with all trades on the burst losing together — suggesting the burst itself is a regime signature (correlated tape pressure) rather than independent setups. The cap is intentionally conservative (allows 2 entries per minute = 120/hr theoretical max, well above our 12-trade daily cap) so it only bites genuine bursts |
+| 0abc | **Opposing-side fractional-Kelly cap** (#251a, 2026-05-06) | `DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES = 20`, `DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES = 3` | Fires only when 0ab armed against the OTHER side AND the un-paused (opposing) side had thin evidence (n < 20) at session start. Caps entries on the surviving side at 3 per session per Kelly criterion (typical lookback is 50-60 trades for win-prob estimation; binomial CI at n=14 with p≈0.5 is ±26pp — statistical noise). Reduces concentration tail-risk on the un-validated side without disabling it. Counter armed by `_maybe_arm_opposing_thin()` inside `arm_multiday_pauses()`; checked by `is_opposing_thin_capped(side)`; bumped by `record_entry(now, side=...)` on each successful opposing-side entry. Disabled implicitly when 0ab is disabled |
+| 0ac | **Entry-burst cap** (#179, budget-tiered #179a) | `ENTRY_BURST_CAP_ENABLED = True`, `ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S = 2`, `BUDGET_BURST_CAP_DELTA = {"TINY": 0, "SMALL": 0, "NORMAL": 1, "LARGE": 2}` | Rolling-60-second window cap with per-budget delta. Engine maintains a `deque[maxlen=32]` of recent successful-entry timestamps; reject any (cap+1)-and-later entry inside any 60-second window where `cap = effective_burst_cap() = base + BUDGET_BURST_CAP_DELTA[regime]` (floored at 0). Origin: 2026-04-22 → 2026-05-05 audit found that 12 of 13 entry-bursts (≥3 entries inside 60s) ended with all trades on the burst losing together — suggesting the burst itself is a regime signature (correlated tape pressure) rather than independent setups. The 92% lose-together evidence was sourced exclusively from a Rs.50K SMALL account, so SMALL/TINY stay at the audit-validated cap-2 while NORMAL/LARGE accounts get +1 / +2 deltas (effective cap 3 / 4) to avoid single-threading their genuine 5-8 morning slot patterns (#179a, 2026-05-06). Industry parallel: prop-firm risk frameworks tier max-concurrent caps by account size |
 | 0d | **Choppy-morning entry pause** (#192) | `CHOPPY_MORNING_PAUSE_ENABLED = True`, `CHOPPY_PAUSE_ADX_THRESHOLD = 16`, `CHOPPY_PAUSE_MINUTES = 15` | Pauses NEW entries when NIFTY ADX < 16 for ≥3 consecutive scans inside the 09:30-10:30 IST window AND ≥2 STAGNANT_EXIT/SIGNAL_DECAY exits occurred in the last 10 min. Sliding 15-min pause; can re-arm multiple times per morning. Existing positions managed normally. Manager feeds NIFTY ADX via `engine.record_nifty_adx()` each NIFTY-recheck tick |
 | 0a | **Lunch-lull skip** (#164) | `LUNCH_LULL_ENABLED = True`, 11:30-12:15 | Reject new entries inside the lowest-volume window unless \|score\| ≥ `LUNCH_LULL_SCORE_OVERRIDE` (currently 5.7, lowered from 6.0 by #221 then nudged 5.5 → 5.7 in the review-pass-1 fix; well above the V2_MIN_SCORE base of 2.0). Boundary-exclusive on the right |
 | 0e | **VIX intraday-spike entry pause** (#211) | `VIX_SPIKE_ENTRY_PAUSE_ENABLED = True`, `VIX_SPIKE_PCT = 10.0` | Fires immediately after 0d. `OrderEngine.is_vix_spike_active()` returns True when manager's `_check_vix_spike()` (compares current INDIA VIX vs day-open) crossed the threshold on the latest NIFTY recheck. Closes the entry-path hole left by #181 — manager already paused the opportunity scan and the all-closed re-scan, but per-trade `enter_trade()` was bypassed by initial pre-market scan and partial re-scan paths. Existing positions managed normally |
