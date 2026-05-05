@@ -4464,6 +4464,24 @@ class OrderEngine:
         it (e.g. fresh DB, no prior trades) — in that case the
         corresponding pause stays unarmed and the bot trades normally.
         """
+        # ── Reset all per-session pause state BEFORE re-arming ───
+        # Production restarts the bot daily so the OrderEngine is
+        # always fresh; but for multi-day same-process operation
+        # (manual sessions, tests, future architectural changes)
+        # we must clear every pause flag and the #251b deque so
+        # yesterday's state cannot leak into today's gating. Cheap
+        # defensive hygiene — costs O(1) per session start.
+        self._rolling_pf_pause_armed = False
+        self._rolling_pf_pause_reason = ""
+        self._directional_pause_side = None
+        self._directional_pause_reason = ""
+        self._opposing_thin_side = None
+        self._opposing_thin_reason = ""
+        self._opposing_thin_count = 0
+        self._opposing_thin_max = 0
+        self._nifty_intraday_returns.clear()
+        self._directional_bypass_logged = {"BUY": False, "SELL": False}
+
         # ── Rolling-PF circuit breaker (#253) ─────────────────────
         if (
             getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", True)
