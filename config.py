@@ -1418,18 +1418,41 @@ class Config:
     # for the first time. No multi-day protection existed; only
     # intra-day soft-stop / peak-DD / loss-streak guards.
     #
-    # Threshold tuning (2026-05-05 backtest replay over trailing
-    # 30 calendar days, 16 evaluable session-starts):
-    #   Variant                     Arms  Net-saved  Comment
-    #   PF<0.5  AND net<−500    →    1    Rs.+47    too strict; missed 04-29/05-04/05-05
-    #   PF<0.6  AND net<−300    →    6    Rs.+387   sweet spot; arms during cold streaks
-    #   PF<0.7  AND net<−300    →    6    Rs.+387   identical (PF<0.6 was the binding constraint)
-    #   PF<0.5  OR  net<−500    →    5    Rs.+56    over-pauses on solitary deep-loss days
-    # Picked PF<0.6 AND net<−300 as the EV-positive variant. Per
-    # the trailing-30d sweep, this would have armed on the start
-    # of 2026-04-23, 04-24, 04-27, 04-28, 04-29, 05-04 — catching
-    # the bulk of the 8-day losing streak, not just the tail.
-    ROLLING_PF_PAUSE_ENABLED: bool = True
+    # ─── DISABLED 2026-05-05 (post-ship audit) ───────────────────
+    # Same-day audit-on-tomorrow: with retuned thresholds (PF<0.6
+    # AND net<−Rs.300) tomorrow's window [04-29, 04-04, 05-05] would
+    # have triggered the gate (PF=0.16, net=−Rs.606, n=12) → ZERO
+    # trades for the entire next session. User pushed back: "is this
+    # reasonable?". Counterfactual replay over the trailing 17
+    # evaluable sessions confirmed it is NOT:
+    #
+    #   Scenario                  Cumulative net  Δ vs baseline
+    #   baseline (no new gates)   Rs. +279        —
+    #   +#251 only                Rs. +783        Rs. +503  (huge)
+    #   +#251 +#253               Rs. +667        Rs. +387
+    #   INCREMENTAL #253 on top of #251 = Rs. −116 (negative)
+    #
+    # The directional gate (#251) is doing the actual work — it
+    # surgically blocks the failing side and lets the other side
+    # trade. #253's full-session blackout (a) costs +Rs.488 on the
+    # 04-10 false-pause (a single big-loss day on 04-09 armed it,
+    # blocking what turned out to be a +Rs.488 winner), and (b)
+    # blocks the SELL side that was profitable during the BUY
+    # collapse (e.g. 05-05 SELL net was +Rs.28).
+    #
+    # Industry-standard reasoning (Kelly criterion, fractional Kelly,
+    # Thorp 1997): when uncertain about edge, REDUCE bet size, do NOT
+    # bet zero. Bet-zero is justified only when edge is provably ≤ 0,
+    # which 24 days of data cannot establish. Prop-firm risk frame-
+    # works enforce daily loss limits (already covered by #163 / #168)
+    # but rarely full-day shutdowns based on multi-day patterns;
+    # quant funds de-leverage rather than going to cash.
+    #
+    # The gate is left disabled via this flag (code, ledger reading,
+    # and PF computation kept intact for telemetry / future re-enable
+    # with longer history). To re-enable, also re-validate thresholds
+    # against ≥ 60-90 days of post-#251 data.
+    ROLLING_PF_PAUSE_ENABLED: bool = False
     ROLLING_PF_PAUSE_LOOKBACK_DAYS: int = 3
     ROLLING_PF_PAUSE_THRESHOLD: float = 0.6       # PF = Σwins / |Σlosses|
     ROLLING_PF_PAUSE_NET_FLOOR: float = -300.0    # rupees; both must hold
