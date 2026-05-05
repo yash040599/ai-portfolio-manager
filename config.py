@@ -1186,7 +1186,28 @@ class Config:
     # path even on lower-conviction entries.
     #
     # Kill-switch only — disable to revert to pure +bump behaviour.
-    LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED: bool = True
+    #
+    # 2026-05-05 phase-2 EV audit (24 sessions, 157 bot-only positions):
+    # the gate is empirically EV-NEGATIVE on the live ledger so far.
+    #   POST-ship cohort (4 sessions, n=9 entries that PASSED the gate
+    #   with |score|>=7 post-10:00): WR 33%, total Rs.-451 net.
+    #   PRE-ship counterfactual (n=39 entries that the gate would now
+    #   block with |score|<7 post-10:00): WR 53.8%, total Rs.+618.
+    #   Sub-bin breakdown of the would-be-blocked cohort:
+    #     |score| in [5,6): n=10, WR 70.0%, total Rs.+323
+    #     |score| in [6,7): n=22, WR 40.9%, total Rs.+26
+    #     |score| in [4,5): n=4,  WR 75.0%, total Rs.+198
+    #     |score| in [0,4): n=3,  WR 66.7%, total Rs.+71
+    # Every sub-bin is net-positive — the gate's predicate ("score>=7
+    # post-10:00 is best") is contradicted by every score band in the
+    # blocked cohort. Same playbook as #253 disable: flip the kill-
+    # switch, document the re-enable trigger in Awaiting-Data #254,
+    # let the next 30 trading days speak. Confounder noted: the bot
+    # was in broader drawdown over the same window (cum +Rs.1,194 ->
+    # -Rs.159 since 2026-04-21) so the post-ship -Rs.451 isn't 100%
+    # attributable to #246 — but the pre-ship +Rs.618 counterfactual
+    # is independent of that drawdown and stands on its own.
+    LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED: bool = False
 
     # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
     # The dominant loss pattern today is "slow bleed to SL" — a trade
