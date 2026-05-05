@@ -200,6 +200,17 @@ class OrderEngine:
         self._opposing_thin_count: int = 0
         self._opposing_thin_max: int = 0
 
+        # ── Intraday NIFTY-bounce bypass on directional pause (#251b) ──
+        # Manager pushes the running NIFTY intraday-return % each scan
+        # via `record_nifty_intraday_return()`. When the deque shows
+        # MIN_SCANS consecutive readings whose sign favours the paused
+        # side (BUY paused → all > +PCT; SELL paused → all < -PCT),
+        # `is_directional_paused()` returns False (bypass) so the bot
+        # can collect fresh evidence in the regime-flip window.
+        # `_directional_bypass_logged` keeps the WARN line one-shot.
+        self._nifty_intraday_returns: collections.deque = collections.deque(maxlen=10)
+        self._directional_bypass_logged: dict[str, bool] = {"BUY": False, "SELL": False}
+
         # ── Tape-breadth state (#212) ──────────────────────────────
         # Scanner stamps this dict each scan with {"buys": int,
         # "sells": int, "ratio": float, "tape": "BULLISH"/"BEARISH"
@@ -4580,10 +4591,76 @@ class OrderEngine:
         )
 
     def is_directional_paused(self, side: str) -> bool:
-        """True if a session-wide directional pause is armed for `side`."""
+        """True if a session-wide directional pause is armed for `side`.
+
+        #251b intraday-bounce bypass: even when the pause is armed,
+        if the engine has accumulated ≥ MIN_SCANS consecutive NIFTY
+        intraday-return readings whose sign favours the paused side
+        (BUY paused → NIFTY UP > +PCT; SELL paused → DOWN < -PCT),
+        return False so the bot can probe the apparent regime flip.
+        Pause STATE remains intact — only the gate check bypasses.
+        Self-limiting: if NIFTY drops back, deque drains and the
+        pause re-engages on the next scan.
+        """
         if not getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True):
             return False
-        return self._directional_pause_side == side
+        if self._directional_pause_side != side:
+            return False
+        if self._is_intraday_nifty_bouncing(side):
+            if not self._directional_bypass_logged.get(side, False):
+                pct = float(getattr(self.cfg, "DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT", 1.0))
+                n = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS", 2))
+                self.log.warning(
+                    f"DIRECTIONAL-PAUSE BYPASS ({side}): NIFTY intraday "
+                    f"return crossed {'+' if side == 'BUY' else '-'}{pct:.2f}% "
+                    f"for {n} consecutive scans — probing regime flip "
+                    f"per #251b. Pause state retained; gate auto-re-engages "
+                    f"if NIFTY reverses."
+                )
+                self._directional_bypass_logged[side] = True
+            return False
+        # If we previously bypassed but NIFTY has since pulled back
+        # below the threshold, allow the next genuine bypass to log
+        # again (one-shot per "bypass episode", not per session).
+        self._directional_bypass_logged[side] = False
+        return True
+
+    def record_nifty_intraday_return(self, pct: float) -> None:
+        """Push the latest NIFTY intraday return % onto the rolling
+        deque consulted by `_is_intraday_nifty_bouncing`. Manager
+        calls this from `_build_nifty_context()` once per scan.
+
+        Filters out NaN / inf — both would break the bypass-threshold
+        comparison silently (NaN > x is always False so the bypass
+        could never fire; inf > x is always True so the bypass would
+        fire forever once a single inf is seen).
+        """
+        try:
+            v = float(pct)
+        except (TypeError, ValueError):
+            return  # fail-soft — bad reading is dropped, deque untouched
+        import math
+        if math.isnan(v) or math.isinf(v):
+            return
+        self._nifty_intraday_returns.append(v)
+
+    def _is_intraday_nifty_bouncing(self, side: str) -> bool:
+        """True iff the last MIN_SCANS readings all cross the threshold
+        in the direction that favours the paused `side`. Returns False
+        on insufficient samples or any mixed-sign run (conservative).
+        """
+        pct = float(getattr(self.cfg, "DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT", 1.0))
+        n = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS", 2))
+        if n < 1 or len(self._nifty_intraday_returns) < n:
+            return False
+        recent = list(self._nifty_intraday_returns)[-n:]
+        if side == "BUY":
+            # BUY paused → bearish-regime suspicion; bounce = NIFTY up
+            return all(r > pct for r in recent)
+        if side == "SELL":
+            # SELL paused → bullish-regime suspicion; bounce = NIFTY down
+            return all(r < -pct for r in recent)
+        return False
 
     def is_opposing_thin_capped(self, side: str) -> bool:
         """True if `side` is the un-paused opposing side AND its

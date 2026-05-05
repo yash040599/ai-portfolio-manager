@@ -1618,6 +1618,21 @@ class PortfolioManager:
             except Exception as _e:
                 self.log.warning(f"NIFTY ADX feed failed: {_e}")  # gate fails-open
 
+            # ── NIFTY intraday-return feed for #251b bounce-bypass ─
+            # Push the latest intraday return % onto the engine deque
+            # so `is_directional_paused()` can bypass the pause when
+            # NIFTY shows a sustained move against the paused side.
+            # Fail-soft: any error is swallowed (gate stays armed).
+            try:
+                if (
+                    hasattr(self, "engine") and self.engine is not None
+                    and day_open and day_open > 0 and price
+                ):
+                    intraday_ret_pct = (price - day_open) / day_open * 100
+                    self.engine.record_nifty_intraday_return(intraday_ret_pct)
+            except Exception as _e:
+                self.log.warning(f"NIFTY intraday-return feed failed: {_e}")
+
             # ── Strong-gap continuation flag for #194 ─────────────
             # If today's NIFTY gap is ≥ ±1.0% AND continues prior-day
             # direction, arm the ADX boost for the rest of the day.

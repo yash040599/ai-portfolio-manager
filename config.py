@@ -1443,6 +1443,30 @@ class Config:
     DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES: int = 20
     DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES: int = 3
 
+    # Roadmap #251b (2026-05-06): intraday NIFTY-bounce bypass on
+    # directional pause. The base #251 gate uses a ROLLING-7-DAY NIFTY
+    # return to decide arming; in a sustained-bear regime where the
+    # 7-day stays slightly negative, the BUY pause can stay armed for
+    # weeks even if today's NIFTY rallies. Without a probe mechanism
+    # the bot collects zero fresh BUY evidence and only "wakes up"
+    # via the n<10 trade-aging fallback, which is a sudden flood
+    # rather than a controlled probe. Industry parallel: directional-
+    # change (DC) algorithms (Adegboye, Kampouridis, Otero 2023)
+    # confirm trend transitions when "price moves beyond a threshold
+    # followed by a confirmation period (overshoot)" — the threshold
+    # + sustained-scans pattern below mirrors that DC structure.
+    # When the engine has accumulated ≥ MIN_SCANS consecutive NIFTY
+    # intraday-return readings whose sign favours the paused side
+    # (BUY paused → NIFTY UP > +PCT; SELL paused → NIFTY DOWN < -PCT)
+    # the pause-check is bypassed at query-time. The pause STATE
+    # remains intact for inspection/logging; only `is_directional_paused`
+    # returns False. Self-limiting: if NIFTY drops back, the deque
+    # drains and the pause re-engages on the next scan. Risk discipline
+    # preserved — opposing-thin (#251a), RR floor, score floor, RSI
+    # cap, ADX gate all still apply.
+    DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT: float = 1.0   # |intraday return| above which bypass may trigger
+    DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS: int = 2  # consecutive scans above threshold required
+
     # ── Rolling profit-factor circuit breaker (Roadmap #253) ─────
     # Multi-day analogue of CONSECUTIVE_SL_PAUSE_COUNT. Computed at
     # session start from intraday_tax_ledger. When the rolling N-day
@@ -2273,6 +2297,17 @@ class Config:
             errors.append(
                 f"DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES must be ≥ 0: "
                 f"{cls.DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES!r}"
+            )
+        # Roadmap #251b intraday NIFTY-bounce bypass.
+        if not (0.0 < cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT <= 100.0):
+            errors.append(
+                f"DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT must be in (0, 100]: "
+                f"{cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS < 1:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS must be ≥ 1: "
+                f"{cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS!r}"
             )
         # Roadmap #179a per-budget burst-cap delta.
         if not isinstance(cls.BUDGET_BURST_CAP_DELTA, dict):
