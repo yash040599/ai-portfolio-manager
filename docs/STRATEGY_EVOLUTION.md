@@ -38,7 +38,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 ```
 
 > **Source of truth:** `STRATEGY_ROADMAP.md` (Completed section). When you ship a strategy item, add a row here in the same commit, following the rules above.
-> Last regenerated: 2026-05-05. Items: 147 strategy rows (#1 → #253). Bug-fix rows are intentionally excluded; see `STRATEGY_ROADMAP.md` for the full Bug Fix log.
+> Last regenerated: 2026-05-05. Items: 157 strategy rows (#1 → #253). Bug-fix rows are intentionally excluded; see `STRATEGY_ROADMAP.md` for the full Bug Fix log.
 
 ## Timeline
 
@@ -176,7 +176,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | 200 | Risk | At score-combine time, penalise candidates where the candle pattern contradicts the technical score. |
 | 201 | Risk | Reject entries trading in the extreme tails of the VWAP statistical bands. |
 | 202 | Risk | Tighten everything for late-day entries: higher R:R floor, higher score floor, lower position cap. |
-| 206 | Performance | Skip the second R:R retry pass on days where no entry was rejected for R:R floor (saves a wasted pass). |
+| 206 | Infra | Skip the second R:R retry pass on days where no entry was rejected for R:R floor (saves a wasted pass). |
 | 210 | Risk | Before retrying a failed order, check if the broker actually accepted the first one — prevents accidental double-fire. |
 | 211 | Risk | If India VIX spikes ≥ 10% intraday, pause ALL new entries (every entry path), not just the periodic re-scan. |
 | 212 | Risk | After the score floor passes, count BUY vs SELL candidates. If today's tape is heavily one-sided, penalise the minority side. |
@@ -198,6 +198,7 @@ A plain-English log of how the trading **strategy** has changed over time. One r
 | 242 | Risk | Removed the late-entry target compression at entry. The 20%/25% target cuts after 1 PM/2 PM were dropping default R:R below the always-on 1.3 hard floor, so every default afternoon trade was rejected by our own arithmetic. Pro intraday desks don't pre-shrink entry targets — drift on open positions is owned by stagnant-exit, momentum kill, open-position time-decay, and the 3:10 PM hard square-off. Targets are now honoured at entry across the day. |
 | 243 | Infra | Collapsed the R:R floor system into a single uniform `RR_HARD_FLOOR = 1.3`. After #235 / #242, every code path was already returning 1.3 — the seven decorative knobs (morning/afternoon/late/relaxed floors, retry step, relax-after, hour selectors) and the dead relaxation/retry branches in the engine and the manager added zero behaviour, only readability cost. Same 1.3 floor everywhere; the give-up-after-5-empty-scans signal is the keeper. |
 | 244 | Risk | The 30-minute "pause new entries after 3 losses in a row" guard now counts ANY losing exit (stop-loss, momentum kill, stagnant exit, signal decay, or late-day loser exit), not just hard stop-losses. End-of-day square-offs and operator closes still don't count. Today's session-1 lost 4 morning trades in a row and the old guard never fired because none were stop-losses; the broader counter would have paused the bot at exit #3. |
+| 245 | Infra | A documented stability-window guardrail: every shipped strategy/risk/execution change has a soft 2-week freeze before further tuning of the same gate, so live ledger samples are not invalidated by daily re-tuning. Bug-fix commits (token `[bugfix-during-stability-window]`) are explicitly exempt. Process change only — does not affect any trade decision. |
 | 246 | Risk | After 10:00 IST the bot will no longer open trades unless the technical score is at least 7. Below that, the in-trade rescue exits cannot save the trade if the thesis breaks, so taking it would be admitting a position only the hard stop-loss can close. (Motivated by JIOFIN 2026-04-28 — entered at score 3.8, flipped to −5.5 within 15 min, ran to stop-loss for −Rs.183.) Morning entries (09:30-10:00) still allow lower scores because a fresh trend gives the position room to recover. |
 | 179 | Risk | Cap entries at 2 per rolling 60 seconds. The 04-22 → 05-05 audit found that bursts of 3+ entries inside 60 seconds ended with all of them losing together on 92% of occurrences — the burst itself is a regime signature (correlated tape pressure), not three independent setups. The cap is conservative (theoretical max ~120/hr, well above the 12-trade daily cap) so it only bites genuine bursts. |
 | 251 | Risk | Auto-pause one trade direction (BUY or SELL) for the whole session when, over the trailing 7 trading days, that side has taken ≥ 10 trades, won ≤ 30% of them, AND the NIFTY is on the contra side. The bot keeps trading the other direction unimpeded. Origin: 2026-04-23 → 2026-05-05 BUY-side WR collapsed to 12.5% (5 of 40) while SELL held 42.9% — every individual day's gates fired correctly but the side-skew was unmistakable in aggregate. The bot used to be blind to its own multi-day directional drift; this gate is the catch. |
