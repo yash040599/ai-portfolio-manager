@@ -39,10 +39,15 @@
 >    target during the early-development weeks, so these numbers are
 >    directional, not deterministic.
 >
-> Last theoretical update: **2026-04-27** (after Roadmap #244 —
-> whipsaw counter broadened to count any losing exit, not just
-> STOP_LOSS; closes coverage gap exposed when today's session-1 lost
-> 4-in-a-row to MOMENTUM_KILL with the guard never firing).
+> Last theoretical update: **2026-05-05** (after Roadmap #179
+> entry-burst cap shipped, #251 BUY/SELL directional auto-pause
+> shipped, #253 rolling-PF circuit breaker shipped-then-disabled,
+> and #246 late-entry no-rescue floor disabled. Net theoretical
+> Δ across the four items ≈ **+0.11 R/trade pre-overlap-discount,
+> +0.03 R/trade after** — the largest single-day theoretical lift
+> since the §2.5 table was first built. §3 headline numbers
+> unchanged because they derive from the §2.2 base-WR ladder,
+> not the §2.5 sum, and the base-rate ladder is unaffected.)
 >
 > Last live snapshot refresh: **2026-05-05** (post-2026-05-05 trading
 > session; six new closed trades — 1 W (LODHA SELL +Rs.50.40,
@@ -257,13 +262,13 @@ This is the table we **update on every strategy change**.
 | Loss-streak guard (#20 + #244 broadening) | Risk mgmt | 0 | −4 % | Pauses 30 min after 3 consecutive losing exits (any reason); cuts whipsaw-day tail |
 | TARGET_DECAY_PCT (post-1pm tightening on open positions) | Exit rule | +0.02 | −2 % | Protects afternoon profits |
 | Late-entry score bump (+1.0, #239) | Hard reject | +0.02 | −2 % | Raises bar for limited-time-to-target trades |
-| Late-entry no-rescue-zone clamp (#246, 2026-04-28) | Hard reject | +0.04 | −3 % | Couples late-entry floor to `SIGNAL_DECAY_MIN_ENTRY_SCORE = 7.0` so we never admit trades the in-trade rescue gates cannot save. Eliminates the JIOFIN-class loss (∼1×/week, ~Rs.150-200 of pure SL bleed) at the cost of skipping ~3-5 marginal afternoon entries/week. No new threshold knob — reuses the existing rescue constant |
+| Late-entry no-rescue-zone clamp (#246, 2026-04-28 — DISABLED 2026-05-05) | Risk mgmt | 0 (disabled) | 0 (disabled) | Originally rated +0.04 R / −3 % MDD on its predicted JIOFIN-class loss profile. Phase-2 EV audit on 2026-05-05 over 24 sessions / 157 bot-only positions falsified that prediction: **pre-ship counterfactual cohort the gate would now block** (n=39, |score|<7 post-10:00, all dates ≤ 2026-04-28) was net **Rs.+618 at 53.8 % WR** with EVERY score sub-bin net-positive; **post-ship admitted cohort** (n=9, |score|≥7 post-10:00) was net **Rs.−451 at 33 % WR**. Disabled via `LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False`; re-enable trigger documented in Awaiting-Data #254. Code retained — flip the flag to re-arm |
 | Entry-burst cap (#179, 2026-05-05) | Hard reject | +0.05 | −4 % | Blocks 3rd-and-later entries in any rolling 60s window. Trigger evidence: 92% of burst-entries (11 of 12) across 3 days lost together — the burst itself is a regime signature. Conservative cap (theoretical max ~120/hr) only bites genuine bursts |
 | Directional auto-pause #251 (BUY/SELL side-skew, 2026-05-05) | Risk mgmt | +0.10 | −12 % | Session-wide pause of one side when 7d WR ≤ 30% over n ≥ 10 trades AND NIFTY 7d return is contra. Trigger: 04-23 → 05-05 BUY-WR collapsed to 12.5% across all 3 NIFTY regimes (not regime-explained). Blocking a 12.5%-WR side is structural EV-recovery; contra side preserved |
 | Rolling-PF circuit breaker #253 (DISABLED 2026-05-05) | Risk mgmt | 0 (disabled) | 0 (disabled) | Shipped then disabled same day after counterfactual replay revealed #251 alone captures Rs.+503 of recovery vs baseline while #253 on top adds Rs.−116 (net-negative incremental). False-pause on 04-10 cost Rs.+488 (single big-loss day armed the gate, blocked a winning session); SELL side was profitable on multiple paused days. Industry rationale: Kelly criterion advises reducing stake when uncertain about edge, not betting zero. Code retained for future re-enable with longer post-#251 history |
 | 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |
-| **Estimated cumulative theoretical edge** | | **≈ +0.81 R** | **−110 %** | But independent gates overlap, so see §2.3 |
-| **After overlap discount (×0.25)** | | **≈ +0.20 R** | **−55 %** | Matches §2.3 base case (multi-day breakers + directional pause are largely orthogonal to per-trade gates so the discount is gentler than for the per-trade family) |
+| **Estimated cumulative theoretical edge** | | **≈ +0.77 R** | **−107 %** | But independent gates overlap, so see §2.3. (Was +0.81 R / −110 % when #246 was active; -0.04 R and +3 % MDD recovered when #246 disabled 2026-05-05.) |
+| **After overlap discount (×0.25)** | | **≈ +0.19 R** | **−53 %** | Matches §2.3 base case (multi-day breakers + directional pause are largely orthogonal to per-trade gates so the discount is gentler than for the per-trade family) |
 
 ### 2.6 What raises vs harms theoretical probability
 
@@ -290,7 +295,7 @@ This is the table we **update on every strategy change**.
 
 ---
 
-## 3. Probability snapshot — *as of 2026-04-27*
+## 3. Probability snapshot — *as of 2026-05-05*
 
 | Question | Theoretical answer |
 |---|---|

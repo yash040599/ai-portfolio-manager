@@ -2239,6 +2239,11 @@ class Config:
                 f"DIRECTIONAL_PAUSE_MIN_TRADES must be > 0: "
                 f"{cls.DIRECTIONAL_PAUSE_MIN_TRADES!r}"
             )
+        if not (-100.0 <= cls.DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT <= 100.0):
+            errors.append(
+                f"DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT must be in [-100, 100]: "
+                f"{cls.DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT!r}"
+            )
 
         # Rolling-PF pause (#253)
         if cls.ROLLING_PF_PAUSE_THRESHOLD < 0:

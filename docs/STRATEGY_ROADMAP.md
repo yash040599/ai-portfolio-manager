@@ -356,15 +356,6 @@ In priority order, matching the Pending table above. Once an item ships,
 above is the historical record. Do not leave “✅ Completed (see #N)”
 stubs here; they bloat the Pending list and slow review.
 
-### 246. Strategy-Version Overlay on Dashboard Cumulative-P&L Chart
-
-Moved to the Dashboard roadmap as item **D13** on 2026-04-27 and
-**shipped same day**. See
-[Dashboard/docs/DASHBOARD_ROADMAP.md](../Dashboard/docs/DASHBOARD_ROADMAP.md)
-D13 (Completed table) for the implementation summary. The V2 strategy
-roadmap no longer carries this item because the change is purely in
-dashboard rendering and report metadata, not in any trading rule.
-
 ### 204. Hot-Key (Ctrl+T) Graceful Trading Pause Without Square-Off
 - **Priority**: MEDIUM
 - **Today**: The only operator kill is Ctrl+C, which terminates the manager process. SL-M orders survive on the exchange (Zerodha-side), but the monitor loop dies — so trailing-stop ratchets, signal-decay exits, momentum kill (#198), time-decay target compression, and stagnant-exits all stop firing. The user has no in-between option: "stop opening new trades, but let the bot keep managing what's already open." Ctrl+C is too blunt; an unmanaged-position state is undesirable.

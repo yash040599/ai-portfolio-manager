@@ -171,6 +171,36 @@
   closes excluded. Log message updated `WHIPSAW GUARD` →
   `LOSS-STREAK GUARD`. Removal trigger logged as #244R: revert if the
   broader counter blocks net-positive trades on > 2 of 10 days.
+
+  2026-05-05 sync — Multi-day side-skew + entry-burst clamp + #246
+  rollback (Roadmap #179, #251, #253, #246-disable). Three new gates
+  shipped after a 9-day cross-trade audit (2026-04-22 → 2026-05-05,
+  n=52 logical trades) surfaced two structural failure modes:
+  (a) entry bursts — 12 of 13 windows with ≥ 3 entries inside 60s
+  ended with all members losing together (≈92% lose-together
+  correlation); (b) BUY-side WR collapse to 12.5% across all three
+  NIFTY regimes while SELL held 42.9%. Shipped: **#179 entry-burst
+  cap** (`ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S = 2`, deque[maxlen=32]
+  of recent successful-entry timestamps, 3rd entry inside any rolling
+  60s window rejected at top of `enter_trade()`); **#251 directional
+  auto-pause** (`DIRECTIONAL_PAUSE_*`, session-startup arming via
+  `manager._arm_multiday_pauses()` reading trailing 7d ledger; pause
+  one side when n ≥ 10 AND WR ≤ 30% AND NIFTY 7d return is contra;
+  default `DIRECTIONAL_PAUSE_ENABLED = True`); **#253 rolling-PF
+  circuit breaker** (`ROLLING_PF_PAUSE_*`, full-session blackout when
+  rolling-3d PF < 0.6 AND net ≤ −Rs.300 AND n ≥ 5; **shipped then
+  disabled same day** — `ROLLING_PF_PAUSE_ENABLED = False` — after
+  17-session counterfactual replay showed #251 alone gains Rs.+503
+  vs baseline while #251+#253 only gains Rs.+387 (incremental −Rs.116);
+  Kelly criterion advises bet-reduction not bet-zero). **#246 disabled**
+  (`LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False`) after phase-2 EV
+  audit over 24 sessions / 157 positions: pre-ship counterfactual
+  cohort (n=39, |score|<7 post-10:00) was net Rs.+618 at 53.8% WR
+  with EVERY sub-bin net-positive; post-ship admitted cohort (n=9,
+  |score|≥7 post-10:00) was net Rs.−451 at 33% WR. Re-enable trigger
+  in Awaiting-Data #254. Pre-trade check count: 41 → 43 (entry-burst
+  cap + directional pause; rolling-PF gate code present but skipped
+  by kill-switch).
 ══════════════════════════════════════════════════════════════ -->
 
 ---
