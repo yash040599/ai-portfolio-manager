@@ -52,15 +52,21 @@
 > unchanged because they derive from the §2.2 base-WR ladder,
 > not the §2.5 sum, and the base-rate ladder is unaffected.)
 >
-> Last live snapshot refresh: **2026-05-05** (post-2026-05-05 trading
-> session; six new closed trades — 1 W (LODHA SELL +Rs.50.40,
-> sign-flip decay caught the winner) + 5 L (SHRIRAMFIN/ABB/IRFC/ENRIN/RECLTD).
-> Net −Rs.434 on a BEARISH_NORMAL day with two same-direction sub-60s
-> entry bursts; LOSS-STREAK GUARD #244 fired correctly at 10:44:42 and
-> paused entries 30 min between sessions. Code change shipped today:
-> none beyond yesterday's `7ee34fe` decay-gate-suppression bugfix
-> (regression check green-by-absence — no opportunity-scan-with-zero-entries
-> coincided with an open position today).
+> Last live snapshot refresh: **2026-05-06** (post-2026-05-06 trading
+> session; three new ledger rows — 2 W (HINDUNILVR SELL +Rs.25.90 STAGNANT
+> after a 4-hour grind, RECLTD SELL +Rs.16.20 SIGNAL_DECAY sign-flip
+> rescue) + 1 L (ADANIPOWER SELL −Rs.66.24 MOMENTUM_KILL within 3 min).
+> Net −Rs.78.88 — the smallest loss in the 9-day streak. #251 BUY
+> directional pause armed at 09:14:27 (BUY-WR=11.1%, NIFTY-7d=−0.58%);
+> #251a opposing-thin SELL cap armed in the same call (SELL n=10 in
+> the 7-day lookback, below threshold 20) and saturated at 3/3 by
+> 10:05:39, blocking ~24 subsequent SELL signals across the rest of
+> the session. Today's commit `046bd5e` (hard 09:30 IST decision floor)
+> exercised correctly — observation deferred from 09:20 → 09:30 and
+> all three entries respected the floor (earliest at 09:30:46). Prior
+> §0 snapshot row counts (57W/91L) were stale by 9 wins; refreshed
+> from `intraday_tax_ledger` directly — true 2026-05-05 cutoff was
+> 48W/102L of 150, today's adds bring it to 49W/104L of 153.
 
 ---
 
@@ -72,8 +78,8 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-05-05** for FY 2026-04-01 →
-> 2027-03-31 (150 trades across 21 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-06** for FY 2026-04-01 →
+> 2027-03-31 (153 trades across 22 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 >
@@ -97,12 +103,12 @@ provisional intraday trades).
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **38.5%** (57 W / 91 L of 150, 2 scratched) | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **0.97** (GP Rs.4,175 / GL Rs.4,295)  | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.13.45** (Net −Rs.2,017 / 150)   | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **28.6%** (6 of 21 days)              | 🔴 below |
+| Win rate                  | 55%                       | **32.0%** (49 W / 104 L of 153, 0 scratched) | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.97** (GP Rs.4,133 / GL Rs.4,277, gross-of-charges) | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.13.70** (Net −Rs.2,096 / 153)   | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **27.3%** (6 of 22 days)              | 🔴 below |
 | Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.2,141** peak-to-trough           | 🟢 within |
+| Max drawdown              | < 10% of capital          | **Rs.2,220** peak-to-trough           | 🟢 within |
 
 **Read this as reference only.** The 144 trades above were taken across
 multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
