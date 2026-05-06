@@ -602,6 +602,9 @@ class StockScannerV2(StockScanner):
                 self.log.debug(f"Earnings blackout check failed: {e}")
 
         scored = []
+        drift_warn_count = 0
+        drift_check_enabled = bool(getattr(self.cfg, "VWAP_DRIFT_CHECK_ENABLED", True))
+        drift_warn_pct = float(getattr(self.cfg, "VWAP_DRIFT_WARN_PCT", 0.30))
         for i, symbol in enumerate(price_filtered):
             # Progress indicator — every 25% of universe
             quarter = max(1, len(price_filtered) // 4)
@@ -612,7 +615,44 @@ class StockScannerV2(StockScanner):
             if result:
                 scored.append(result)
 
+                # ── Broker session-VWAP drift sanity check (Roadmap #268) ──
+                # Pure observability: compare exchange-truth `average_price`
+                # from the live quote against the VWAP we just computed
+                # from cached candles. A divergence > VWAP_DRIFT_WARN_PCT
+                # means our cache is stale or has gaps, and the three
+                # production VWAP gates (#34/#125/#228) will evaluate
+                # against the wrong reference. No gate logic touched
+                # here — we only WARN so the operator can trace the
+                # candle-cache pipeline before it bleeds money.
+                if drift_check_enabled and drift_warn_pct > 0:
+                    try:
+                        q = quotes.get(f"NSE:{symbol}", {}) or {}
+                        broker_vwap = float(q.get("average_price", 0) or 0)
+                        our_vwap = float(result.get("vwap", 0) or 0)
+                        if broker_vwap > 0 and our_vwap > 0:
+                            delta_pct = abs(our_vwap - broker_vwap) / broker_vwap * 100
+                            if delta_pct > drift_warn_pct:
+                                drift_warn_count += 1
+                                self.log.warning(
+                                    f"{symbol}: VWAP drift "
+                                    f"broker=Rs.{broker_vwap:.2f} "
+                                    f"ours=Rs.{our_vwap:.2f} "
+                                    f"(delta {delta_pct:.2f}%) — "
+                                    f"candle cache may be stale"
+                                )
+                    except Exception as e:
+                        self.log.debug(
+                            f"{symbol}: VWAP-drift check skipped ({type(e).__name__}: {e})"
+                        )
+
         self.log.info(f"  Analysed {len(scored)} stocks with sufficient candle data")
+        if drift_check_enabled and drift_warn_count > 0:
+            self.log.warning(
+                f"  VWAP drift sanity check: {drift_warn_count} symbol(s) "
+                f"diverged > {drift_warn_pct:.2f}% from broker session VWAP "
+                f"(see WARN lines above; investigate candle-cache pipeline "
+                f"if rate stays elevated on healthy market days)"
+            )
 
         # Filter out weak signals below V2_MIN_SCORE threshold
         min_score = min_score_override if min_score_override is not None else self.cfg.V2_MIN_SCORE

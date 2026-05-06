@@ -338,6 +338,37 @@ class Config:
     #   raise to 0.3-0.4% if you see frequent skips on stocks you want.
     MAX_IMPACT_COST_PCT: float = 0.2
 
+    # ── Broker VWAP Drift Sanity Check (Roadmap #268) ────────────
+    # Pure observability gate. Compares our locally-computed session
+    # VWAP (from cached 1-min candles in `data/candle_cache.db` via
+    # `services/technical_indicators.py::vwap()`) against Kite's
+    # exchange-truth `average_price` field returned in every quote
+    # payload, and emits a structured WARN log when the two disagree
+    # by more than VWAP_DRIFT_WARN_PCT. Three production gates
+    # consume our VWAP — #34 SD bands, #125 trend block,
+    # #228 statistical-band consolidation — so a silent cache gap
+    # would corrupt all three; this check surfaces the divergence
+    # before it bleeds money.
+    #
+    # NO entry behaviour change: nothing is blocked or admitted on
+    # the basis of drift, no score is adjusted. The only signal is a
+    # WARN line per drifting candidate during the V2 pre-filter pass.
+    # If WARN lines start appearing on healthy market days, that's
+    # the cue to fix the candle-cache pipeline (separate Pending item
+    # filed at that point).
+    #
+    # Threshold rationale: 0.30% is wider than the natural noise
+    # floor of two methods averaging the same prints (rounding,
+    # candle-bucket boundary, late ingestion of a 1-min bar). On a
+    # Rs.1,000 stock that is Rs.3 of VWAP-anchored gates' reference
+    # — wide enough that anything above it is a genuine cache /
+    # ingestion problem, not a numerical artifact.
+    #
+    # Set VWAP_DRIFT_CHECK_ENABLED = False to silence the check
+    # entirely if the WARN volume becomes noise post-shipping.
+    VWAP_DRIFT_CHECK_ENABLED: bool = True
+    VWAP_DRIFT_WARN_PCT: float = 0.30
+
     # ── Dry-Run Realism ──────────────────────────────────────────
     # SLIPPAGE_PCT: simulated slippage added to entries and exits
     #   in dry-run mode. Makes simulated P&L more realistic.
@@ -1918,6 +1949,16 @@ class Config:
             errors.append(f"MAX_SPREAD_PCT out of range (0-10): {cls.MAX_SPREAD_PCT!r}")
         if cls.MAX_IMPACT_COST_PCT < 0 or cls.MAX_IMPACT_COST_PCT > 10:
             errors.append(f"MAX_IMPACT_COST_PCT out of range (0-10): {cls.MAX_IMPACT_COST_PCT!r}")
+        if not isinstance(cls.VWAP_DRIFT_CHECK_ENABLED, bool):
+            errors.append(
+                f"VWAP_DRIFT_CHECK_ENABLED must be bool "
+                f"(got {cls.VWAP_DRIFT_CHECK_ENABLED!r})"
+            )
+        if cls.VWAP_DRIFT_WARN_PCT < 0 or cls.VWAP_DRIFT_WARN_PCT > 10:
+            errors.append(
+                f"VWAP_DRIFT_WARN_PCT out of range (0-10): "
+                f"{cls.VWAP_DRIFT_WARN_PCT!r}"
+            )
 
         # Risk caps
         _pct("MAX_LOSS_PER_DAY_PCT", cls.MAX_LOSS_PER_DAY_PCT, 20)

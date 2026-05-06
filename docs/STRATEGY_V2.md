@@ -13,7 +13,7 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-05-07 — Loss-streak intervention pass. Two ships:
+  Last sync: 2026-05-07 — Loss-streak intervention pass. Three ships:
   #258 Risk — paused score-weighted sizing in live NoAI
   (`Config.SCORE_WEIGHTED_SIZING_ENABLED = False` default;
   `_score_weight_sizing()` short-circuits to equal sizing). Surfaced
@@ -33,6 +33,21 @@
   shipped (Pending block proposed three; live code-walk found only
   one was meaningful — dashboard `entry_score` is post-pre-open by
   definition; report_writer has no candidate section). Pre-trade
+  check count unchanged at 44.
+  #268 Infra — broker session-VWAP drift sanity check. New
+  `Config.VWAP_DRIFT_CHECK_ENABLED` (default True) +
+  `Config.VWAP_DRIFT_WARN_PCT` (default 0.30 %). After every
+  `_analyse_stock()` in `_prefilter_universe()`, compare Kite's
+  exchange-truth `quote()['average_price']` to the candle-derived
+  `result['vwap']`; emit a structured WARN line per drifted symbol
+  plus one summary line at the end of the analyse loop when the
+  per-scan counter is non-zero. **Pure observability — no entry
+  gate logic touched.** Surfaces silent candle-cache gaps (network
+  blip, late ingestion, symbol-add lag) that would otherwise corrupt
+  the three downstream VWAP gates (#34 SD bands, #125 trend block,
+  #228 statistical-band consolidation). Skips silently when either
+  side is ≤ 0; defensive try/except around the entire check so a
+  malformed quote payload can never break the analyse loop. Pre-trade
   check count unchanged at 44.
 
   Previous: 2026-05-07 — Phase-2 NoAI audit ship (#255 entry-path
