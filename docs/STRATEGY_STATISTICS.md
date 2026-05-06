@@ -39,6 +39,34 @@
 >    target during the early-development weeks, so these numbers are
 >    directional, not deterministic.
 >
+> Last theoretical update: **2026-05-07** (after Roadmap #258 paused
+> score-weighted sizing in live NoAI as the loss-streak structural
+> lever; #262 added pre-open score-freshness tag in scanner log as
+> operator-clarity UX. Net theoretical Δ EV ≈ +0.10 R/trade for #258
+> alone — the 9-day audit (n=55 trades) showed score-magnitude was
+> anti-correlated with realised P&L for the score≥6 cohort, so
+> un-concentrating rupees away from the worst-performing buckets is
+> a direct EV-recovery lever. #262 is EV-neutral. Re-enable trigger
+> for #258 logged as #258R Awaiting-Data. Previous update: 2026-05-07
+> after #255 / #256 / #257 NoAI audit hardening pass.
+>
+> Last theoretical update: **2026-05-07** (after the 2026-05-06
+> NoAI audit pass shipped #255 entry-path quote/depth retry-3 +
+> fail-closed gates, #256 net R:R charge calculation side-aware,
+> and #257 phase-2 code/comment hygiene. The audit also added six
+> new Pending items (#258 pause score-weighted sizing, #259
+> per-candidate telemetry, #260 intraday volume baselines, #261
+> typed quote validator, #262 pre-market score tagging, #263 docs
+> cleanup) and four new Awaiting-Data items (#255R / #258R
+> removal-triggers, #264 trend-cluster cap, #265 Scoring v3
+> bundle, #266 orders()-based EXTERNAL_CLOSE fill price); none of
+> those affect §2.5 until they ship. Net theoretical Δ for the
+> #255 / #256 / #257 ship: +0.02 R/trade (#255 closes the rare
+> tail where missing depth would have let an illiquid trade
+> through; #256 is precision-only on the gate input, no measurable
+> EV change; #257 is hygiene). Previous update: 2026-05-06 after
+> #179a / #251a / #251b shipped.
+>
 > Last theoretical update: **2026-05-06** (after Roadmap #179
 > entry-burst cap shipped, #251 BUY/SELL directional auto-pause
 > shipped, #253 rolling-PF circuit breaker shipped-then-disabled,
@@ -278,8 +306,9 @@ This is the table we **update on every strategy change**.
 | Fractional-Kelly opposing-side cap (#251a, 2026-05-06) | Risk mgmt | +0.02 | −2 % | When #251 arms against one side, caps the OPPOSING (un-paused) side at 3 entries/session whenever its history has < 20 trades (binomial CI at n=14 is ±26pp — statistical noise; Kelly criterion advises reduced stake under edge uncertainty, not full play). Reduces concentration tail-risk on the un-validated side without disabling it. Direct EV+ comes from skipping low-EV opposing-side trades after the 3rd; MDD↓ comes from capping the worst-case tail when the surviving side's small-sample edge is illusory |
 | Intraday NIFTY-bounce bypass on directional pause (#251b, 2026-05-06) | Risk mgmt | +0.02 | 0 % | Closes the **BUY-pause loop trap**: in a sustained-bear regime where NIFTY 7d stays slightly negative, the #251 BUY pause stays armed indefinitely and the bot collects ZERO fresh BUY evidence. New mechanism: when NIFTY's intraday return crosses +1% (BUY paused) or −1% (SELL paused) for 2 consecutive scans in the direction that favours the paused side, the pause-check is bypassed so the bot can probe the apparent regime flip. Pause STATE retained for inspection; only gate-check returns False. Self-limiting (deque drains if NIFTY pulls back, pause re-engages). Direct EV+ from probing genuine regime flips that the lagging-7d gate misses; MDD≈ (other gates — opposing-thin, burst-cap, R:R, score floor, ADX — still apply, so worst-case tail is unchanged). Industry parallel: directional-change algorithms (Adegboye, Kampouridis, Otero 2023) confirm trend transitions when price crosses a threshold for a sustained confirmation window |
 | Rolling-PF circuit breaker #253 (DISABLED 2026-05-05) | Risk mgmt | 0 (disabled) | 0 (disabled) | Shipped then disabled same day after counterfactual replay revealed #251 alone captures Rs.+503 of recovery vs baseline while #253 on top adds Rs.−116 (net-negative incremental). False-pause on 04-10 cost Rs.+488 (single big-loss day armed the gate, blocked a winning session); SELL side was profitable on multiple paused days. Industry rationale: Kelly criterion advises reducing stake when uncertain about edge, not betting zero. Code retained for future re-enable with longer post-#251 history |
-| 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |
-| **Estimated cumulative theoretical edge** | | **≈ +0.82 R** | **−110 %** | But independent gates overlap, so see §2.3. (Was +0.81 R / −110 % when #246 was active; -0.04 R and +3 % MDD recovered when #246 disabled 2026-05-05; +0.03 R / −3 % MDD added by #179a + #251a follow-ups on 2026-05-06; +0.02 R added by #251b intraday-bounce bypass on 2026-05-06.) |
+| Entry-path quote/depth retry-3 + fail-closed gates (#255, 2026-05-07) | Risk mgmt | +0.02 | −1 % | Surfaced by the 2026-05-06 NoAI audit. Three coupled changes: 3-attempt retry across `get_quotes_safe()` / `_fetch_entry_quote()` / scanner pre-filter; spread + impact-cost gates flip from fail-open on missing/malformed depth (legacy #146) to fail-closed after 3 attempts. Tolerates flaky Kite responses (typical recovery on 2nd try) while ensuring no trade ever enters when the order book is genuinely unknown. EV+ comes from blocking the rare illiquid-tail trade that previously slipped through; MDD-↓ tiny because the prior frequency was already low. Removal trigger logged under #255R Awaiting-Data || Pause score-weighted sizing in live NoAI (#258, 2026-05-07) | Risk mgmt | +0.10 | −2 % | Loss-streak structural intervention. 9-day live audit (`scripts/analyst_pulse_v2.py`, n=55 logical trades) showed score-magnitude was **anti-correlated** with realised P&L for the score≥6 cohort: |score|≥9 = −Rs.51/trade; 8-9 = −Rs.54/trade; 7-8 = −Rs.36/trade; 6-7 = −Rs.43/trade; <6 = −Rs.0.28/trade. Score-weighted sizing (`_score_weight_sizing()`, originally #107) was concentrating MORE capital on the worst-performing buckets every session. Kill-switch `Config.SCORE_WEIGHTED_SIZING_ENABLED = False` (default) routes to existing equal-sizing fallback. Industry standard: equal-weight (1/N) is the OOS-validated benchmark when factor confidence is low (DeMiguel/Garlappi/Uppal 2009, *RFS*). EV+ comes from un-concentrating rupees away from the loss-side of the inversion; MDD↓ from capping per-trade max-loss exposure on the worst bucket. Re-enable trigger logged under #258R Awaiting-Data |
+| Pre-open score freshness tag in scanner log (#262, 2026-05-07) | Infra | 0 | 0 % | EV-neutral; operator-decision-quality positive. Scanner candidate log line now appends `[pre-open]` suffix when scan time is before the first 15-min candle close (09:30 IST). Reduces operator-debug overhead during the loss-streak recovery window by making it explicit that scores will be revalidated by the entry pipeline (#196/#199 stale-score guards) before any trade fires. No gate logic touched || 14:45 LOSER_EXIT + 15:10 SQUARE_OFF | Exit rule | 0 | −3 % | Exits stale + auction-tax avoidance |
+| **Estimated cumulative theoretical edge** | | **≈ +0.94 R** | **−113 %** | But independent gates overlap, so see §2.3. (Was +0.81 R / −110 % when #246 was active; -0.04 R and +3 % MDD recovered when #246 disabled 2026-05-05; +0.03 R / −3 % MDD added by #179a + #251a follow-ups on 2026-05-06; +0.02 R added by #251b intraday-bounce bypass on 2026-05-06; +0.02 R / −1 % MDD added by #255 entry-path quote/depth retry+fail-closed on 2026-05-07; **+0.10 R / −2 % MDD added by #258 score-weighted-sizing pause on 2026-05-07** — the loss-streak structural lever, single largest single-pass delta in the 04-22 window.) |
 | **After overlap discount (×0.25)** | | **≈ +0.19 R** | **−53 %** | Matches §2.3 base case (multi-day breakers + directional pause are largely orthogonal to per-trade gates so the discount is gentler than for the per-trade family) |
 
 ### 2.6 What raises vs harms theoretical probability

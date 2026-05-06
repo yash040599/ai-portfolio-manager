@@ -13,7 +13,46 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-05-07 — Multi-day directional pause + bypass paths (#251 / #251a fractional-Kelly opposing-thin cap / #251b NIFTY-bounce / #251c tape-breadth A/D divergence) + entry-burst cap retune (#179a).
+  Last sync: 2026-05-07 — Loss-streak intervention pass. Two ships:
+  #258 Risk — paused score-weighted sizing in live NoAI
+  (`Config.SCORE_WEIGHTED_SIZING_ENABLED = False` default;
+  `_score_weight_sizing()` short-circuits to equal sizing). Surfaced
+  by `scripts/analyst_pulse_v2.py` over the 9-day rolling-loss window
+  (n=55 trades, net −Rs.2,220) showing score-magnitude is
+  **anti-correlated** with realised P&L for the score≥6 cohort
+  (|score|≥9 = −Rs.51/trade; <6 = −Rs.0.28/trade) — the legacy #107
+  sizing was concentrating MORE capital on the worst-performing
+  buckets every session. Industry standard equal-weight (1/N) is the
+  documented OOS-validated benchmark when factor confidence is low
+  (DeMiguel/Garlappi/Uppal 2009). Re-enable trigger #258R.
+  #262 Infra — scanner candidate log line now appends `[pre-open]`
+  suffix when scan time is before the first 15-min candle close
+  (09:30 IST). Reduces operator-debug overhead during the recovery
+  window. New module-level `_is_pre_open_score_time()` helper in
+  `services/stock_scanner_v2.py`. Single operator-facing surface
+  shipped (Pending block proposed three; live code-walk found only
+  one was meaningful — dashboard `entry_score` is post-pre-open by
+  definition; report_writer has no candidate section). Pre-trade
+  check count unchanged at 44.
+
+  Previous: 2026-05-07 — Phase-2 NoAI audit ship (#255 entry-path
+  quote/depth retry-3 + fail-closed gates; #256 net R:R charge
+  calculation side-aware; #257 phase-2 code/comment hygiene). Three
+  Completed rows; pre-trade check count unchanged at 44 (none of the
+  three shipped items added a new entry gate). Six new Pending items
+  added (#258 pause score-weighted sizing, #259 per-candidate telemetry,
+  #260 intraday volume baselines, #261 typed quote validator, #262
+  pre-market score tagging, #263 docs cleanup) plus four Awaiting-Data
+  triggers (#255R / #258R removal-triggers, #264 trend-cluster cap,
+  #265 Scoring v3 bundle, #266 orders()-based EXTERNAL_CLOSE fill
+  price). Same-pass review-cycle audit also corrected a long-standing
+  Completed-table tally drift (Risk Management header 79→75, grand total
+  214→209) and Awaiting-Data header (17→22), bringing every roadmap
+  section header into line with its actual row count. See
+  [docs/audit/NOAI_INTRADAY_AUDIT_2026-05-06.md](audit/NOAI_INTRADAY_AUDIT_2026-05-06.md)
+  for the full audit input.
+
+  Previous: 2026-05-07 — Multi-day directional pause + bypass paths (#251 / #251a fractional-Kelly opposing-thin cap / #251b NIFTY-bounce / #251c tape-breadth A/D divergence) + entry-burst cap retune (#179a).
   Added: per-symbol re-entry cooldown (30 min), charge-aware target multiple (2×),
   daily-loss soft-stop hysteresis (1.5%), lunch-lull entry skip (11:30-12:15),
   budget-regime gate deltas (TINY/SMALL/NORMAL/LARGE adjust ADX threshold,
