@@ -206,6 +206,24 @@ class Config:
     MAX_POSITIONS_OVERRIDE: int = 0  # 0 = auto-scale with budget; >0 = locked manual value
     MAX_POSITION_PCT: int = 40
 
+    # SCORE_WEIGHTED_SIZING_ENABLED: kill-switch for the score-weighted
+    #   position-sizing pass in services/stock_scanner_v2._score_weight_sizing.
+    #   When True (legacy behaviour, Roadmap #107): per-trade qty is
+    #   reweighted by |entry_score| so higher-conviction names get more
+    #   capital.
+    #   When False (default after Roadmap #258, 2026-05-07): the pass is
+    #   a no-op and equal-sizing (one slot per primary candidate, sized
+    #   off budget-per-slot) stands.
+    #   Why default-OFF: the 2026-05-06 NoAI audit + 9-day rolling ledger
+    #   showed score-magnitude is anti-correlated with realised P&L for
+    #   the score>=6 cohort (|score|>=9: -Rs.51/trade; |score|<6:
+    #   -Rs.0.28/trade). Score-weighting concentrates capital on the
+    #   buckets that lose the most. Equal-sizing is the documented
+    #   out-of-sample fallback when factor confidence is low
+    #   (DeMiguel/Garlappi/Uppal 2009). Re-enable trigger logged as
+    #   Roadmap #258R (Awaiting-Data).
+    SCORE_WEIGHTED_SIZING_ENABLED: bool = False
+
     # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
     #   the same stock in a single day. Prevents Claude from repeatedly
     #   re-entering a stock that keeps hitting stop-loss.
@@ -1876,6 +1894,11 @@ class Config:
         _pos("MAX_BUDGET_INR",       cls.MAX_BUDGET_INR)
         _pos("MIN_BALANCE_TO_TRADE", cls.MIN_BALANCE_TO_TRADE)
         _pct("MAX_POSITION_PCT",     cls.MAX_POSITION_PCT)
+        if not isinstance(cls.SCORE_WEIGHTED_SIZING_ENABLED, bool):
+            errors.append(
+                f"SCORE_WEIGHTED_SIZING_ENABLED must be bool "
+                f"(got {cls.SCORE_WEIGHTED_SIZING_ENABLED!r})"
+            )
 
         # SL / target / R:R
         _pos("ATR_MULTIPLIER",         cls.ATR_MULTIPLIER)

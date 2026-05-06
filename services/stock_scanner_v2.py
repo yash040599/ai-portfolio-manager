@@ -61,6 +61,34 @@ MAX_CANDIDATES = 15
 # Maximum positions allowed per sector (prevents correlated drawdowns)
 MAX_PER_SECTOR = 2
 
+
+# ================================================================
+# PRE-OPEN SCORE FRESHNESS HELPER (Roadmap #262, 2026-05-07)
+# ================================================================
+
+def _is_pre_open_score_time(now: datetime.datetime | None = None) -> bool:
+    """
+    Returns True when `now` (defaults to now_ist()) is before the close
+    of the first 15-min candle on a given trading day.
+
+    Operator-clarity helper for the candidate-result log lines. Scores
+    computed before that boundary are derived from previous-close-anchored
+    daily/15-min candles and the entry pipeline will revalidate them
+    against fresh first-15-min candle data before any trade fires
+    (stale-score guards #196 / #199). The `[pre-open]` suffix tells the
+    operator reading the log not to trust an apparently-strong number
+    until the live re-check.
+    """
+    n = now if now is not None else now_ist()
+    cfg = Config
+    open_dt = n.replace(
+        hour=cfg.MARKET_OPEN_HOUR,
+        minute=cfg.MARKET_OPEN_MINUTE,
+        second=0, microsecond=0,
+    )
+    first_15m_close = open_dt + datetime.timedelta(minutes=15)
+    return n < first_15m_close
+
 # ================================================================
 # SECTOR MAPPING — NSE NIFTY STOCKS
 # ================================================================
@@ -494,17 +522,52 @@ class StockScannerV2(StockScanner):
 
         price_filtered = []
         dropped_price = 0
+        dropped_no_quote = 0
+        missing_quote_symbols = []
+
         for symbol in universe:
             key = f"NSE:{symbol}"
             q = quotes.get(key, {})
-            ltp = q.get("last_price", 0)
+            ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
             if ltp <= 0:
-                price_filtered.append(symbol)  # no quote = still analyse
+                missing_quote_symbols.append(symbol)
+
+        if missing_quote_symbols:
+            retry_quotes = self.zerodha.get_quotes_safe(
+                [{"symbol": s, "exchange": "NSE"} for s in missing_quote_symbols],
+                max_retries=3,
+            ) or {}
+            recovered = 0
+            for symbol in missing_quote_symbols:
+                key = f"NSE:{symbol}"
+                q = retry_quotes.get(key, {})
+                ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+                if ltp > 0:
+                    quotes[key] = q
+                    recovered += 1
+            if recovered:
+                self.log.info(
+                    f"  Price filter: recovered {recovered}/"
+                    f"{len(missing_quote_symbols)} missing quotes on retry"
+                )
+
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+            if ltp <= 0:
+                dropped_no_quote += 1
                 continue
             if ltp < min_price or ltp > max_price:
                 dropped_price += 1
                 continue
             price_filtered.append(symbol)
+
+        if dropped_no_quote:
+            self.log.warning(
+                f"  Price filter: skipped {dropped_no_quote} stocks with "
+                f"missing live quotes after 3 attempts"
+            )
 
         if dropped_price:
             self.log.info(
@@ -822,6 +885,7 @@ class StockScannerV2(StockScanner):
                 f"(dropped: {dropped_price} price, {dropped_score} score, "
                 f"{dropped_trend} trend, {dropped_sector} sector)"
             )
+            pre_open_tag = " [pre-open]" if _is_pre_open_score_time() else ""
             for r in top:
                 ps = r["pattern_summary"]
                 patterns_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
@@ -829,7 +893,7 @@ class StockScannerV2(StockScanner):
                 delta = r.get("score_delta")
                 delta_str = f"  Δ{delta:+.1f}" if delta is not None else ""
                 self.log.info(
-                    f"    {r['symbol']:<14} score: {r['combined_score']:>+5.1f}{delta_str}  "
+                    f"    {r['symbol']:<14} score: {r['combined_score']:>+5.1f}{pre_open_tag}{delta_str}  "
                     f"tech: {r['technical']['signal']:<12} "
                     f"patterns: {patterns_str}{rvol_str}"
                 )
@@ -1250,7 +1314,22 @@ class StockScannerV2(StockScanner):
                  qty_i    = floor(budget_i / price_i)
         Capped at MAX_POSITION_PCT per stock. Excess redistributed
         to lower-scored stocks to maximize deployment.
+
+        Roadmap #258 (2026-05-07): kill-switch
+        `Config.SCORE_WEIGHTED_SIZING_ENABLED` (default False) bypasses
+        this pass entirely — trades keep their equal-sizing qty from
+        the upstream slot allocation. Audit data 04-22→05-06 showed
+        |score|≥6 buckets are anti-correlated with realised P&L on
+        n=44 trades; equal-sizing is the documented OOS fallback when
+        factor confidence is low. Re-enable trigger #258R.
         """
+        if not self.cfg.SCORE_WEIGHTED_SIZING_ENABLED:
+            self.log.info(
+                "  Score-weighted sizing disabled (kill-switch); "
+                "using equal sizing"
+            )
+            return trades
+
         if len(trades) <= 1:
             return trades
 
