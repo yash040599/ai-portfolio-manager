@@ -266,7 +266,7 @@
    - [Phase 1 — Pre-Market Scan](#phase-1--pre-market-scan-900-am--free)
    - [Phase 2 — Stock Selection](#phase-2--stock-selection)
    - [Phase 3 — Entry](#phase-3--entry)
-   - [Phase 4 — Monitor Loop](#phase-4--monitor-loop-920-am--310-pm)
+   - [Phase 4 — Monitor Loop](#phase-4--monitor-loop-930-am--310-pm-945-start-on-expiry-thursdays)
    - [Phase 5 — Square Off & Report](#phase-5--square-off--report)
 5. [Technical Indicators (14)](#technical-indicators-14)
 6. [Candlestick Patterns (14)](#candlestick-patterns-14)
@@ -310,7 +310,7 @@
 Think of the bot as an automated day-trader for the Indian stock market. Every morning:
 
 1. **Before the market opens (9:00 AM)** it looks at ~100 large Indian stocks and scores each one from −24 (strong sell) to +24 (strong buy). The score is built from 14 chart patterns (like "hammer" or "engulfing" candles) and 14 technical indicators (trend, momentum, volume, support/resistance).
-2. **A few minutes after the market opens (9:20 AM)** it picks the 2–7 highest-scoring stocks (count depends on your budget) and places actual orders on Zerodha — buying the strong-positive scores, short-selling the strong-negative ones.
+2. **Once the market has settled (9:30 AM, or 9:45 on Thursday F&O expiry days)** it picks the 2–7 highest-scoring stocks (count depends on your budget) and places actual orders on Zerodha — buying the strong-positive scores, short-selling the strong-negative ones. The bot deliberately skips the chaotic first 15 minutes after open (`ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN = 15` HARD floor) where spreads are 1.5–3× wide, VWAP isn't yet usable, and HFT flow dominates. On expiry Thursdays the floor extends to 30 minutes (`EXPIRY_ENTRY_DELAY_MINUTES = 30`) to clear the F&O settlement-driven opening swings.
 3. **Throughout the day** it watches prices every 10 seconds and automatically:
     - Exits at a pre-set loss price (stop-loss) so no trade can hurt too much.
     - Takes partial profit once a trade is nicely in the green, and slides the stop-loss up so you keep most of the gain even if the price reverses.
@@ -505,7 +505,7 @@ This section walks through **every decision** the bot makes during one trading d
 8. **Confirm 0.3% directional move** from open price. If a stock hasn't moved in either direction, the signal isn't ripe. Log: `"{symbol}: no confirmed move yet"`.
 9. 🤖 **(AI mode only)** Claude receives the shortlist with all 14 indicators + patterns + time context, and ranks/vetoes. Output: ENTRY / SL / TARGET / QTY / RATIONALE per trade.
 
-#### 🕤 9:20 AM onward — Entry pipeline (every candidate runs all 44 checks, in order)
+#### 🕤 9:30 AM onward (9:45 on expiry Thursdays) — Entry pipeline (every candidate runs all 44 checks, in order)
 
 For each candidate, the bot asks these questions. **The first "no" rejects the trade and moves to the next candidate.** Every rejection is logged as a warning with the symbol and reason.
 
@@ -513,6 +513,9 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 >
 > - 🆕 **Lunch lull?** Is it 11:30–12:15 and `|score| < 5.7`? → Skip. Example log: `"TATAMOTORS: lunch-lull window 11:30-12:15 — |score| 4.2 < 5.7 override. Skipping."` (Roadmap #164, override stepped down 6.0 → 5.7 by #221)
 > - 🆕 **Soft-stop?** Has day P&L dropped ≥ 1.5% below budget? → Block all new entries (but existing positions keep running; hard CB at 3% still closes everything). Log: `"soft-stop active — day P&L Rs.-1,650.00 ≤ -1.5%. No new entries."` (#163)
+> - 🆕 **Multi-day directional pause?** Did one side (BUY or SELL) lose ≥7 of last 10 trades over the trailing 7 sessions AND NIFTY 7d return is contra? → Side paused for the whole session (#251). **Two bypass paths can lift it for one scan:**
+>     - **#251b NIFTY-bounce:** if NIFTY intraday return > +1% (BUY paused) or < −1% (SELL paused) for ≥ 2 consecutive scans, gate returns False with one-shot WARN. Pulls back → pause snaps back.
+>     - **#251c tape-breadth:** if scanner finds ≥ 5 candidates total AND ≥ 3 on the paused side AND paused side is ≥ 40% of {BUY+SELL}, gate returns False. *Worked example:* scanner finds 4 BUY + 6 SELL = 10 total, BUY share = 40% → BUY pause bypasses for that scan. Scanner finds 2 BUY + 8 SELL → BUY share 20% < 40% → pause holds. The 30–40% band between the bearish-tape PENALTY (#212) and this BYPASS is an explicit "uncertain — neither rule fires" zone.
 >
 > **Price sanity gates:**
 >
@@ -552,7 +555,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 >
 > **Acceptance:** When every check above returns "yes", you see `"✓ {symbol}: ALL CHECKS PASSED [regime=NORMAL] — BUY 5x @ Rs.1,234.50 | SL Rs.1,221.00 (1.1%) | Target Rs.1,255.00 (1.7%) | Cost Rs.6,173"`. The bot then places the LIMIT entry, waits up to 8s, falls back to MARKET if unfilled, and finally places the exchange SL-M.
 
-#### 🔁 9:20 AM – 2:45 PM — Monitor loop
+#### 🔁 9:30 AM (9:45 expiry) – 2:45 PM — Monitor loop
 
 Every 10 seconds (5s when price is near SL/target), for each open position, the bot asks:
 
@@ -687,7 +690,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 7. Fetch actual fill price — scale SL/target proportionally around fill
 8. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
-### Phase 4 — Monitor Loop (9:20 AM – 3:10 PM)
+### Phase 4 — Monitor Loop (9:30 AM – 3:10 PM, 9:45 start on expiry Thursdays)
 
 | Interval | Action | Cost |
 |----------|--------|------|
@@ -985,6 +988,21 @@ The cushion matters: on a contrary signal the live price is already moving again
 Both the software SL and the exchange SL-M trigger are updated together (see bug-fix #153).
 
 This is automatic in both modes. In `--ai` mode, Claude additionally sees the patterns and can act on weaker contrary signals.
+
+### Sector-Cascade Defensive SL Tightening (#220)
+
+Runs once per candle re-scan, after per-position contrary checks. Reads the scanner's per-sector AVERAGE-score snapshot from the last two scan ticks (`scanner.last_sector_momentum` vs `scanner._prev_sector_momentum`) and tightens SLs on positions inside a fast-collapsing sector — **never opens a new trade.**
+
+**Trigger (held BUYs; mirrored for SELLs):**
+- Sector avg-score dropped by ≥ `SECTOR_CASCADE_DROP_THRESHOLD` (default 2.0) in one scan window
+- AND new sector avg ≤ `−SECTOR_CASCADE_OPPOSITE_FLOOR` (default −1.5) — cross-zero, not just "less positive"
+- AND we hold ≥ `SECTOR_CASCADE_MIN_OPEN` positions (default 2) on the hostile side in that sector
+
+**Action:** software SL bumped to `_compute_protective_sl()` output (typically breakeven plus the `CANDLE_PROTECT_MIN_CUSHION_PCT` 0.3% buffer); exchange SL-M replaced via `engine._update_exchange_sl()`. Per-position try/except (#222) so a transient broker error on position N can't leave positions N+1, N+2 un-tightened — software SL is updated first (always succeeds), broker mismatch repaired on next sync via `_reconcile_orphan_sl_m()`.
+
+**Why it matters:** sector waves move stocks together. If two of our three IT-sector BUYs are silently bleeding while the third is at SL, waiting for each individual stop to fire compounds the damage. The cascade detector tightens all open exposure in that sector to lock the still-positive ones at breakeven before the wave reaches them.
+
+Kill-switch: `SECTOR_CASCADE_EXIT_ENABLED = True` (default).
 
 ### Signal-Reversal Exit
 
