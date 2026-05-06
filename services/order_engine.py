@@ -42,6 +42,89 @@ class OrderEngine:
     _BEARISH_REVERSAL_PATTERNS = candle_patterns.BEARISH_REVERSAL_PATTERNS
     _BULLISH_REVERSAL_PATTERNS = candle_patterns.BULLISH_REVERSAL_PATTERNS
 
+    @staticmethod
+    def _depth_levels(quote_data: dict, side: str) -> list[dict]:
+        """Return Zerodha depth levels for one side, or [] when malformed."""
+        if not isinstance(quote_data, dict):
+            return []
+        depth = quote_data.get("depth")
+        if not isinstance(depth, dict):
+            return []
+        levels = depth.get(side)
+        return levels if isinstance(levels, list) else []
+
+    @staticmethod
+    def _level_number(level: dict, field: str) -> float:
+        if not isinstance(level, dict):
+            return 0.0
+        try:
+            return float(level.get(field, 0) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _fetch_entry_quote(
+        self,
+        symbol: str,
+        exchange: str,
+        required_depth_sides: set[str] | None = None,
+        require_spread_book: bool = False,
+        impact_side: str | None = None,
+        max_attempts: int = 3,
+    ) -> tuple[dict, dict]:
+        """Fetch a valid live entry quote, retrying transient Zerodha gaps."""
+        required_depth_sides = required_depth_sides or set()
+        stock = {"symbol": symbol, "exchange": exchange}
+        quote_key = f"{exchange}:{symbol}"
+
+        for attempt in range(1, max_attempts + 1):
+            live_quotes = self.zerodha.get_quotes_safe([stock], max_retries=1) or {}
+            quote_data = live_quotes.get(quote_key, {})
+            live_price = (
+                quote_data.get("last_price", 0)
+                if isinstance(quote_data, dict) else 0
+            )
+            has_price = live_price > 0
+            has_depth = all(
+                self._depth_levels(quote_data, depth_side)
+                for depth_side in required_depth_sides
+            )
+            has_spread_book = True
+            if require_spread_book:
+                buy_depth = self._depth_levels(quote_data, "buy")
+                sell_depth = self._depth_levels(quote_data, "sell")
+                best_bid = self._level_number(buy_depth[0] if buy_depth else {}, "price")
+                best_ask = self._level_number(sell_depth[0] if sell_depth else {}, "price")
+                has_spread_book = best_bid > 0 and best_ask > 0 and best_ask >= best_bid
+
+            has_impact_book = True
+            if impact_side:
+                has_impact_book = any(
+                    self._level_number(level, "price") > 0
+                    and self._level_number(level, "quantity") > 0
+                    for level in self._depth_levels(quote_data, impact_side)
+                )
+
+            if has_price and has_depth and has_spread_book and has_impact_book:
+                return live_quotes, quote_data
+
+            if attempt < max_attempts:
+                missing = []
+                if not has_price:
+                    missing.append("live price")
+                if not has_depth:
+                    missing.append("order-book depth")
+                if not has_spread_book:
+                    missing.append("bid/ask prices")
+                if not has_impact_book:
+                    missing.append("impact-depth levels")
+                self.log.warning(
+                    f"{symbol}: Zerodha quote missing {' + '.join(missing)} "
+                    f"(attempt {attempt}/{max_attempts}) — retrying."
+                )
+                time.sleep(attempt)
+
+        return {}, {}
+
     def __init__(
         self,
         config:  type[Config],
@@ -151,11 +234,6 @@ class OrderEngine:
         # the authoritative value is `_strong_gap_direction` ("UP"/"DOWN"/None).
         self._strong_gap_day: bool = False
         self._strong_gap_direction: str | None = None
-        # opening NIFTY gap is GAP_*_STRONG and continues prior-day
-        # direction. Reverts at session end (set False) or fresh
-        # OrderEngine instance.
-        self._strong_gap_day: bool = False
-
         # ── Last-exit score cache (#195) ───────────────────────────
         # Stamped by exit_position(). Keyed "SYMBOL_SIDE", value is
         # {"score": float, "reason": str, "time": datetime}. Used by
@@ -1814,32 +1892,54 @@ class OrderEngine:
 
         # ── Validate entry price against live quote ───────────────
         # Claude can hallucinate prices. Always use Zerodha as source of truth.
-        live_quotes = {}
-        try:
-            live_quotes = self.zerodha.get_quotes(
-                [{"symbol": symbol, "exchange": exchange}]
-            ) or {}
-            live_price = live_quotes.get(
-                f"{exchange}:{symbol}", {}
-            ).get("last_price", 0)
-        except Exception:
-            live_price = 0
+        max_spread = self.effective_max_spread()
+        max_impact = self.cfg.MAX_IMPACT_COST_PCT
+        required_depth_sides: set[str] = set()
+        impact_side = None
+        if not self.cfg.DRY_RUN:
+            if max_spread > 0:
+                required_depth_sides.update(("buy", "sell"))
+            if max_impact > 0:
+                impact_side = "sell" if side == "BUY" else "buy"
+                required_depth_sides.add(impact_side)
 
-        if live_price > 0:
-            deviation = abs(entry - live_price) / live_price
-            if deviation > 0.05:
-                self.log.warning(
-                    f"Entry price override: {symbol} Claude said Rs.{entry:.2f} "
-                    f"but live quote is Rs.{live_price:.2f} "
-                    f"({deviation*100:.1f}% off) — using live price"
-                )
-                entry = live_price
-                trade["entry_price"] = entry
-            else:
-                self.log.info(
-                    f"  ✓ {symbol}: price validated — plan Rs.{entry:.2f}, "
-                    f"live Rs.{live_price:.2f} ({deviation*100:.1f}% off)"
-                )
+        live_quotes, quote_data = self._fetch_entry_quote(
+            symbol,
+            exchange,
+            required_depth_sides,
+            require_spread_book=max_spread > 0 and not self.cfg.DRY_RUN,
+            impact_side=impact_side,
+        )
+
+        live_price = quote_data.get("last_price", 0) if isinstance(quote_data, dict) else 0
+        if live_price <= 0:
+            self.log.warning(
+                f"{symbol}: live quote still missing/invalid after 3 attempts — skipping."
+            )
+            return False
+        if required_depth_sides and any(
+            not self._depth_levels(quote_data, depth_side)
+            for depth_side in required_depth_sides
+        ):
+            self.log.warning(
+                f"{symbol}: order-book depth still missing after 3 attempts — skipping."
+            )
+            return False
+
+        deviation = abs(entry - live_price) / live_price
+        if deviation > 0.05:
+            self.log.warning(
+                f"Entry price override: {symbol} plan Rs.{entry:.2f} "
+                f"but live quote is Rs.{live_price:.2f} "
+                f"({deviation*100:.1f}% off) — using live price"
+            )
+            entry = live_price
+            trade["entry_price"] = entry
+        else:
+            self.log.info(
+                f"  ✓ {symbol}: price validated — plan Rs.{entry:.2f}, "
+                f"live Rs.{live_price:.2f} ({deviation*100:.1f}% off)"
+            )
 
         # ── Circuit-limit (UC/LC) entry guard (Roadmap #180) ──────
         # Refuse entries within CIRCUIT_LIMIT_BUFFER_PCT of the ±20%
@@ -1879,41 +1979,40 @@ class OrderEngine:
         # #236: budget-adaptive cap via effective_max_spread() so
         # small-budget accounts (where spread alone can rival the
         # charge hurdle) get a stricter cap automatically.
-        max_spread = self.effective_max_spread()
         if max_spread > 0 and not self.cfg.DRY_RUN:
-            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
-            depth = quote_data.get("depth", {})
-            best_bid = (depth.get("buy", [{}]) or [{}])[0].get("price", 0)
-            best_ask = (depth.get("sell", [{}]) or [{}])[0].get("price", 0)
-            if best_bid > 0 and best_ask > 0:
-                spread_pct = (best_ask - best_bid) / best_bid * 100
-                if spread_pct > max_spread:
-                    self.log.warning(
-                        f"{symbol}: bid-ask spread {spread_pct:.2f}% exceeds "
-                        f"MAX_SPREAD_PCT ({max_spread}%) — skipping "
-                        f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
-                    )
-                    return False
-                self.log.info(
-                    f"  ✓ {symbol}: spread {spread_pct:.2f}% OK "
+            buy_depth = self._depth_levels(quote_data, "buy")
+            sell_depth = self._depth_levels(quote_data, "sell")
+            best_bid = self._level_number(buy_depth[0] if buy_depth else {}, "price")
+            best_ask = self._level_number(sell_depth[0] if sell_depth else {}, "price")
+            if best_bid <= 0 or best_ask <= 0 or best_ask < best_bid:
+                self.log.warning(
+                    f"{symbol}: bid-ask depth unavailable or malformed after 3 attempts — skipping."
+                )
+                return False
+            spread_pct = (best_ask - best_bid) / best_bid * 100
+            if spread_pct > max_spread:
+                self.log.warning(
+                    f"{symbol}: bid-ask spread {spread_pct:.2f}% exceeds "
+                    f"MAX_SPREAD_PCT ({max_spread}%) — skipping "
                     f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
                 )
+                return False
+            self.log.info(
+                f"  ✓ {symbol}: spread {spread_pct:.2f}% OK "
+                f"(bid Rs.{best_bid:.2f} / ask Rs.{best_ask:.2f})"
+            )
 
         # ── Impact-cost / depth liquidity check (Roadmap #146) ────
-        # Spread alone is not enough — a tight best-bid/ask with only a
-        # few shares and a big gap to the next level means we'll fill at
-        # a worse weighted-average price. Walk the top-5 book levels and
-        # compute what our full qty would actually fill at; reject if
-        # slippage vs LTP exceeds MAX_IMPACT_COST_PCT.
-        # Fail-open on missing/malformed depth data (same policy as the
-        # VWAP guard — log a warning, let the trade through).
-        max_impact = self.cfg.MAX_IMPACT_COST_PCT
+        # Walk top-5 depth and reject when the full qty cannot fill inside
+        # MAX_IMPACT_COST_PCT. Missing depth is not a tradable state.
         if max_impact > 0 and not self.cfg.DRY_RUN:
-            quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
-            depth = quote_data.get("depth", {})
-            # BUY fills against sell-side (asks); SELL fills against buy-side (bids)
-            book_side = depth.get("sell", []) if side == "BUY" else depth.get("buy", [])
+            book_side = self._depth_levels(quote_data, "sell" if side == "BUY" else "buy")
             ltp = quote_data.get("last_price", entry) or entry
+            if not book_side:
+                self.log.warning(
+                    f"{symbol}: impact-cost depth unavailable after 3 attempts — skipping."
+                )
+                return False
             try:
                 remaining = int(qty)
                 filled_notional = 0.0
@@ -1921,8 +2020,8 @@ class OrderEngine:
                 for level in (book_side or []):
                     if remaining <= 0:
                         break
-                    lvl_price = level.get("price", 0) or 0
-                    lvl_qty   = level.get("quantity", 0) or 0
+                    lvl_price = self._level_number(level, "price")
+                    lvl_qty   = self._level_number(level, "quantity")
                     if lvl_price <= 0 or lvl_qty <= 0:
                         continue
                     take = min(remaining, int(lvl_qty))
@@ -1931,11 +2030,10 @@ class OrderEngine:
                     remaining       -= take
 
                 if filled_qty == 0 or ltp <= 0:
-                    # Nothing to measure — let trade through (fail-open)
                     self.log.warning(
-                        f"{symbol}: impact-cost check skipped — "
-                        f"order-book depth unavailable or malformed"
+                        f"{symbol}: impact-cost depth malformed after 3 attempts — skipping."
                     )
+                    return False
                 elif remaining > 0:
                     # Not enough visible depth in top-5 for our full qty.
                     # This is a strong liquidity signal — treat as a skip.
@@ -1967,11 +2065,11 @@ class OrderEngine:
                         f"(avg fill Rs.{avg_fill:.2f} vs LTP Rs.{ltp:.2f})"
                     )
             except Exception as e:
-                # Fail-open: malformed depth should not block trading
                 self.log.warning(
-                    f"{symbol}: impact-cost check skipped — "
-                    f"depth parse error ({type(e).__name__}: {e})"
+                    f"{symbol}: impact-cost depth parse failed "
+                    f"({type(e).__name__}: {e}) after 3 attempts — skipping."
                 )
+                return False
 
         # ── Volume confirmation at entry ──────────────────────────
         # Skip stocks with below-average recent volume — low conviction.
@@ -2689,8 +2787,12 @@ class OrderEngine:
         if qty > 0 and entry > 0:
             gross_profit = abs(target - entry) * qty
             gross_risk = abs(entry - sl) * qty
-            buy_val = entry * qty
-            sell_val = entry * qty  # approximate
+            if side == "BUY":
+                buy_val = entry * qty
+                sell_val = target * qty
+            else:
+                sell_val = entry * qty
+                buy_val = target * qty
             charges = Config.calculate_charges(buy_val, sell_val, 2)
             round_trip_charges = charges["total_tax_and_charges"]
             net_profit = gross_profit - round_trip_charges

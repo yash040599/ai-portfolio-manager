@@ -378,25 +378,46 @@ class ZerodhaClient:
 
         return result
 
-    def get_quotes_safe(self, stocks: list[dict]) -> dict | None:
+    def get_quotes_safe(
+        self,
+        stocks: list[dict],
+        max_retries: int = 3,
+        delay_seconds: float = 1.0,
+    ) -> dict | None:
         """
-        Fetches quotes with automatic token-expiry retry.
-        Returns the quotes dict, or None if both attempts fail.
+        Fetches quotes with automatic retry.
+        Returns the quotes dict, or None if all attempts fail.
         """
-        try:
-            return self.get_quotes(stocks)
-        except Exception as e:
-            if "api_key" in str(e).lower() or "access_token" in str(e).lower():
-                self.log.info("Token appears invalid — forcing re-login...")
-                self.force_relogin()
-                try:
-                    return self.get_quotes(stocks)
-                except Exception as e2:
-                    self.log.error(f"Retry also failed: {e2}")
-                    return None
-            else:
-                self.log.error(f"Quote fetch failed: {e}")
-                return None
+        max_retries = max(1, int(max_retries))
+        last_error = None
+        relogged = False
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                return self.get_quotes(stocks)
+            except Exception as e:
+                last_error = e
+                msg = str(e).lower()
+                if (
+                    ("api_key" in msg or "access_token" in msg)
+                    and not relogged
+                ):
+                    self.log.info("Token appears invalid — forcing re-login...")
+                    self.force_relogin()
+                    relogged = True
+
+                if attempt < max_retries:
+                    wait = delay_seconds * attempt
+                    self.log.warning(
+                        f"Quote fetch failed (attempt {attempt}/{max_retries}): "
+                        f"{e} | Retrying in {wait:.0f}s..."
+                    )
+                    time.sleep(wait)
+
+        self.log.error(
+            f"Quote fetch failed after {max_retries} attempts: {last_error}"
+        )
+        return None
 
     # ================================================================
     # HISTORICAL DATA
