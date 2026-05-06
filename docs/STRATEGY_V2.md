@@ -571,7 +571,7 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 
 **Every 30 minutes** (if free slots):
 
-18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 40-check pipeline as above.) In AI mode Claude ranks the new shortlist.
+18. **Opportunity re-scan.** Same pre-filter + entry pipeline on fresh quotes. If new candidates emerge, enter them. (Same 44-check pipeline as above.) In AI mode Claude ranks the new shortlist.
 
 **Every 30 minutes** (NoAI only):
 
