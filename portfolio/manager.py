@@ -564,9 +564,51 @@ class PortfolioManager:
         the configured delay (e.g. bot started at 9:40 with 15-min delay),
         the delay is shortened to 5 min since the opening volatility has
         already settled and prices have established direction.
+
+        HARD DECISION FLOOR (ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN):
+            No entry — through ANY path in this method — fires before
+            MARKET_OPEN + floor minutes (default 9:30 IST). When the
+            computed entry_time falls before the floor, it is clamped
+            UP to the floor and the observation window is extended.
+            See config.py for full industry rationale.
         """
         delay = self.cfg.ENTRY_DELAY_MINUTES
+
+        # Compute now / market_open / hard floor up-front so both the
+        # delay <= 0 (immediate) path and the normal observation path
+        # see the same floor.
+        now = now_ist()
+        market_open = now.replace(
+            hour=self.cfg.MARKET_OPEN_HOUR,
+            minute=self.cfg.MARKET_OPEN_MINUTE,
+            second=0, microsecond=0,
+        )
+        floor_min = self.cfg.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN
+        hard_floor_time = market_open + datetime.timedelta(minutes=floor_min)
+
         if delay <= 0:
+            # Decision floor still applies — never enter pre-9:30 even
+            # when ENTRY_DELAY_MINUTES is set to 0.
+            if now < hard_floor_time:
+                wait_min = (hard_floor_time - now).total_seconds() / 60
+                self.log.info(
+                    f"ENTRY_DELAY_MINUTES=0 but decision floor active — "
+                    f"waiting {wait_min:.0f} min until "
+                    f"{hard_floor_time.strftime('%I:%M %p')} "
+                    f"(opening-range / VWAP-warmup window)..."
+                )
+                while now_ist() < hard_floor_time and not self._shutdown_requested:
+                    remaining = (hard_floor_time - now_ist()).total_seconds()
+                    mins, secs = divmod(int(remaining), 60)
+                    print(
+                        f"\r  \U0001f50d Decision-floor wait: {mins:02d}:{secs:02d} remaining  ",
+                        end="", flush=True,
+                    )
+                    time.sleep(1)
+                print()
+                if self._shutdown_requested:
+                    return
+
             # Late entry guard: don't enter if too few minutes remain
             now_check = now_ist()
             sq_off_check = now_check.replace(
@@ -586,19 +628,14 @@ class PortfolioManager:
             return
 
         # Observation-window semantics:
-        #   entry_time = market_open + delay (so at 9:30 start with delay=30,
-        #   entry is at 9:45 — we've already observed 15 of the 30 min).
+        #   entry_time = market_open + delay (so at 9:15 start with delay=5,
+        #   entry would be 9:20 — then clamped UP to the 9:30 hard floor
+        #   below). At 9:30 start with delay=5, entry is at 9:35.
         # If market has already been open LONGER than the configured delay
         # (late script start), use a short floor observation from now:
         #   normal days: 5 min
         #   expiry days: EXPIRY_ENTRY_DELAY_LATE_FLOOR (15 min) — F&O
         #     settlement creates instability through the whole morning.
-        now = now_ist()
-        market_open = now.replace(
-            hour=self.cfg.MARKET_OPEN_HOUR,
-            minute=self.cfg.MARKET_OPEN_MINUTE,
-            second=0, microsecond=0,
-        )
         target_entry_time = market_open + datetime.timedelta(minutes=delay)
         minutes_since_open = (now - market_open).total_seconds() / 60
 
@@ -623,6 +660,30 @@ class PortfolioManager:
                 f"{remaining:.0f} min to entry)"
             )
 
+        # ── HARD DECISION FLOOR ───────────────────────────────────
+        # Never enter before MARKET_OPEN + floor minutes (default 9:30).
+        # For late starts (now > floor), this is a no-op. For early bot
+        # starts (9:15-9:25), this extends the observation window so
+        # the directional-move filter compares against a meaningful
+        # opening range and the stale-score guard re-validates against
+        # the freshly-closed first-15-min candle.
+        if entry_time < hard_floor_time:
+            deferred = (hard_floor_time - entry_time).total_seconds() / 60
+            self.log.info(
+                f"Decision floor active: deferring entry from "
+                f"{entry_time.strftime('%I:%M %p')} to "
+                f"{hard_floor_time.strftime('%I:%M %p')} "
+                f"(+{deferred:.0f} min — opening-range / VWAP-warmup window). "
+                f"Observation window extended; entry uses 9:30 candle data."
+            )
+            entry_time = hard_floor_time
+            # Bump `delay` (used as wait_minutes by the stale-score
+            # guard) so it reflects the actual observation length —
+            # otherwise a tight ENTRY_DELAY_MINUTES=5 would mark the
+            # 15-min floor wait as "5 min" and the stale-score recheck
+            # would still fire at threshold but the log would mislead.
+            delay = max(delay, int((hard_floor_time - now).total_seconds() / 60))
+
         self.log.section(f"OBSERVATION MODE — entry at {entry_time.strftime('%I:%M %p')}")
         self.log.info(
             f"Trades will be entered at {entry_time.strftime('%I:%M %p')} "
@@ -638,7 +699,28 @@ class PortfolioManager:
             open_quotes = self.zerodha.get_quotes(plan_symbols)
         except Exception as e:
             self.log.warning(f"Quote fetch failed during observation: {e}")
-            self.log.warning("Skipping observation — will enter with pre-trade checks only")
+            self.log.warning(
+                "Skipping observation — will enter with pre-trade checks only"
+            )
+            # Even on quote-fetch failure we MUST honour the hard
+            # decision floor (e.g. 9:30). Otherwise an early-morning
+            # quote API hiccup at 9:15 would silently bypass the floor
+            # and fire entries into the opening-range / VWAP-warmup
+            # window. (This is exactly the cross-gate dead-zone pattern
+            # — a failure in component A defeats a guard in component B.)
+            while now_ist() < entry_time and not self._shutdown_requested:
+                remaining = (entry_time - now_ist()).total_seconds()
+                mins, secs = divmod(int(remaining), 60)
+                print(
+                    f"\r  \U0001f50d Floor wait (no observation data): "
+                    f"{mins:02d}:{secs:02d} remaining  ",
+                    end="", flush=True,
+                )
+                time.sleep(1)
+            if now_ist() >= entry_time:
+                print()
+            if self._shutdown_requested:
+                return
             self._enter_positions()
             return
 

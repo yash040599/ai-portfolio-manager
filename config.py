@@ -129,6 +129,51 @@ class Config:
     ENTRY_DELAY_MINUTES: int = 5
     ENTRY_MIN_MOVE_PCT:  float = 0.3   # min % move from open to confirm direction
 
+    # ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN: HARD floor — no entries fire
+    #   before this many minutes after MARKET_OPEN, regardless of when the
+    #   bot actually started or what ENTRY_DELAY_MINUTES is set to. The
+    #   strongest single rule the rest of the codebase already implies.
+    #
+    #   WHY 15 (i.e. 9:30 IST): industry consensus across Indian retail /
+    #   prop desks (Zerodha Varsity, ICICI Direct ORB tutorials, prop-desk
+    #   handbooks) defines the strategy as: wait for the 9:15 candle to
+    #   close, then trade. The 9:15-9:30 "Opening Range" is unsuitable for
+    #   discretionary entries because:
+    #     - Spreads are 1.5-3x normal (the slippage model in
+    #       services/order_engine.py already doubles the cost basis when
+    #       hour == MARKET_OPEN_HOUR)
+    #     - Pre-open auction unfilled orders hit the live book → noise
+    #     - VWAP needs >= 3 candles to be meaningful (first usable at 9:30)
+    #     - The first 15-min candle is what resolves gap-fade vs gap-go
+    #     - HFT dominates 9:15-9:25 (algo-vs-algo arb); discretionary
+    #       edge returns post-9:30
+    #     - The choppy-morning ADX gate already keys off the 9:30-10:30
+    #       window — pre-9:30 entries skip this protection
+    #     - The VWAP entry guard activates only after 10:15 — pre-9:30
+    #       entries skip this protection
+    #
+    #   INTERACTION WITH ENTRY_DELAY_MINUTES (default 5):
+    #     Bot starts 9:15 → entry 9:30 (15-min observation; floor wins)
+    #     Bot starts 9:20 → entry 9:30 (10-min observation; floor wins)
+    #     Bot starts 9:25 → entry 9:30 (5-min observation; both equal)
+    #     Bot starts 9:32 → entry 9:37 (5-min observation; floor passed)
+    #     Bot starts 9:40 → entry 9:45 (5-min observation; floor passed)
+    #   The 5-min "normal" observation is preserved for every late-start
+    #   case — the floor only adds wait when the bot launches early.
+    #
+    #   THE EXTENDED 9:15-9:30 WINDOW IS NOT WASTED:
+    #     - Open prices are captured at observation START (9:15)
+    #     - The directional-move filter at entry compares 9:15 → 9:30
+    #       (a far stronger signal than 9:15 → 9:20)
+    #     - The stale-score guard (#196) re-scores every candidate against
+    #       fresh 9:30 candle data and drops decayed setups
+    #     - Existing pre-market scan output (built ~9:00) survives the
+    #       wait — at 9:30 each candidate is re-validated, not re-picked
+    #
+    #   Set to 0 to disable (NOT recommended outside backtest sweeps —
+    #   pre-9:30 entries are an explicit policy violation).
+    ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN: int = 15
+
     # ── Polling & Claude Review Intervals ─────────────────────────
     # PRICE_POLL_SECONDS: how often to check Kite quotes for SL/target hits.
     #   Lower = faster reaction to price moves, but more API calls.
@@ -2033,6 +2078,11 @@ class Config:
             errors.append(f"SQUARE_OFF_HOUR out of range: {cls.SQUARE_OFF_HOUR!r}")
         _pos("PRICE_POLL_SECONDS",      cls.PRICE_POLL_SECONDS)
         _pos("MIN_MINUTES_FOR_ENTRY",   cls.MIN_MINUTES_FOR_ENTRY)
+        if cls.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN < 0:
+            errors.append(
+                f"ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN must be ≥ 0: "
+                f"{cls.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN!r}"
+            )
 
         # Entry filters
         _pct("RSI_BUY_BLOCK_THRESHOLD",  cls.RSI_BUY_BLOCK_THRESHOLD)
