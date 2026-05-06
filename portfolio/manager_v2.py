@@ -486,6 +486,13 @@ class PortfolioManagerV2(PortfolioManager):
             open_sells=open_sells,
         )
 
+        # Forward scanner's tape-breadth snapshot to the engine for
+        # the directional-pause breadth-divergence bypass. None on
+        # small-sample scans so the engine never bypasses on stale data.
+        self.engine.set_tape_breadth(
+            getattr(self.scanner, "last_tape_breadth", None)
+        )
+
         if self._trade_plans:
             # Show primary picks with full details, fallbacks just listed
             max_t = self.cfg.MAX_POSITIONS

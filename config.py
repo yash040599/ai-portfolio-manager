@@ -129,49 +129,24 @@ class Config:
     ENTRY_DELAY_MINUTES: int = 5
     ENTRY_MIN_MOVE_PCT:  float = 0.3   # min % move from open to confirm direction
 
-    # ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN: HARD floor — no entries fire
-    #   before this many minutes after MARKET_OPEN, regardless of when the
-    #   bot actually started or what ENTRY_DELAY_MINUTES is set to. The
-    #   strongest single rule the rest of the codebase already implies.
+    # ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN: HARD floor — no entries
+    #   fire before this many minutes after MARKET_OPEN, regardless of
+    #   bot start time or ENTRY_DELAY_MINUTES.
     #
-    #   WHY 15 (i.e. 9:30 IST): industry consensus across Indian retail /
-    #   prop desks (Zerodha Varsity, ICICI Direct ORB tutorials, prop-desk
-    #   handbooks) defines the strategy as: wait for the 9:15 candle to
-    #   close, then trade. The 9:15-9:30 "Opening Range" is unsuitable for
-    #   discretionary entries because:
-    #     - Spreads are 1.5-3x normal (the slippage model in
-    #       services/order_engine.py already doubles the cost basis when
-    #       hour == MARKET_OPEN_HOUR)
-    #     - Pre-open auction unfilled orders hit the live book → noise
-    #     - VWAP needs >= 3 candles to be meaningful (first usable at 9:30)
-    #     - The first 15-min candle is what resolves gap-fade vs gap-go
-    #     - HFT dominates 9:15-9:25 (algo-vs-algo arb); discretionary
-    #       edge returns post-9:30
-    #     - The choppy-morning ADX gate already keys off the 9:30-10:30
-    #       window — pre-9:30 entries skip this protection
-    #     - The VWAP entry guard activates only after 10:15 — pre-9:30
-    #       entries skip this protection
+    #   Why 15 (i.e. 9:30 IST): the 9:15-9:30 opening range has 1.5-3x
+    #   spreads (slippage doubles in the engine), pre-open auction
+    #   spillover, no usable VWAP (needs ≥3 candles), and HFT-dominated
+    #   flow. Choppy-morning ADX + VWAP entry guards both key off the
+    #   post-9:30 window, so pre-9:30 entries skip both protections.
     #
-    #   INTERACTION WITH ENTRY_DELAY_MINUTES (default 5):
-    #     Bot starts 9:15 → entry 9:30 (15-min observation; floor wins)
-    #     Bot starts 9:20 → entry 9:30 (10-min observation; floor wins)
-    #     Bot starts 9:25 → entry 9:30 (5-min observation; both equal)
-    #     Bot starts 9:32 → entry 9:37 (5-min observation; floor passed)
-    #     Bot starts 9:40 → entry 9:45 (5-min observation; floor passed)
-    #   The 5-min "normal" observation is preserved for every late-start
-    #   case — the floor only adds wait when the bot launches early.
+    #   Interaction with ENTRY_DELAY_MINUTES=5: floor wins for early
+    #   starts (bot up 9:15-9:25 → entry 9:30), normal observation for
+    #   late starts (bot up 9:32 → entry 9:37). The 9:15-9:30 wait isn't
+    #   wasted: open prices are captured at start, the directional-move
+    #   filter compares 9:15→9:30 (stronger than 9:15→9:20), and the
+    #   stale-score guard re-scores against fresh 9:30 candle data.
     #
-    #   THE EXTENDED 9:15-9:30 WINDOW IS NOT WASTED:
-    #     - Open prices are captured at observation START (9:15)
-    #     - The directional-move filter at entry compares 9:15 → 9:30
-    #       (a far stronger signal than 9:15 → 9:20)
-    #     - The stale-score guard (#196) re-scores every candidate against
-    #       fresh 9:30 candle data and drops decayed setups
-    #     - Existing pre-market scan output (built ~9:00) survives the
-    #       wait — at 9:30 each candidate is re-validated, not re-picked
-    #
-    #   Set to 0 to disable (NOT recommended outside backtest sweeps —
-    #   pre-9:30 entries are an explicit policy violation).
+    #   Set to 0 to disable (not recommended outside backtest sweeps).
     ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN: int = 15
 
     # ── Polling & Claude Review Intervals ─────────────────────────
@@ -277,34 +252,17 @@ class Config:
     MIN_SL_DISTANCE_PCT: float = 0.8
 
     # ── R:R (Risk:Reward) Settings ────────────────────────────────
-    # R:R = (target distance) / (stop distance).
-    # ATR produces a base R:R of RR_TARGET_RATIO (1.5:1).
+    # R:R = (target distance) / (stop distance). ATR produces a base
+    # R:R of RR_TARGET_RATIO (1.5:1).
     #
-    # SINGLE FLOOR — UNIFORM ALL DAY (#242 / #243).
-    # Roadmap #242 removed entry-time target compression (the previous
-    # 20%/25% target cuts after 1 PM / 2 PM). Roadmap #243 followed
-    # through by collapsing the time-tiered floors and the dead
-    # relaxation/retry knobs into a single always-on floor:
-    #
-    #   RR_HARD_FLOOR = 1.3   ← the only knob that matters
-    #
-    # Rationale (analyst lens — copilot/analyst-review.md):
-    #   1. Pre-shrinking entry targets while the always-on hard floor
-    #      then rejected the resulting R:R was a self-defeating loop —
-    #      both x and y were ours. Removed by #242.
-    #   2. After #242 every time-of-day floor (afternoon/late) was
-    #      already pinned to 1.3 = RR_HARD_FLOOR; the time-routing
-    #      added zero behavioural value, only log-label noise.
-    #   3. Adaptive relaxation ("we haven't traded in an hour, drop the
-    #      bar") is the same instinct that bankrupts retail traders
-    #      (see #235). RR_HARD_FLOOR always won last anyway, so the
-    #      relaxation branch never produced a different outcome.
+    # Single uniform all-day floor: RR_HARD_FLOOR = 1.3. The previous
+    # time-tiered floors and adaptive-relaxation branches were dead
+    # code — RR_HARD_FLOOR always won last so the routing only added
+    # log noise. Adaptive relaxation ("haven't traded in an hour, drop
+    # the bar") is the same instinct that bankrupts retail traders.
     #
     # KEPT: RR_GIVEUP_AFTER_FAILS — after N zero-entry scans we stop
-    # trading entirely. That's the keeper, the "today is not a trading
-    # day" signal. RR_TARGET_RATIO sets the default ATR target so
-    # default-ATR trades produce R:R = 1.5 (clears the 1.3 floor with
-    # ~0.2 of headroom for tick-rounding noise).
+    # trading entirely ("today is not a trading day" signal).
     RR_TARGET_RATIO:       float = 1.5   # base R:R from ATR (target = SL × this)
     RR_HARD_FLOOR:         float = 1.3   # always-on R:R floor (uniform all day)
     RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before stopping for the day
@@ -753,49 +711,26 @@ class Config:
     SIGNAL_REVERSAL_SCORE:           float = 7.0
     SIGNAL_REVERSAL_REQUIRE_PATTERN: bool  = True
 
-    # ── Signal-Decay Exit (#188) ──────────────────────────────────
-    # Companion to signal-reversal: catches both *same-direction
-    # thesis decay* AND *sign-flip* cases that the strict #174
-    # reversal gate (which requires |fresh|≥SIGNAL_REVERSAL_SCORE
-    # AND a confirming candle pattern) silently misses. Without
-    # this gate weak-but-not-flipped trades sit in the slow-positive
-    # corridor for hours, AND any soft sign flip (e.g. +10 → -3
-    # without a candle pattern) sits live until SL or LOSER_EXIT.
+    # ── Signal-Decay Exit ─────────────────────────────────────────
+    # Companion to signal-reversal: catches same-direction thesis
+    # decay AND any sign flip that #174 (which requires |fresh|≥7
+    # and a confirming pattern) silently misses.
     #
-    # Triggers (BUY position, mirrored for SELL):
-    #   abs(entry_score) >= SIGNAL_DECAY_MIN_ENTRY_SCORE   (only act
-    #     on trades that started with real conviction — a +3 → +1
-    #     drift is statistical noise, not decay)
+    # Triggers (BUY, mirrored for SELL):
+    #   |entry_score| ≥ MIN_ENTRY_SCORE   (only conviction entries)
     #   AND one of:
-    #     a) SAME-SIGN path: fresh_score keeps the entry sign AND
-    #        abs(fresh_score) < abs(entry_score) * SIGNAL_DECAY_FRACTION
-    #     b) SIGN-FLIP path: fresh_score sign reversed (any magnitude)
-    #   AND elapsed_minutes >= SIGNAL_DECAY_MIN_HOLD_MINUTES
-    #   AND pnl < initial_risk * SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
-    #     (book-and-go below 1R: sub-1R profit has no trailing-stop
-    #     cushion anyway — the stop sits at or below entry, so any
-    #     pullback gives it all back. Winners ≥1R keep running on
-    #     the trailing stop. If `initial_sl` is missing — e.g. a
-    #     restart-rehydrated position — fall back to the conservative
-    #     `pnl > 0` skip so we never dump a profitable legacy trade.)
+    #     a) same-sign decay: |fresh| < |entry| × DECAY_FRACTION
+    #     b) sign flip (any magnitude)
+    #   AND elapsed ≥ MIN_HOLD_MINUTES
+    #   AND pnl < initial_risk × WINNER_SKIP_R_MULTIPLE
+    #     (sub-1R profit has no trailing cushion; ≥1R keeps running
+    #      on the trailing stop. Falls back to `pnl > 0` skip when
+    #      `initial_sl` is missing — restart-rehydrated trade.)
     #
-    # MOTIVATING CASES:
-    #   BHARTIARTL 2026-04-21 (same-sign decay) — entered BUY @ +10.1
-    #     at 09:42, re-scored +3.6 (Δ-6.5) at 10:31, sat in the slow-
-    #     positive corridor for 5h 3min and exited LOSER_EXIT @ -Rs.16
-    #     at 14:45. Max favourable was +Rs.109 at 11:05 (0.72R). With
-    #     the 1R winner-skip the gate fires at the 10:31 re-scan
-    #     (pnl Rs.+41 = 0.27R < 1R) and books +Rs.41.
-    #   Sign-flip dead zone (added 2026-04-28) — held BUY at entry
-    #     score +X re-scoring to a small negative value (e.g. -3, -5)
-    #     was previously caught by NEITHER gate: #174 needs |fresh|≥7
-    #     and a confirming pattern; #188 (old) had a same-sign
-    #     requirement that returned False on any flip. Bug observed
-    #     live on 2026-04-28 — losing trade kept running. Fix: the
-    #     same-sign requirement was removed; any sign flip now
-    #     qualifies as decay, subject to the unchanged hold-time and
-    #     winner-skip guards. The strict #174 path is unchanged and
-    #     still fires first when its conditions hold.
+    # Origin: BHARTIARTL 2026-04-21 (entered +10.1, decayed to +3.6,
+    # sat 5h in slow-positive then exited LOSER_EXIT). Sign-flip
+    # path added 2026-04-28 after a soft +10→-3 flip slipped past
+    # both #174 (no pattern) and the prior same-sign-only #188.
     SIGNAL_DECAY_EXIT_ENABLED:          bool  = True
     SIGNAL_DECAY_FRACTION:              float = 0.4
     SIGNAL_DECAY_MIN_ENTRY_SCORE:       float = 7.0
@@ -1109,51 +1044,31 @@ class Config:
     AVG_DOWN_LOOKBACK_MINUTES:      int   = 120
     AVG_DOWN_OVERRIDE_SCORE:        float = 8.0
 
-    # ── Pattern-direction entry veto (Roadmap #190) ──────────
-    # Mirror of the SIGNAL_REVERSAL exit (#174) applied at ENTRY.
-    # Candle patterns flow into combined_score as weighted contributions
-    # but never act as a hard veto. A BUY can clear |score| ≥ 6.0 even
-    # when the entry-tick pattern set contains a bearish reversal
-    # (BEARISH_ENGULFING, EVENING_STAR, BEARISH_HARAMI, SHOOTING_STAR,
-    # HANGING_MAN, THREE_BLACK_CROWS) — and vice-versa for SELL with
-    # the bullish set. Live observations (2026-04-21): PNB BUY @ +6.1
-    # with BEARISH_ENGULFING and TRENT BUY @ +6.4 with
-    # BEARISH_ENGULFING both stagnated.
-    #
-    # Gate: if entry-tick patterns include an opposite-side reversal
-    # AND |score| < PATTERN_VETO_OVERRIDE_SCORE, skip the entry.
-    # Set PATTERN_VETO_ENABLED = False to disable.
+    # ── Pattern-direction entry veto ─────────────────────────────
+    # Mirror of the SIGNAL_REVERSAL exit applied at ENTRY. A BUY can
+    # currently clear |score|≥6 even when the entry-tick pattern set
+    # contains a bearish reversal (BEARISH_ENGULFING, EVENING_STAR,
+    # BEARISH_HARAMI, SHOOTING_STAR, HANGING_MAN, THREE_BLACK_CROWS) —
+    # mirrored for SELL with bullish set. Live evidence: PNB / TRENT
+    # 2026-04-21 entered at +6 with BEARISH_ENGULFING, both stagnated.
+    # Gate: opposite-side reversal pattern AND |score| < OVERRIDE_SCORE
+    # → skip entry. Override allows high-conviction break-outs through.
     PATTERN_VETO_ENABLED:        bool  = True
     PATTERN_VETO_OVERRIDE_SCORE: float = 8.0
 
-    # ── Pattern↔Tech Contradiction Penalty (Roadmap #200) ─────────
-    # Patterns currently flow into combined_score as raw additive
-    # contributions. Two failure modes were observed live:
-    #   (a) Indecision noise: DOJI is a NEUTRAL candle (indecision).
-    #       It tells us "no commitment" yet its weight currently
-    #       survives into a directional verdict. Live observation
-    #       (2026-04-21): NESTLEIND scored +5.6
-    #       STRONG_BUY with both BEARISH_ENGULFING and DOJI present.
-    #   (b) Direct contradiction: a bearish reversal pattern on a BUY
-    #       verdict (or vice-versa) means the chart is *already*
-    #       printing the flip — the score is reading momentum that's
-    #       about to die. #190 PATTERN_VETO is a hard skip at very low
-    #       conviction; this is a softer continuous penalty applied at
-    #       SCANNER scoring time so downstream gates / Claude / sorting
-    #       all see the de-risked score.
-    # Apply at scanner combine point in stock_scanner_v2._analyse_stock,
-    # *after* pattern_score + tech_score have been summed:
-    #   - Contradiction (BUY-leaning + bearish pattern OR SELL-leaning
-    #     + bullish pattern): subtract PATTERN_CONTRADICTION_PENALTY
-    #     from |combined_score|, clamped so the score does NOT flip
-    #     sign (we already have #190 for hard veto; this is just a
-    #     conviction haircut).
-    #   - Indecision (DOJI present, regardless of side): subtract
-    #     PATTERN_INDECISION_PENALTY from |combined_score|, same
-    #     no-flip clamp.
-    # Both penalties stack — DOJI + BEARISH_ENGULFING on a BUY would
-    # take 0.5 + 2.0 = 2.5 off the score magnitude.
-    # Kill-switch: PATTERN_CONTRADICTION_PENALTY_ENABLED.
+    # ── Pattern↔Tech Contradiction Penalty ──────────────────────
+    # Patterns flow into combined_score as raw additive contributions;
+    # two failure modes:
+    #   (a) DOJI is NEUTRAL (indecision) but its weight currently
+    #       survives into a directional verdict.
+    #   (b) A bearish reversal pattern on a BUY verdict (or vice-versa)
+    #       means the chart is already printing the flip; the score is
+    #       reading momentum about to die. #190 hard-vetoes at very low
+    #       conviction — this is a softer continuous penalty applied at
+    #       scanner scoring time so downstream gates / Claude / sorting
+    #       see the de-risked score.
+    # Apply after pattern+tech sum, clamp so |score| can't flip sign.
+    # Penalties stack: DOJI + BEARISH_ENGULFING on a BUY = -2.5.
     PATTERN_CONTRADICTION_PENALTY_ENABLED: bool  = True
     PATTERN_CONTRADICTION_PENALTY:         float = 2.0
     PATTERN_INDECISION_PENALTY:            float = 0.5
@@ -1206,88 +1121,42 @@ class Config:
     # visibly higher bar, not marginally higher.
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 1.0
 
-    # ── No-Rescue-Zone alignment (Roadmap #246, 2026-04-28) ──────
-    # The in-trade rescue gates (`_signal_decay_exit` and
-    # `_signal_reversal_exit`) refuse to act on entries with
-    # |entry_score| < SIGNAL_DECAY_MIN_ENTRY_SCORE (= 7.0) — that
-    # threshold is a STATISTICAL noise floor on the score model, not
-    # a budget knob (a +5 → +2 drift is jitter regardless of account
-    # size). Meanwhile the late-entry score floor on a SMALL Rs.50K
-    # budget is only ~3.5 (V2_MIN_SCORE 2.0 + BUDGET_MIN_SCORE_DELTA
-    # +0.5 + LATE_ENTRY_MIN_SCORE_BUMP +1.0). So entries between 3.5
-    # and 7.0 after 10:00 IST live in a permanent "no-rescue zone":
-    # if the thesis breaks, only SL / LOSER_EXIT / SQUARE_OFF can
-    # close them. JIOFIN 2026-04-28 (entry +3.8, sign-flipped to
-    # -5.5, ran to STOP_LOSS for -Rs.183) is the motivating case.
+    # ── No-Rescue-Zone alignment ─────────────────────────────────
+    # The rescue gates (`_signal_decay_exit`, `_signal_reversal_exit`)
+    # require |entry_score| ≥ SIGNAL_DECAY_MIN_ENTRY_SCORE (=7.0).
+    # On a SMALL Rs.50K budget the late-entry floor is only ~3.5, so
+    # entries 3.5-7.0 after 10:00 IST live in a "no-rescue zone" — if
+    # the thesis breaks, only SL/LOSER_EXIT/SQUARE_OFF can close them
+    # (JIOFIN 2026-04-28: entry +3.8, flipped to -5.5, ran to SL).
+    # Fix when enabled: clamp the late-entry floor to ≥ the rescue
+    # threshold (no new constant — coupling enforced by code review).
     #
-    # Fix (analyst lens, NOT "lower the rescue floor"): align the
-    # entry side with the rescue side by clamping the late-entry
-    # floor to >= SIGNAL_DECAY_MIN_ENTRY_SCORE inside the existing
-    # late-entry block in `enter_trade`. The threshold is REUSED
-    # from the rescue gate — there is intentionally no new
-    # `*_MIN_SCORE` constant to keep the two coupled by code review.
-    # Morning entries (09:30-10:00) are unaffected: a fresh trend
-    # plus the 30-min decay-hold guard supplies a de-facto rescue
-    # path even on lower-conviction entries.
-    #
-    # Kill-switch only — disable to revert to pure +bump behaviour.
-    #
-    # 2026-05-05 phase-2 EV audit (24 sessions, 157 bot-only positions):
-    # the gate is empirically EV-NEGATIVE on the live ledger so far.
-    #   POST-ship cohort (4 sessions, n=9 entries that PASSED the gate
-    #   with |score|>=7 post-10:00): WR 33%, total Rs.-451 net.
-    #   PRE-ship counterfactual (n=39 entries that the gate would now
-    #   block with |score|<7 post-10:00): WR 53.8%, total Rs.+618.
-    #   Sub-bin breakdown of the would-be-blocked cohort:
-    #     |score| in [5,6): n=10, WR 70.0%, total Rs.+323
-    #     |score| in [6,7): n=22, WR 40.9%, total Rs.+26
-    #     |score| in [4,5): n=4,  WR 75.0%, total Rs.+198
-    #     |score| in [0,4): n=3,  WR 66.7%, total Rs.+71
-    # Every sub-bin is net-positive — the gate's predicate ("score>=7
-    # post-10:00 is best") is contradicted by every score band in the
-    # blocked cohort. Same playbook as #253 disable: flip the kill-
-    # switch, document the re-enable trigger in Awaiting-Data #254,
-    # let the next 30 trading days speak. Confounder noted: the bot
-    # was in broader drawdown over the same window (cum +Rs.1,194 ->
-    # -Rs.159 since 2026-04-21) so the post-ship -Rs.451 isn't 100%
-    # attributable to #246 — but the pre-ship +Rs.618 counterfactual
-    # is independent of that drawdown and stands on its own.
+    # DISABLED post-2026-05-05 EV audit (157 positions over 24 sessions):
+    # would-be-blocked cohort was WR 53.8% / +Rs.618 net; post-ship
+    # passing cohort was WR 33% / -Rs.451. Every sub-band of the
+    # blocked cohort was net-positive — the gate's predicate is
+    # contradicted by the live ledger. Re-enable trigger in roadmap
+    # Awaiting-Data once 30+ post-disable sessions accumulate.
     LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED: bool = False
 
-    # ── Post-Entry Momentum Kill (Roadmap #198) ───────────────────
-    # The dominant loss pattern today is "slow bleed to SL" — a trade
-    # is filled, immediately turns red, and walks 8-12 minutes to its
-    # SL while we wait. If the stock had real edge in our direction
-    # the first three minutes of post-fill price action should at
-    # least *try* to move toward target. When that doesn't happen and
-    # MTM is already negative, the setup is wrong — exit at small loss
-    # rather than wait for the full -1×ATR SL hit.
-    # Logic in check_stops_and_targets per-position loop:
-    #   skip if elapsed_seconds < MOMENTUM_KILL_GRACE_SECONDS  (let order settle)
-    #   skip if elapsed_seconds > MOMENTUM_KILL_WINDOW_MINUTES*60
-    #   skip if pos["_external"]                              (manual / adopted — give grace)
-    #   skip if pos.get("_partial_taken")                     (already booking profit; trailing stop owns it)
-    #   compute adverse_pct = |entry - current| / entry * 100  (only on red side)
-    #   skip if adverse_pct < MOMENTUM_KILL_MIN_ADVERSE_PCT     (sub-noise / inside spread)
-    #   compute progress = (current - entry) / (target - entry) for BUY (mirrored for SELL)
-    #   if progress < MOMENTUM_KILL_MIN_PROGRESS_PCT/100 AND unrealised < 0:
-    #     exit at market with reason "MOMENTUM_KILL"
+    # ── Post-Entry Momentum Kill ──────────────────────────────────
+    # Targets the "slow bleed to SL" pattern: a fill turns red
+    # immediately and walks 8-12 min to its full -1×ATR SL. If the
+    # setup has real edge, the first few minutes should at least try
+    # to move toward target; if not (and MTM is already negative),
+    # exit at small loss rather than wait for the full SL hit.
     #
-    # 2026-04-27 production-data tuning: shipped 2026-04-24 with
-    # grace=60s and no adverse floor. First live day (2026-04-27) the
-    # rule killed 4/4 morning entries on sub-spread micro-moves
-    # (HDFCLIFE killed at -0.018% / Rs.0.11 on Rs.600). Cause: the
-    # 25%-progress-to-target test in the first minute fires on any
-    # negative tick because typical NSE bid-ask + fade is 0.05-0.20%
-    # and the +0.3% favorable bar is mathematically unreachable in
-    # under a minute. Fix: (a) grace 60s -> 180s — first 3 min is
-    # settlement, only hard SL fires (industry standard ORB practice);
-    # (b) new MOMENTUM_KILL_MIN_ADVERSE_PCT = 0.40 — adverse move must
-    # exceed 4x typical NSE intraday spread before kill is even
-    # considered. Both gates must trip with the existing 25% progress
-    # test as a third filter. On 2026-04-27 data this would have
-    # killed zero trades.
-    # Kill-switch: MOMENTUM_KILL_ENABLED.
+    # Logic in check_stops_and_targets per-position loop:
+    #   skip if elapsed < GRACE_SECONDS or > WINDOW_MINUTES
+    #   skip if pos["_external"] or pos.get("_partial_taken")
+    #   adverse_pct = |entry-current|/entry × 100 (red side only)
+    #   skip if adverse_pct < MIN_ADVERSE_PCT (sub-noise / spread)
+    #   progress = (current-entry)/(target-entry)  [mirrored SELL]
+    #   if progress < MIN_PROGRESS_PCT/100 AND unrealised < 0 → exit
+    #
+    # Tuning: grace=180s after 2026-04-27 prod evidence (1-min
+    # progress test was killing on sub-spread micro-moves);
+    # MIN_ADVERSE_PCT=0.40 = ~4× typical NSE intraday spread.
     MOMENTUM_KILL_ENABLED:           bool  = True
     MOMENTUM_KILL_GRACE_SECONDS:     int   = 180  # 3-min settlement window (industry std)
     MOMENTUM_KILL_WINDOW_MINUTES:    int   = 5
@@ -1476,91 +1345,51 @@ class Config:
     DIRECTIONAL_PAUSE_WR_THRESHOLD: float = 0.30  # arm if rolling WR ≤ 30%
     DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT: float = 0.0  # arm if NIFTY 7d return ≤ this %
     DIRECTIONAL_PAUSE_RECOVER_WR: float = 0.40    # not used in same-session logic; documented for skill files
-    # Roadmap #251a (2026-05-06): fractional-Kelly opposing-side cap.
-    # When a side's pause arms, the OPPOSING (un-paused) side may have
-    # thin evidence (n < OPPOSING_MIN_TRADES). Per Kelly criterion
-    # (Investopedia: typical lookback is 50-60 trades for win-prob
-    # estimation; binomial CI at n=14 is ±26pp — noise) and prop-firm
-    # risk practice, when the surviving side has < OPPOSING_MIN_TRADES
-    # of history we cap entries on it at OPPOSING_THIN_MAX_ENTRIES per
-    # session. This is fractional-Kelly: keep playing the un-paused
-    # side, but with reduced concentration until evidence accumulates.
+    # Fractional-Kelly opposing-side cap. When a side's pause arms,
+    # the surviving (un-paused) side may have thin evidence
+    # (n < OPPOSING_MIN_TRADES). Per Kelly: ≤20 trades is statistically
+    # noisy. Cap entries on the un-validated side until it accumulates
+    # history. MAX_ENTRIES bumped 3 → 5 after live SELL-side WR=67%
+    # (n=3) under the original cap left profit on the table.
     DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES: int = 20
-    DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES: int = 3
+    DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES: int = 5
 
-    # Roadmap #251b (2026-05-06): intraday NIFTY-bounce bypass on
-    # directional pause. The base #251 gate uses a ROLLING-7-DAY NIFTY
-    # return to decide arming; in a sustained-bear regime where the
-    # 7-day stays slightly negative, the BUY pause can stay armed for
-    # weeks even if today's NIFTY rallies. Without a probe mechanism
-    # the bot collects zero fresh BUY evidence and only "wakes up"
-    # via the n<10 trade-aging fallback, which is a sudden flood
-    # rather than a controlled probe. Industry parallel: directional-
-    # change (DC) algorithms (Adegboye, Kampouridis, Otero 2023)
-    # confirm trend transitions when "price moves beyond a threshold
-    # followed by a confirmation period (overshoot)" — the threshold
-    # + sustained-scans pattern below mirrors that DC structure.
-    # When the engine has accumulated ≥ MIN_SCANS consecutive NIFTY
-    # intraday-return readings whose sign favours the paused side
-    # (BUY paused → NIFTY UP > +PCT; SELL paused → NIFTY DOWN < -PCT)
-    # the pause-check is bypassed at query-time. The pause STATE
-    # remains intact for inspection/logging; only `is_directional_paused`
-    # returns False. Self-limiting: if NIFTY drops back, the deque
-    # drains and the pause re-engages on the next scan. Risk discipline
-    # preserved — opposing-thin (#251a), RR floor, score floor, RSI
-    # cap, ADX gate all still apply.
+    # Intraday NIFTY-bounce bypass. Base pause uses 7-day NIFTY return;
+    # in a flat-but-bearish regime the pause can stay armed for weeks.
+    # If today's NIFTY rallies for ≥ MIN_SCANS consecutive readings in
+    # the paused-side direction, query-time bypass kicks in (state is
+    # retained, drains naturally if NIFTY reverses). All other gates
+    # (opposing-thin, RR/score/RSI/ADX) still apply.
     DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT: float = 1.0   # |intraday return| above which bypass may trigger
-    DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS: int = 2  # consecutive scans above threshold required
+    DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS: int = 2  # consecutive scans required
 
-    # ── Rolling profit-factor circuit breaker (Roadmap #253) ─────
-    # Multi-day analogue of CONSECUTIVE_SL_PAUSE_COUNT. Computed at
-    # session start from intraday_tax_ledger. When the rolling N-day
-    # net is below ROLLING_PF_PAUSE_NET_FLOOR AND rolling-N-day PF
-    # is below ROLLING_PF_PAUSE_THRESHOLD, the bot blocks all NEW
-    # entries for the session. Existing positions are managed
-    # normally. Reuses scripts/tax_summary.py's intraday_tax_ledger
-    # as the canonical source so the gate matches the dashboard /
-    # tax page numbers.
+    # Tape-breadth divergence bypass — A/D-line analogue. NIFTY is
+    # cap-weighted (~50% in top-7 names) so a "flat NIFTY but mid-caps
+    # rallying" day never trips the NIFTY-bounce bypass. When the
+    # scanner's post-V2_MIN candidate snapshot shows the paused side
+    # holding ≥ RATIO of {BUY+SELL} (and absolute floors are met), we
+    # probe the regime. The 30-40% band between BREADTH_BEARISH_BUY_RATIO
+    # and BREADTH_BYPASS_RATIO is an explicit "uncertain — neither
+    # rule fires" zone so the two gates never overlap.
+    DIRECTIONAL_PAUSE_BREADTH_BYPASS_ENABLED:        bool  = True
+    DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO:          float = 0.40  # paused-side share of {BUY+SELL} that triggers bypass
+    DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_PAUSED_SIDE: int = 3      # absolute paused-side count floor
+    DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL:      int   = 5     # total below which bypass is skipped (small sample)
+
+    # ── Rolling profit-factor circuit breaker ────────────────────
+    # Multi-day analogue of CONSECUTIVE_SL_PAUSE_COUNT computed at
+    # session start from intraday_tax_ledger. When rolling N-day net
+    # is below NET_FLOOR AND PF is below THRESHOLD, blocks new entries
+    # for the session (existing positions managed normally).
     #
-    # Origin: 2026-04-22 → 2026-05-05 9-day audit. 8 consecutive
-    # losing days; FY-cumulative profit factor crossed below 1.0
-    # for the first time. No multi-day protection existed; only
-    # intra-day soft-stop / peak-DD / loss-streak guards.
-    #
-    # ─── DISABLED 2026-05-05 (post-ship audit) ───────────────────
-    # Same-day audit-on-tomorrow: with retuned thresholds (PF<0.6
-    # AND net<−Rs.300) tomorrow's window [04-29, 04-04, 05-05] would
-    # have triggered the gate (PF=0.16, net=−Rs.606, n=12) → ZERO
-    # trades for the entire next session. User pushed back: "is this
-    # reasonable?". Counterfactual replay over the trailing 17
-    # evaluable sessions confirmed it is NOT:
-    #
-    #   Scenario                  Cumulative net  Δ vs baseline
-    #   baseline (no new gates)   Rs. +279        —
-    #   +#251 only                Rs. +783        Rs. +503  (huge)
-    #   +#251 +#253               Rs. +667        Rs. +387
-    #   INCREMENTAL #253 on top of #251 = Rs. −116 (negative)
-    #
-    # The directional gate (#251) is doing the actual work — it
-    # surgically blocks the failing side and lets the other side
-    # trade. #253's full-session blackout (a) costs +Rs.488 on the
-    # 04-10 false-pause (a single big-loss day on 04-09 armed it,
-    # blocking what turned out to be a +Rs.488 winner), and (b)
-    # blocks the SELL side that was profitable during the BUY
-    # collapse (e.g. 05-05 SELL net was +Rs.28).
-    #
-    # Industry-standard reasoning (Kelly criterion, fractional Kelly,
-    # Thorp 1997): when uncertain about edge, REDUCE bet size, do NOT
-    # bet zero. Bet-zero is justified only when edge is provably ≤ 0,
-    # which 24 days of data cannot establish. Prop-firm risk frame-
-    # works enforce daily loss limits (already covered by #163 / #168)
-    # but rarely full-day shutdowns based on multi-day patterns;
-    # quant funds de-leverage rather than going to cash.
-    #
-    # The gate is left disabled via this flag (code, ledger reading,
-    # and PF computation kept intact for telemetry / future re-enable
-    # with longer history). To re-enable, also re-validate thresholds
-    # against ≥ 60-90 days of post-#251 data.
+    # DISABLED 2026-05-05 — counterfactual replay over 17 sessions
+    # showed this gate REMOVES Rs.116 net once #251 (directional pause)
+    # is in place. The directional gate already surgically blocks the
+    # failing side; a full-session blackout (a) costs the opposing
+    # side's profit and (b) creates false-pause days on single-loss
+    # arming. Per Kelly: when edge is uncertain, reduce stake, don't
+    # bet zero. Code/ledger reading kept for telemetry; re-enable only
+    # after ≥ 60 days of post-#251 data validates new thresholds.
     ROLLING_PF_PAUSE_ENABLED: bool = False
     ROLLING_PF_PAUSE_LOOKBACK_DAYS: int = 3
     ROLLING_PF_PAUSE_THRESHOLD: float = 0.6       # PF = Σwins / |Σlosses|
@@ -2337,7 +2166,7 @@ class Config:
                 f"DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT must be in [-100, 100]: "
                 f"{cls.DIRECTIONAL_PAUSE_NIFTY_FLOOR_PCT!r}"
             )
-        # Roadmap #251a opposing-side fractional-Kelly cap.
+        # Directional pause — opposing-thin cap.
         if cls.DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES < 0:
             errors.append(
                 f"DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES must be ≥ 0: "
@@ -2348,7 +2177,7 @@ class Config:
                 f"DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES must be ≥ 0: "
                 f"{cls.DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES!r}"
             )
-        # Roadmap #251b intraday NIFTY-bounce bypass.
+        # Directional pause — NIFTY-bounce bypass.
         if not (0.0 < cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT <= 100.0):
             errors.append(
                 f"DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_PCT must be in (0, 100]: "
@@ -2358,6 +2187,30 @@ class Config:
             errors.append(
                 f"DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS must be ≥ 1: "
                 f"{cls.DIRECTIONAL_PAUSE_INTRADAY_BOUNCE_MIN_SCANS!r}"
+            )
+        # Directional pause — tape-breadth bypass.
+        if not (0.0 < cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO <= 1.0):
+            errors.append(
+                f"DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO must be in (0, 1]: "
+                f"{cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_PAUSED_SIDE < 1:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_PAUSED_SIDE must be ≥ 1: "
+                f"{cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_PAUSED_SIDE!r}"
+            )
+        if cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL < 1:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL must be ≥ 1: "
+                f"{cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL!r}"
+            )
+        # MIN_TOTAL must be ≥ BREADTH_MIN_CANDIDATES — otherwise the
+        # bypass checks a snapshot the scanner never publishes.
+        if cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL < cls.BREADTH_MIN_CANDIDATES:
+            errors.append(
+                f"DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL "
+                f"({cls.DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL}) must be ≥ "
+                f"BREADTH_MIN_CANDIDATES ({cls.BREADTH_MIN_CANDIDATES})"
             )
         # Roadmap #179a per-budget burst-cap delta.
         if not isinstance(cls.BUDGET_BURST_CAP_DELTA, dict):

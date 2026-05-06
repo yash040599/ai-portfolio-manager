@@ -170,6 +170,13 @@ class StockScannerV2(StockScanner):
         self.last_sector_momentum: dict[str, float] = {}
         self._prev_sector_momentum: dict[str, float] = {}
 
+        # Tape-breadth snapshot — {buys, sells, ratio, tape} stamped
+        # by `_prefilter_universe` so the manager can forward it to
+        # the engine for the directional-pause breadth-bypass. Cleared
+        # (None) on small-sample scans so the engine never bypasses
+        # on stale data.
+        self.last_tape_breadth: dict | None = None
+
         # Cleanup old cached data on startup (keep 45 days)
         try:
             cleaned = self._cache.cleanup_old(keep_days=45)
@@ -555,14 +562,14 @@ class StockScannerV2(StockScanner):
         if dropped_score:
             self.log.info(f"  Score filter: dropped {dropped_score} stocks below |score| {min_score}")
 
-        # Tape-breadth filter (Roadmap #212).
-        # Count BUY vs SELL candidates AFTER the score floor.
-        # When the minority side is ≤ BREADTH_BEARISH/BULLISH ratio of
-        # {BUY+SELL}, the broader tape is one-directional — apply
-        # BREADTH_PENALTY to |score| of the minority side so weak
-        # counter-tape candidates fall below V2_MIN_SCORE naturally.
-        # Operates on magnitude (sign preserved). Skipped when sample
-        # is too small to be meaningful (BREADTH_MIN_CANDIDATES).
+        # Tape-breadth filter. Count BUY vs SELL after the score floor;
+        # when the minority side is at/below the BEARISH/BULLISH ratio
+        # of {BUY+SELL} the tape is one-directional, so penalise the
+        # minority's |score|. Skipped on small samples. The snapshot
+        # is stamped on `self.last_tape_breadth` regardless of penalty
+        # firing so the engine can consult it for the breadth-bypass;
+        # cleared to None on small samples to prevent stale-data bypass.
+        self.last_tape_breadth = None
         if (
             getattr(self.cfg, "BREADTH_FILTER_ENABLED", True)
             and len(passed_score) >= int(self.cfg.BREADTH_MIN_CANDIDATES)
@@ -603,6 +610,14 @@ class StockScannerV2(StockScanner):
                     f"({buy_ratio*100:.0f}%/{sell_ratio*100:.0f}%) — "
                     f"{tape}, no penalty applied"
                 )
+            # Snapshot is PRE-penalty so the engine's breadth-bypass
+            # sees genuine paused-side strength, not the suppressed remnant.
+            self.last_tape_breadth = {
+                "buys":  n_buys,
+                "sells": n_sells,
+                "ratio": round(buy_ratio, 3),
+                "tape":  tape,
+            }
             # Re-apply score floor — penalised candidates may now
             # have fallen below V2_MIN_SCORE and should be dropped
             # before sector momentum / nifty trend filters.
@@ -615,10 +630,6 @@ class StockScannerV2(StockScanner):
                 self.log.info(
                     f"  Score filter (post-breadth): dropped {dropped_post} more"
                 )
-            # NOTE: engine breadth stamp deferred — scanner is constructed
-            # without an engine ref, so passing the snapshot would need
-            # cross-wiring. The penalty is already applied above; the
-            # snapshot was only intended for downstream log context.
 
         # Sector momentum: compute average score per sector.
         # Stocks from sectors where 3+ stocks agree on direction get

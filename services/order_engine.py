@@ -188,36 +188,34 @@ class OrderEngine:
         self._rolling_pf_pause_armed: bool = False
         self._rolling_pf_pause_reason: str = ""
 
-        # ── Opposing-side fractional-Kelly cap (#251a) ────────────
-        # When `_directional_pause_side` is set, the OPPOSING side may
-        # have thin evidence (n < OPPOSING_MIN_TRADES). In that case
-        # we cap entries on the un-paused side at
-        # OPPOSING_THIN_MAX_ENTRIES per session per Kelly best-practice
-        # (reduce stake when uncertain about edge). Stamped by
-        # `arm_multiday_pauses()`; counter incremented in `record_entry()`.
+        # ── Opposing-side fractional-Kelly cap ─────────────────────
+        # When a directional pause arms, cap entries on the un-paused
+        # side at OPPOSING_THIN_MAX_ENTRIES if its history is thin
+        # (n < OPPOSING_MIN_TRADES). Stamped in `arm_multiday_pauses`,
+        # bumped in `record_entry`.
         self._opposing_thin_side: str | None = None  # the side TO BE CAPPED
         self._opposing_thin_reason: str = ""
         self._opposing_thin_count: int = 0
         self._opposing_thin_max: int = 0
 
-        # ── Intraday NIFTY-bounce bypass on directional pause (#251b) ──
-        # Manager pushes the running NIFTY intraday-return % each scan
-        # via `record_nifty_intraday_return()`. When the deque shows
+        # ── Intraday NIFTY-bounce bypass on directional pause ──────
+        # Manager pushes NIFTY intraday-return % each scan via
+        # `record_nifty_intraday_return()`. When the deque shows
         # MIN_SCANS consecutive readings whose sign favours the paused
-        # side (BUY paused → all > +PCT; SELL paused → all < -PCT),
-        # `is_directional_paused()` returns False (bypass) so the bot
-        # can collect fresh evidence in the regime-flip window.
-        # `_directional_bypass_logged` keeps the WARN line one-shot.
+        # side, `is_directional_paused()` returns False (bypass).
+        # `_directional_bypass_logged` keeps the WARN one-shot.
         self._nifty_intraday_returns: collections.deque = collections.deque(maxlen=10)
         self._directional_bypass_logged: dict[str, bool] = {"BUY": False, "SELL": False}
 
-        # ── Tape-breadth state (#212) ──────────────────────────────
-        # Scanner stamps this dict each scan with {"buys": int,
-        # "sells": int, "ratio": float, "tape": "BULLISH"/"BEARISH"
-        # /"NEUTRAL"}. Currently informational — the score penalty
-        # is applied scanner-side; this lets log lines reference the
-        # tape state when an entry is eventually rejected for score.
+        # ── Tape-breadth state ─────────────────────────────────────
+        # Scanner stamps this dict each scan with {"buys", "sells",
+        # "ratio", "tape": "BULLISH"|"BEARISH"|"NEUTRAL"}. Consumed by
+        # (a) score-rejection log context, (b) the breadth-bypass on
+        # directional pause (`_has_breadth_divergence`).
         self._tape_breadth: dict | None = None
+        # Per-side one-shot WARN flag for the breadth-bypass episode.
+        # Re-arms when divergence stops firing so a new episode logs.
+        self._breadth_bypass_logged: dict[str, bool] = {"BUY": False, "SELL": False}
 
         # ── Adaptive R:R tracking ─────────────────────────────────
         # Counts scans that produced 0 entries (every candidate rejected).
@@ -1553,70 +1551,54 @@ class OrderEngine:
     # ================================================================
 
     def enter_trade(self, trade: dict) -> bool:
-        """
-        Opens a new position based on a trade plan from StockScanner.
+        """Open a new position from a scanner trade plan.
 
-        In dry-run mode: logs the order, assigns a fake order ID,
-        and tracks the position using real live prices.
+        Dry-run: log the order, assign a fake order ID, track from
+        live prices. Live: call ZerodhaClient.place_order() and track
+        the returned order ID. Returns True on success.
 
-        In live mode: calls ZerodhaClient.place_order() and tracks
-        the returned order ID.
-
-        Returns True if the order was placed/logged successfully.
-
-        Entry pipeline (each step can reject the trade). Total = 43
-        checks across the V2 design (see docs/STRATEGY_V2.md §"Risk
-        Management — Entry Pre-Checks" for the canonical inventory):
-        3 scanner-side pre-filter gates (#-1 earnings blackout, #14c
-        pattern↔tech contradiction penalty, #14d tape-breadth filter)
-        run before enter_trade() is ever called; the remaining gates
-        run here in code order, ending with 2 post-decision placement
-        steps (#33 place order, #34 place SL-M).
-
-        Code-walkthrough summary below. A handful of subsidiary gates
-        (#0e VIX-spike pause #211, #17d VWAP statistical-band #201,
-        #18d late-entry score-floor #202) are described inline in
-        their own code blocks and in STRATEGY_V2.md but omitted from
-        this numbered summary to keep the walkthrough readable. When
-        adding/removing gates, update STRATEGY_V2.md FIRST (it is the
-        source of truth), then patch this summary if helpful.
-          0a. Rolling-PF circuit breaker (#253) — session-wide pause when last 3 trading days' PF < 0.5 AND net < -Rs.500
-          0b. Directional auto-pause (#251) — session-wide BUY (or SELL) pause when 7d side-WR ≤ 30% AND NIFTY 7d return on contra side
-          0c. Entry-burst cap (#179) — block third-and-later entry inside any rolling 60s window
-          0.  Choppy-morning entry pause (#192) — pause when NIFTY ADX < 16 for 3 consecutive 09:30-10:30 scans + ≥2 recent stagnant exits
-          1.  Lunch-lull skip (#164) — 11:30-12:15 IST unless |score|≥5.7 (LUNCH_LULL_SCORE_OVERRIDE; stepped down from 6.0 by #221)
-          2.  Daily-loss soft-stop (#163, MTM-aware via #166) — block at -1.5% of effective_day_pnl
-          3.  Peak-drawdown stop (#168, MTM-aware via #166) — block when effective_day_pnl gives back ≥1.5% from intraday peak
+        Entry pipeline runs ~44 checks; STRATEGY_V2.md is the source of
+        truth and lists each one. The numbered walkthrough below covers
+        the in-this-method gates in code order; scanner-side filters
+        (earnings blackout, pattern↔tech contradiction, tape-breadth)
+        run before this method is called.
+          0a. Rolling-PF circuit breaker — session pause on rolling 3d losses
+          0b. Directional auto-pause + bypasses (NIFTY-bounce, tape-breadth)
+          0c. Entry-burst cap — block 3rd+ entry inside any 60s window
+          0.  Choppy-morning entry pause (NIFTY ADX < 16 + recent stagnant exits)
+          1.  Lunch-lull skip — 11:30-12:15 IST unless |score|≥5.7
+          2.  Daily-loss soft-stop (MTM-aware) at -1.5% of effective_day_pnl
+          3.  Peak-drawdown stop (MTM-aware) at ≥1.5% give-back from intraday peak
           4.  Validate entry price vs live Zerodha quote
-          5.  Circuit-limit (UC/LC) entry guard (#180) — reject BUY when within 1% of +20% upper circuit, SELL within 1% of -20% lower circuit
+          5.  Circuit-limit (UC/LC) entry guard
           6.  Bid-ask spread check (illiquid stocks)
-          7.  Volume confirmation (RVol gate with scan-time fallback, hour-bucket scaling #147)
-          8.  Impact-cost check (#146) — depth-weighted slippage
-          9.  ATR-based SL/target (pure ATR when available, config fallback)
+          7.  Volume confirmation (RVol with hour-bucket scaling)
+          8.  Impact-cost check (depth-weighted slippage)
+          9.  ATR-based SL/target
          10.  Late-entry target reduction (13:00 / 14:00 cutoffs)
-         11.  R:R floor check (time-based, adaptive relaxation)
+         11.  R:R floor check (uniform 1.3 all day)
          12.  Minimum profit check (must cover round-trip charges)
-         13.  Charge-aware target floor (#162, retuned by #238) — gross target ≥ 3× charges
+         13.  Charge-aware target floor (gross target ≥ 3× charges)
          14.  Slippage simulation (dry-run only)
          15.  Budget cap
          16.  Max positions cap
          17.  Duplicate position guard (no two open on same symbol+side)
          18.  Sector cap (max 2 per sector)
-         19.  Direction diversification (max same-side concurrent)
+         19.  Direction diversification
          20.  Short entry cutoff
          21.  Max re-entries per stock + declining score block
-         22.  Per-symbol re-entry cooldown (#161) — 30 min same-side
-         22b. Average-down prevention (#195) — block same-magnitude re-entry within 120 min of STAGNANT/SIGNAL_DECAY exit unless |score|≥8
-         23.  RSI > BUY ceiling (default 75)
-         24.  RSI > SELL ceiling (default 70)
-         25.  RSI < 30 BUY floor / RSI < 25 SELL floor
-         26.  Pattern-direction entry veto (#190) — BUY blocked when bearish reversal pattern present unless |score|≥8
-         27.  ADX + DI directional gate (#157, #194 strong-gap boost) — chop-day reject; effective threshold + override score raised on continuation-strong-gap days
-         28.  Gap-coherence gate (#173) — BUY blocked on GAP_DOWN_STRONG unless |score|≥7.5
-         29.  Daily trade cap + expiry trade cap (#124)
-         30.  Stagnant churn guard (no re-enter stagnant exits)
-         31.  VWAP guard: trend-fight + extension-chase + fresh-reversal (#125, #131)
-         32.  Net-of-charges R:R check (effective R:R ≥ 1.0:1 after costs)
+         22.  Per-symbol re-entry cooldown (30 min same-side)
+         22b. Average-down prevention
+         23.  RSI > BUY ceiling
+         24.  RSI > SELL ceiling
+         25.  RSI < BUY/SELL floor
+         26.  Pattern-direction entry veto (opposite-side reversal pattern)
+         27.  ADX + DI directional gate (chop-day reject)
+         28.  Gap-coherence gate (BUY blocked on GAP_DOWN_STRONG)
+         29.  Daily trade cap + expiry trade cap
+         30.  Stagnant churn guard
+         31.  VWAP guard (trend-fight + extension + fresh-reversal)
+         32.  Net-of-charges R:R check (effective R:R ≥ 1.0)
          --- order placement ---
          33.  Place order → scale SL/target to actual fill price
          34.  Place exchange SL-M for instant stop-loss execution
@@ -4437,7 +4419,8 @@ class OrderEngine:
                     f"OPPOSING-THIN CAP REACHED ({side}): "
                     f"{self._opposing_thin_count}/{self._opposing_thin_max} "
                     f"entries this session. Further {side} entries blocked "
-                    f"until next session (fractional-Kelly per #251a)."
+                    f"until next session (fractional-Kelly cap on the "
+                    f"surviving side of the directional pause)."
                 )
 
     # ================================================================
@@ -4464,13 +4447,8 @@ class OrderEngine:
         it (e.g. fresh DB, no prior trades) — in that case the
         corresponding pause stays unarmed and the bot trades normally.
         """
-        # ── Reset all per-session pause state BEFORE re-arming ───
-        # Production restarts the bot daily so the OrderEngine is
-        # always fresh; but for multi-day same-process operation
-        # (manual sessions, tests, future architectural changes)
-        # we must clear every pause flag and the #251b deque so
-        # yesterday's state cannot leak into today's gating. Cheap
-        # defensive hygiene — costs O(1) per session start.
+        # Reset all per-session pause state before re-arming, so a
+        # multi-day same-process run cannot leak yesterday's state.
         self._rolling_pf_pause_armed = False
         self._rolling_pf_pause_reason = ""
         self._directional_pause_side = None
@@ -4481,15 +4459,16 @@ class OrderEngine:
         self._opposing_thin_max = 0
         self._nifty_intraday_returns.clear()
         self._directional_bypass_logged = {"BUY": False, "SELL": False}
+        self._breadth_bypass_logged = {"BUY": False, "SELL": False}
 
         # ── Rolling-PF circuit breaker (#253) ─────────────────────
         if (
-            getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", True)
+            getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", False)
             and rolling_pf is not None
             and rolling_net is not None
             and rolling_n_trades >= int(getattr(self.cfg, "ROLLING_PF_PAUSE_MIN_TRADES", 5))
-            and rolling_pf < float(getattr(self.cfg, "ROLLING_PF_PAUSE_THRESHOLD", 0.5))
-            and rolling_net < float(getattr(self.cfg, "ROLLING_PF_PAUSE_NET_FLOOR", -500.0))
+            and rolling_pf < float(getattr(self.cfg, "ROLLING_PF_PAUSE_THRESHOLD", 0.6))
+            and rolling_net < float(getattr(self.cfg, "ROLLING_PF_PAUSE_NET_FLOOR", -300.0))
         ):
             lookback = int(getattr(self.cfg, "ROLLING_PF_PAUSE_LOOKBACK_DAYS", 3))
             self._rolling_pf_pause_armed = True
@@ -4587,7 +4566,7 @@ class OrderEngine:
             getattr(self.cfg, "DIRECTIONAL_PAUSE_OPPOSING_MIN_TRADES", 20)
         )
         max_entries = int(
-            getattr(self.cfg, "DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES", 3)
+            getattr(self.cfg, "DIRECTIONAL_PAUSE_OPPOSING_THIN_MAX_ENTRIES", 5)
         )
         if max_entries <= 0 or n_threshold <= 0:
             return
@@ -4601,7 +4580,7 @@ class OrderEngine:
         self._opposing_thin_reason = (
             f"opposing-side {opposing} n={opposing_n} below "
             f"OPPOSING_MIN_TRADES={n_threshold}; capping {opposing} "
-            f"entries at {max_entries}/session per #251a fractional-Kelly"
+            f"entries at {max_entries}/session (fractional-Kelly)"
         )
         self.log.warning(
             f"OPPOSING-THIN CAP ARMED ({opposing}): "
@@ -4609,16 +4588,16 @@ class OrderEngine:
         )
 
     def is_directional_paused(self, side: str) -> bool:
-        """True if a session-wide directional pause is armed for `side`.
+        """True iff a session-wide directional pause is armed for `side`
+        AND no fresh-evidence bypass overrides it. Two bypass paths:
 
-        #251b intraday-bounce bypass: even when the pause is armed,
-        if the engine has accumulated ≥ MIN_SCANS consecutive NIFTY
-        intraday-return readings whose sign favours the paused side
-        (BUY paused → NIFTY UP > +PCT; SELL paused → DOWN < -PCT),
-        return False so the bot can probe the apparent regime flip.
-        Pause STATE remains intact — only the gate check bypasses.
-        Self-limiting: if NIFTY drops back, deque drains and the
-        pause re-engages on the next scan.
+        * NIFTY intraday-bounce: index itself rallies in paused-side
+          direction.
+        * Tape-breadth divergence: scanner finds enough paused-side
+          candidates (A/D divergence vs cap-weighted index).
+
+        Bypass returns False; pause state is retained so the gate
+        auto-re-engages on the next scan if conditions revert.
         """
         if not getattr(self.cfg, "DIRECTIONAL_PAUSE_ENABLED", True):
             return False
@@ -4631,32 +4610,90 @@ class OrderEngine:
                 self.log.warning(
                     f"DIRECTIONAL-PAUSE BYPASS ({side}): NIFTY intraday "
                     f"return crossed {'+' if side == 'BUY' else '-'}{pct:.2f}% "
-                    f"for {n} consecutive scans — probing regime flip "
-                    f"per #251b. Pause state retained; gate auto-re-engages "
-                    f"if NIFTY reverses."
+                    f"for {n} consecutive scans — probing regime flip. "
+                    f"Pause state retained; gate auto-re-engages if "
+                    f"NIFTY reverses."
                 )
                 self._directional_bypass_logged[side] = True
+            # Re-arm the breadth log so a subsequent breadth-only
+            # bypass episode (after NIFTY pulls back) prints fresh.
+            self._breadth_bypass_logged[side] = False
             return False
         # If we previously bypassed but NIFTY has since pulled back
         # below the threshold, allow the next genuine bypass to log
         # again (one-shot per "bypass episode", not per session).
         self._directional_bypass_logged[side] = False
+        # ── #251c tape-breadth divergence bypass ───────────────────
+        if self._has_breadth_divergence(side):
+            if not self._breadth_bypass_logged.get(side, False):
+                info = self._tape_breadth or {}
+                paused_count = int(info.get(
+                    "buys" if side == "BUY" else "sells", 0
+                ))
+                total = int(info.get("buys", 0)) + int(info.get("sells", 0))
+                ratio_pct = (paused_count / total * 100.0) if total > 0 else 0.0
+                ratio_floor = float(getattr(
+                    self.cfg, "DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO", 0.40
+                )) * 100.0
+                self.log.warning(
+                    f"DIRECTIONAL-PAUSE BYPASS ({side}): tape-breadth "
+                    f"shows {paused_count}/{total} ({ratio_pct:.0f}%) "
+                    f"{side} candidates — A/D divergence vs NIFTY "
+                    f"(≥{ratio_floor:.0f}% threshold). Probing regime "
+                    f"flip; gate auto-re-engages on next scan if breadth "
+                    f"shifts. All other entry gates still apply."
+                )
+                self._breadth_bypass_logged[side] = True
+            return False
+        # Breadth shifted — next genuine breadth-bypass should re-log.
+        self._breadth_bypass_logged[side] = False
         return True
+
+    def _has_breadth_divergence(self, side: str) -> bool:
+        """True iff the latest scanner tape-breadth snapshot shows
+        meaningful paused-side representation. Conservative: returns
+        False on missing snapshot, small samples, or thin paused-side
+        counts. The 30-40% band between BREADTH_BEARISH_BUY_RATIO and
+        BREADTH_BYPASS_RATIO is an explicit "uncertain — neither rule
+        fires" zone so the two gates never overlap.
+        """
+        if not getattr(self.cfg, "DIRECTIONAL_PAUSE_BREADTH_BYPASS_ENABLED", True):
+            return False
+        info = self._tape_breadth
+        if not isinstance(info, dict):
+            return False
+        try:
+            buys = int(info.get("buys", 0))
+            sells = int(info.get("sells", 0))
+        except (TypeError, ValueError):
+            return False
+        total = buys + sells
+        min_total = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_TOTAL", 5))
+        if total < min_total:
+            return False
+        if side == "BUY":
+            paused_count = buys
+        elif side == "SELL":
+            paused_count = sells
+        else:
+            return False
+        min_paused = int(getattr(self.cfg, "DIRECTIONAL_PAUSE_BREADTH_BYPASS_MIN_PAUSED_SIDE", 3))
+        if paused_count < min_paused:
+            return False
+        ratio_floor = float(getattr(self.cfg, "DIRECTIONAL_PAUSE_BREADTH_BYPASS_RATIO", 0.40))
+        if total <= 0:
+            return False
+        return (paused_count / total) >= ratio_floor
 
     def record_nifty_intraday_return(self, pct: float) -> None:
         """Push the latest NIFTY intraday return % onto the rolling
-        deque consulted by `_is_intraday_nifty_bouncing`. Manager
-        calls this from `_build_nifty_context()` once per scan.
-
-        Filters out NaN / inf — both would break the bypass-threshold
-        comparison silently (NaN > x is always False so the bypass
-        could never fire; inf > x is always True so the bypass would
-        fire forever once a single inf is seen).
+        deque consulted by `_is_intraday_nifty_bouncing`. Drops NaN /
+        inf to keep the bypass comparison honest.
         """
         try:
             v = float(pct)
         except (TypeError, ValueError):
-            return  # fail-soft — bad reading is dropped, deque untouched
+            return
         import math
         if math.isnan(v) or math.isinf(v):
             return
@@ -4702,7 +4739,7 @@ class OrderEngine:
 
     def is_rolling_pf_paused(self) -> bool:
         """True if the rolling-PF session-wide pause is armed."""
-        if not getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", True):
+        if not getattr(self.cfg, "ROLLING_PF_PAUSE_ENABLED", False):
             return False
         return self._rolling_pf_pause_armed
 
@@ -4904,17 +4941,14 @@ class OrderEngine:
         return self._vix_spike_active
 
     def set_tape_breadth(self, info: dict | None) -> None:
-        """Stamp the latest scanner tape-breadth snapshot (#212).
-
-        Currently informational — the score penalty is applied scanner-side
-        via `BREADTH_PENALTY`. The engine reads this only for log context
-        when an entry is rejected on score (helps users understand WHY
-        the BUY/SELL was downgraded below the floor).
+        """Stamp the latest scanner tape-breadth snapshot. Manager forwards
+        `scanner.last_tape_breadth` each scan. Pass None on a scan with
+        no candidates (gate refuses to bypass on stale data).
         """
         self._tape_breadth = info if isinstance(info, dict) else None
 
     def is_choppy_morning_paused(self, now: datetime.datetime | None = None) -> bool:
-        """True if the choppy-morning entry pause is currently active (#192).
+        """True if the choppy-morning entry pause is currently active.
 
         Two conditions arm a fresh pause:
           1. ≥ CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS NIFTY ADX readings
@@ -4922,15 +4956,23 @@ class OrderEngine:
           2. ≥ CHOPPY_PAUSE_MIN_RECENT_STAGNANT_EXITS chop-exits in
              the last CHOPPY_PAUSE_RECENT_EXIT_LOOKBACK_MINUTES.
 
-        Only arms inside the morning window
-        [CHOPPY_PAUSE_WINDOW_START_HOUR:MINUTE,
-         CHOPPY_PAUSE_WINDOW_END_HOUR:MINUTE]. Once tripped, sets
-        `_choppy_pause_until = now + CHOPPY_PAUSE_MINUTES`. The pause
-        sticks even past the morning window if armed inside it.
-        Existing positions are unaffected — gate is entry-only.
+        Only arms inside [WINDOW_START, WINDOW_END]; sticks past the
+        window once armed inside it. Existing positions unaffected.
         Kill-switch: CHOPPY_MORNING_PAUSE_ENABLED.
+
+        Yields to any active directional-pause bypass (NIFTY-bounce or
+        tape-breadth divergence) — those are fresher signals than the
+        backward-looking chop heuristic. See cross-gate-coverage memo.
         """
         if not getattr(self.cfg, "CHOPPY_MORNING_PAUSE_ENABLED", False):
+            return False
+        # Yield to any active directional-pause bypass.
+        if (
+            self._is_intraday_nifty_bouncing("BUY")
+            or self._is_intraday_nifty_bouncing("SELL")
+            or self._has_breadth_divergence("BUY")
+            or self._has_breadth_divergence("SELL")
+        ):
             return False
         t = now or now_ist()
         # If a pause is already armed and still in window, honour it.
