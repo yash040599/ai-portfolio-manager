@@ -110,8 +110,8 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-05-06** for FY 2026-04-01 →
-> 2027-03-31 (153 trades across 22 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-07** for FY 2026-04-01 →
+> 2027-03-31 (158 trades across 23 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 >
@@ -135,12 +135,12 @@ provisional intraday trades).
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **32.0%** (49 W / 104 L of 153, 0 scratched) | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **0.97** (GP Rs.4,133 / GL Rs.4,277, gross-of-charges) | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.13.70** (Net −Rs.2,096 / 153)   | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **27.3%** (6 of 22 days)              | 🔴 below |
+| Win rate                  | 55%                       | **39.1%** (61 W / 95 L of 158, 2 scratched) | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.94** (GP Rs.4,377 / GL Rs.4,660, gross-of-charges) | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.14.66** (Net −Rs.2,317 / 158)   | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **26.1%** (6 of 23 days)              | 🔴 below |
 | Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.2,220** peak-to-trough           | 🟢 within |
+| Max drawdown              | < 10% of capital          | **Rs.2,441** peak-to-trough           | 🟢 within |
 
 **Read this as reference only.** The 144 trades above were taken across
 multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
