@@ -690,58 +690,61 @@ class PortfolioManager:
             f"for stocks with >{self.cfg.ENTRY_MIN_MOVE_PCT}% directional move"
         )
 
-        # Collect open prices at start of observation
+        def _too_late_for_entry() -> bool:
+            now_post = now_ist()
+            sq_off_post = now_post.replace(
+                hour=self.cfg.SQUARE_OFF_HOUR,
+                minute=self.cfg.SQUARE_OFF_MINUTE,
+                second=0, microsecond=0,
+            )
+            mins_left_post = (sq_off_post - now_post).total_seconds() / 60
+            if mins_left_post < self.cfg.MIN_MINUTES_FOR_ENTRY:
+                self.log.warning(
+                    f"Only {mins_left_post:.0f} min until square-off after observation — "
+                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries. "
+                    f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
+                )
+                return True
+            return False
+
+        # Collect open prices at start of observation. This snapshot is
+        # useful for the directional-move filter, but a transient Kite
+        # timeout must not bypass the later fresh-candle score recheck.
         plan_symbols = [
             {"symbol": t["symbol"], "exchange": t.get("exchange", "NSE")}
             for t in self._trade_plans
         ]
-        try:
-            open_quotes = self.zerodha.get_quotes(plan_symbols)
-        except Exception as e:
-            self.log.warning(f"Quote fetch failed during observation: {e}")
+        open_quotes = self.zerodha.get_quotes_safe(plan_symbols)
+        if open_quotes is None:
             self.log.warning(
-                "Skipping observation — will enter with pre-trade checks only"
+                "Observation quote snapshot unavailable after retries — "
+                "will use entry-time ohlc.open if available and still run "
+                "fresh-candle score recheck before entry"
             )
-            # Even on quote-fetch failure we MUST honour the hard
-            # decision floor (e.g. 9:30). Otherwise an early-morning
-            # quote API hiccup at 9:15 would silently bypass the floor
-            # and fire entries into the opening-range / VWAP-warmup
-            # window. (This is exactly the cross-gate dead-zone pattern
-            # — a failure in component A defeats a guard in component B.)
-            while now_ist() < entry_time and not self._shutdown_requested:
-                remaining = (entry_time - now_ist()).total_seconds()
-                mins, secs = divmod(int(remaining), 60)
-                print(
-                    f"\r  \U0001f50d Floor wait (no observation data): "
-                    f"{mins:02d}:{secs:02d} remaining  ",
-                    end="", flush=True,
-                )
-                time.sleep(1)
-            if now_ist() >= entry_time:
-                print()
-            if self._shutdown_requested:
-                return
-            self._enter_positions()
-            return
 
         open_prices = {}
-        for t in self._trade_plans:
-            key = f"{t.get('exchange', 'NSE')}:{t['symbol']}"
-            q = open_quotes.get(key, {})
-            ohlc = q.get("ohlc", {})
-            day_open = ohlc.get("open", 0)
-            if day_open > 0:
-                open_prices[t["symbol"]] = day_open
-            else:
-                # Use last_price as fallback
-                open_prices[t["symbol"]] = q.get("last_price", t["entry_price"])
+        if open_quotes:
+            for t in self._trade_plans:
+                key = f"{t.get('exchange', 'NSE')}:{t['symbol']}"
+                q = open_quotes.get(key, {}) or {}
+                ohlc = q.get("ohlc", {}) or {}
+                day_open = ohlc.get("open", 0)
+                if day_open > 0:
+                    open_prices[t["symbol"]] = day_open
+                else:
+                    # Use last_price as fallback
+                    open_prices[t["symbol"]] = q.get("last_price", t["entry_price"])
 
         # Wait until entry time — print status during observation
         while now_ist() < entry_time and not self._shutdown_requested:
             remaining = (entry_time - now_ist()).total_seconds()
             mins, secs = divmod(int(remaining), 60)
+            label = (
+                "Observing" if open_prices
+                else "Floor wait (quote snapshot unavailable)"
+            )
             print(
-                f"\r  \U0001f50d Observing: {mins:02d}:{secs:02d} remaining  ",
+                f"\r  {label}: {mins:02d}:{secs:02d} remaining  ",
                 end="", flush=True,
             )
             time.sleep(1)
@@ -750,25 +753,32 @@ class PortfolioManager:
         if self._shutdown_requested:
             return
 
-        # Fetch live quotes after observation period (retry up to 3 times)
-        current_quotes = None
-        for attempt in range(1, 4):
-            try:
-                current_quotes = self.zerodha.get_quotes(plan_symbols)
-                break
-            except Exception as e:
-                self.log.warning(
-                    f"Quote fetch failed after observation (attempt {attempt}/3): {e}"
-                )
-                if attempt < 3:
-                    time.sleep(2 * attempt)
+        # Fetch live quotes after observation period. If this still fails,
+        # run the stale-score guard anyway so a 9:00 plan cannot enter at
+        # 9:30/9:45 without fresh candle validation; the order engine will
+        # perform its own retrying live-quote fetch and fail closed.
+        current_quotes = self.zerodha.get_quotes_safe(
+            plan_symbols,
+            max_retries=3,
+            delay_seconds=2.0,
+        )
 
         if current_quotes is None:
             self.log.warning(
-                "All retries failed — skipping observation filter. "
-                "Trades will enter with pre-trade checks only"
+                "All entry-time quote retries failed — skipping directional "
+                "movement filter, but running fresh-candle score recheck "
+                "before pre-trade checks"
             )
-            self._enter_positions()
+            if _too_late_for_entry():
+                return
+            confirmed = self._stale_score_filter(self._trade_plans, delay)
+            if not confirmed:
+                self.log.warning(
+                    "All entries dropped by stale-score guard — "
+                    "scores decayed during observation"
+                )
+                return
+            self._enter_positions(confirmed)
             return
 
         # Filter: only enter stocks that moved >ENTRY_MIN_MOVE_PCT from open
@@ -779,9 +789,12 @@ class PortfolioManager:
         for trade in self._trade_plans:
             symbol = trade["symbol"]
             key = f"{trade.get('exchange', 'NSE')}:{symbol}"
-            q = current_quotes.get(key, {})
+            q = current_quotes.get(key, {}) or {}
             current_price = q.get("last_price", 0)
             day_open_price = open_prices.get(symbol, 0)
+            if day_open_price <= 0:
+                ohlc = q.get("ohlc", {}) or {}
+                day_open_price = ohlc.get("open", 0)
 
             if current_price <= 0 or day_open_price <= 0:
                 confirmed.append(trade)  # no data — let it through
@@ -826,19 +839,7 @@ class PortfolioManager:
 
         if confirmed:
             # Late entry guard after observation period
-            now_post = now_ist()
-            sq_off_post = now_post.replace(
-                hour=self.cfg.SQUARE_OFF_HOUR,
-                minute=self.cfg.SQUARE_OFF_MINUTE,
-                second=0, microsecond=0,
-            )
-            mins_left_post = (sq_off_post - now_post).total_seconds() / 60
-            if mins_left_post < self.cfg.MIN_MINUTES_FOR_ENTRY:
-                self.log.warning(
-                    f"Only {mins_left_post:.0f} min until square-off after observation — "
-                    f"need {self.cfg.MIN_MINUTES_FOR_ENTRY} min. Skipping all entries. "
-                    f"(change MIN_MINUTES_FOR_ENTRY in config.py to allow later entries)"
-                )
+            if _too_late_for_entry():
                 return
             # Stale-score guard (#196): refresh composite score on a
             # fresh candle pull and drop trades whose conviction has
