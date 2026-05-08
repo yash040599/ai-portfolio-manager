@@ -3193,41 +3193,15 @@ class OrderEngine:
         entry    = position["entry_price"]
         now      = now_ist()
 
-        # Last-second broker truth check (#270): the operator can close a
-        # tracked position in Kite and press Ctrl+C before our 10s poll loop
-        # notices. Without this sync, a shutdown SQUARE_OFF submits the
-        # opposite-side MARKET order against broker net=0 and opens a reverse
-        # ghost position. sync_external_positions() marks such rows CLOSED
-        # from Zerodha's day-position data and cancels stale SL-M orders.
-        if not self.cfg.DRY_RUN:
-            before_qty = qty
-            try:
-                self.sync_external_positions()
-            except Exception as e:
-                self.log.warning(
-                    f"Broker preflight before {reason} exit for {symbol} failed: {e} — "
-                    f"continuing with tracked position state"
-                )
-
-            if position.get("status") != "OPEN":
-                self.log.warning(
-                    f"{symbol}: broker preflight before {reason} detected the "
-                    f"position was already closed externally; skipping MARKET exit order"
-                )
-                return
-
-            qty = int(position.get("qty", qty) or qty)
-            if qty <= 0:
-                self.log.warning(
-                    f"{symbol}: broker preflight before {reason} left no shares to close; "
-                    f"skipping MARKET exit order"
-                )
-                return
-            if qty != before_qty:
-                self.log.warning(
-                    f"{symbol}: broker preflight before {reason} detected external partial "
-                    f"close ({before_qty} → {qty}); closing only remaining broker qty"
-                )
+        # NOTE: the broker-truth preflight that prevents shutdown ghost
+        # trips lives in `square_off_all()` (the only entry point that
+        # ever fires SQUARE_OFF / CIRCUIT_BREAKER exits). Doing it again
+        # here on every SL / target / decay / momentum exit added ~200-
+        # 500ms of Zerodha latency per polled exit, duplicated work the
+        # main loop already does each scan tick, and short-circuited the
+        # nuanced SL-M status path below. The early-OPEN guard at the
+        # top of this method is the cheap defence that still covers the
+        # rare "another path just marked it CLOSED" race.
 
         # Apply exit slippage in dry-run mode (adverse fill)
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
