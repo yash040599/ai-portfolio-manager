@@ -1195,7 +1195,7 @@ class OrderEngine:
                     except Exception as e:
                         self.log.warning(f"Failed to get market quote for {p['symbol']}: {e}")
                 
-                # 3. Final fallback: entry price (with error logged)
+                # 4. Final fallback: entry price (with error logged)
                 if not exit_price:
                     exit_price = p["entry_price"]
                     self.log.error(

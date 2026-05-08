@@ -13,7 +13,18 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
-  Last sync: 2026-05-07 — Loss-streak intervention pass. Three ships:
+  Last sync: 2026-05-08 — Bug-fix pass on top of 2026-05-07 loss-streak
+  intervention. Today's ship: #270 Execution (Bug Fix) — shutdown
+  SQUARE_OFF broker-net preflight + `kite.trades()`-based external-close
+  fill attribution. `OrderEngine.square_off_all()` now syncs broker
+  positions before building the close list, so a Ctrl+C / circuit-breaker
+  shutdown that races a manual Kite close no longer fires opposite-side
+  MARKET orders against broker net=0 (the 2026-05-08 ghost-trip
+  incident). External-close attribution prefers actual close-side fills
+  from `kite.trades()` after the bot's entry time, capped at position
+  qty, instead of the contaminated day-position buy/sell averages. No
+  strategy semantics changed — pre-trade check count remains 44; the
+  exit-gate cross-product check still passes. Yesterday's three ships:
   #258 Risk — paused score-weighted sizing in live NoAI
   (`Config.SCORE_WEIGHTED_SIZING_ENABLED = False` default;
   `_score_weight_sizing()` short-circuits to equal sizing). Surfaced
