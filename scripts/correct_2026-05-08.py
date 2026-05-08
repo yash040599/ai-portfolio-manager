@@ -67,7 +67,12 @@ GHOST_REASON = "BOT_SHUTDOWN_GHOST"
 
 def _ts(s: str) -> str:
     """Extract HH:MM:SS from a Zerodha timestamp like 'YYYY-MM-DD HH:MM:SS'."""
-    return s.split(" ")[1] if " " in s else s
+    if not s:
+        return ""
+    normalised = str(s).replace("T", " ")
+    if " " in normalised:
+        return normalised.split(" ")[-1][:8]
+    return normalised[:8]
 
 
 def build_roundtrips(fills: list[dict]) -> list[dict]:

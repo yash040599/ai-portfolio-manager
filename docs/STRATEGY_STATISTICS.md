@@ -84,21 +84,17 @@
 > unchanged because they derive from the §2.2 base-WR ladder,
 > not the §2.5 sum, and the base-rate ladder is unaffected.)
 >
-> Last live snapshot refresh: **2026-05-06** (post-2026-05-06 trading
-> session; three new ledger rows — 2 W (HINDUNILVR SELL +Rs.25.90 STAGNANT
-> after a 4-hour grind, RECLTD SELL +Rs.16.20 SIGNAL_DECAY sign-flip
-> rescue) + 1 L (ADANIPOWER SELL −Rs.66.24 MOMENTUM_KILL within 3 min).
-> Net −Rs.78.88 — the smallest loss in the 9-day streak. #251 BUY
-> directional pause armed at 09:14:27 (BUY-WR=11.1%, NIFTY-7d=−0.58%);
-> #251a opposing-thin SELL cap armed in the same call (SELL n=10 in
-> the 7-day lookback, below threshold 20) and saturated at 3/3 by
-> 10:05:39, blocking ~24 subsequent SELL signals across the rest of
-> the session. Today's commit `046bd5e` (hard 09:30 IST decision floor)
-> exercised correctly — observation deferred from 09:20 → 09:30 and
-> all three entries respected the floor (earliest at 09:30:46). Prior
-> §0 snapshot row counts (57W/91L) were stale by 9 wins; refreshed
-> from `intraday_tax_ledger` directly — true 2026-05-05 cutoff was
-> 48W/102L of 150, today's adds bring it to 49W/104L of 153.
+> Last live snapshot refresh: **2026-05-08** (post-2026-05-08 corrected
+> Zerodha reconciliation; 15 ledger rows after rebuilding the day from
+> `kite.trades()` — 12 primary round-trips + 3 `BOT_SHUTDOWN_GHOST`
+> rows caused by the pre-#270 shutdown SQUARE_OFF bug. Corrected day:
+> gross −Rs.491.15, regulatory charges Rs.414.82, net −Rs.905.97.
+> FY live metrics fell to 56W/117L of 173 ledger rows, WR 32.4%, PF 0.541,
+> expectancy −Rs.18.63/trade, profitable-day rate 25.0%, max drawdown
+> Rs.3,346.72. The 2026-05-08 `analyst_pulse_v2.py` run isolates the
+> structural bleed: BUY side 14.0% WR and −Rs.2,942.93 net since 2026-04-22;
+> STOP_LOSS exits −Rs.1,681.72 net; SIGNAL_DECAY is the only recurring
+> exit family near break-even after charges (63.2% WR, −Rs.69.42 net).
 
 ---
 
@@ -110,8 +106,8 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-05-07** for FY 2026-04-01 →
-> 2027-03-31 (158 trades across 23 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-08** for FY 2026-04-01 →
+> 2027-03-31 (173 trades across 24 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 >
@@ -135,14 +131,14 @@ provisional intraday trades).
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **39.1%** (61 W / 95 L of 158, 2 scratched) | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **0.94** (GP Rs.4,377 / GL Rs.4,660, gross-of-charges) | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.14.66** (Net −Rs.2,317 / 158)   | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **26.1%** (6 of 23 days)              | 🔴 below |
-| Sharpe (annualised)       | 1.5 – 2.5                 | **−3.07** (Sortino −4.29, last refreshed 2026-04-27 — small day-count change, headline within ±2 %) | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.2,441** peak-to-trough           | 🟢 within |
+| Win rate                  | 55%                       | **32.4%** (56 W / 117 L of 173)       | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.541** (GP Rs.3,799.97 / GL Rs.7,022.92, net-of-charges trade P&L) | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.18.63** (Net −Rs.3,222.95 / 173, excluding Claude API cost) | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **25.0%** (6 of 24 days)              | 🔴 below |
+| Sharpe (annualised)       | 1.5 – 2.5                 | **−6.76** (Sortino −10.07)            | 🔴 below |
+| Max drawdown              | < 10% of capital          | **Rs.3,346.72** peak-to-trough        | 🟢 within |
 
-**Read this as reference only.** The 144 trades above were taken across
+**Read this as reference only.** The 173 trades above were taken across
 multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
 including the #188 sign-flip-decay fix in commit `09483df` and the
 #246 no-rescue-zone late-entry floor in `f87dd95`, both shipped

@@ -428,6 +428,74 @@ class OrderEngine:
         # Kite returns "YYYY-MM-DD HH:MM:SS" (str or datetime). Take last 8 chars.
         return s[-8:] if len(s) >= 8 else None
 
+    @staticmethod
+    def _time_seconds(time_str) -> int | None:
+        """Return seconds since midnight for HH:MM:SS-ish strings."""
+        if not time_str:
+            return None
+        s = str(time_str).replace("T", " ")
+        if " " in s:
+            s = s.split(" ")[-1]
+        s = s[:8]
+        try:
+            h, m, sec = (int(part) for part in s.split(":")[:3])
+        except (TypeError, ValueError):
+            return None
+        return h * 3600 + m * 60 + sec
+
+    def _external_close_fill_from_trades(
+        self,
+        fills: list[dict],
+        exit_side: str,
+        qty: int,
+        entry_time: str | None,
+    ) -> tuple[float, str] | None:
+        """Infer a user/broker close fill from kite.trades() rows.
+
+        Zerodha net-positions exposes only day-level buy/sell averages, which
+        can blend separate round-trips on the same symbol. For external closes
+        we want the first opposite-side fills after our entry time, capped at
+        the position qty. This is the broker-truth path that prevents one
+        position's exit price from being averaged with a later ghost/opening
+        fill on the same symbol.
+        """
+        if qty <= 0:
+            return None
+
+        entry_sec = self._time_seconds(entry_time)
+        total_qty = 0
+        total_value = 0.0
+        last_time: str | None = None
+
+        for fill in fills:
+            if fill.get("transaction_type") != exit_side:
+                continue
+            fill_time = self._fmt_fill_time(
+                fill.get("fill_timestamp") or fill.get("order_timestamp")
+            )
+            fill_sec = self._time_seconds(fill_time)
+            if entry_sec is not None and fill_sec is not None and fill_sec < entry_sec:
+                continue
+
+            try:
+                fill_qty = int(fill.get("quantity", 0) or 0)
+                fill_price = float(fill.get("average_price", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if fill_qty <= 0 or fill_price <= 0:
+                continue
+
+            take_qty = min(fill_qty, qty - total_qty)
+            total_qty += take_qty
+            total_value += take_qty * fill_price
+            last_time = fill_time or last_time
+            if total_qty >= qty:
+                return round(total_value / total_qty, 2), (last_time or "")
+
+        if total_qty > 0:
+            return round(total_value / total_qty, 2), (last_time or "")
+        return None
+
     def load_existing_positions(self) -> int:
         """
         Fetches today's open MIS positions from Zerodha and loads them
@@ -1041,6 +1109,8 @@ class OrderEngine:
             z_side = "BUY" if zq > 0 else "SELL"
             zerodha_qty_by_side[(pos.get("tradingsymbol", ""), z_side)] = abs(zq)
 
+        trades_idx_for_external: dict[str, list[dict]] | None = None
+
         for p in self.positions:
             if p["status"] != "OPEN":
                 continue
@@ -1086,18 +1156,35 @@ class OrderEngine:
 
                 # Fetch exit price from Zerodha's day position data with multiple fallbacks
                 exit_price = sl_fill_price  # may be None; will fall through
+                exit_time = None
+
+                # 1. Prefer actual kite.trades() fills after this position's
+                # entry time. Net-position buy/sell averages can blend multiple
+                # same-symbol round-trips and produced the 2026-05-08 phantom
+                # weighted-average exit price (#270 / #266 overlap).
+                if exit_price is None:
+                    if trades_idx_for_external is None:
+                        trades_idx_for_external = self._trades_index_by_symbol()
+                    exit_side = "SELL" if p["side"] == "BUY" else "BUY"
+                    inferred = self._external_close_fill_from_trades(
+                        trades_idx_for_external.get(p["symbol"], []),
+                        exit_side=exit_side,
+                        qty=int(p.get("qty", 0) or 0),
+                        entry_time=p.get("entry_time"),
+                    )
+                    if inferred:
+                        exit_price, exit_time = inferred
                 
-                # BUG FIX: Try multiple sources for exit price
-                # 1. Try Zerodha position data (sell_price for BUY, buy_price for SELL)
+                # 2. Try Zerodha position data (sell_price for BUY, buy_price for SELL)
                 for zp in net_positions:
                     if zp.get("tradingsymbol") == p["symbol"] and zp.get("product") == "MIS":
                         if p["side"] == "BUY":
-                            exit_price = zp.get("sell_price") or zp.get("last_price")
+                            exit_price = exit_price or zp.get("sell_price") or zp.get("last_price")
                         else:
-                            exit_price = zp.get("buy_price") or zp.get("last_price")
+                            exit_price = exit_price or zp.get("buy_price") or zp.get("last_price")
                         break
                 
-                # 2. Fallback: Get current market price if not found above
+                # 3. Fallback: Get current market price if not found above
                 if not exit_price:
                     try:
                         quotes = self.zerodha.get_quotes(
@@ -1164,7 +1251,7 @@ class OrderEngine:
                     p["exit_reason"] = "STOP_LOSS"
                 else:
                     p["exit_reason"] = "EXTERNAL_CLOSE"
-                p["exit_time"] = now_ist().strftime("%H:%M:%S")
+                p["exit_time"] = exit_time or now_ist().strftime("%H:%M:%S")
                 p["pnl"] = round(pnl, 2)
                 # Record exit time for per-symbol re-entry cooldown (Roadmap #161).
                 self._last_exit_time[f"{p['symbol']}_{p['side']}"] = now_ist()
@@ -3092,12 +3179,55 @@ class OrderEngine:
         In dry-run mode: logs the exit. P&L calculated from entry/exit prices.
         In live mode: places a counter-order (BUY→SELL or SELL→BUY).
         """
+        if position.get("status") != "OPEN":
+            self.log.debug(
+                f"Skipping {reason} exit for {position.get('symbol', 'UNKNOWN')}: "
+                f"position already {position.get('status')}"
+            )
+            return
+
         symbol   = position["symbol"]
         exchange = position["exchange"]
         side     = position["side"]
         qty      = position["qty"]
         entry    = position["entry_price"]
         now      = now_ist()
+
+        # Last-second broker truth check (#270): the operator can close a
+        # tracked position in Kite and press Ctrl+C before our 10s poll loop
+        # notices. Without this sync, a shutdown SQUARE_OFF submits the
+        # opposite-side MARKET order against broker net=0 and opens a reverse
+        # ghost position. sync_external_positions() marks such rows CLOSED
+        # from Zerodha's day-position data and cancels stale SL-M orders.
+        if not self.cfg.DRY_RUN:
+            before_qty = qty
+            try:
+                self.sync_external_positions()
+            except Exception as e:
+                self.log.warning(
+                    f"Broker preflight before {reason} exit for {symbol} failed: {e} — "
+                    f"continuing with tracked position state"
+                )
+
+            if position.get("status") != "OPEN":
+                self.log.warning(
+                    f"{symbol}: broker preflight before {reason} detected the "
+                    f"position was already closed externally; skipping MARKET exit order"
+                )
+                return
+
+            qty = int(position.get("qty", qty) or qty)
+            if qty <= 0:
+                self.log.warning(
+                    f"{symbol}: broker preflight before {reason} left no shares to close; "
+                    f"skipping MARKET exit order"
+                )
+                return
+            if qty != before_qty:
+                self.log.warning(
+                    f"{symbol}: broker preflight before {reason} detected external partial "
+                    f"close ({before_qty} → {qty}); closing only remaining broker qty"
+                )
 
         # Apply exit slippage in dry-run mode (adverse fill)
         if self.cfg.DRY_RUN and self.cfg.SLIPPAGE_PCT > 0:
@@ -4338,6 +4468,19 @@ class OrderEngine:
         for _p in self.open_positions():
             if _p.get("_sl_order_id"):
                 _p["_sl_order_id"] = None
+
+        # Broker truth preflight (#270): rebuild the open-position list
+        # after checking whether the user already closed any tracked MIS
+        # positions in Kite. This prevents shutdown SQUARE_OFF from opening
+        # reverse-side ghost positions against broker net=0.
+        if not self.cfg.DRY_RUN:
+            try:
+                self.sync_external_positions()
+            except Exception as e:
+                self.log.warning(
+                    f"square_off_all broker preflight failed: {e} — "
+                    f"continuing with tracked open positions"
+                )
 
         open_pos = self.open_positions()
         if not open_pos:
