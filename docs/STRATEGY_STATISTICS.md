@@ -95,6 +95,22 @@
 > structural bleed: BUY side 14.0% WR and −Rs.2,942.93 net since 2026-04-22;
 > STOP_LOSS exits −Rs.1,681.72 net; SIGNAL_DECAY is the only recurring
 > exit family near break-even after charges (63.2% WR, −Rs.69.42 net).
+>
+> Last live snapshot refresh: **2026-05-11** (post-EOD review of the 12th
+> consecutive losing day; 6 logical trades / Rs.−227.82 net today). FY live
+> metrics now 57W/123L of 180 ledger rows, WR 31.7%, PF 0.530, expectancy
+> −Rs.19.04/trade, profitable-day rate 24.0% (6 of 25 days), max drawdown
+> Rs.3,550.99 peak-to-trough. Per-side over the FULL FY is now symmetric
+> (BUY 31.7% WR / SELL 31.6% WR — the BUY-catastrophe of the 04-22 → 05-11
+> rolling window is a regime artifact, not a structural side-skew). Last
+> profitable session: **2026-04-21** (Rs.+134.55, 20 trading days ago).
+> Today's session ran on the VM: morning gates' log evidence is missing
+> from the local copy of `portfolio.log` (sync only captured 11:58 IST
+> onward). Of the two pause gates we can verify in the partial log:
+> #251 directional pause WAS armed (`DIRECTIONAL-PAUSE BYPASS (BUY)`
+> fired at 14:01 against tape-breadth divergence — bypass let no actual
+> entry through), and #244 LOSS-STREAK GUARD armed at 14:31 after the
+> 3rd consecutive losing exit (correctly suppressed any further entries).
 
 ---
 
@@ -106,8 +122,8 @@ live ledger currently shows. Live numbers are auto-refreshed by
 `Dashboard/live_stats.py` and cover the **current FY** (verified +
 provisional intraday trades).
 
-> Live snapshot below was captured on **2026-05-08** for FY 2026-04-01 →
-> 2027-03-31 (173 trades across 24 trading days, source: `intraday_tax_ledger`
+> Live snapshot below was captured on **2026-05-11** for FY 2026-04-01 →
+> 2027-03-31 (180 trades across 25 trading days, source: `intraday_tax_ledger`
 > via `scripts/tax_summary.py --intraday`). Refresh the dashboard for the
 > live read.
 >
@@ -131,21 +147,21 @@ provisional intraday trades).
 
 | Metric | Theoretical (target) | Live (current FY) | Status |
 |---|---|---|---|
-| Win rate                  | 55%                       | **32.4%** (56 W / 117 L of 173)       | 🔴 below |
-| Profit Factor             | ≥ 1.50                    | **0.541** (GP Rs.3,799.97 / GL Rs.7,022.92, net-of-charges trade P&L) | 🔴 below |
-| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.18.63** (Net −Rs.3,222.95 / 173, excluding Claude API cost) | 🔴 below |
-| P(profitable day)         | ≈ 60%                     | **25.0%** (6 of 24 days)              | 🔴 below |
-| Sharpe (annualised)       | 1.5 – 2.5                 | **−6.76** (Sortino −10.07)            | 🔴 below |
-| Max drawdown              | < 10% of capital          | **Rs.3,346.72** peak-to-trough        | 🟢 within |
+| Win rate                  | 55%                       | **31.7%** (57 W / 123 L of 180)       | 🔴 below |
+| Profit Factor             | ≥ 1.50                    | **0.530** (GP Rs.3,865.79 / GL Rs.7,293.01, net-of-charges trade P&L) | 🔴 below |
+| Expectancy / trade        | +0.10 R (≈ +Rs.25)        | **−Rs.19.04** (Net −Rs.3,427.22 / 180, excluding Claude API cost) | 🔴 below |
+| P(profitable day)         | ≈ 60%                     | **24.0%** (6 of 25 days)              | 🔴 below |
+| Sharpe (annualised)       | 1.5 – 2.5                 | **−7.20** (Sortino −10.89)            | 🔴 below |
+| Max drawdown              | < 10% of capital          | **Rs.3,550.99** peak-to-trough        | 🟡 watching |
 
-**Read this as reference only.** The 173 trades above were taken across
-multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #246
-including the #188 sign-flip-decay fix in commit `09483df` and the
-#246 no-rescue-zone late-entry floor in `f87dd95`, both shipped
-2026-04-28). Gates were added, removed, tightened, and loosened in
-flight — so this is **not** a clean backtest of the current code. The
-clean-strategy benchmark only starts from now (post-#246). Full caveat
-in §4.
+**Read this as reference only.** The 180 trades above were taken across
+multiple iterations of the strategy (V1 → V2 → roadmap items #161 … #270
+including the #270 shutdown-ghost fix in commit `e6c718d` on 2026-05-08).
+Gates were added, removed, tightened, and loosened in flight — so this is
+**not** a clean backtest of the current code. The clean-strategy benchmark
+only starts from now (post-#270). Today (2026-05-11) marks the **12th
+consecutive losing day**; last profitable session was 2026-04-21 (20
+trading days ago). Full caveat in §4.
 
 ---
 

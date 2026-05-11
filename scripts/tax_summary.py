@@ -18,6 +18,17 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+# Reconfigure stdout to handle unicode glyphs (→ — etc.) on Windows cp1252.
+# Mirrors verify_trades.py and import_zerodha_taxpnl.py which do the same.
+# Without this, the 'Section 43(5) | ITR-3 → Schedule BP' header crashes
+# the script under the default Windows console (UnicodeEncodeError on
+# '\u2192'), which silently breaks the daily-review pipeline that
+# treats tax_summary.py as the canonical FY P&L source.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+except (AttributeError, OSError):
+    pass
+
 from config import Config
 from scripts.tax_db import get_db, indian_fy, fy_label, fy_date_range, current_fy
 

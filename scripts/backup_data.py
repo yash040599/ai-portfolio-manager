@@ -171,19 +171,25 @@ def ask_conflict(rel_path: str) -> str:
 # SQLITE DATABASE MERGING
 # ================================================================
 
-# Tables with UNIQUE constraints — use INSERT OR IGNORE
+# Tables with UNIQUE constraints — use INSERT OR IGNORE / OR REPLACE.
+# Defer to the SQL-level UNIQUE index for dedup (do NOT add a Python-side
+# key here — it would drift from the index and cause IntegrityError on
+# rows that match the SQL key but differ on the Python-key columns).
+#   trades:              UNIQUE(date, symbol, side, entry_time)
+#                        — see services/performance_tracker.py idx_trades_dedup
+#   intraday_tax_ledger: UNIQUE(...) defined at table create
+#   capital_gains_ledger: UNIQUE(...) defined at table create
 UNIQUE_TABLES = {
+    "trades",
     "intraday_tax_ledger",
     "capital_gains_ledger",
 }
 
-# Tables without UNIQUE constraints — deduplicate on all data columns
+# Tables without UNIQUE constraints — deduplicate on the listed key columns
+# (Python-side existence check + INSERT). Only put a table here if it has
+# NO SQL-level UNIQUE index — otherwise the Python key can disagree with
+# the index and the INSERT path will hit IntegrityError on collisions.
 APPEND_TABLES = {
-    # Dedup key must use ONLY immutable fields — fields that don't change
-    # after trade verification (verify_trades.py, import_zerodha_taxpnl.py).
-    # pnl and exit_price are mutable (corrected by verification) — excluded.
-    "trades":             ("date", "symbol", "side", "entry_price", "qty",
-                           "entry_time"),
     "portfolio_analyses": ("date", "symbol", "action", "conviction", "current_price",
                            "invested_value", "current_value"),
 }
