@@ -241,7 +241,7 @@ Open [config.py](config.py). Common settings:
 
 | Setting | Default | Controls |
 |---------|---------|----------|
-| `MAX_BUDGET_INR` | 20,000 | Max capital deployed per day |
+| `MAX_BUDGET_INR` | 50,000 | Max capital deployed per day |
 | `SCAN_UNIVERSE` | NIFTY100 | Stock pool (overridable per-run with `--nifty 50/100/150/200`) |
 | `MAX_POSITIONS` | 3 | Simultaneous trades |
 | `DRY_RUN` | False | Simulate without real orders (or use `--dryrun`) |
@@ -533,14 +533,31 @@ gitignored except `candle_cache.db` (public market data is committed).
 | `scripts/rejection_audit.py --append-report` | Verdict on every skipped entry |
 | `scripts/exit_coverage_check.py` | Truth-table guard — fails if any thesis-broken in-loss `(entry, fresh, pattern)` cell is uncovered by both `_signal_reversal_exit` and `_signal_decay_exit`. Run as part of the smoke triple after any exit-pipeline change to catch cross-gate dead zones (the 2026-04-28 sign-flip class) before they ship. |
 | `scripts/strategy_stability_check.py [--lookback N] [--window-days N]` | Reads `git log` and reports (a) currently-open 10-trading-day no-tune windows opened by recent strategy commits, (b) any tuning commit that landed inside another commit's window without an exempt token. Informational only — never blocks a commit or push. Roadmap #245. **Bug-fix commits that touch tracked strategy files MUST include `bugfix-during-stability-window` in the subject** so the script doesn't spuriously open a fresh window; `#NNNR` removal commits use `removal-trigger-fired`. See `copilot/review-cycle.md` Wrap-up table for the full classification rules. |
-| `scripts/import_reports_to_db.py` | One-time backfill of old JSON reports |
+| `scripts/view_candidates.py [--date YYYY-MM-DD] [--since YYYY-MM-DD] [--symbol STK] [--side BUY/SELL] [--status STATUS] [--summary] [--hash]` | Read-only viewer for the `intraday_candidates` telemetry table (Roadmap #259). Filters by date / symbol / side / status (`SCORED`, `ENTERED`, `REJECTED`); `--summary` totals; `--hash` lists distinct config hashes seen in the window. |
+| `scripts/build_volume_baseline.py [--lookback N] [--universe UNIV] [--symbol STK] [--dry-run]` | Rebuilds `data/volume_baseline.db` from the trailing N trading days of 15-min candles in `data/candle_cache.db` (Roadmap #260). Computes per-symbol, per-hour mean cumulative-volume share. After build, set `Config.INTRADAY_VOLUME_BASELINE_ENABLED = True` to switch the scanner's RVol denominator from linear pro-rating to baseline-aware. |
+| `scripts/backtest.py --from YYYY-MM-DD --to YYYY-MM-DD [--symbol STK] [--min-score N] [--max-trades-per-day N]` | Offline replay harness (Roadmap #24). Walks 15-min cached candles, applies a simplified directional score (EMA-cross + RSI + 1h momentum), and simulates synthetic trades using ATR-derived SL / target geometry and `Config.SQUARE_OFF_*`. Output: per-trade JSON in `reports/backtest/` plus a stdout summary (WR / PF / expectancy / max-DD), each row stamped with `Config.snapshot_hash()` for replay-vs-live comparison. **Do not read absolute P&L as a forecast** — see the script docstring "Scoring fidelity" note. |
+| `scripts/promotion_check.py [--window N] [--json]` | Codified PASS / FAIL gate for capital scale-ups. Reads the last N (default 20) trading sessions from `data/trades.db` and tests profit factor, expectancy, day-WR, trade-WR and max-drawdown against fixed thresholds. Exit codes: `0` = PASS, `1` = FAIL, `2` = INSUFFICIENT_DATA. Run BEFORE any major risk-knob relax or capital scale; the script is the single source of truth on whether the live edge is positive enough to justify the change. |
 
 All scripts support `--help`.
 
 ### Data sync (private repo)
 
 `data/`, `reports/`, `logs/` are personal — keep them in a **separate
-private repo** so they're portable across machines.
+private repo** so they're portable across machines. The default sync
+is a glob walk of those three folders so any new file (e.g. a new
+DB, a new report subfolder) is picked up automatically with no code
+change.
+
+**Synced as of 2026-05-11 (everything in these locations):**
+- `data/trades.db` — trades, intraday_tax_ledger, capital_gains_ledger, **`intraday_candidates`** (Roadmap #259, full SCORED → ENTERED/REJECTED → OUTCOME chain stamped with `Config.snapshot_hash()`)
+- `data/intraday_tax.db`, `data/tax.db` — tax DBs
+- **`data/volume_baseline.db`** (Roadmap #260) — per-(symbol, hour) cumulative volume share, built by `scripts/build_volume_baseline.py`
+- `data/zerodha_authoritative_*.json` — quarterly Zerodha truth snapshots
+- `data/candle_cache.db` — git-tracked alongside the code repo (already identical across machines, NOT in the data backup)
+- `reports/dashboard/`, `reports/portfolio/`, `reports/trading/`, **`reports/backtest/`** (Roadmap #24, per-trade JSON stamped with `Config.snapshot_hash()` so two machines with the same config produce comparable runs)
+- `logs/portfolio.log*`
+
+**Never synced (operator secrets / local-only):** `data/access_token.json`, `data/access_token.json.bak`, `data/ZerodhaTaxPL/`, `__pycache__/`.
 
 ```bash
 python scripts/backup_data.py            # two-way append-merge + push (HTTPS)
@@ -577,6 +594,23 @@ python scripts/backup_data.py --all-remote      # full overwrite of local
    - Edit a DB row or report .txt to correct bad data.
    - `python scripts/backup_data.py --prefer local` — your edits become the truth.
    - VM picks up corrections on its next pull.
+
+  Important: row-level sync does not delete remote-only ghost DB rows yet. If a repair deliberately removes rows from `trades.db`, use the new deletion-aware path:
+
+  ```powershell
+  python scripts/backup_data.py --canonical-trades --dry-run   # shows local sha256 + remote sha256 + per-table row deltas, no writes
+  python scripts/backup_data.py --canonical-trades             # backs up the remote DB to a timestamped file then bit-for-bit replaces it with the local DB
+  ```
+
+  This propagates row deletions correctly (Roadmap #270). Use the dry-run first whenever you’re about to overwrite the remote DB so you see exactly which tables differ. The legacy nuclear `--all-local` still works but copies *all* files; `--canonical-trades` is the surgical option for canonical DBs only. As of 2026-05-11 the canonical set is `data/trades.db` + `data/volume_baseline.db` — both will be diffed and replaced together in a single pass when you use the flag, with one timestamped backup per file.
+
+**Bringing up a new machine** (clean checkout):
+
+1. Clone this repo, set up the venv, fill in `.env` (Zerodha + optional `KITE_TOTP_SECRET` for unattended login).
+2. `python scripts/backup_data.py --ssh` (or HTTPS) — pulls the data repo into `../ai-portfolio-manager-data` and merges into local `data/`, `reports/`, `logs/`. The new machine now has the full trade ledger, tax ledger, telemetry rows, and any backtest runs another machine produced.
+3. `python -c "from config import Config; print(Config.snapshot_hash())"` — confirm the same `(version, hash)` pair on both machines. Different hashes mean a config knob differs in `config.py` and any backtest comparison is invalid until reconciled.
+4. Optional: `python scripts/build_volume_baseline.py --dry-run` to confirm the baseline DB on the new machine; the file syncs in step 2 but the builder is fully reproducible from `data/candle_cache.db` (which is in the code repo, identical across machines), so a rebuild produces an identical DB.
+5. Optional: `python scripts/promotion_check.py` — read-only, confirms the new machine sees the same PASS/FAIL state as the old one (proves the trade ledger merged correctly).
 
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.

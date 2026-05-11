@@ -530,8 +530,48 @@ class PortfolioManager:
                 skipped_full = len(plans) - tried
                 break
             tried += 1
-            if self.engine.enter_trade(trade):
+            ok = self.engine.enter_trade(trade)
+            if ok:
                 entered += 1
+            # ── Per-candidate telemetry update (#259) ────────────
+            # Best-effort. Records ENTERED / REJECTED on the SCORED
+            # row written by the scanner. `rejected_gate` is filled
+            # in by the rejection_audit script later (we don't
+            # instrument every `return False` site in enter_trade()).
+            try:
+                tele = getattr(self.scanner, "telemetry", None)
+                if tele is not None:
+                    if ok:
+                        # Find the just-opened position to capture the
+                        # actual fill price/time the engine recorded.
+                        opened = next(
+                            (p for p in self.engine.open_positions()
+                             if p.get("symbol") == trade.get("symbol")
+                             and p.get("side") == trade.get("side")),
+                            None,
+                        )
+                        entry_price = opened.get("entry_price") if opened else None
+                        entry_time = (
+                            opened.get("_entry_time") or opened.get("entry_time")
+                        ) if opened else None
+                        tele.mark_attempted(
+                            symbol=trade.get("symbol", ""),
+                            side=trade.get("side", ""),
+                            scan_time=trade.get("_scan_time"),
+                            status="ENTERED",
+                            entry_price=entry_price,
+                            entry_time=entry_time,
+                        )
+                    else:
+                        tele.mark_attempted(
+                            symbol=trade.get("symbol", ""),
+                            side=trade.get("side", ""),
+                            scan_time=trade.get("_scan_time"),
+                            status="REJECTED",
+                        )
+            except Exception as _e:
+                # Telemetry must never break a trade attempt.
+                self.log.debug(f"Candidate-telemetry update skipped: {_e}")
             time.sleep(0.5)
 
         # Summary: show user what happened across all candidates

@@ -1,4 +1,4 @@
-﻿"""
+"""
 View performance analytics from the trades database.
 
 Shows trade-level data plus aggregated statistics: daily P&L,

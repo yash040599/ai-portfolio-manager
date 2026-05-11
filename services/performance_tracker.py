@@ -206,6 +206,29 @@ class PerformanceTracker:
 
         self.log.success(f"Recorded {len(closed)} trades to performance database")
 
+        # ── Per-candidate telemetry outcome backfill (#259) ─────
+        # Best-effort: attach exit_price/exit_time/exit_reason/pnl onto
+        # the matching ENTERED telemetry row, if any. Swallows errors
+        # so the trade record write never depends on telemetry health.
+        try:
+            from services.candidate_telemetry import CandidateTelemetry
+            tele = CandidateTelemetry(self.log)
+            for p in closed:
+                entry_time = p.get("_entry_time") or p.get("entry_time")
+                exit_time  = p.get("_exit_time")  or p.get("exit_time")
+                tele.attach_outcome(
+                    date=today,
+                    symbol=p.get("symbol", ""),
+                    side=p.get("side", ""),
+                    entry_time=entry_time,
+                    exit_price=p.get("exit_price", 0),
+                    exit_time=exit_time,
+                    exit_reason=p.get("exit_reason", ""),
+                    pnl=p.get("pnl", 0) + p.get("_partial_pnl", 0),
+                )
+        except Exception as e:
+            self.log.debug(f"Candidate-telemetry outcome backfill skipped: {e}")
+
     # ================================================================
     # QUERIES
     # ================================================================

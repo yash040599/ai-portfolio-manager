@@ -243,8 +243,10 @@ should be a separate mechanical phase:
 - Keep `copilot/pre-trade-checklist.md`, `copilot/code-map.md`, and
   `copilot/review-cycle.md` if they are actively used. Move human-only review
   prompts to `docs/review/` or mark them non-runtime.
-- Mark likely phase-1 scripts as deprecated if kept: `scripts/import_reports_to_db.py`
-  and `scripts/view_analyses.py` look nonessential to phase-2 NoAI.
+- Mark likely phase-1 scripts as deprecated if kept: `scripts/view_analyses.py`
+   looks nonessential to phase-2 NoAI. `scripts/import_reports_to_db.py` was
+   later deleted in the 2026-05-11 HFT-readiness audit because it was a stale
+   one-time JSON-to-SQLite importer.
 - Preserve `scripts/rejection_audit.py`, `scripts/verify_trades.py`,
   `scripts/exit_coverage_check.py`, and `scripts/strategy_stability_check.py`.
 

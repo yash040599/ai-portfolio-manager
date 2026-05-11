@@ -13,6 +13,61 @@
   When updating code that affects strategy (config, indicators, order
   engine, scanner), update this document in the same commit.
   
+  Last sync: 2026-05-11 — Industry-standard infrastructure ship.
+  Audit-driven (`docs/audit/HFT_READINESS_INTRADAY_AUDIT_2026-05-11.md`)
+  pass closing seven gaps in one day. **No strategy semantics changed
+  in this ship** — pre-trade check count remains 44, the exit-gate
+  cross-product check still passes, no entry/exit/risk thresholds
+  moved. What landed: (1) **#24 Backtest harness** — `scripts/backtest.py`
+  replays a simplified score (EMA-cross + RSI + 1h momentum) on cached
+  15-min candles for any `--from / --to` window; per-trade JSON
+  stamped with `Config.snapshot_hash()` so two runs against different
+  configs are diffable. Use only for direction-of-effect A/B; absolute
+  P&L is not directly comparable to the live `compute_technical_score`
+  (which reads `now_ist().date()` for VWAP / ORB / gap and would
+  mis-fire in replay). (2) **#259 Per-candidate telemetry** — new
+  `services/candidate_telemetry.py` writes `intraday_candidates` to
+  `data/trades.db` (31 cols, UNIQUE on `(date, symbol, side, scan_time)`).
+  Three lifecycle hooks: SCORED (end of `_prefilter_universe`),
+  ENTERED/REJECTED (after `engine.enter_trade()` in
+  `_attempt_entries`), OUTCOME (in `record_trades`). All best-effort;
+  `telemetry.healthy` flag printed at startup so a silent dropout is
+  visible. Side derivation MIRRORS scanner (Roadmap #169):
+  `score>0→BUY`, `score<0→SELL`, `score==0→skip`. Read API:
+  `scripts/view_candidates.py`. (3) **#260 Intraday volume baselines**
+  — new `services/volume_baseline.py` + `scripts/build_volume_baseline.py`
+  + `data/volume_baseline.db`. Three new config knobs:
+  `INTRADAY_VOLUME_BASELINE_ENABLED` (default `False` — kill-switch),
+  `LOOKBACK_DAYS` (20), `MIN_SAMPLES` (10). Scanner read site falls
+  back to legacy linear pro-rate with a WARNING log on lookup failure.
+  Operator workflow: (a) wait for cache accrual, (b) run builder with
+  `--dry-run`, (c) review sample-density per symbol, (d) flip
+  kill-switch on. (4) **#261 Typed `Quote` / `DepthLevel`** dataclasses
+  in `core/zerodha_client.py` + `get_typed_quotes()` wrapper. Single
+  canonical parser via `Quote.from_kite_dict()`; safe defaults (every
+  numeric → 0, every list → []); convenience views `is_priced`,
+  `best_bid`, `best_ask`, `has_two_sided_book`, `spread_pct()`,
+  `impact_cost_pct(qty, side)` (top-5-level walk; positive = adverse).
+  Migration of legacy raw-dict callers deferred. (5) **#271 Deletion-aware
+  backup sync** (renumbered from audit's #270 to avoid colliding with
+  the 2026-05-08 SQUARE_OFF preflight that already used #270) —
+  `scripts/backup_data.py --canonical-trades [--dry-run]`. Dry-run
+  prints local + remote sha256 + per-table row deltas; real run takes
+  a timestamped backup of remote then bit-for-bit replaces. Plus
+  **`Config.snapshot_hash() -> (version, sha256[:16])`** —
+  `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"`; missing keys
+  recorded as the literal string `"<MISSING>"` so refactor drift is
+  visible. Stamped on every `intraday_candidates` row + every backtest
+  run. Plus **`scripts/promotion_check.py`** — codified PASS/FAIL gate
+  on the live ledger (PF≥1.15, expectancy≥+Rs.10/trade, day-WR≥55%,
+  trade-WR≥40%, max-DD≤3% of avg daily capital). **Current state:
+  FAIL** (PF 0.86, expectancy −Rs.5/trade, day-WR 30%) — capital
+  scaling is GATED OFF until next PASS. Verification: import smoke
+  OK across all new modules, `Config.validate_ranges()=[]`,
+  `exit_coverage_check.py` PASS, `Config.snapshot_hash() ==
+  ('v1.0-2026-05-11', '803234ac9cb81260')`,
+  `CandidateTelemetry().healthy = True`.
+
   Last sync: 2026-05-08 — Bug-fix pass on top of 2026-05-07 loss-streak
   intervention. Today's ship: #270 Execution (Bug Fix) — shutdown
   SQUARE_OFF broker-net preflight + `kite.trades()`-based external-close
@@ -531,7 +586,7 @@ These are math formulas computed on the last 20–30 candles. Each produces a si
 | **Stock selection** | Auto-picks top N by score sign + magnitude | Claude picks from top 15 pre-filtered |
 | **Trade side** | Score sign: positive = BUY, negative = SELL | Claude decides |
 | **SL / Target** | Config defaults, ATR overrides | Claude sets, ATR may override |
-| **Position sizing** | Score-weighted (higher conviction = more capital) | Claude sets qty, budget-validated |
+| **Position sizing** | Equal-sized slots by default; score-weighted sizing is disabled by #258 | Claude sets qty, budget-validated |
 | **Rationale** | Auto-generated from indicator values | Claude writes qualitative analysis |
 | **Position reviews** | Stagnant exit after 45 min (rule-based) | Claude reviews every 30 min |
 | **Mid-day re-scan** | Auto-select from new candidates (same as initial) | Claude picks from new candidates |
@@ -717,7 +772,7 @@ Take top N candidates (N = MAX_POSITIONS - open_positions)
   → Side = BUY if score > 0, SELL if score < 0
   → SL = price × (1 ± DEFAULT_STOP_LOSS_PCT)
   → Target = price × (1 ± DEFAULT_TARGET_PCT)
-  → Qty via score-weighted sizing (conviction-proportional, capped at MAX_POSITION_PCT)
+  → Qty via equal-sized slots by default (score-weighted sizing is kill-switched off by #258)
   → Rationale auto-generated from indicators:
       "Score +8.3 | RSI 28 | EMA BULLISH_CROSS | ST UP | Patterns: HAMMER"
   → Skip symbols already traded today or currently held
@@ -1191,7 +1246,9 @@ Goal: round-trip charges (Rs.40-50) stay < 0.5% of each position. Set `MAX_POSIT
 
 ### Score-Weighted Sizing (NoAI)
 
-In NoAI mode, budget is allocated proportionally to conviction (composite score magnitude). Higher-scoring candidates get more capital, capped at `MAX_POSITION_PCT` (40%) per stock. This is a simplified Kelly criterion — bet more on higher-conviction setups.
+In NoAI mode, score-weighted sizing is currently disabled by default (`SCORE_WEIGHTED_SIZING_ENABLED = False`, #258). The live bot uses equal-sized candidate slots while the score model is under review; this prevents high-conviction scores from receiving extra capital during a regime where recent score buckets have been unstable.
+
+When re-enabled, budget is allocated proportionally to conviction (composite score magnitude), capped at `MAX_POSITION_PCT` (40%) per stock. Re-enable only if #258R's recovery trigger fires on a sufficiently large live sample.
 
 In `--ai` mode, Claude sets qty directly (budget-validated by the engine).
 
@@ -1209,7 +1266,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| `MAX_BUDGET_INR` | 20,000 | Daily capital cap (overridable via `--max` CLI flag) |
+| `MAX_BUDGET_INR` | 50,000 | Daily capital cap (overridable via `--max` CLI flag) |
 | `MAX_POSITIONS` | 3 (auto-scaled) | See Dynamic Position Sizing |
 | `MAX_POSITIONS_OVERRIDE` | 0 | 0 = auto; >0 = fixed |
 | `MAX_POSITION_PCT` | 40% | Per-stock cap |
@@ -1430,7 +1487,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | **DEFAULT_TARGET 1.2%** | Was 1.5%. 26/63 trades hit SQUARE_OFF (target never reached). 1.2% more achievable for NSE intraday. |
 | **NoAI as default** | Zero cost, instant execution, deterministic. Claude adds marginal value for position reviews but costs Rs.20-40/day. |
 | **Stagnant exit 45 min** | Replaces Claude reviews in NoAI. Dead positions waste slots — exit them to try stronger setups. |
-| **Score-weighted sizing** | Simple Kelly criterion: higher conviction → more capital. Better capital allocation than equal-weight. |
+| **Score-weighted sizing paused** | #258 keeps live NoAI on equal-sized slots until high-score cohorts regain verified edge; `SCORE_WEIGHTED_SIZING_ENABLED = True` restores conviction-proportional sizing after #258R's trigger fires. |
 | **Fallback promotion** | Budget validation can drop expensive primary picks. Next fallback fills the freed slot — no capital left idle. |
 
 ---

@@ -53,6 +53,8 @@ from services.technical_indicators   import (
     vwap, rsi, ema_crossover, supertrend, stoch_rsi,
 )
 from services.candle_cache           import CandleCache
+from services.candidate_telemetry    import CandidateTelemetry
+from services.volume_baseline        import get_baseline_share
 
 
 # Maximum candidates to send to Claude (rest are filtered out by math)
@@ -204,6 +206,26 @@ class StockScannerV2(StockScanner):
         # (None) on small-sample scans so the engine never bypasses
         # on stale data.
         self.last_tape_breadth: dict | None = None
+
+        # ── Per-candidate telemetry (Roadmap #259) ───────────────
+        # Best-effort, write-only, swallows exceptions. Records every
+        # V2_MIN-passing candidate to data/trades.db::intraday_candidates
+        # with the full feature snapshot + config version/hash. Engine
+        # then updates the row to ENTERED/REJECTED, and PerformanceTracker
+        # backfills exit_price/pnl/exit_reason on close. The complete
+        # rejected-candidate stream removes the selection-bias problem
+        # that has blocked replay/backtest work.
+        self.telemetry = CandidateTelemetry(self.log)
+        # Single timestamp per call to _prefilter_universe so all rows
+        # written from one scan share the same scan_time and the engine
+        # can match the SCORED row by (date, symbol, side, scan_time).
+        self.last_scan_time: str | None = None
+
+        # Optional NIFTY context piggybacked by the manager so the
+        # telemetry rows pick up `nifty_trend` and `vix` without us
+        # round-tripping through Kite again.
+        self.last_nifty_trend: str = ""
+        self.last_vix: float | None = None
 
         # Cleanup old cached data on startup (keep 45 days)
         try:
@@ -447,6 +469,30 @@ class StockScannerV2(StockScanner):
                 today_vol = sum(c.get("volume", 0) for c in today_candles)
                 # Pro-rate to full-day estimate (25 fifteen-min candles per session)
                 prorated_vol = today_vol * (25 / n_today)
+                # Roadmap #260: when the baseline DB is built and enabled,
+                # replace the linear pro-rating with a per-symbol per-hour
+                # historical share. The baseline gives the historical
+                # cumulative-volume fraction by end-of-current-hour for
+                # this symbol, so today's cumulative volume can be
+                # compared like-for-like against the multi-day average.
+                # Falls back silently to linear pro-rating when the
+                # baseline is missing / disabled / under-sampled.
+                if getattr(self.cfg, "INTRADAY_VOLUME_BASELINE_ENABLED", False):
+                    try:
+                        cur_hour = now_ist().hour
+                        share = get_baseline_share(
+                            symbol, exchange, cur_hour,
+                            min_samples=self.cfg.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES,
+                        )
+                        if share and share > 0:
+                            # Use today_vol / share as the symbol's
+                            # baseline-aware projected full-day volume.
+                            prorated_vol = today_vol / share
+                    except Exception as e:
+                        self.log.warning(
+                            f"{symbol}: volume-baseline lookup failed, "
+                            f"falling back to linear pro-rating: {e}"
+                        )
                 recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
                 if recent_vols:
                     avg_daily_vol = sum(recent_vols) / len(recent_vols)
@@ -938,6 +984,28 @@ class StockScannerV2(StockScanner):
                     f"patterns: {patterns_str}{rvol_str}"
                 )
 
+        # ── Per-candidate telemetry (#259) ─────────────────────
+        # Stamp every survivor with the scan timestamp so the engine
+        # can locate the row when the trade attempt resolves, then
+        # write a SCORED row per candidate. Best-effort: any DB error
+        # is logged and swallowed by `CandidateTelemetry`.
+        scan_ts = now_ist().strftime("%Y-%m-%d %H:%M:%S")
+        self.last_scan_time = scan_ts
+        tape_label = ""
+        if isinstance(self.last_tape_breadth, dict):
+            tape_label = self.last_tape_breadth.get("tape", "") or ""
+        for r in top:
+            r["_scan_time"] = scan_ts
+            sector = SECTOR_MAP.get(r["symbol"], "OTHER")
+            self.telemetry.record_scored(
+                r,
+                scan_time=scan_ts,
+                nifty_trend=nifty_trend or self.last_nifty_trend,
+                vix=self.last_vix,
+                tape=tape_label,
+                sector=sector,
+            )
+
         return top
 
     # ================================================================
@@ -1302,6 +1370,10 @@ class StockScannerV2(StockScanner):
                 "_entry_minus_di": tech.get("adx", {}).get("minus_di", 0),
                 "_entry_patterns": list(ps.get("patterns", []) or []),
                 "_indicator_snapshot": self._build_indicator_snapshot(tech, c),
+                # #259: forward the scan timestamp so the engine can
+                # match the SCORED telemetry row when this trade
+                # resolves (entered or rejected).
+                "_scan_time": c.get("_scan_time"),
             })
 
         # Split primary picks and fallback candidates.
@@ -1497,6 +1569,9 @@ class StockScannerV2(StockScanner):
                 t["_entry_plus_di"]  = tech.get("adx", {}).get("plus_di", 0)
                 t["_entry_minus_di"] = tech.get("adx", {}).get("minus_di", 0)
                 t["_indicator_snapshot"] = self._build_indicator_snapshot(tech, c)
+                # #259: forward scan timestamp so engine can locate the
+                # SCORED telemetry row when this trade resolves.
+                t["_scan_time"] = c.get("_scan_time")
 
     # ================================================================
     # ENRICHED SNAPSHOT BUILDER

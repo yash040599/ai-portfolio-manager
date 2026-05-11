@@ -38,6 +38,11 @@ Usage
     # Nuclear reset (also deletes files not on the chosen side)
     python scripts/backup_data.py --all-local  # push ALL local data to remote (full overwrite)
     python scripts/backup_data.py --all-remote # pull ALL remote data to local (full overwrite)
+
+    # Canonical-trades replace (#270 — deletion-aware)
+    python scripts/backup_data.py --canonical-trades --dry-run  # show diff
+    python scripts/backup_data.py --canonical-trades            # back up remote DB,
+                                                                # replace it with local
 """
 
 import argparse
@@ -183,6 +188,7 @@ UNIQUE_TABLES = {
     "trades",
     "intraday_tax_ledger",
     "capital_gains_ledger",
+    "intraday_candidates",
 }
 
 # Tables without UNIQUE constraints — deduplicate on the listed key columns
@@ -516,6 +522,164 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool,
     return changed
 
 
+# ================================================================
+# CANONICAL-TRADES REPLACE (Roadmap #270)
+# ================================================================
+
+# Files to canonical-replace. Each is a single-source-of-truth SQLite
+# DB whose row deletions need to propagate (the default append-merge
+# path is only correct for append-only tables). data/trades.db is the
+# source of truth for trade lifecycle, intraday tax, capital gains, and
+# (since #259) candidate telemetry. data/volume_baseline.db (Roadmap
+# #260) is rebuilt nightly from candle_cache and any rebuild-with-
+# different-lookback or builder bug-fix should propagate as a full
+# replace, not an append-merge. Adding more canonical DBs in the
+# future just means appending to this tuple.
+CANONICAL_DBS = (
+    os.path.join("data", "trades.db"),
+    os.path.join("data", "volume_baseline.db"),
+)
+
+
+def _table_row_counts(db_path: str) -> dict[str, int]:
+    """Return {table_name: row_count} for every user table in db_path."""
+    counts: dict[str, int] = {}
+    if not os.path.isfile(db_path):
+        return counts
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            for name, in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            ):
+                try:
+                    counts[name] = conn.execute(
+                        f"SELECT COUNT(*) FROM {name}"
+                    ).fetchone()[0]
+                except sqlite3.DatabaseError:
+                    counts[name] = -1
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError:
+        pass
+    return counts
+
+
+def _file_sha256(path: str) -> str:
+    """Hex SHA-256 of file contents — quick integrity proof for the diff."""
+    import hashlib
+    if not os.path.isfile(path):
+        return "<missing>"
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
+def canonical_trades_replace(dry_run: bool) -> int:
+    """
+    Replace each canonical SQLite DB on the remote side with the local
+    file, with deletions propagated. Backs up the existing remote file
+    to <file>.bak.<UTC timestamp> before overwriting. Idempotent: a
+    second consecutive run produces no diffs and no second backup.
+
+    Returns 0 on success, 1 on any preflight error.
+    """
+    print("  [#270] Canonical-trades DB replace (deletion-aware)\n")
+
+    overall_changes = 0
+    for rel in CANONICAL_DBS:
+        local_path  = os.path.join(PROJECT_ROOT, rel)
+        remote_path = os.path.join(BACKUP_ROOT, rel)
+
+        if not os.path.isfile(local_path):
+            print(f"  ! Local DB missing — skipping: {rel}")
+            continue
+
+        local_counts  = _table_row_counts(local_path)
+        remote_counts = _table_row_counts(remote_path)
+        local_hash    = _file_sha256(local_path)
+        remote_hash   = _file_sha256(remote_path)
+
+        all_tables = sorted(set(local_counts) | set(remote_counts))
+
+        diffs: list[str] = []
+        for t in all_tables:
+            l = local_counts.get(t, 0)
+            r = remote_counts.get(t, 0)
+            if l != r:
+                delta = l - r
+                arrow = "+" if delta > 0 else ""
+                diffs.append(f"      {t:<24} local={l:>6}  remote={r:>6}  delta={arrow}{delta}")
+            else:
+                diffs.append(f"      {t:<24} local={l:>6}  remote={r:>6}  (same)")
+
+        print(f"    {rel}:")
+        print(f"      sha256: local={local_hash}  remote={remote_hash}")
+        for line in diffs:
+            print(line)
+
+        if local_hash == remote_hash and remote_hash != "<missing>":
+            print(f"      -> already in sync, no replace needed.\n")
+            continue
+
+        overall_changes += 1
+        if dry_run:
+            print(f"      [DRY RUN] would back up remote and replace.\n")
+            continue
+
+        # Real replace.
+        os.makedirs(os.path.dirname(remote_path), exist_ok=True)
+        try:
+            if os.path.isfile(remote_path):
+                from datetime import datetime as _dt
+                stamp = _dt.utcnow().strftime("%Y%m%dT%H%M%SZ")
+                bak_path = f"{remote_path}.bak.{stamp}"
+                shutil.copy2(remote_path, bak_path)
+                print(f"      -> backed up remote to: {os.path.basename(bak_path)}")
+            shutil.copy2(local_path, remote_path)
+            print(f"      -> replaced remote with local.")
+        except (PermissionError, OSError) as e:
+            print(
+                f"      ! file copy failed: {e}\n"
+                f"      ! likely cause: the bot or another process is holding "
+                f"a lock on {os.path.basename(remote_path)} or "
+                f"{os.path.basename(local_path)}.\n"
+                f"      ! stop the bot (or close any DB browser holding the "
+                f"file) and re-run this command. Aborting without partial "
+                f"writes."
+            )
+            return 1
+
+        # Sanity re-check post-write.
+        post_hash = _file_sha256(remote_path)
+        if post_hash != local_hash:
+            print(f"      ! post-write hash mismatch (got {post_hash}, "
+                  f"expected {local_hash}). Investigate before pushing.")
+            return 1
+        print(f"      -> post-write sha256 verified: {post_hash}\n")
+
+    if overall_changes == 0:
+        print("  All canonical DBs already in sync. Nothing to push.\n")
+        return 0
+
+    if dry_run:
+        print(
+            "  [DRY RUN] No files written. Re-run without --dry-run to "
+            "perform the replace.\n"
+        )
+        return 0
+
+    push_msg = "sync: canonical-trades replace (#270, deletion-aware)"
+    if git_push(push_msg):
+        print("  ok Pushed canonical replace to remote.\n")
+    else:
+        print("  (no git changes detected — push skipped)\n")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description="Two-way sync data with private backup repo.")
     parser.add_argument("--dry-run", action="store_true",
@@ -534,6 +698,13 @@ def main():
     parser.add_argument("--all-remote", action="store_true",
                         help="Pull ALL remote data to local (full overwrite, "
                              "including DELETING local files not present remotely).")
+    parser.add_argument("--canonical-trades", action="store_true",
+                        help="(#270) Replace remote data/trades.db ENTIRELY "
+                             "with the local file, propagating row deletions "
+                             "from a manual repair (e.g. May 8 / May 11 ghost "
+                             "rows). Backs up the existing remote DB first to "
+                             "<file>.bak.<UTC stamp>. Combine with --dry-run "
+                             "to preview row-count and checksum diffs only.")
     args = parser.parse_args()
 
     if args.all_local and args.all_remote:
@@ -542,6 +713,10 @@ def main():
     if (args.all_local or args.all_remote) and args.prefer:
         print("  \u2717 --prefer is incompatible with --all-local / --all-remote "
               "(--all-* deletes; --prefer never deletes).")
+        sys.exit(1)
+    if args.canonical_trades and (args.all_local or args.all_remote or args.prefer):
+        print("  \u2717 --canonical-trades is a self-contained DB replace. "
+              "Do not combine with --prefer / --all-local / --all-remote.")
         sys.exit(1)
 
     if not os.path.isdir(BACKUP_ROOT):
@@ -575,6 +750,18 @@ def main():
         if not git_pull():
             sys.exit(1)
     print()
+
+    # -- Canonical-trades replace (#270) ---------------------------
+    # Append-merge can never delete a row that exists only on the
+    # destination side, so a manual data fix that REMOVED ghost rows
+    # (e.g. May 8 / May 11 reconciliation) cannot propagate via the
+    # default flow. This branch replaces the remote DB file with the
+    # local one after a checksum/row-count diff and a timestamped
+    # backup of the remote file. Targets only the canonical SQLite
+    # databases (data/trades.db). Other files use the normal flow.
+    if args.canonical_trades:
+        rc = canonical_trades_replace(args.dry_run)
+        sys.exit(rc)
 
     # -- Full one-directional sync ---------------------------------
     if args.all_local or args.all_remote:

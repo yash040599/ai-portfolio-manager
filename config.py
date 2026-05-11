@@ -1255,6 +1255,29 @@ class Config:
         15: 1.00,  # closing surge
     }
 
+    # ── Intraday volume baselines (Roadmap #260) ─────────────────
+    # When True AND `data/volume_baseline.db` exists with a row for the
+    # current `(symbol, hour-bucket)`, the scanner replaces the linear
+    # daily-volume pro-rating with a per-symbol per-hour baseline:
+    #   live_rvol = today_cumulative_volume_so_far
+    #               / (avg_daily_volume * baseline_hour_share)
+    # where `baseline_hour_share` is the historical fraction of the
+    # full-day volume that completes by the current hour boundary on
+    # that symbol (mean over the last N trading days from
+    # `data/candle_cache.db`). NSE intraday volume is U-shaped, so the
+    # current linear pro-rating over-rejects midday and under-rejects
+    # opens/closes — RVOL_FLOOR_BY_HOUR softens that but still uses
+    # the wrong denominator. The baseline replaces the denominator.
+    #
+    # Default OFF (fail-safe). Build the baseline first via
+    #   `python scripts/build_volume_baseline.py`
+    # then flip this to True. The scanner falls back to the existing
+    # linear pro-rating when the baseline DB is missing or the symbol
+    # has no row yet (e.g. a newly added universe member).
+    INTRADAY_VOLUME_BASELINE_ENABLED: bool = False
+    INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS: int = 20
+    INTRADAY_VOLUME_BASELINE_MIN_SAMPLES:   int = 10
+
     # ══════════════════════════════════════════════════════════════
     # BUDGET REGIME — DYNAMIC CONFIG BY ACCOUNT SIZE (Roadmap #165)
     # ══════════════════════════════════════════════════════════════
@@ -2311,7 +2334,143 @@ class Config:
                 f"{cls.ROLLING_PF_PAUSE_MIN_TRADES!r}"
             )
 
+        # Intraday volume baselines (#260)
+        if not isinstance(cls.INTRADAY_VOLUME_BASELINE_ENABLED, bool):
+            errors.append(
+                f"INTRADAY_VOLUME_BASELINE_ENABLED must be bool "
+                f"(got {cls.INTRADAY_VOLUME_BASELINE_ENABLED!r})"
+            )
+        _pos("INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS",
+             cls.INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS)
+        _pos("INTRADAY_VOLUME_BASELINE_MIN_SAMPLES",
+             cls.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES)
+        if cls.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES > cls.INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS:
+            errors.append(
+                f"INTRADAY_VOLUME_BASELINE_MIN_SAMPLES "
+                f"({cls.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES}) must be ≤ "
+                f"INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS "
+                f"({cls.INTRADAY_VOLUME_BASELINE_LOOKBACK_DAYS})"
+            )
+
+        # Strategy config snapshot (Roadmap #259) — version is plain str
+        if not isinstance(cls.STRATEGY_CONFIG_VERSION, str) or not cls.STRATEGY_CONFIG_VERSION:
+            errors.append(
+                f"STRATEGY_CONFIG_VERSION must be a non-empty str "
+                f"(got {cls.STRATEGY_CONFIG_VERSION!r})"
+            )
+        if not isinstance(cls.STRATEGY_CONFIG_KEYS, tuple):
+            errors.append(
+                f"STRATEGY_CONFIG_KEYS must be a tuple "
+                f"(got {type(cls.STRATEGY_CONFIG_KEYS).__name__})"
+            )
+
         return errors
+
+    # ── Strategy-config version & hash (Roadmap #259 scope) ──────
+    # Records-grade fingerprint of every strategy-relevant constant
+    # the runtime decides on. Two consumers:
+    #   1. `services/candidate_telemetry.py` stamps `config_version`
+    #      and `config_hash` on every candidate row, so later replay
+    #      knows which rule set produced the score / decision.
+    #   2. `scripts/backtest.py` (#24) records the same pair on every
+    #      synthetic trade for direct apples-to-apples comparison
+    #      with live runs.
+    #
+    # `version` is a short human-readable string that bumps whenever
+    # the underlying constants set is widened. `hash` is the SHA-256
+    # of the JSON-serialised constants and is the durable identifier
+    # — even a one-char change to any tracked constant flips it.
+    #
+    # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
+    # the hash starts tracking it. Removing one? Same, in reverse.
+    # Pure observability changes (logging only) need not be added.
+    STRATEGY_CONFIG_VERSION: str = "v1.0-2026-05-11"
+
+    STRATEGY_CONFIG_KEYS: tuple = (
+        # Sizing / budget
+        "MAX_BUDGET_INR", "MAX_POSITIONS_OVERRIDE", "MAX_POSITION_PCT",
+        "SCORE_WEIGHTED_SIZING_ENABLED", "MAX_REENTRIES_PER_STOCK",
+        # Risk / SL / target
+        "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
+        "MAX_LOSS_PER_DAY_PCT", "ATR_MULTIPLIER", "ATR_PERIOD",
+        "MAX_INTRADAY_SL_PCT", "MIN_SL_DISTANCE_PCT",
+        "RR_TARGET_RATIO", "RR_HARD_FLOOR", "RR_GIVEUP_AFTER_FAILS",
+        "TRAIL_AFTER_RISK_MULTIPLE", "TRAIL_STEP_PCT",
+        "MAX_SPREAD_PCT", "MAX_IMPACT_COST_PCT", "MIN_EXPECTED_PROFIT",
+        "VWAP_DRIFT_CHECK_ENABLED", "VWAP_DRIFT_WARN_PCT",
+        "SLIPPAGE_PCT",
+        # Timing
+        "MARKET_OPEN_HOUR", "MARKET_OPEN_MINUTE",
+        "SQUARE_OFF_HOUR", "SQUARE_OFF_MINUTE",
+        "ENTRY_DELAY_MINUTES", "ENTRY_MIN_MOVE_PCT",
+        "ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN",
+        "PRICE_POLL_SECONDS", "POSITION_REVIEW_MINUTES",
+        "TARGET_DECAY_AFTER_HOUR", "TARGET_DECAY_PCT",
+        "MIN_MINUTES_FOR_ENTRY",
+        # Scanner / score floors
+        "V2_MIN_SCORE", "V2_CANDLE_INTERVAL",
+        "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
+        "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",
+        # RVol / time normalisation
+        "RVOL_TIME_NORMALIZATION_ENABLED", "RVOL_FLOOR_BY_HOUR",
+        "INTRADAY_VOLUME_BASELINE_ENABLED",
+        # Lunch lull
+        "LUNCH_LULL_ENABLED", "LUNCH_LULL_SCORE_OVERRIDE",
+        # Choppy-morning pause
+        "CHOPPY_MORNING_PAUSE_ENABLED",
+        "CHOPPY_PAUSE_ADX_THRESHOLD", "CHOPPY_PAUSE_MINUTES",
+        # Pattern penalties
+        "PATTERN_CONTRADICTION_PENALTY_ENABLED",
+        "PATTERN_CONTRADICTION_PENALTY", "PATTERN_INDECISION_PENALTY",
+        # Tape breadth
+        "BREADTH_FILTER_ENABLED", "BREADTH_BEARISH_BUY_RATIO",
+        "BREADTH_BULLISH_SELL_RATIO", "BREADTH_PENALTY",
+        "BREADTH_MIN_CANDIDATES",
+        # Budget regime
+        "BUDGET_REGIME_ENABLED",
+        "BUDGET_TIER_SMALL", "BUDGET_TIER_NORMAL", "BUDGET_TIER_LARGE",
+        # Directional pause
+        "DIRECTIONAL_PAUSE_WR_THRESHOLD",
+        "DIRECTIONAL_PAUSE_LOOKBACK_DAYS",
+        "DIRECTIONAL_PAUSE_MIN_TRADES",
+        # Rolling PF
+        "ROLLING_PF_PAUSE_THRESHOLD",
+        "ROLLING_PF_PAUSE_NET_FLOOR",
+        "ROLLING_PF_PAUSE_LOOKBACK_DAYS",
+        "ROLLING_PF_PAUSE_MIN_TRADES",
+        # VIX
+        "VIX_SPIKE_PCT", "VIX_HIGH_THRESHOLD", "VIX_LOW_THRESHOLD",
+    )
+
+    @classmethod
+    def snapshot_hash(cls) -> tuple[str, str]:
+        """
+        Returns (version, hash_hex) for the current strategy-config
+        snapshot. `hash_hex` is SHA-256 of the JSON-serialised values
+        of every key in STRATEGY_CONFIG_KEYS.
+
+        Missing keys (config typo or refactor lag) are recorded as the
+        literal string "<MISSING>" so the hash still changes when a
+        new key is added or removed; a downstream consumer that sees
+        "<MISSING>" in the audit can investigate the drift.
+        """
+        import hashlib
+        import json
+        snapshot = {}
+        for k in cls.STRATEGY_CONFIG_KEYS:
+            try:
+                v = getattr(cls, k)
+            except AttributeError:
+                v = "<MISSING>"
+            # Make non-JSON-serialisable values stable.
+            try:
+                json.dumps(v, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                v = repr(v)
+            snapshot[k] = v
+        blob = json.dumps(snapshot, sort_keys=True, default=str).encode("utf-8")
+        digest = hashlib.sha256(blob).hexdigest()
+        return cls.STRATEGY_CONFIG_VERSION, digest[:16]
 
     @classmethod
     def calculate_charges(

@@ -1177,10 +1177,24 @@ class PortfolioManagerV2(PortfolioManager):
         initial_risk = abs(entry - initial_sl) * qty
         if initial_risk > 0:
             if pnl >= initial_risk:
+                # Surface this skip once — operator may otherwise wonder
+                # "reversal pattern fired but bot didn't exit; is the
+                # gate broken?" Trailing-stop is the right tool for
+                # ≥1R winners; the reversal gate stands down.
+                self.log.info(
+                    f"  ✓ {symbol}: reversal pattern present but P&L "
+                    f"Rs.{pnl:+,.2f} ≥ 1R risk Rs.{initial_risk:,.2f} — "
+                    f"trailing-stop owns this winner, reversal gate stands down"
+                )
                 return False
         elif pnl > 0:
             # No risk reference available — be conservative and skip
             # any in-profit position rather than risk dumping a winner.
+            self.log.info(
+                f"  ✓ {symbol}: reversal pattern present but P&L "
+                f"Rs.{pnl:+,.2f} > 0 with no initial-SL reference — "
+                f"skipping conservatively (legacy/rehydrated position)"
+            )
             return False
 
         confirming_match = sorted(pattern_set & (
@@ -1288,12 +1302,29 @@ class PortfolioManagerV2(PortfolioManager):
         if initial_risk > 0:
             winner_floor = initial_risk * self.cfg.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE
             if pnl >= winner_floor and winner_floor > 0:
+                # Surface this skip once — operator may otherwise wonder
+                # why a clearly-decayed score didn't fire the exit. The
+                # winner-floor protection is intentional (#188): ≥1R
+                # winners belong to the trailing-stop, not decay.
+                self.log.info(
+                    f"  ✓ {symbol}: score decayed entry {entry_score:+.1f} "
+                    f"→ fresh {fresh_score:+.1f} but P&L Rs.{pnl:+,.2f} ≥ "
+                    f"{self.cfg.SIGNAL_DECAY_WINNER_SKIP_R_MULTIPLE:.1f}R "
+                    f"floor Rs.{winner_floor:,.2f} — trailing-stop owns this "
+                    f"winner, decay gate stands down"
+                )
                 return False
         else:
             # Fallback: no usable initial_sl → conservative `pnl > 0` skip
             # so we never dump a profitable legacy / rehydrated position
             # without a known risk reference.
             if pnl > 0:
+                self.log.info(
+                    f"  ✓ {symbol}: score decayed entry {entry_score:+.1f} "
+                    f"→ fresh {fresh_score:+.1f} but P&L Rs.{pnl:+,.2f} > 0 "
+                    f"with no initial-SL reference — skipping conservatively "
+                    f"(legacy/rehydrated position)"
+                )
                 return False
 
         decay_pct = (1 - abs(fresh_score) / abs(entry_score)) * 100

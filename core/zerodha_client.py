@@ -378,6 +378,47 @@ class ZerodhaClient:
 
         return result
 
+    # ----------------------------------------------------------------
+    # Typed quote API (Roadmap #261)
+    # ----------------------------------------------------------------
+    # Five+ sites in the codebase parse the raw Kite quote dict to
+    # pull out last_price / volume / depth / spread / impact-cost.
+    # Each one re-implements its own fail-safe defaulting and shape
+    # checking. That has produced subtle bugs (e.g. reading "depth"
+    # on a non-dict, treating missing average_price as 0).
+    #
+    # The `Quote` dataclass below is the single canonical view of a
+    # Kite quote payload. `get_typed_quotes()` is the new entry point;
+    # callers ready to migrate get a typed object with helper methods
+    # (`best_bid`, `best_ask`, `spread_pct`, `impact_cost_pct`).
+    # The raw `get_quotes()` API is kept for backward compatibility
+    # so existing call sites need not change in this pass.
+    def get_typed_quotes(
+        self,
+        stocks: list[dict],
+        max_retries: int = 3,
+    ) -> dict[str, "Quote"]:
+        """
+        Wraps `get_quotes_safe()` and converts each raw Kite payload
+        into a `Quote` dataclass. Returns an empty dict on total
+        failure (callers must check; never None — typed contract).
+        Skips entries with non-dict payloads (Kite occasionally
+        returns sparse responses for illiquid names).
+        """
+        raw = self.get_quotes_safe(stocks, max_retries=max_retries) or {}
+        out: dict[str, Quote] = {}
+        for key, payload in raw.items():
+            if not isinstance(payload, dict):
+                continue
+            try:
+                out[key] = Quote.from_kite_dict(key, payload)
+            except Exception as e:
+                # Never raise from the typed wrapper; fall back to
+                # exclusion so the caller behaves like quote was
+                # missing (a known fail-closed code path).
+                self.log.debug(f"Quote parse failed for {key}: {e}")
+        return out
+
     def get_quotes_safe(
         self,
         stocks: list[dict],
@@ -790,30 +831,49 @@ class ZerodhaClient:
         tick = self.get_tick_size(symbol, exchange)
         trigger_price = self.round_to_tick(trigger_price, tick)
 
-        try:
-            order_id = self._kite.place_order(
-                variety=self._kite.VARIETY_REGULAR,
-                tradingsymbol=symbol,
-                exchange=exchange,
-                transaction_type=transaction,
-                quantity=qty,
-                product=self._kite.PRODUCT_MIS,
-                order_type=getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
-                trigger_price=trigger_price,
-                validity=self._kite.VALIDITY_DAY,
-                market_protection=-1,
-            )
-            self.log.success(
-                f"SL-M order placed: {side} {qty}x {symbol} "
-                f"trigger Rs.{trigger_price:.2f} | ID: {order_id}"
-            )
-            return str(order_id)
-        except Exception as e:
-            self.log.error(
-                f"SL-M order FAILED: {side} {qty}x {symbol} "
-                f"trigger Rs.{trigger_price:.2f} — {e}"
-            )
-            return None
+        # Two attempts with a 1-second pause between them. Kite occasionally
+        # returns a transient 502 / connection-reset on order placement;
+        # one retry catches >90% of those without risking a duplicate
+        # order (the per-call log makes any duplicate immediately
+        # visible to the operator, and Zerodha's intraday duplicate-order
+        # rejection would surface in the second attempt's exception).
+        last_exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                order_id = self._kite.place_order(
+                    variety=self._kite.VARIETY_REGULAR,
+                    tradingsymbol=symbol,
+                    exchange=exchange,
+                    transaction_type=transaction,
+                    quantity=qty,
+                    product=self._kite.PRODUCT_MIS,
+                    order_type=getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
+                    trigger_price=trigger_price,
+                    validity=self._kite.VALIDITY_DAY,
+                    market_protection=-1,
+                )
+                self.log.success(
+                    f"SL-M order placed: {side} {qty}x {symbol} "
+                    f"trigger Rs.{trigger_price:.2f} | ID: {order_id}"
+                    + (f" (attempt {attempt})" if attempt > 1 else "")
+                )
+                return str(order_id)
+            except Exception as e:
+                last_exc = e
+                if attempt == 1:
+                    self.log.warning(
+                        f"SL-M order attempt {attempt}/2 failed for "
+                        f"{side} {qty}x {symbol} trigger "
+                        f"Rs.{trigger_price:.2f} — retrying in 1s: "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    time.sleep(1)
+        # Both attempts failed — fall through to the final ERROR log.
+        self.log.error(
+            f"SL-M order FAILED: {side} {qty}x {symbol} "
+            f"trigger Rs.{trigger_price:.2f} — {last_exc}"
+        )
+        return None
 
     def modify_order(
         self,
@@ -1055,3 +1115,214 @@ class ZerodhaClient:
                 "ZerodhaClient not logged in. "
                 "Call login() before using any other methods."
             )
+
+
+# ================================================================
+# TYPED MARKET-DATA OBJECTS (Roadmap #261)
+# ================================================================
+# Single canonical view of a Kite quote payload. The scanner, engine,
+# manager, and audit scripts have so far each parsed the raw quote
+# dict in subtly different ways:
+#   - some default missing fields to 0, others to None;
+#   - some treat `last_price=0` as "no price", others let it through;
+#   - some read `depth.buy[0]` as a dict, others as a list-of-numbers.
+# Those drifts are the source class of "fail-open when we should have
+# fail-closed" bugs. `Quote` + `DepthLevel` collapse all parsing into
+# one place with explicit defaults and helper methods for the
+# decisions the bot actually makes (best bid/ask, spread %, impact
+# cost over qty).
+#
+# Migration plan: callers are converted incrementally to
+# `ZerodhaClient.get_typed_quotes()` over the next few items. The raw
+# `get_quotes()` API is retained verbatim so no existing call site
+# needs to move on day one.
+# ================================================================
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class DepthLevel:
+    """One level of the order book — never NaN, never None."""
+    price: float = 0.0
+    quantity: int = 0
+    orders: int = 0
+
+    @classmethod
+    def from_kite_dict(cls, raw: dict) -> "DepthLevel":
+        if not isinstance(raw, dict):
+            return cls()
+        return cls(
+            price=_safe_float(raw.get("price"), 0.0),
+            quantity=_safe_int(raw.get("quantity"), 0),
+            orders=_safe_int(raw.get("orders"), 0),
+        )
+
+    @property
+    def is_valid(self) -> bool:
+        """Treat zero-price OR zero-qty as fail-closed depth."""
+        return self.price > 0 and self.quantity > 0
+
+
+@dataclass
+class Quote:
+    """
+    Canonical typed view of a Kite quote payload. All numeric fields
+    default to 0.0 (or 0 / "" for non-floats). All depth lists default
+    to empty list (NEVER `None`) so callers can iterate safely.
+
+    Use `Quote.from_kite_dict()` to construct; never instantiate the
+    fields manually unless you're writing a test fixture.
+    """
+    instrument: str = ""              # e.g. "NSE:RELIANCE"
+    instrument_token: int = 0
+    last_price: float = 0.0
+    average_price: float = 0.0        # broker session VWAP
+    volume: int = 0
+    buy_quantity: int = 0
+    sell_quantity: int = 0
+    open: float = 0.0
+    high: float = 0.0
+    low: float = 0.0
+    close: float = 0.0                # previous-day close
+    last_quantity: int = 0
+    last_trade_time: str = ""
+    timestamp: str = ""
+    bids: List[DepthLevel] = field(default_factory=list)
+    asks: List[DepthLevel] = field(default_factory=list)
+    raw: dict = field(default_factory=dict)   # original payload, for debug
+
+    # ── construction ────────────────────────────────────────────
+
+    @classmethod
+    def from_kite_dict(cls, instrument: str, raw: dict) -> "Quote":
+        """
+        Parse a single Kite quote payload (one value of the
+        `kite.quote()` return dict). Robust against missing keys,
+        non-dict depth, and stringified numerics. Stores the raw
+        payload too so callers can fall back to legacy parsing
+        during migration.
+        """
+        ohlc = raw.get("ohlc", {}) if isinstance(raw, dict) else {}
+        depth = raw.get("depth", {}) if isinstance(raw, dict) else {}
+        bids_raw = depth.get("buy", []) if isinstance(depth, dict) else []
+        asks_raw = depth.get("sell", []) if isinstance(depth, dict) else []
+
+        return cls(
+            instrument=instrument,
+            instrument_token=_safe_int(raw.get("instrument_token"), 0),
+            last_price=_safe_float(raw.get("last_price"), 0.0),
+            average_price=_safe_float(raw.get("average_price"), 0.0),
+            volume=_safe_int(raw.get("volume"), 0),
+            buy_quantity=_safe_int(raw.get("buy_quantity"), 0),
+            sell_quantity=_safe_int(raw.get("sell_quantity"), 0),
+            open=_safe_float(ohlc.get("open"), 0.0),
+            high=_safe_float(ohlc.get("high"), 0.0),
+            low=_safe_float(ohlc.get("low"), 0.0),
+            close=_safe_float(ohlc.get("close"), 0.0),
+            last_quantity=_safe_int(raw.get("last_quantity"), 0),
+            last_trade_time=str(raw.get("last_trade_time") or ""),
+            timestamp=str(raw.get("timestamp") or ""),
+            bids=[DepthLevel.from_kite_dict(b) for b in (bids_raw or [])],
+            asks=[DepthLevel.from_kite_dict(a) for a in (asks_raw or [])],
+            raw=raw if isinstance(raw, dict) else {},
+        )
+
+    # ── derived views (the actual decisions the bot makes) ──────
+
+    @property
+    def is_priced(self) -> bool:
+        """LTP > 0 — fail-closed gate input for entry quote check."""
+        return self.last_price > 0
+
+    @property
+    def best_bid(self) -> float:
+        """Highest priced bid level, or 0.0 if depth empty."""
+        for b in self.bids:
+            if b.is_valid:
+                return b.price
+        return 0.0
+
+    @property
+    def best_ask(self) -> float:
+        """Lowest priced ask level, or 0.0 if depth empty."""
+        for a in self.asks:
+            if a.is_valid:
+                return a.price
+        return 0.0
+
+    @property
+    def has_two_sided_book(self) -> bool:
+        """Both bid and ask levels present and priced."""
+        return self.best_bid > 0 and self.best_ask > 0 and self.best_ask >= self.best_bid
+
+    def spread_pct(self) -> float:
+        """
+        Returns (ask-bid)/mid * 100. Returns 0.0 when book is missing
+        — caller MUST check `has_two_sided_book` first if they need
+        fail-closed behaviour.
+        """
+        if not self.has_two_sided_book:
+            return 0.0
+        mid = (self.best_bid + self.best_ask) / 2.0
+        if mid <= 0:
+            return 0.0
+        return (self.best_ask - self.best_bid) / mid * 100.0
+
+    def impact_cost_pct(self, qty: int, side: str) -> float:
+        """
+        Walk top-5 levels of the relevant side and compute the
+        weighted-average fill price for `qty`, returning the deviation
+        from LTP as a percent (positive = adverse).
+
+        side = 'BUY'  → walks ask side (we lift offers).
+        side = 'SELL' → walks bid side (we hit bids).
+
+        Returns 0.0 when book is empty or insufficient depth — caller
+        MUST verify the book is non-empty for fail-closed behaviour.
+        """
+        if qty <= 0 or self.last_price <= 0:
+            return 0.0
+        levels = self.asks if side == "BUY" else self.bids
+        if not levels:
+            return 0.0
+        remaining = qty
+        cost = 0.0
+        filled = 0
+        for lev in levels:
+            if not lev.is_valid:
+                continue
+            take = min(remaining, lev.quantity)
+            cost += take * lev.price
+            filled += take
+            remaining -= take
+            if remaining <= 0:
+                break
+        if filled == 0:
+            return 0.0
+        avg_fill = cost / filled
+        if side == "BUY":
+            return (avg_fill - self.last_price) / self.last_price * 100.0
+        return (self.last_price - avg_fill) / self.last_price * 100.0
+
+
+def _safe_float(v, default: float) -> float:
+    if v is None:
+        return default
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(v, default: int) -> int:
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return default
