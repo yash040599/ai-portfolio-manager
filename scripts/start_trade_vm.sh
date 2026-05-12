@@ -136,11 +136,16 @@ if (( $# == 0 )); then
 fi
 MAIN_ARGS="$*"
 
-# Inner command runs INSIDE the tmux session. `tee -a` mirrors output to
-# a daily log so the user can also `tail -F` from another shell. We use
-# `set -o pipefail` and read PIPESTATUS so the bot's exit code is
-# preserved even with the tee pipe in front.
-read -r -d '' INNER_CMD <<EOF || true
+# Write the runner sequence to a temp script file. We do NOT inline it
+# into `tmux new-session "bash -c \"...\""` because INNER_CMD itself
+# contains double quotes (echo "==> [...]") and the nested-quote
+# escaping is fragile across bash/tmux versions. A temp script file
+# is bulletproof — variable expansion happens once at heredoc time,
+# all quoting is local, and we delete the file when bash finishes
+# loading it (the in-memory copy keeps running).
+RUNNER_SCRIPT="$PROJECT_ROOT/.trader_runner_$$.sh"
+cat > "$RUNNER_SCRIPT" <<RUNNER_EOF
+#!/usr/bin/env bash
 set -u
 cd '$PROJECT_ROOT'
 source $VENV_DIR/bin/activate
@@ -164,13 +169,15 @@ python main.py --mode trade $MAIN_ARGS 2>&1 | tee -a '$DAILY_LOG'
 EC=\${PIPESTATUS[0]}
 echo
 echo "==> [\$(date +%H:%M:%S)] bot exited with code \$EC"
-echo "Press Enter to close this pane."
+echo "Press Enter to close this pane (the tmux session will end)."
 read
-EOF
+RUNNER_EOF
+chmod +x "$RUNNER_SCRIPT"
 
 # Launch detached. The bot now lives inside tmux, parented by the tmux
 # server, NOT by this SSH session. SSH can drop without killing it.
-tmux new-session -d -s "$SESSION_NAME" "bash -c \"$INNER_CMD\""
+# bash loads the runner into memory before we delete the temp file.
+tmux new-session -d -s "$SESSION_NAME" "bash '$RUNNER_SCRIPT'; rm -f '$RUNNER_SCRIPT'"
 
 cat <<EOF
 ✓ Bot started in tmux session '$SESSION_NAME'.
