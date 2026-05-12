@@ -53,11 +53,69 @@ import sqlite3
 import subprocess
 import sys
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BACKUP_ROOT  = os.path.join(os.path.dirname(PROJECT_ROOT), "ai-portfolio-manager-data")
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; we'll just rely on real env vars.
 
-GITHUB_REPO_URL     = "https://github.com/yash040599/ai-portfolio-manager-data.git"
-GITHUB_REPO_URL_SSH = "git@github.com:yash040599/ai-portfolio-manager-data.git"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# ── Backup repo URL — read from .env (BACKUP_REPO_URL_HTTPS / _SSH) ──
+# This script syncs the repository's runtime data (data/, reports/,
+# logs/, copilot/) to a SEPARATE *private* GitHub repo so it survives
+# reinstalls and is shareable across machines (e.g. dev laptop ↔ VM).
+#
+# Set ONE or BOTH of these in .env (HTTPS for laptops with `gh auth`,
+# SSH for headless VMs with an SSH key on the GitHub account):
+#
+#     BACKUP_REPO_URL_HTTPS=https://github.com/<your-username>/<your-data-repo>.git
+#     BACKUP_REPO_URL_SSH=git@github.com:<your-username>/<your-data-repo>.git
+#
+# The local folder name is derived from the repo name (the bit after
+# the last "/" minus the .git suffix), placed alongside this project's
+# root so backup is always at "../<repo-name>/" relative to the code.
+GITHUB_REPO_URL     = os.getenv("BACKUP_REPO_URL_HTTPS", "").strip()
+GITHUB_REPO_URL_SSH = os.getenv("BACKUP_REPO_URL_SSH",   "").strip()
+
+
+def _backup_folder_name() -> str:
+    """Derive ``<repo-name>`` from whichever URL the user has configured.
+
+    Falls back to a generic name when no URL is configured so error
+    messages stay readable. Never raises.
+    """
+    for url in (GITHUB_REPO_URL, GITHUB_REPO_URL_SSH):
+        if not url:
+            continue
+        # Handle both ``https://host/owner/repo.git`` and
+        # ``git@host:owner/repo.git`` shapes uniformly.
+        tail = url.rsplit("/", 1)[-1]
+        if tail.endswith(".git"):
+            tail = tail[:-4]
+        if tail:
+            return tail
+    return "backup-repo"
+
+
+BACKUP_ROOT = os.path.join(os.path.dirname(PROJECT_ROOT), _backup_folder_name())
+
+
+def _require_backup_url(want_ssh: bool) -> str:
+    """Return the configured URL for the requested transport, or exit
+    with a clear message telling the user which env var to set."""
+    url = GITHUB_REPO_URL_SSH if want_ssh else GITHUB_REPO_URL
+    var = "BACKUP_REPO_URL_SSH" if want_ssh else "BACKUP_REPO_URL_HTTPS"
+    if not url:
+        print(
+            f"\n  ✗ {var} is not set in your .env file.\n"
+            f"  Add it (and/or the other transport variant), e.g.:\n\n"
+            f"      BACKUP_REPO_URL_HTTPS=https://github.com/<your-username>/<your-data-repo>.git\n"
+            f"      BACKUP_REPO_URL_SSH=git@github.com:<your-username>/<your-data-repo>.git\n\n"
+            f"  See README.md → 'Data sync' for the full bring-up guide.\n"
+        )
+        sys.exit(1)
+    return url
 
 # Folders/files to sync (relative to PROJECT_ROOT / BACKUP_ROOT)
 SYNC_ITEMS = [
@@ -720,7 +778,7 @@ def main():
         sys.exit(1)
 
     if not os.path.isdir(BACKUP_ROOT):
-        clone_url = GITHUB_REPO_URL_SSH if args.ssh else GITHUB_REPO_URL
+        clone_url = _require_backup_url(want_ssh=args.ssh)
         print(f"\n  Backup repo not found at: {BACKUP_ROOT}")
         print(f"  Cloning from {clone_url} ...")
         parent_dir = os.path.dirname(BACKUP_ROOT)
