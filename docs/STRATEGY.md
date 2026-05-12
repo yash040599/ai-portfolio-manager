@@ -1,8 +1,8 @@
-# V2 Trading Strategy — Complete Reference
+# Trading Strategy — Complete Reference
 <!-- ══════════════════════════════════════════════════════════════
   MAINTENANCE NOTE — Keep this document in sync with code changes.
   
-  This is the SINGLE source of truth for the V2 intraday trading
+  This is the SINGLE source of truth for the intraday trading
   strategy covering BOTH modes: NoAI (default) and Claude AI (--ai).
   
   Anyone reviewing this document should be able to:
@@ -95,7 +95,7 @@
   suffix when scan time is before the first 15-min candle close
   (09:30 IST). Reduces operator-debug overhead during the recovery
   window. New module-level `_is_pre_open_score_time()` helper in
-  `services/stock_scanner_v2.py`. Single operator-facing surface
+  `services/stock_scanner.py`. Single operator-facing surface
   shipped (Pending block proposed three; live code-walk found only
   one was meaningful — dashboard `entry_score` is post-pre-open by
   definition; report_writer has no candidate section). Pre-trade
@@ -1503,15 +1503,15 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | **DEFAULT_TARGET_PCT 1.5→1.2%** | 26/63 trades hit SQUARE_OFF (target never reached). 1.2% more achievable. | `config.py` |
 | **R:R floor (time-based + adaptive)** | Morning 1.3:1, afternoon 1.2:1, late 1.0:1. Relaxes to 1.1 after 3 zero-entry scans. Gives up after 5. Mid-day retry with floor - 0.1. | `config.py`, `order_engine.py`, `manager.py` |
 | **Volume confirmation at entry** | Live mode: skip if RVol < 0.7× average. | `order_engine.py` |
-| **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. | `technical_indicators.py`, `stock_scanner_v2.py` |
-| **Sector momentum filter** | ≥3 stocks in sector agree → ±0.5 boost. | `stock_scanner_v2.py` |
+| **StochRSI(14,14) indicator** | Stochastic of RSI with %K/%D crossover signals. | `technical_indicators.py`, `stock_scanner.py` |
+| **Sector momentum filter** | ≥3 stocks in sector agree → ±0.5 boost. | `stock_scanner.py` |
 | **Extended move penalty fix** | Only penalises chasing, not contrarian setups. | `technical_indicators.py` |
 | **Morning/Evening Star gap check** | Star candle position validated (lower 40% / upper 60%). | `candle_patterns.py` |
 | **Three Soldiers/Crows body fix** | Per Nison's definition: opens within prior body. | `candle_patterns.py` |
-| **Direction filter fallback fix** | Extras in allowed directions kept as fallbacks. | `stock_scanner_v2.py` |
+| **Direction filter fallback fix** | Extras in allowed directions kept as fallbacks. | `stock_scanner.py` |
 | **R:R mid-day retry guard** | Step-down only on mid-day rescans, not morning. | `manager.py` |
 | **SL/target helper extraction** | `_compute_atr_sl_target()` + `_default_sl_target()` — DRY. | `order_engine.py` |
-| **Config-derived AI prompts** | All R:R floors, compression %, SL range, trail params from config. | `stock_scanner.py`, `stock_scanner_v2.py` |
+| **Config-derived AI prompts** | All R:R floors, compression %, SL range, trail params from config. | `stock_scanner.py`, `stock_scanner.py` |
 | **LOSER_EXIT rename** | From EOD_EXIT. Only exits losers at 2:45 PM, not all positions. | `config.py`, `order_engine.py`, `manager*.py` |
 
 ### AI Mode Only
@@ -1519,10 +1519,10 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 | Change | Detail | File |
 |--------|--------|------|
 | **POSITION_REVIEW_MINUTES 20→30** | 20 min cut winners short. 30 min gives trades room. Same knob now also gates NoAI stagnant-exit cadence (renamed from CLAUDE_REVIEW_MINUTES on 2026-04-20). | `config.py` |
-| **Claude scan prompt: rank/veto role** | Explicit: rank and filter, don't generate. | `stock_scanner_v2.py` |
-| **StochRSI in Claude prompt** | Interpretation guide + 14-item confluence checklist. | `stock_scanner_v2.py` |
-| **15-min data in review prompt** | Reviews see both 5-min granular + 15-min composite score. | `stock_scanner_v2.py` |
-| **Prompt values config-derived** | All hardcoded numbers in prompts replaced with `self.cfg.X`. | `stock_scanner.py`, `stock_scanner_v2.py` |
+| **Claude scan prompt: rank/veto role** | Explicit: rank and filter, don't generate. | `stock_scanner.py` |
+| **StochRSI in Claude prompt** | Interpretation guide + 14-item confluence checklist. | `stock_scanner.py` |
+| **15-min data in review prompt** | Reviews see both 5-min granular + 15-min composite score. | `stock_scanner.py` |
+| **Prompt values config-derived** | All hardcoded numbers in prompts replaced with `self.cfg.X`. | `stock_scanner.py`, `stock_scanner.py` |
 | **V1 partial profit note fixed** | Said "50% at 1×" but code does "33% at 1.5×". | `stock_scanner.py` |
 | **getattr wrappers removed** | All `getattr(self.cfg, ...)` → `self.cfg.X` for guaranteed dataclass fields. | `order_engine.py` |
 
@@ -1534,21 +1534,7 @@ Based on deep code review of 63 trades over 9 days (Rs.-585 total P&L, 48% win r
 
 V1 is a **Claude-first** strategy: Claude receives raw price tables (no pre-filter) and picks trades entirely on its own judgment. Risk management is rule-based (same OrderEngine as V2).
 
-```
-python main.py --mode trade --v1
-```
-
-V1 shares the same `OrderEngine` as V2/NoAI, so it passively inherits entry checks, trailing stop, circuit breaker, whipsaw guard, and manual trade sync. However, V1 is not tested against new OrderEngine changes.
-
-**Key differences from V2:**
-- No technical pre-filter — Claude sees raw prices only
-- Entire universe sent to Claude (vs top 15 pre-filtered in V2)
-- No candle re-scan auto-protect
-- No VIX/expiry adjustments
-- Fixed poll interval (no dynamic near-SL acceleration)
-- Higher Claude costs (Claude does all selection + reviews)
-
-For full V1 details, see [STRATEGY_V1.md](STRATEGY_V1.md).
+V1 was REMOVED 2026-05-12. The single trading mode is the candle-aware scanner described above (use `--noai` for pure rules — default — or `--ai` for the Claude-augmented variant).
 
 ---
 

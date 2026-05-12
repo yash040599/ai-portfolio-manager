@@ -5,11 +5,6 @@ technical indicators + candlestick patterns for stock selection, **Zerodha
 Kite** for data and execution, and optionally **Claude AI** for selection
 and reviews via `--ai`.
 
-> **V1 is DEPRECATED and FROZEN (April 2026).** Do not modify
-> `portfolio/manager.py` (V1 base class), `services/stock_scanner.py`, or
-> `docs/STRATEGY_V1.md`. Shared components (`order_engine.py`,
-> `market_data.py`, …) may evolve for V2/NoAI — V1 inherits passively.
-> All new work targets V2 or V2 NoAI.
 
 <!-- ══════════════════════════════════════════════════════════════
 README MAINTENANCE CONTRACT (read before editing this file).
@@ -382,13 +377,11 @@ ai-portfolio-manager/
 │   └── logger.py                 # coloured terminal + rotating file log
 ├── portfolio/
 │   ├── analyser.py               # Phase 1
-│   ├── manager.py                # Phase 2 V1 (FROZEN)
-│   └── manager_v2.py             # Phase 2 V2 (active)
+│   └── manager.py                 # Intraday trading orchestrator
 ├── services/
-│   ├── analysis_queue.py         # Per-stock Claude analysis with retry
-│   ├── market_data.py            # Live prices + history enrichment
-│   ├── stock_scanner.py          # V1 scanner
-│   ├── stock_scanner_v2.py       # V2 candle pre-filter + scorer
+│   ├── analysis_queue.py          # Per-stock Claude analysis with retry (--ai mode)
+│   ├── market_data.py             # Live prices + history enrichment
+│   ├── stock_scanner.py           # Candle pre-filter + scorer (NoAI + AI modes)
 │   ├── candle_patterns.py        # 14 pure-math pattern detectors
 │   ├── candle_cache.py           # SQLite cache for candles
 │   ├── technical_indicators.py   # Indicators + composite scoring
