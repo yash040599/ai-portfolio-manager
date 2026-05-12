@@ -107,12 +107,13 @@ def _require_backup_url(want_ssh: bool) -> str:
     url = GITHUB_REPO_URL_SSH if want_ssh else GITHUB_REPO_URL
     var = "BACKUP_REPO_URL_SSH" if want_ssh else "BACKUP_REPO_URL_HTTPS"
     if not url:
+        # Plain ASCII so the message renders on Windows cp1252 too.
         print(
-            f"\n  ✗ {var} is not set in your .env file.\n"
+            f"\n  ERROR: {var} is not set in your .env file.\n"
             f"  Add it (and/or the other transport variant), e.g.:\n\n"
             f"      BACKUP_REPO_URL_HTTPS=https://github.com/<your-username>/<your-data-repo>.git\n"
             f"      BACKUP_REPO_URL_SSH=git@github.com:<your-username>/<your-data-repo>.git\n\n"
-            f"  See README.md → 'Data sync' for the full bring-up guide.\n"
+            f"  See README.md -> 'Data sync' for the full bring-up guide.\n"
         )
         sys.exit(1)
     return url
