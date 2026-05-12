@@ -159,7 +159,6 @@ their content.
 | Doc | What it covers |
 |-----|----------------|
 | [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
-| [docs/STRATEGY_V1.md](docs/STRATEGY_V1.md) | V1 architecture (deprecated, frozen) |
 | [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
 | [docs/STRATEGY_EVOLUTION.md](docs/STRATEGY_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [docs/STRATEGY_STATISTICS.md](docs/STRATEGY_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
@@ -360,7 +359,6 @@ via the `keyring` package instead of `.env` — a future enhancement.
 | `python main.py --mode trade --test` | See pipeline only (no Claude, no trades, no cost) |
 | `python main.py --mode trade --max 30000` | Cap today's capital at Rs.30,000 |
 | `python main.py --mode trade --nifty 150` | Override scan universe |
-| `python main.py --mode trade --v1` | V1 legacy (deprecated) |
 | `python main.py --mode login` | Test Zerodha login only |
 | `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) |
 

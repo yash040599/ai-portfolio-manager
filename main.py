@@ -5,17 +5,17 @@
 #
 # Usage:
 #   python main.py --mode analyze                 ← portfolio analysis (read-only)
-#   python main.py --mode trade                   ← V2 NoAI intraday trading (default)
-#   python main.py --mode trade --ai              ← V2 with Claude AI selection
+#   python main.py --mode trade                   ← NoAI intraday trading (default)
 #   python main.py --mode trade --noai            ← same as default (explicit NoAI)
-#   python main.py --mode trade --test            ← test NoAI strategy pipeline (no cost)
-#   python main.py --mode trade --ai --test       ← test V2+Claude strategy pipeline
+#   python main.py --mode trade --ai              ← with Claude AI selection
+#   python main.py --mode trade --test            ← show NoAI strategy analysis (no cost)
+#   python main.py --mode trade --ai --test       ← show AI strategy analysis (no cost)
 #   python main.py --mode trade --dryrun          ← full NoAI run, no real orders placed
-#   python main.py --mode trade --ai --dryrun     ← full V2+Claude run, no real orders
-#   python main.py --mode trade --v1              ← V1 legacy trading (retired)
-#   python main.py --mode trade --v1 --dryrun     ← V1 dry run
-#   python main.py --mode trade --nifty 150       ← scan NIFTY100 + next 50 mid caps
-#   python main.py --mode trade --nifty 100       ← scan Nifty 100 (override config)
+#   python main.py --mode trade --ai --dryrun     ← full AI run, no real orders
+#   python main.py --mode trade --max 30000       ← limit today's budget to Rs.30,000
+#   python main.py --mode trade --nifty 50|100|150|200  ← override scan universe
+#   python main.py --mode login                   ← test Zerodha login only
+#   python main.py --mode dashboard               ← launch the web dashboard
 #
 # --test   shows the strategy analysis pipeline without Claude or trades.
 #          Useful for seeing how the bot analyses stocks, what scores
@@ -24,7 +24,7 @@
 # --dryrun runs the FULL trading strategy (position monitoring, etc.)
 #          but doesn't place real orders on Zerodha.
 #
-# Default mode is NoAI (pure technical signals, zero Claude calls).
+# Default mode is NoAI (pure technical signals, zero Claude API calls).
 # Use --ai to enable Claude for stock selection and position reviews.
 #
 # To change plans or budget:
@@ -59,8 +59,6 @@ def main():
             pass
 
     # Parse CLI flags
-    use_v1     = "--v1"     in sys.argv
-    use_v2     = "--v2"     in sys.argv
     use_test   = "--test"   in sys.argv
     use_noai   = "--noai"   in sys.argv
     use_ai     = "--ai"     in sys.argv
@@ -100,8 +98,10 @@ def main():
             sys.exit(1)
         nifty_universe = mapping[raw]
 
-    if use_v1 and use_v2:
-        print("\n  Error: --v1 and --v2 are mutually exclusive.")
+    if "--v1" in sys.argv or "--v2" in sys.argv:
+        flag = "--v1" if "--v1" in sys.argv else "--v2"
+        print(f"\n  Note: {flag} is no longer recognised — there is only one")
+        print("  trading strategy now. Use --noai (default) or --ai instead.")
         sys.exit(1)
 
     if use_ai and use_noai:
@@ -111,22 +111,20 @@ def main():
     if mode not in VALID_MODES:
         print("Usage: python main.py --mode [analyze|trade|login|dashboard] [flags]")
         print()
-        print("  analyze                    — read-only portfolio analysis")
+        print("  analyze                       — read-only portfolio analysis")
         print()
-        print("  trade                      — V2 NoAI intraday trading (default)")
-        print("  trade --dryrun             — full strategy, no real orders")
-        print("  trade --test               — show NoAI strategy analysis (no cost)")
-        print("  trade --ai                 — V2 with Claude AI selection")
-        print("  trade --ai --dryrun        — V2+Claude dry run")
-        print("  trade --ai --test          — show V2+Claude strategy analysis (no cost)")
-        print("  trade --noai               — same as default (explicit NoAI)")
-        print("  trade --max 30000          — limit today's budget to Rs.30,000")
-        print("  trade --nifty 50|100|150|200  — override scan universe (each tier adds 50 more)")
+        print("  trade                         — NoAI intraday trading (default)")
+        print("  trade --dryrun                — full strategy, no real orders")
+        print("  trade --test                  — show NoAI strategy analysis (no cost)")
+        print("  trade --ai                    — with Claude AI selection")
+        print("  trade --ai --dryrun           — AI run, no real orders")
+        print("  trade --ai --test             — show AI strategy analysis (no cost)")
+        print("  trade --noai                  — same as default (explicit NoAI)")
+        print("  trade --max 30000             — limit today's budget to Rs.30,000")
+        print("  trade --nifty 50|100|150|200  — override scan universe")
         print()
-        print("  trade --v1                 — V1 legacy trading (retired)")
-        print("  trade --v1 --dryrun        — V1 dry run")
-        print()
-        print("  login                      — test Zerodha login only")
+        print("  login                         — test Zerodha login only")
+        print("  dashboard                     — launch the web dashboard")
         sys.exit(1)
 
     if mode == "analyze":
@@ -148,41 +146,19 @@ def main():
             Config.SCAN_UNIVERSE = nifty_universe
             print(f"  Scan universe set to {nifty_universe} (via --nifty)\n")
 
-        if use_v1:
-            # V1 DEPRECATED — frozen as of 2026-04-08, no new features.
-            # Still functional but not actively maintained or tested.
-            if use_noai or use_ai or use_test:
-                print("\n  Error: --noai, --ai, and --test are V2 features.")
-                print("  V1 has no pre-filter strategy to test or run without AI.")
-                print()
-                print("  Usage:")
-                print("    python main.py --mode trade --v1           ← V1 live trading")
-                print("    python main.py --mode trade --v1 --dryrun  ← V1 dry run")
-                print()
-                print("  For V2 features, drop the --v1 flag:")
-                print("    python main.py --mode trade --test         ← V2 strategy test")
-                print("    python main.py --mode trade --ai           ← V2 with Claude")
-                sys.exit(1)
-            runner = PortfolioManager(Config)
-            runner.run()
-        else:
-            # V2 is the default (--v2 is optional, same behavior)
-            # Default mode is NoAI (pure technical signals).
-            # Use --ai to enable Claude for selection & reviews.
-            from portfolio.manager_v2 import PortfolioManagerV2
-            runner = PortfolioManagerV2(Config)
-            if use_ai:
-                # Claude-enabled mode
-                if use_test:
-                    runner.run_test(noai=False)
-                else:
-                    runner.run()
+        # Single trading entry point. Default mode is NoAI (pure rules,
+        # zero Claude API calls). Use --ai for Claude selection + reviews.
+        runner = PortfolioManager(Config)
+        if use_ai:
+            if use_test:
+                runner.run_test(noai=False)
             else:
-                # NoAI mode (default, also triggered by explicit --noai)
-                if use_test:
-                    runner.run_test(noai=True)
-                else:
-                    runner.run_noai()
+                runner.run()
+        else:
+            if use_test:
+                runner.run_test(noai=True)
+            else:
+                runner.run_noai()
 
     elif mode == "login":
         missing = Config.validate()

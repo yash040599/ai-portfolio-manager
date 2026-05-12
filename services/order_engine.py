@@ -29,7 +29,7 @@ import time
 import collections
 
 from config              import Config, now_ist
-from services.stock_scanner_v2 import SECTOR_MAP, MAX_PER_SECTOR
+from services.stock_scanner import SECTOR_MAP, MAX_PER_SECTOR
 from services             import candle_patterns
 from core.logger         import Logger
 from core.zerodha_client import ZerodhaClient
