@@ -341,7 +341,7 @@ class Config:
     # ── Broker VWAP Drift Sanity Check (Roadmap #268) ────────────
     # Pure observability gate. Compares our locally-computed session
     # VWAP (from cached 1-min candles in `data/candle_cache.db` via
-    # `services/technical_indicators.py::vwap()`) against Kite's
+    # `shared/technical_indicators.py::vwap()`) against Kite's
     # exchange-truth `average_price` field returned in every quote
     # payload, and emits a structured WARN log when the two disagree
     # by more than VWAP_DRIFT_WARN_PCT. Three production gates
@@ -352,7 +352,7 @@ class Config:
     #
     # NO entry behaviour change: nothing is blocked or admitted on
     # the basis of drift, no score is adjusted. The only signal is a
-    # WARN line per drifting candidate during the V2 pre-filter pass.
+    # WARN line per drifting candidate during the Pre-filter pass.
     # If WARN lines start appearing on healthy market days, that's
     # the cue to fix the candle-cache pipeline (separate Pending item
     # filed at that point).
@@ -427,7 +427,7 @@ class Config:
     # EXPIRY_POSITION_REDUCTION: MAX_POSITIONS reduced by this many —
     #   skipped when budget < EXPIRY_POSITION_REDUCTION_MIN_BUDGET so
     #   small accounts keep full slot count for rotation capacity.
-    # EXPIRY_SCORE_BUMP: added to V2_MIN_SCORE (demand stronger signals).
+    # EXPIRY_SCORE_BUMP: added to MIN_SCORE (demand stronger signals).
     # EXPIRY_STAGNANT_EXTRA_MINUTES: extends stagnant timer on expiry.
     # EXPIRY_ENTRY_DELAY_MINUTES: observation window is "market_open + N"
     #   — at 9:15 start with 30 min → entry at 9:45. At 9:30 start →
@@ -547,8 +547,8 @@ class Config:
     # at every trading day where the bot's git SHA changed vs the
     # previous day, with a hover tooltip showing the commit subject.
     # Visual proof of when a strategy change inflected the equity
-    # curve. Roadmap D13 + V2 #246. Read by `Dashboard/render_html.py`
-    # via `Dashboard/strategy_versions.py`. Set False to hide overlay
+    # curve. Roadmap D13 + V2 #246. Read by `modes/dashboard/render_html.py`
+    # via `modes/dashboard/strategy_versions.py`. Set False to hide overlay
     # without breaking anything else (data still recorded either way).
     DASHBOARD_STRATEGY_VERSION_OVERLAY: bool = True
 
@@ -570,18 +570,18 @@ class Config:
     # ══════════════════════════════════════════════════════════════
     # V2 — CANDLE STRATEGY SETTINGS (default strategy)
     # ══════════════════════════════════════════════════════════════
-    # V2 pre-filters stocks using candlestick patterns and technical
+    # Pre-filters stocks using candlestick patterns and technical
     # indicators (EMA, RSI, VWAP, SuperTrend) before sending the
     # top candidates to Claude. This gives Claude richer technical
     # context and higher signal-to-noise ratio.
     #
     # These settings apply when running: python main.py --mode trade (default)
 
-    # V2_CANDLE_RESCAN_MINUTES: how often to re-run candle analysis
+    # CANDLE_RESCAN_MINUTES: how often to re-run candle analysis
     # on the universe during monitoring (separate from Claude review).
     # This is FREE (no Claude cost) — just Zerodha historical API calls.
     # Lower = detect new setups faster, but more API calls.
-    V2_CANDLE_RESCAN_MINUTES: int = 15
+    CANDLE_RESCAN_MINUTES: int = 15
 
     # ── SuperTrend Parameters ─────────────────────────────────────
     # SuperTrend is the primary trend-following indicator.
@@ -629,17 +629,17 @@ class Config:
     # accounts (where charges grow with slot value) raise the bar.
     MIN_EXPECTED_PROFIT: float = 135.0
 
-    # V2_MIN_SCORE: minimum absolute technical score for a stock to
+    # MIN_SCORE: minimum absolute technical score for a stock to
     # pass the pre-filter. Lower = more candidates for Claude to
     # choose from (more Claude context). Higher = fewer but stronger signals.
     # Range: 1-5 recommended. Default 2 = mild signal required.
-    V2_MIN_SCORE: float = 2.0
+    MIN_SCORE: float = 2.0
 
-    # V2_CANDLE_INTERVAL: primary candle interval for pattern detection.
+    # CANDLE_INTERVAL: primary candle interval for pattern detection.
     # Options: "5minute", "10minute", "15minute", "30minute"
     # 15minute = good balance of signal clarity vs responsiveness.
     # 5minute = more signals but noisier patterns.
-    V2_CANDLE_INTERVAL: str = "15minute"
+    CANDLE_INTERVAL: str = "15minute"
 
     # ── Scan Price Filter ─────────────────────────────────────────
     # Skip stocks outside this price range during scanning.
@@ -734,7 +734,7 @@ class Config:
     CANDLE_PROTECT_MIN_CUSHION_PCT: float = 0.3
 
     # ── Signal-Reversal Exit (#174) ───────────────────────────────
-    # When the periodic candle re-scan (V2_CANDLE_RESCAN_MINUTES) sees
+    # When the periodic candle re-scan (CANDLE_RESCAN_MINUTES) sees
     # a held position's combined_score flip strongly OPPOSITE to the
     # trade direction AND a confirming reversal candle pattern is
     # present, exit immediately rather than waiting for price to hit SL.
@@ -806,7 +806,7 @@ class Config:
     # Only fires when wait >= FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES
     # (default 5 — skip on near-zero waits where no new candle has closed).
     # Requires the active scanner to expose `_analyse_stock(symbol, exchange)`
-    # — V2 scanner does, V1 (frozen) does not, so V1 path is unaffected.
+    # — Scanner does, V1 (frozen) does not, so V1 path is unaffected.
     FRESH_ENTRY_RECHECK_ENABLED:        bool  = True
     FRESH_ENTRY_DECAY_FRACTION:         float = 0.6
     FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES: int = 5
@@ -926,10 +926,10 @@ class Config:
     # net-NEGATIVE every day (Avoided Rs.1,649 vs Missed Rs.2,656
     # = net -Rs.1,007 over 3 days at 1-slot hypothetical sizing).
     # Initial fix lowered the override 6.0 → 5.5, but that
-    # equalled V2_MIN_SCORE (5.5) and silently turned the gate
+    # equalled MIN_SCORE (5.5) and silently turned the gate
     # into a no-op (anything passing the entry score gate also
     # passed lunch). Final landing: 5.7 — a meaningful step above
-    # V2_MIN_SCORE so the gate still bites on truly weak lunch-
+    # MIN_SCORE so the gate still bites on truly weak lunch-
     # window signals (5.5–5.7 range) while admitting the
     # borderline-but-profitable 5.7+ band the audit said we were
     # missing. Conservative tweak — not disabling the gate.
@@ -985,10 +985,10 @@ class Config:
     # pre-filter set scores SELL, sectors weak across the board. BUYs
     # entered on such days underperform their score-implied edge by
     # ~30 % (anecdotal Apr 2026 backtests). #212 counts BUY vs SELL
-    # candidates AFTER the V2_MIN_SCORE filter and applies a small
+    # candidates AFTER the MIN_SCORE filter and applies a small
     # score penalty to the minority side. The penalty operates on
     # magnitude (sign preserved) so weak counter-tape candidates fall
-    # below `V2_MIN_SCORE` naturally instead of being hard-blocked.
+    # below `MIN_SCORE` naturally instead of being hard-blocked.
     # BREADTH_BEARISH_BUY_RATIO: when BUY count ≤ this fraction of
     #     {BUY+SELL}, tape is bearish — penalize remaining BUYs.
     # BREADTH_BULLISH_SELL_RATIO: mirror for bullish tape (penalize
@@ -1270,7 +1270,7 @@ class Config:
     # the wrong denominator. The baseline replaces the denominator.
     #
     # Default OFF (fail-safe). Build the baseline first via
-    #   `python scripts/build_volume_baseline.py`
+    #   `python scripts/trade/build_volume_baseline.py`
     # then flip this to True. The scanner falls back to the existing
     # linear pro-rating when the baseline DB is missing or the symbol
     # has no row yet (e.g. a newly added universe member).
@@ -1333,7 +1333,7 @@ class Config:
     #   #237 (analyst pass, 2026-04-27).
     BUDGET_MIN_PROFIT_DELTA = {"TINY": 0.0, "SMALL": 0.0, "NORMAL": 65.0, "LARGE": 265.0}
 
-    # MIN_SCORE bump (base V2_MIN_SCORE = 2.0):
+    # MIN_SCORE bump (base MIN_SCORE = 2.0):
     #   tiny = +1.0, small = +0.5, normal = 0, large = 0.
     BUDGET_MIN_SCORE_DELTA = {"TINY": 1.0, "SMALL": 0.5, "NORMAL": 0.0, "LARGE": 0.0}
 
@@ -1472,7 +1472,7 @@ class Config:
     # After losses, raise the minimum score for new NoAI trades.
     # LOSS_SCORE_BUMP_PCT: day loss threshold (as % of budget)
     #   that triggers a higher MIN_SCORE.
-    # LOSS_SCORE_BUMP_AMOUNT: extra score points added to V2_MIN_SCORE.
+    # LOSS_SCORE_BUMP_AMOUNT: extra score points added to MIN_SCORE.
     LOSS_SCORE_BUMP_PCT: float = 1.5
     LOSS_SCORE_BUMP_AMOUNT: float = 1.5
 
@@ -1494,7 +1494,7 @@ class Config:
     # VIX_SPIKE_PCT: if VIX jumps this much intraday (vs day open),
     #   pause new entries and protect existing positions.
     # VIX_HIGH_POSITION_REDUCTION: reduce MAX_POSITIONS by this in high VIX.
-    # VIX_HIGH_SCORE_BUMP: raise V2_MIN_SCORE by this in high VIX.
+    # VIX_HIGH_SCORE_BUMP: raise MIN_SCORE by this in high VIX.
     VIX_HIGH_THRESHOLD: float = 20.0
     VIX_LOW_THRESHOLD:  float = 12.0
     VIX_SPIKE_PCT:      float = 10.0
@@ -2369,10 +2369,10 @@ class Config:
     # ── Strategy-config version & hash (Roadmap #259 scope) ──────
     # Records-grade fingerprint of every strategy-relevant constant
     # the runtime decides on. Two consumers:
-    #   1. `services/candidate_telemetry.py` stamps `config_version`
+    #   1. `modes/trade/candidate_telemetry.py` stamps `config_version`
     #      and `config_hash` on every candidate row, so later replay
     #      knows which rule set produced the score / decision.
-    #   2. `scripts/backtest.py` (#24) records the same pair on every
+    #   2. `scripts/trade/backtest.py` (#24) records the same pair on every
     #      synthetic trade for direct apples-to-apples comparison
     #      with live runs.
     #
@@ -2408,7 +2408,7 @@ class Config:
         "TARGET_DECAY_AFTER_HOUR", "TARGET_DECAY_PCT",
         "MIN_MINUTES_FOR_ENTRY",
         # Scanner / score floors
-        "V2_MIN_SCORE", "V2_CANDLE_INTERVAL",
+        "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",
         # RVol / time normalisation

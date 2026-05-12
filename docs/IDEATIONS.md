@@ -1,7 +1,7 @@
 # Ideations -- Future Money Engines
 
 > **Status:** Planning / research only -- no code changes implied.
-> **Context:** V2 intraday improvements stay in [STRATEGY_ROADMAP.md](STRATEGY_ROADMAP.md).
+> **Context:** V2 intraday improvements stay in [TRADE_ROADMAP.md](TRADE_ROADMAP.md).
 > This file is for broader future product directions that can make money beyond
 > the current intraday bot.
 
@@ -48,10 +48,10 @@ and **separate accounting**.
 | Asset | Reuse |
 |---|---|
 | `core/zerodha_client.py` | Login, funds, holdings, quotes, historical candles, order placement. Needs `product=CNC` support before live delivery/ETF execution. |
-| `services/technical_indicators.py` | Trend, RSI, ADX, VWAP, and other indicators can be reused on daily/60-min candles. |
-| `services/candle_cache.py` | Historical candle store can support swing/ETF scans and paper backtests. |
-| `services/report_writer.py` | Pattern for writing JSON/text reports can be copied into `reports/swing/` and `reports/rotation/`. |
-| `Dashboard/` | Existing read-only analytics layer can grow separate panels for swing and rotation P&L. |
+| `shared/technical_indicators.py` | Trend, RSI, ADX, VWAP, and other indicators can be reused on daily/60-min candles. |
+| `shared/candle_cache.py` | Historical candle store can support swing/ETF scans and paper backtests. |
+| `modes/trade/report_writer.py` | Pattern for writing JSON/text reports can be copied into `reports/swing/` and `reports/rotation/`. |
+| `modes/dashboard/` | Existing read-only analytics layer can grow separate panels for swing and rotation P&L. |
 | Tax ledger/scripts | Delivery and ETF trades become capital gains, not speculative intraday income; they need separate tax handling from MIS trades. |
 
 ---

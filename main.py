@@ -35,8 +35,8 @@ import sys
 from config              import Config
 from core.logger         import Logger
 from core.zerodha_client import ZerodhaClient
-from portfolio.analyser  import PortfolioAnalyser
-from portfolio.manager   import PortfolioManager
+from modes.analyze.analyser  import PortfolioAnalyser
+from modes.trade.manager   import PortfolioManager
 
 VALID_MODES = {"analyze", "trade", "login", "dashboard"}
 
@@ -173,7 +173,7 @@ def main():
     elif mode == "dashboard":
         # Read-only profitability dashboard. All flags after `--mode
         # dashboard` are forwarded to Dashboard.cli (its own argparse).
-        from Dashboard.cli import main as dashboard_main
+        from modes.dashboard.cli import main as dashboard_main
         idx = sys.argv.index("--mode")
         forwarded = [a for a in sys.argv[idx + 2:] if a]
         sys.exit(dashboard_main(forwarded))

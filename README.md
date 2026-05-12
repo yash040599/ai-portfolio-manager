@@ -30,7 +30,7 @@ Structure (do NOT reorder, do NOT merge):
 Style rules:
   • Prefer BULLETS over paragraphs. Max 3 sentences per bullet.
   • Use TABLES for: scripts, CLI flags, env vars, doc links, costs.
-  • NEVER duplicate STRATEGY_V2.md content — link, don't copy.
+  • NEVER duplicate TRADE_STRATEGY.md content — link, don't copy.
   • Each section starts with a 1-line "what is this" sentence.
   • Use third-level headings (###) for sub-sections, not bold paragraphs.
   • All file/directory references use markdown links to actual paths.
@@ -44,7 +44,7 @@ When updating:
   • Run `python main.py --help` after any CLI flag change to verify the
     flag table matches reality.
 
-When in doubt: terser is better. Long-form belongs in docs/STRATEGY_V2.md.
+When in doubt: terser is better. Long-form belongs in docs/TRADE_STRATEGY.md.
 ══════════════════════════════════════════════════════════════ -->
 
 ---
@@ -77,7 +77,7 @@ Loop, in plain English:
    the best candidates.
 2. **Execute** — LIMIT entry at LTP + 1 tick (MARKET fallback), ATR-based
    SL/target with min-distance floor, **44-check pre-trade pipeline** (see
-   [STRATEGY_V2.md](docs/STRATEGY_V2.md#risk-management--entry-pre-checks)
+   [TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md#risk-management--entry-pre-checks)
    for the full table), risk-budget position sizing.
 3. **Monitor** — adaptive polling, auto-trail SL, partial profits,
    two-tier stagnant exit, three score-driven exits (signal-reversal,
@@ -108,9 +108,9 @@ granularity, source toggle), so the CLI is just an entry point.
 - Source toggle: **all trades** (verified + provisional, the default) or **verified only** (T+1 frozen, tax-grade). Provisional rows are clearly badged so they can never be mistaken for final numbers.
 - `% of budget` is computed against the **per-day budget actually deployed** (read from each day's `reports/trading/.../trading_data_DD.json` → `config.budget`), not a static config value — matters because `--max` varies day to day.
 - Pending-verification banner lists trading days awaiting Zerodha sheet import.
-- Lives in its own [Dashboard/](Dashboard/) folder, isolated from the trading bot. Touches no strategy/order code; reads only.
-- **Theory & statistics pages** ([`/theory/<slug>`](Dashboard/theory_page.py)) — four reference docs rendered live from `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a theoretical-vs-live snapshot card on top), V2 Strategy reference, Strategy Evolution log, and the India Tax Guide.
-- **Tax page** ([`/tax`](Dashboard/tax_page.py)) — FY-summary + projection. Enter your other FY income; the page computes which slab you fall into under Budget-2025 new-regime rules, applies Section 87A rebate + 4% cess, and shows the headline "tax attributable to intraday this FY" (= total-tax-with-intraday minus total-tax-without). Includes click-to-copy ITR-3 Schedule BP fields, a documents checklist, and a cross-link to the Tax Guide for the regulatory reference. Backed by versioned slabs in [`Dashboard/tax/slabs.py`](Dashboard/tax/slabs.py) — adding a future FY is a one-line config.
+- Lives in its own [modes/dashboard/](modes/dashboard/) folder, isolated from the trading bot. Touches no strategy/order code; reads only.
+- **Theory & statistics pages** ([`/theory/<slug>`](modes/dashboard/theory_page.py)) — four reference docs rendered live from `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a theoretical-vs-live snapshot card on top), Trade Strategy reference, Strategy Evolution log, and the India Tax Guide.
+- **Tax page** ([`/tax`](modes/dashboard/tax_page.py)) — FY-summary + projection. Enter your other FY income; the page computes which slab you fall into under Budget-2025 new-regime rules, applies Section 87A rebate + 4% cess, and shows the headline "tax attributable to intraday this FY" (= total-tax-with-intraday minus total-tax-without). Includes click-to-copy ITR-3 Schedule BP fields, a documents checklist, and a cross-link to the Tax Guide for the regulatory reference. Backed by versioned slabs in [`modes/dashboard/tax/slabs.py`](modes/dashboard/tax/slabs.py) — adding a future FY is a one-line config.
 
 ```
 python main.py --mode dashboard                    # interactive (server + browser)
@@ -119,7 +119,7 @@ python main.py --mode dashboard --text             # legacy plain-text
 python main.py --mode dashboard --port 8765        # fixed port
 ```
 
-Full plan: [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D23 pending).
+Full plan: [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D23 pending).
 
 ### Historical candle cache
 
@@ -153,13 +153,13 @@ their content.
 
 | Doc | What it covers |
 |-----|----------------|
-| [docs/STRATEGY_V2.md](docs/STRATEGY_V2.md) | Complete V2 strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
-| [docs/STRATEGY_ROADMAP.md](docs/STRATEGY_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
-| [docs/STRATEGY_EVOLUTION.md](docs/STRATEGY_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
-| [docs/STRATEGY_STATISTICS.md](docs/STRATEGY_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
-| [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 + D13 + D16 + D17 shipped)** — Profitability dashboard roadmap; lives in its own `Dashboard/` folder |
+| [docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md) | Complete Trade strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
+| [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
+| [docs/TRADE_EVOLUTION.md](docs/TRADE_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
+| [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 + D13 + D16 + D17 shipped)** — Profitability dashboard roadmap; lives in its own `modes/dashboard/` folder |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
-| [docs/TAX_GUIDE.md](docs/TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
+| [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 
 ---
 
@@ -355,7 +355,7 @@ via the `keyring` package instead of `.env` — a future enhancement.
 | `python main.py --mode trade --max 30000` | Cap today's capital at Rs.30,000 |
 | `python main.py --mode trade --nifty 150` | Override scan universe |
 | `python main.py --mode login` | Test Zerodha login only |
-| `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [Dashboard/docs/DASHBOARD_ROADMAP.md](Dashboard/docs/DASHBOARD_ROADMAP.md) |
+| `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) |
 
 **Ctrl+C** triggers graceful shutdown — squares off all positions first.
 Phase 2 can be started any time (handles weekends / NSE holidays / late
@@ -367,42 +367,49 @@ starts / token expiry automatically).
 
 ```
 ai-portfolio-manager/
-├── main.py                       # entry point
-├── config.py                     # all settings
+├── main.py                          # entry point
+├── config.py                        # all settings
 ├── requirements.txt
-├── .env                          # API keys (gitignored)
-├── core/
-│   ├── claude_client.py          # Claude wrapper + error classification
-│   ├── zerodha_client.py         # Kite wrapper
-│   └── logger.py                 # coloured terminal + rotating file log
-├── portfolio/
-│   ├── analyser.py               # Phase 1
-│   └── manager.py                 # Intraday trading orchestrator
-├── services/
-│   ├── analysis_queue.py          # Per-stock Claude analysis with retry (--ai mode)
-│   ├── market_data.py             # Live prices + history enrichment
-│   ├── stock_scanner.py           # Candle pre-filter + scorer (NoAI + AI modes)
-│   ├── candle_patterns.py        # 14 pure-math pattern detectors
-│   ├── candle_cache.py           # SQLite cache for candles
-│   ├── technical_indicators.py   # Indicators + composite scoring
-│   ├── order_engine.py           # 44-check entry pipeline + monitoring
-│   ├── report_writer.py          # txt + json reports
-│   └── performance_tracker.py    # SQLite trades + analyses
-├── scripts/                      # see Sections 9 + 10 for tables
-├── docs/                         # see Section 3 doc map
-├── Dashboard/                    # ✅ Phase 3 (D1 + D1.1 shipped) — read-only analytics layer
-│   ├── cli.py                    # argparse entry; `python main.py --mode dashboard`
-│   ├── server.py                 # stdlib http.server SPA backend (/, /api/data)
-│   ├── data_layer.py             # DB reads, sheet-verified filtering, FY window
-│   ├── metrics.py                # headline P&L, bucketed/cumulative series
-│   ├── budget_history.py         # per-day budget from trading_data_*.json
-│   ├── verdict.py                # capital-ladder traffic-light engine
-│   ├── render_html.py            # Chart.js SPA shell + JSON payload builder
-│   ├── render_text.py            # plain-text mode (--text)
-│   └── docs/DASHBOARD_ROADMAP.md # full plan (D1 + D1.1 done; D2–D23 pending)
-├── data/                         # gitignored (trades.db, tokens, etc.)
-├── reports/                      # generated; gitignored
-└── logs/                         # rotating logs; gitignored
+├── .env                             # API keys (gitignored)
+├── core/                            # shared infrastructure
+│   ├── claude_client.py             # Claude wrapper + error classification
+│   ├── zerodha_client.py            # Kite wrapper
+│   └── logger.py                    # coloured terminal + rotating file log
+├── shared/                          # cross-mode services
+│   ├── candle_cache.py              # SQLite cache for candles
+│   ├── candle_patterns.py           # 14 pure-math pattern detectors
+│   ├── market_data.py               # Live prices + history enrichment
+│   ├── technical_indicators.py      # Indicators + composite scoring
+│   └── tax_db.py                    # tax-ledger DB helpers
+├── modes/                           # one folder per CLI mode
+│   ├── analyze/
+│   │   └── analyser.py              # `--mode analyze` (read-only portfolio review)
+│   ├── trade/                       # `--mode trade` (default; --noai or --ai)
+│   │   ├── manager.py               # day orchestrator (run / run_noai / run_test)
+│   │   ├── stock_scanner.py         # candle + indicator scanner
+│   │   ├── order_engine.py          # 44-check entry pipeline + monitoring
+│   │   ├── performance_tracker.py   # SQLite trades + analyses
+│   │   ├── report_writer.py         # txt + json reports
+│   │   ├── analysis_queue.py        # per-stock Claude analysis (--ai)
+│   │   ├── candidate_telemetry.py   # `intraday_candidates` writer
+│   │   └── volume_baseline.py       # per-symbol intraday RVol baselines
+│   └── dashboard/                   # `--mode dashboard` (read-only analytics)
+│       ├── cli.py                   # argparse entry
+│       ├── server.py                # stdlib HTTP server SPA backend
+│       ├── data_layer.py            # DB reads, sheet-verified filtering, FY window
+│       ├── metrics.py               # headline P&L, cumulative series
+│       ├── budget_history.py        # per-day budget from trading_data_*.json
+│       ├── verdict.py               # capital-ladder traffic-light engine
+│       ├── render_html.py           # Chart.js SPA shell + JSON payload builder
+│       ├── render_text.py           # plain-text mode (--text)
+│       └── docs/DASHBOARD_ROADMAP.md # plan (D1 + D1.1 done; D2-D23 pending)
+├── scripts/
+│   ├── trade/                       # trade-mode CLIs (see Section 9)
+│   └── shared/                      # cross-mode CLIs (see Section 10)
+├── docs/                            # see Section 3 doc map
+├── data/                            # gitignored (trades.db, tokens, etc.)
+├── reports/                         # generated; gitignored
+└── logs/                            # rotating logs; gitignored
 ```
 
 ---
@@ -445,7 +452,7 @@ KITE_PASSWORD=your_kite_web_password
 # KITE_TOTP_SECRET=JBSWY3DPEHPK...
 EOF
 chmod 600 .env                      # restrict to your VM user
-python scripts/backup_data.py --ssh   # pull data from your private backup repo
+python scripts/shared/backup_data.py --ssh   # pull data from your private backup repo
 python main.py --mode login           # picks ASSISTED if KITE_USER_ID+PASSWORD set,
                                        # else falls back to manual mode (option 'm')
 ```
@@ -460,8 +467,8 @@ backup repo (`--all-remote`, auto-confirmed), and starts
 ```bash
 ssh azureuser@<vm-ip>
 tmux new -s bot                              # detach with Ctrl+B, D
-./ai-portfolio-manager/scripts/start_trade_vm.sh
-# overrides: ./ai-portfolio-manager/scripts/start_trade_vm.sh --ai --max 30000
+./ai-portfolio-manager/scripts/trade/start_trade_vm.sh
+# overrides: ./ai-portfolio-manager/scripts/trade/start_trade_vm.sh --ai --max 30000
 ```
 
 Step-by-step (if you want to see each phase):
@@ -480,7 +487,7 @@ the tmux session is gone; start fresh with `tmux new -s bot`.
 After the trading day:
 
 ```bash
-python scripts/backup_data.py --ssh
+python scripts/shared/backup_data.py --ssh
 ```
 
 > **Tokens are IP-specific.** Delete `data/access_token.json` when
@@ -492,7 +499,7 @@ python scripts/backup_data.py --ssh
 
 ### Report layout
 
-- Phase 1 → `reports/portfolio/<year>/<month>/portfolio_report_DD.txt` + `.json`.
+- Phase 1 → `reports/modes/trade/<year>/<month>/portfolio_report_DD.txt` + `.json`.
 - Phase 2 → `reports/trading/<year>/<month>/trading_report_DD.txt` + `.json`.
 
 Multiple Phase-2 sessions on the same day merge into one combined report
@@ -515,19 +522,19 @@ gitignored except `candle_cache.db` (public market data is committed).
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/view_trades.py` | All intraday trades with P&L summary |
-| `scripts/view_performance.py` | Daily P&L, win rate, exit stats, indicator correlation |
-| `scripts/view_analyses.py` | Phase 1 analyses with action status |
-| `scripts/generate_sheet.py` | TSV spreadsheet from a portfolio report (1 Claude call) |
-| `scripts/view_candle_cache.py` | Inspect candle cache contents |
-| `scripts/verify_trades.py` | EOD trade verification vs Zerodha API |
-| `scripts/rejection_audit.py --append-report` | Verdict on every skipped entry |
-| `scripts/exit_coverage_check.py` | Truth-table guard — fails if any thesis-broken in-loss `(entry, fresh, pattern)` cell is uncovered by both `_signal_reversal_exit` and `_signal_decay_exit`. Run as part of the smoke triple after any exit-pipeline change to catch cross-gate dead zones (the 2026-04-28 sign-flip class) before they ship. |
-| `scripts/strategy_stability_check.py [--lookback N] [--window-days N]` | Reads `git log` and reports (a) currently-open 10-trading-day no-tune windows opened by recent strategy commits, (b) any tuning commit that landed inside another commit's window without an exempt token. Informational only — never blocks a commit or push. Roadmap #245. **Bug-fix commits that touch tracked strategy files MUST include `bugfix-during-stability-window` in the subject** so the script doesn't spuriously open a fresh window; `#NNNR` removal commits use `removal-trigger-fired`. See `copilot/review-cycle.md` Wrap-up table for the full classification rules. |
-| `scripts/view_candidates.py [--date YYYY-MM-DD] [--since YYYY-MM-DD] [--symbol STK] [--side BUY/SELL] [--status STATUS] [--summary] [--hash]` | Read-only viewer for the `intraday_candidates` telemetry table (Roadmap #259). Filters by date / symbol / side / status (`SCORED`, `ENTERED`, `REJECTED`); `--summary` totals; `--hash` lists distinct config hashes seen in the window. |
-| `scripts/build_volume_baseline.py [--lookback N] [--universe UNIV] [--symbol STK] [--dry-run]` | Rebuilds `data/volume_baseline.db` from the trailing N trading days of 15-min candles in `data/candle_cache.db` (Roadmap #260). Computes per-symbol, per-hour mean cumulative-volume share. After build, set `Config.INTRADAY_VOLUME_BASELINE_ENABLED = True` to switch the scanner's RVol denominator from linear pro-rating to baseline-aware. |
-| `scripts/backtest.py --from YYYY-MM-DD --to YYYY-MM-DD [--symbol STK] [--min-score N] [--max-trades-per-day N]` | Offline replay harness (Roadmap #24). Walks 15-min cached candles, applies a simplified directional score (EMA-cross + RSI + 1h momentum), and simulates synthetic trades using ATR-derived SL / target geometry and `Config.SQUARE_OFF_*`. Output: per-trade JSON in `reports/backtest/` plus a stdout summary (WR / PF / expectancy / max-DD), each row stamped with `Config.snapshot_hash()` for replay-vs-live comparison. **Do not read absolute P&L as a forecast** — see the script docstring "Scoring fidelity" note. |
-| `scripts/promotion_check.py [--window N] [--json]` | Codified PASS / FAIL gate for capital scale-ups. Reads the last N (default 20) trading sessions from `data/trades.db` and tests profit factor, expectancy, day-WR, trade-WR and max-drawdown against fixed thresholds. Exit codes: `0` = PASS, `1` = FAIL, `2` = INSUFFICIENT_DATA. Run BEFORE any major risk-knob relax or capital scale; the script is the single source of truth on whether the live edge is positive enough to justify the change. |
+| `scripts/trade/view_trades.py` | All intraday trades with P&L summary |
+| `scripts/trade/view_performance.py` | Daily P&L, win rate, exit stats, indicator correlation |
+| `scripts/shared/view_analyses.py` | Phase 1 analyses with action status |
+| `scripts/shared/generate_sheet.py` | TSV spreadsheet from a portfolio report (1 Claude call) |
+| `scripts/shared/view_candle_cache.py` | Inspect candle cache contents |
+| `scripts/trade/verify_trades.py` | EOD trade verification vs Zerodha API |
+| `scripts/trade/rejection_audit.py --append-report` | Verdict on every skipped entry |
+| `scripts/trade/exit_coverage_check.py` | Truth-table guard — fails if any thesis-broken in-loss `(entry, fresh, pattern)` cell is uncovered by both `_signal_reversal_exit` and `_signal_decay_exit`. Run as part of the smoke triple after any exit-pipeline change to catch cross-gate dead zones (the 2026-04-28 sign-flip class) before they ship. |
+| `scripts/trade/strategy_stability_check.py [--lookback N] [--window-days N]` | Reads `git log` and reports (a) currently-open 10-trading-day no-tune windows opened by recent strategy commits, (b) any tuning commit that landed inside another commit's window without an exempt token. Informational only — never blocks a commit or push. Roadmap #245. **Bug-fix commits that touch tracked strategy files MUST include `bugfix-during-stability-window` in the subject** so the script doesn't spuriously open a fresh window; `#NNNR` removal commits use `removal-trigger-fired`. See `copilot/review-cycle.md` Wrap-up table for the full classification rules. |
+| `scripts/trade/view_candidates.py [--date YYYY-MM-DD] [--since YYYY-MM-DD] [--symbol STK] [--side BUY/SELL] [--status STATUS] [--summary] [--hash]` | Read-only viewer for the `intraday_candidates` telemetry table (Roadmap #259). Filters by date / symbol / side / status (`SCORED`, `ENTERED`, `REJECTED`); `--summary` totals; `--hash` lists distinct config hashes seen in the window. |
+| `scripts/trade/build_volume_baseline.py [--lookback N] [--universe UNIV] [--symbol STK] [--dry-run]` | Rebuilds `data/volume_baseline.db` from the trailing N trading days of 15-min candles in `data/candle_cache.db` (Roadmap #260). Computes per-symbol, per-hour mean cumulative-volume share. After build, set `Config.INTRADAY_VOLUME_BASELINE_ENABLED = True` to switch the scanner's RVol denominator from linear pro-rating to baseline-aware. |
+| `scripts/trade/backtest.py --from YYYY-MM-DD --to YYYY-MM-DD [--symbol STK] [--min-score N] [--max-trades-per-day N]` | Offline replay harness (Roadmap #24). Walks 15-min cached candles, applies a simplified directional score (EMA-cross + RSI + 1h momentum), and simulates synthetic trades using ATR-derived SL / target geometry and `Config.SQUARE_OFF_*`. Output: per-trade JSON in `reports/backtest/` plus a stdout summary (WR / PF / expectancy / max-DD), each row stamped with `Config.snapshot_hash()` for replay-vs-live comparison. **Do not read absolute P&L as a forecast** — see the script docstring "Scoring fidelity" note. |
+| `scripts/trade/promotion_check.py [--window N] [--json]` | Codified PASS / FAIL gate for capital scale-ups. Reads the last N (default 20) trading sessions from `data/trades.db` and tests profit factor, expectancy, day-WR, trade-WR and max-drawdown against fixed thresholds. Exit codes: `0` = PASS, `1` = FAIL, `2` = INSUFFICIENT_DATA. Run BEFORE any major risk-knob relax or capital scale; the script is the single source of truth on whether the live edge is positive enough to justify the change. |
 
 All scripts support `--help`.
 
@@ -542,26 +549,26 @@ change.
 **Synced as of 2026-05-11 (everything in these locations):**
 - `data/trades.db` — trades, intraday_tax_ledger, capital_gains_ledger, **`intraday_candidates`** (Roadmap #259, full SCORED → ENTERED/REJECTED → OUTCOME chain stamped with `Config.snapshot_hash()`)
 - `data/intraday_tax.db`, `data/tax.db` — tax DBs
-- **`data/volume_baseline.db`** (Roadmap #260) — per-(symbol, hour) cumulative volume share, built by `scripts/build_volume_baseline.py`
+- **`data/volume_baseline.db`** (Roadmap #260) — per-(symbol, hour) cumulative volume share, built by `scripts/trade/build_volume_baseline.py`
 - `data/zerodha_authoritative_*.json` — quarterly Zerodha truth snapshots
 - `data/candle_cache.db` — git-tracked alongside the code repo (already identical across machines, NOT in the data backup)
-- `reports/dashboard/`, `reports/portfolio/`, `reports/trading/`, **`reports/backtest/`** (Roadmap #24, per-trade JSON stamped with `Config.snapshot_hash()` so two machines with the same config produce comparable runs)
+- `reports/dashboard/`, `reports/modes/trade/`, `reports/trading/`, **`reports/backtest/`** (Roadmap #24, per-trade JSON stamped with `Config.snapshot_hash()` so two machines with the same config produce comparable runs)
 - `logs/portfolio.log*`
 
 **Never synced (operator secrets / local-only):** `data/access_token.json`, `data/access_token.json.bak`, `data/ZerodhaTaxPL/`, `__pycache__/`.
 
 ```bash
-python scripts/backup_data.py            # two-way append-merge + push (HTTPS)
-python scripts/backup_data.py --ssh      # SSH (Linux VMs)
-python scripts/backup_data.py --dry-run  # preview, no writes
+python scripts/shared/backup_data.py            # two-way append-merge + push (HTTPS)
+python scripts/shared/backup_data.py --ssh      # SSH (Linux VMs)
+python scripts/shared/backup_data.py --dry-run  # preview, no writes
 
 # Manual-fix flow (you edited a row/report on this machine — make it the truth)
-python scripts/backup_data.py --prefer local    # local wins, edits propagate via UPSERT
-python scripts/backup_data.py --prefer remote   # remote wins (rare — adopt VM's version)
+python scripts/shared/backup_data.py --prefer local    # local wins, edits propagate via UPSERT
+python scripts/shared/backup_data.py --prefer remote   # remote wins (rare — adopt VM's version)
 
 # Nuclear reset (also DELETES files not on the chosen side; prompts y/n)
-python scripts/backup_data.py --all-local       # full overwrite of remote
-python scripts/backup_data.py --all-remote      # full overwrite of local
+python scripts/shared/backup_data.py --all-local       # full overwrite of remote
+python scripts/shared/backup_data.py --all-remote      # full overwrite of local
 ```
 
 | Scenario | Action |
@@ -577,20 +584,20 @@ python scripts/backup_data.py --all-remote      # full overwrite of local
 **Two normal flows**
 
 1. **EOD VM → coding machine** (no flag needed):
-   - VM: `python scripts/backup_data.py --ssh` after market close.
-   - Dev machine: `python scripts/backup_data.py` next morning.
+   - VM: `python scripts/shared/backup_data.py --ssh` after market close.
+   - Dev machine: `python scripts/shared/backup_data.py` next morning.
    - DBs append-merge cleanly because both sides only added new rows.
 
 2. **Manual data fix on coding machine → VM** (use `--prefer local`):
    - Edit a DB row or report .txt to correct bad data.
-   - `python scripts/backup_data.py --prefer local` — your edits become the truth.
+   - `python scripts/shared/backup_data.py --prefer local` — your edits become the truth.
    - VM picks up corrections on its next pull.
 
   Important: row-level sync does not delete remote-only ghost DB rows yet. If a repair deliberately removes rows from `trades.db`, use the new deletion-aware path:
 
   ```powershell
-  python scripts/backup_data.py --canonical-trades --dry-run   # shows local sha256 + remote sha256 + per-table row deltas, no writes
-  python scripts/backup_data.py --canonical-trades             # backs up the remote DB to a timestamped file then bit-for-bit replaces it with the local DB
+  python scripts/shared/backup_data.py --canonical-trades --dry-run   # shows local sha256 + remote sha256 + per-table row deltas, no writes
+  python scripts/shared/backup_data.py --canonical-trades             # backs up the remote DB to a timestamped file then bit-for-bit replaces it with the local DB
   ```
 
   This propagates row deletions correctly (Roadmap #270). Use the dry-run first whenever you’re about to overwrite the remote DB so you see exactly which tables differ. The legacy nuclear `--all-local` still works but copies *all* files; `--canonical-trades` is the surgical option for canonical DBs only. As of 2026-05-11 the canonical set is `data/trades.db` + `data/volume_baseline.db` — both will be diffed and replaced together in a single pass when you use the flag, with one timestamped backup per file.
@@ -598,10 +605,10 @@ python scripts/backup_data.py --all-remote      # full overwrite of local
 **Bringing up a new machine** (clean checkout):
 
 1. Clone this repo, set up the venv, fill in `.env` (Zerodha + optional `KITE_TOTP_SECRET` for unattended login).
-2. `python scripts/backup_data.py --ssh` (or HTTPS) — pulls the data repo into `../ai-portfolio-manager-data` and merges into local `data/`, `reports/`, `logs/`. The new machine now has the full trade ledger, tax ledger, telemetry rows, and any backtest runs another machine produced.
+2. `python scripts/shared/backup_data.py --ssh` (or HTTPS) — pulls the data repo into `../ai-portfolio-manager-data` and merges into local `data/`, `reports/`, `logs/`. The new machine now has the full trade ledger, tax ledger, telemetry rows, and any backtest runs another machine produced.
 3. `python -c "from config import Config; print(Config.snapshot_hash())"` — confirm the same `(version, hash)` pair on both machines. Different hashes mean a config knob differs in `config.py` and any backtest comparison is invalid until reconciled.
-4. Optional: `python scripts/build_volume_baseline.py --dry-run` to confirm the baseline DB on the new machine; the file syncs in step 2 but the builder is fully reproducible from `data/candle_cache.db` (which is in the code repo, identical across machines), so a rebuild produces an identical DB.
-5. Optional: `python scripts/promotion_check.py` — read-only, confirms the new machine sees the same PASS/FAIL state as the old one (proves the trade ledger merged correctly).
+4. Optional: `python scripts/trade/build_volume_baseline.py --dry-run` to confirm the baseline DB on the new machine; the file syncs in step 2 but the builder is fully reproducible from `data/candle_cache.db` (which is in the code repo, identical across machines), so a rebuild produces an identical DB.
+5. Optional: `python scripts/trade/promotion_check.py` — read-only, confirms the new machine sees the same PASS/FAIL state as the old one (proves the trade ledger merged correctly).
 
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.
@@ -637,17 +644,17 @@ Intraday is **speculative business income** in India (ITR-3). Bot tracks
 brokerage, STT, GST, stamp duty per trade, separates short-term and
 long-term capital gains.
 
-Full guide: **[docs/TAX_GUIDE.md](docs/TAX_GUIDE.md)** (slabs, advance
+Full guide: **[docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md)** (slabs, advance
 tax dates, loss carry-forward).
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/fill_intraday_ledger.py` | Build intraday ledger from trade JSONs (auto-runs EOD) |
-| `scripts/verify_trades.py` | Verify trades vs Zerodha; correct prices in reports + ledger + DB |
-| `scripts/import_zerodha_taxpnl.py [--fy YYYY]` | Import Zerodha Tax P&L xlsx (intraday + capital gains) |
-| `scripts/tax_summary.py [--intraday] [--fy YYYY]` | Combined tax summary — speculative + STCG + LTCG + estimated tax |
-| `scripts/view_intraday_ledger.py [--fy YYYY] [--list]` | Intraday ledger view |
-| `scripts/view_capital_gains_ledger.py [--list]` | Capital gains ledger view |
+| `scripts/trade/fill_intraday_ledger.py` | Build intraday ledger from trade JSONs (auto-runs EOD) |
+| `scripts/trade/verify_trades.py` | Verify trades vs Zerodha; correct prices in reports + ledger + DB |
+| `scripts/shared/import_zerodha_taxpnl.py [--fy YYYY]` | Import Zerodha Tax P&L xlsx (intraday + capital gains) |
+| `scripts/shared/tax_summary.py [--intraday] [--fy YYYY]` | Combined tax summary — speculative + STCG + LTCG + estimated tax |
+| `scripts/trade/view_intraday_ledger.py [--fy YYYY] [--list]` | Intraday ledger view |
+| `scripts/shared/view_capital_gains_ledger.py [--list]` | Capital gains ledger view |
 
 Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 `STCG_TAX_RATE_PCT`, `LTCG_TAX_RATE_PCT`, etc.
@@ -676,7 +683,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Per-symbol re-entry cooldown** — 30 min on same `SYMBOL_SIDE`.
 - **Stale-score guard** — after the post-open observation wait, re-runs the scoring and aborts entries whose conviction sign-flipped, decayed below 60% of the scan-time score, OR (#199) lost magnitude (`|fresh| + 0.3 < |entry|`) — catches the slow-bleed setups the magnitude-only floor missed.
 - **Post-entry momentum kill (#198, retuned by #233)** — exits at market between 3 and 5 min after fill if the trade is unrealised-loss, has moved adversely by ≥0.40% (≈4× typical NSE intraday spread), AND has covered <25% of the entry→target distance. Caps slow-bleed losers at ~-0.4% instead of waiting for the -1.1% SL hit. The 3-min grace + adverse-move floor were added on 2026-04-27 after the original 60s/no-floor settings killed 4/4 morning entries on sub-spread micro-moves.
-- **Pattern↔tech contradiction penalty (#200)** — at the scanner combine, subtracts 2.0 from `|combined_score|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_ENGULFING`) and 0.5 when patterns include `DOJI` indecision; weak-conviction conflict setups fall below `V2_MIN_SCORE` naturally.
+- **Pattern↔tech contradiction penalty (#200)** — at the scanner combine, subtracts 2.0 from `|combined_score|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_ENGULFING`) and 0.5 when patterns include `DOJI` indecision; weak-conviction conflict setups fall below `MIN_SCORE` naturally.
 - **VWAP statistical-band gate (#201)** — blocks BUY at the upper 1σ/2σ VWAP band and SELL at the lower 1σ/2σ; complements the existing % VWAP-extension check with a volatility-adaptive band classifier. Override at `|score| ≥ 7.0`.
 - **Late-entry tightening (#202, retuned by #239, coupled by #246)** — after 10:00 IST: `MIN_SCORE` bumped by +1.0 (raised 0.5 → 1.0 by #239 after first live day showed +0.5 was too gentle), then clamped to `>= SIGNAL_DECAY_MIN_ENTRY_SCORE = 7.0` by #246 so the entry floor is never below the rescue-gate floor (no-rescue-zone alignment, motivated by JIOFIN 2026-04-28). R:R floor and concurrency are owned by always-on `RR_HARD_FLOOR` + `dynamic_max_positions(budget)` (simplified by #225).
 - **Realised-P&L recovery on restart (#203)** — on init, scans Zerodha net-positions for already-closed MIS round-trips not in our session and imports them as synthetic CLOSED records so the MTM-aware safety gates and adaptive budget reason from the correct realised baseline after a mid-session restart.
@@ -695,7 +702,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Existing demat holdings are READ-ONLY** — only the managed budget pool is traded.
 - **Graceful shutdown** — Ctrl+C squares off everything before exit.
 
-Full risk architecture: **[docs/STRATEGY_V2.md](docs/STRATEGY_V2.md#risk-management--entry-pre-checks)**.
+Full risk architecture: **[docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md#risk-management--entry-pre-checks)**.
 
 ---
 

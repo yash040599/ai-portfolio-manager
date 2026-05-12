@@ -8,7 +8,7 @@
 #   - Classifying errors into plain English messages
 #   - Advising whether an error is worth retrying
 #
-# Retry logic lives in AnalysisQueue (services/analysis_queue.py),
+# Retry logic lives in AnalysisQueue (modes/trade/analysis_queue.py),
 # not here — this class just makes the call and surfaces the result.
 # Phase 2 will call this for buy/sell decisions too.
 # ================================================================
