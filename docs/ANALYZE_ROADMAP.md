@@ -124,12 +124,12 @@ runs in `data/portfolio_analyses.db` and can measure things like
 |---|------|--------|
 | P-X | **Per-stock fundamental auto-fetch (P/E, ROE, debt-to-equity) from a free public source.** | No free source is reliable enough across the NIFTY100 universe (yfinance fundamentals lag and miss splits, screener.in scraping violates ToS, MoneyControl HTML changes weekly). P3 ships with a hand-maintained `data/fundamentals_seed.json` instead. Re-evaluate when an exchange-grade free feed exists. |
 
-### Completed (8 items)
+### Completed (9 items)
 
-Shipped 2026-05-12 in a single sweep across P1-P8 (the `P8`
-industry-standard risk-metrics block was added during the same
-review pass that closed P1-P7). Dashboard surface (D24-D29) shipped
-in lockstep — see [DASHBOARD_ROADMAP.md](../modes/dashboard/docs/DASHBOARD_ROADMAP.md).
+Shipped 2026-05-12 in a single sweep across P1-P9 (the `P8`
+industry-standard risk-metrics block + `P9` market-cap tier landed
+during the same review pass that closed P1-P7). Dashboard surface
+(D24-D29) shipped in lockstep — see [DASHBOARD_ROADMAP.md](../modes/dashboard/docs/DASHBOARD_ROADMAP.md).
 
 | # | Improvement | Category | Date |
 |---|-------------|----------|------|
@@ -141,19 +141,22 @@ in lockstep — see [DASHBOARD_ROADMAP.md](../modes/dashboard/docs/DASHBOARD_ROA
 | P6 | Industry-standard portfolio metrics — HHI, top-5 concentration, single-name max, group concentration (Adani / Tata / Bajaj / etc.), weighted P/E, weighted dividend yield, portfolio beta vs NIFTY. [`modes/analyze/metrics.py`](../modes/analyze/metrics.py). | Indicators | 2026-05-12 |
 | P7 | "What's missing" engine. UNDER_ALLOCATED (sector vs benchmark gap > 5pp), MISSING_DEFENSIVE (cyclicals-heavy book without FMCG/pharma ballast), CONCENTRATION (single-name > 25%), GROUP_RISK (group > 30%). Suggestions from `data/analyse_candidates.json` (held names blocked from suggestions). [`modes/analyze/gaps.py`](../modes/analyze/gaps.py). | Risk | 2026-05-12 |
 | P8 | Risk / return / cash-position metrics on top of P6 — annualised volatility (60-day window × √252), Sharpe ratio (RFR=7%), max drawdown across prior runs, CAGR (two-point approximation), annual dividend estimate (Σ DPS×qty), cash balance + cash drag % with `CASH_DRAG` gap flag at > 25% of total account value. New config knobs: `RISK_FREE_RATE_PCT`, `CASH_DRAG_FLAG_PCT`, `ANALYZE_VOL_LOOKBACK_DAYS`. | Risk | 2026-05-12 |
+| P9 | Market-cap tier (LARGE / MID / SMALL / ETF / UNKNOWN) classification per AMFI definitions. New optional `market_cap_tier` field on `StockAnalysis` populated from [`data/market_cap_tier.json`](../data/market_cap_tier.json) (semi-annual refresh). New `cap_tier_weights` portfolio metric sums weights per tier. Surfaced as a card on `/portfolio`, a column on the holdings table, a row on the drill-down market context, and a banner in the .txt report. Fail-open: missing seed → `UNKNOWN` bucket flagged in the UI as "refresh seed". | Indicators | 2026-05-12 |
+| Bug fix | Tz-aware vs naive datetime crash in `PortfolioSnapshot.most_stale_at()` aborted the persist + report step every time the dashboard's "Analyse Now" ran end-to-end with real Zerodha data. Kite's `historical_data()` returns tz-aware IST datetimes; everything else uses naive IST via `now_ist()`. Fix: a `_to_naive()` helper in [`modes/analyze/enrich_noai.py`](../modes/analyze/enrich_noai.py) strips tzinfo at the source. Belt-and-braces in [`modes/analyze/types.py`](../modes/analyze/types.py): `Field.staleness_minutes`, `StockAnalysis.most_stale_at`, `PortfolioSnapshot.most_stale_at` all normalise tz-aware timestamps to naive before any subtraction or `min()`. | Bug fix | 2026-05-12 |
 
 ### Reference seed files (data/, hand-curated, quarterly refresh)
 
 All carry a `_meta` block with `as_of` + refresh cadence so a
 reviewer can see at a glance how stale the inputs are.
 
-| File | Purpose |
-|------|---------|
-| [`data/fundamentals_seed.json`](../data/fundamentals_seed.json) | TTM P/E per symbol; loss-makers / ETFs are explicitly null. |
-| [`data/dividends_seed.json`](../data/dividends_seed.json) | TTM dividend per share — used for yield computation. |
-| [`data/benchmark_sector_weights.json`](../data/benchmark_sector_weights.json) | NIFTY100 sector benchmark used by the gap engine. |
-| [`data/analyse_candidates.json`](../data/analyse_candidates.json) | Approved candidate pool per sector with one-line rationales (used for "Suggested additions"). |
-| [`data/promoter_groups.json`](../data/promoter_groups.json) | Promoter-group membership map (Adani / Tata / Bajaj / HDFC / ...) used by group-concentration metric. |
+| File | Purpose | Refresh cadence |
+|------|---------|-----------------|
+| [`data/fundamentals_seed.json`](../data/fundamentals_seed.json) | TTM P/E per symbol; loss-makers / ETFs are explicitly null. | Quarterly (after results) |
+| [`data/dividends_seed.json`](../data/dividends_seed.json) | TTM dividend per share — used for yield computation. | Quarterly |
+| [`data/benchmark_sector_weights.json`](../data/benchmark_sector_weights.json) | NIFTY100 sector benchmark used by the gap engine. | Quarterly (after NIFTY rebalance) |
+| [`data/analyse_candidates.json`](../data/analyse_candidates.json) | Approved candidate pool per sector with one-line rationales (used for "Suggested additions"). | Quarterly |
+| [`data/promoter_groups.json`](../data/promoter_groups.json) | Promoter-group membership map (Adani / Tata / Bajaj / HDFC / ...) used by group-concentration metric. | Quarterly |
+| [`data/market_cap_tier.json`](../data/market_cap_tier.json) | AMFI mcap-tier classification (LARGE / MID / SMALL / ETF). | Semi-annually (after AMFI publication, Jan / Jul) |
 
 ---
 

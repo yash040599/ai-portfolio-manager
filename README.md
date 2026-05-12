@@ -67,7 +67,8 @@ Three surfaces, one CLI. Pick a mode at the CLI.
   regenerating any of the deterministic numbers.
 - Per-stock recommendation (HOLD / BUY MORE / AVERAGE DOWN /
   PARTIAL EXIT / FULL EXIT) plus a portfolio-wide review with sector
-  gaps, concentration risks, and "what's missing" suggestions
+  gaps, AMFI market-cap tier (LARGE / MID / SMALL / ETF) breakdown,
+  concentration risks, and "what's missing" suggestions
   (industry-standard portfolio-analyser checks).
 - Long-term horizon throughout. No orders placed.
 - Surfaced live on the **Dashboard** (`/portfolio` page) — see Phase 3.
@@ -205,7 +206,7 @@ their content.
 | [docs/TRADE_EVOLUTION.md](docs/TRADE_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
 | [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |
-| [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P8 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag), "what's missing" engine |
+| [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P9 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag, AMFI mcap-tier breakdown), "what's missing" engine |
 | [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide read-only surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages: `/portfolio` + per-stock drill-down + on-demand "Analyse now" + `/login`) all shipped 2026-05-12** |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
 | [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
@@ -438,7 +439,7 @@ ai-portfolio-manager/
 │   │   ├── enrich_noai.py           # deterministic Zerodha + cache + reference-seed enrichment
 │   │   ├── enrich_ai.py             # Claude qualitative overlay (only ai_* slots)
 │   │   ├── recommendation_rules.py  # 7-branch deterministic action engine
-│   │   ├── metrics.py               # HHI / top-5 / Sharpe / vol / max-DD / CAGR / cash drag
+│   │   ├── metrics.py               # HHI / top-5 / Sharpe / vol / max-DD / CAGR / cash drag / mcap tier
 │   │   ├── gaps.py                  # what's-missing engine + suggested additions
 │   │   ├── persistence.py           # data/portfolio_analyses.db (two tables, six read helpers)
 │   │   └── report.py                # .txt + .json output (drops the legacy .tsv)

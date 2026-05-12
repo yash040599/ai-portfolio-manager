@@ -89,6 +89,7 @@ Schema lives in [`modes/analyze/types.py`](../modes/analyze/types.py)
 | `high_52w` / `low_52w` | High / low close in last 252 trading days | `candle_cache` |
 | `price_vs_high_52w_pct` | (current − 52w_high) / 52w_high × 100 — negative means below high | `derived` |
 | `sector` / `industry` | Mapped from [`modes/trade/stock_scanner.SECTOR_MAP`](../modes/trade/stock_scanner.py) — same map intraday uses | `sector_map` |
+| `market_cap_tier` | One of `LARGE` / `MID` / `SMALL` / `ETF` / `UNKNOWN`. AMFI mcap-tier classification (top-100 = LARGE, 101-250 = MID, 251+ = SMALL). Refreshed from [`data/market_cap_tier.json`](../data/market_cap_tier.json) semi-annually | `sector_map` (seed) |
 | `beta_vs_nifty` | Rolling 250-day daily-return covariance vs NIFTY 50, normalised by NIFTY variance. Falls back to 1.0 when NIFTY history < 30 days | `derived` |
 | `dividend_yield_ttm` | DPS_TTM / current_price × 100. DPS pulled from hand-curated [`data/dividends_seed.json`](../data/dividends_seed.json), refreshed quarterly | `dividends_seed` |
 | `weighted_pe` | TTM P/E from hand-curated [`data/fundamentals_seed.json`](../data/fundamentals_seed.json), refreshed quarterly. Loss-makers / ETFs return null | `fundamentals_seed` |
@@ -206,6 +207,15 @@ optional `cash_balance` (rupees), optional `prior_runs` list (from
 holdings_count)` sorted by weight descending. Sectors come from
 the same `SECTOR_MAP` intraday mode uses; "OTHER" absorbs unknowns.
 
+### 5.2.1 Market-cap tier breakdown (P9)
+
+`cap_tier_weights` = `{tier_name: weight_pct}` summed across
+holdings. Tiers come from [`data/market_cap_tier.json`](../data/market_cap_tier.json)
+(AMFI mcap-tier classification: top-100 = LARGE, 101-250 = MID,
+251+ = SMALL; ETFs are tagged separately). A non-zero `UNKNOWN`
+bucket is the operator's cue to refresh the seed file. Surfaced as
+its own card on `/portfolio` and a column on the holdings table.
+
 ### 5.3 Income + valuation
 
 | Metric | Formula | Notes |
@@ -236,12 +246,13 @@ the same `SECTOR_MAP` intraday mode uses; "OTHER" absorbs unknowns.
 ## 6. "What's missing" — gap engine
 
 Implemented in [`modes/analyze/gaps.py`](../modes/analyze/gaps.py).
-Compares the user's metrics against three reference files (all
-hand-curated, refreshed quarterly):
+Compares the user's metrics against four reference files (all
+hand-curated, refreshed quarterly / semi-annually):
 
 - [`data/benchmark_sector_weights.json`](../data/benchmark_sector_weights.json) — NIFTY100 sector benchmark
 - [`data/analyse_candidates.json`](../data/analyse_candidates.json) — approved candidate pool per sector
 - [`data/promoter_groups.json`](../data/promoter_groups.json) — promoter-group membership map
+- [`data/market_cap_tier.json`](../data/market_cap_tier.json) — AMFI mcap-tier classification (read by enrich_noai for `market_cap_tier` field, then summed by `metrics.compute_metrics()` into `cap_tier_weights`)
 
 ### 6.1 Flag categories
 
@@ -430,7 +441,19 @@ Roadmap items behind these pages: D24-D29 in
   portfolio (cash erodes against inflation).
 - **Most stale `as_of`** — The oldest `as_of` across every populated
   field on a stock or in the snapshot. The rendered "freshness" badge
-  is conservative — it shows the worst-case staleness.
+  is conservative — it shows the worst-case staleness. All `as_of`
+  values are **naive IST** by contract (`now_ist()` returns naive,
+  candle-cache reads are stripped via `_to_naive()` in
+  `enrich_noai.py`); mixing tz-aware and naive datetimes through
+  `min()` would crash, so the `Field` / `StockAnalysis` /
+  `PortfolioSnapshot` accessors normalise defensively.
+- **AMFI mcap tier** — The Association of Mutual Funds in India
+  publishes a half-yearly classification of every listed company:
+  top-100 by full market cap = LARGE, 101-250 = MID, 251+ = SMALL.
+  The `market_cap_tier` field on each holding and the
+  `cap_tier_weights` portfolio metric both come from this list, so
+  the analyser's "you're 78% large-cap heavy" reading uses the same
+  definitions every Indian mutual-fund factsheet uses.
 
 ---
 
@@ -447,5 +470,5 @@ Roadmap items behind these pages: D24-D29 in
 | The DB schema | [`modes/analyze/persistence.py`](../modes/analyze/persistence.py) |
 | Dashboard summary page | [`modes/dashboard/portfolio_page.py`](../modes/dashboard/portfolio_page.py) |
 | Background-job runner | [`modes/dashboard/portfolio_actions.py`](../modes/dashboard/portfolio_actions.py) |
-| A reference seed (P/E, dividend, sector benchmark, candidate pool, promoter group) | The matching JSON under `data/` (each has a `_meta` block with refresh cadence) |
+| A reference seed (P/E, dividend, sector benchmark, candidate pool, promoter group, market-cap tier) | The matching JSON under `data/` (each has a `_meta` block with refresh cadence) |
 | A risk threshold (RFR, cash drag %, vol lookback) | `Config.RISK_FREE_RATE_PCT`, `Config.CASH_DRAG_FLAG_PCT`, `Config.ANALYZE_VOL_LOOKBACK_DAYS` |
