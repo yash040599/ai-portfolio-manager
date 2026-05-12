@@ -338,6 +338,7 @@ def _decode_metrics(blob: str | None) -> PortfolioMetrics:
         annual_dividend_estimate = Field.from_dict(d.get("annual_dividend_estimate")),
         cash_balance             = Field.from_dict(d.get("cash_balance")),
         cash_drag_pct            = Field.from_dict(d.get("cash_drag_pct")),
+        cap_tier_weights         = Field.from_dict(d.get("cap_tier_weights")),
     )
 
 

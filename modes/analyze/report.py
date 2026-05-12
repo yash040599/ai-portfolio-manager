@@ -123,6 +123,20 @@ def _render_metrics(snap: PortfolioSnapshot) -> str:
                        f"{'s' if sw.holdings_count != 1 else ''})")
         out.append("")
 
+    # Market-cap tier breakdown (P9).
+    if m.cap_tier_weights and isinstance(m.cap_tier_weights.value, dict) \
+            and m.cap_tier_weights.value:
+        out.append("Market-cap tier breakdown (AMFI):")
+        # Render in fixed order so the eye finds each tier in the same place.
+        for tier in ("LARGE", "MID", "SMALL", "ETF", "UNKNOWN"):
+            pct = m.cap_tier_weights.value.get(tier)
+            if pct is None:
+                continue
+            bar = "▇" * max(1, int(round(pct / 2.5)))
+            tag = "  ⚠ refresh seed" if tier == "UNKNOWN" else ""
+            out.append(f"  {tier:<8s} {pct:>5.1f}%  {bar}{tag}")
+        out.append("")
+
     out.append(f"  HHI concentration       : {_v(m.hhi_concentration):>8.1f}    "
                f"({m.hhi_concentration.note or ''})".rstrip())
     out.append(f"  Top-5 concentration     : {_v(m.top_5_concentration_pct):>7.1f}%")

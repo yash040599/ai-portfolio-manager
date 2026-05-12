@@ -62,10 +62,18 @@ class Field(Generic[T]):
 
     @property
     def staleness_minutes(self) -> int:
-        """Minutes between `as_of` and `now_ist()`. Rounded down."""
+        """Minutes between `as_of` and `now_ist()`. Rounded down.
+
+        Defensive: if `as_of` somehow ended up tz-aware (e.g. raw
+        Kite historical_data datetime), strip tzinfo before the
+        subtraction so we never crash with the offset-naive vs
+        offset-aware error in a render path."""
         if self.as_of is None:
             return 0
-        delta = now_ist() - self.as_of
+        ts = self.as_of
+        if ts.tzinfo is not None:
+            ts = ts.replace(tzinfo=None)
+        delta = now_ist() - ts
         return max(0, int(delta.total_seconds() // 60))
 
     @property
@@ -171,6 +179,11 @@ class StockAnalysis:
     # ── Derived helpers (filled by the analyser, not the enricher) ──
     weight_in_portfolio_pct: Field[float] | None = None
 
+    # ── Optional classification (filled by enrich_noai when seed
+    # data exists). Kept optional so older persisted runs round-trip
+    # cleanly without a schema migration.
+    market_cap_tier: Field[str] | None = None   # 'LARGE' | 'MID' | 'SMALL' | 'ETF' | 'UNKNOWN'
+
     # ── Methods ──
 
     def all_fields(self) -> list[Field]:
@@ -188,9 +201,18 @@ class StockAnalysis:
     def most_stale_at(self) -> datetime.datetime:
         """Returns the oldest `as_of` across all populated fields.
         Exposed in the report header so the user knows the worst
-        case freshness for this stock."""
-        all_as = [f.as_of for f in self.all_fields()
-                  if f and f.value is not None and f.as_of is not None]
+        case freshness for this stock.
+
+        Defensive: any tz-aware datetime is normalised to naive IST
+        before `min()` so a stray Kite-historical_data timestamp
+        cannot crash the snapshot render path."""
+        all_as = []
+        for f in self.all_fields():
+            if f and f.value is not None and f.as_of is not None:
+                ts = f.as_of
+                if ts.tzinfo is not None:
+                    ts = ts.replace(tzinfo=None)
+                all_as.append(ts)
         if not all_as:
             return now_ist()
         return min(all_as)
@@ -276,6 +298,10 @@ class PortfolioMetrics:
     cash_balance:          Field[float] | None = None   # Zerodha funds.live_balance
     cash_drag_pct:         Field[float] | None = None   # cash / (cash + invested) × 100
 
+    # ── Market-cap tier breakdown (P9) ──
+    # {tier_name: weight_pct}, e.g. {'LARGE': 78.4, 'MID': 12.1, 'SMALL': 0.0, 'ETF': 9.5}
+    cap_tier_weights:      Field[dict] | None = None
+
     def to_dict(self) -> dict:
         out = {
             "sector_weights": [asdict(s) for s in self.sector_weights],
@@ -296,7 +322,8 @@ class PortfolioMetrics:
         for name in ("volatility_30d_pct", "sharpe_ratio",
                      "max_drawdown_pct", "xirr_pct",
                      "annual_dividend_estimate",
-                     "cash_balance", "cash_drag_pct"):
+                     "cash_balance", "cash_drag_pct",
+                     "cap_tier_weights"):
             v = getattr(self, name, None)
             if v is not None:
                 out[name] = v.to_dict()
@@ -341,14 +368,24 @@ class PortfolioSnapshot:
 
     def most_stale_at(self) -> datetime.datetime:
         """Oldest `as_of` across the entire snapshot — what the
-        dashboard header renders prominently."""
+        dashboard header renders prominently. Defensive against
+        stray tz-aware timestamps (see StockAnalysis.most_stale_at)."""
         ts = [h.most_stale_at() for h in self.holdings]
         for f in (self.metrics.hhi_concentration,
                   self.metrics.weighted_pe,
                   self.metrics.portfolio_beta_vs_nifty):
             if f and f.as_of:
-                ts.append(f.as_of)
-        return min(ts) if ts else self.timestamp
+                a = f.as_of
+                if a.tzinfo is not None:
+                    a = a.replace(tzinfo=None)
+                ts.append(a)
+        if not ts:
+            return self.timestamp
+        # Re-normalise the snapshot timestamp too in case a caller
+        # passed a tz-aware now() instead of now_ist().
+        ts = [t.replace(tzinfo=None) if t.tzinfo is not None else t
+              for t in ts]
+        return min(ts)
 
     def to_dict(self) -> dict:
         return {

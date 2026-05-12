@@ -50,6 +50,7 @@ _DIVIDENDS_PATH       = _DATA_DIR / "dividends_seed.json"
 _BENCHMARK_PATH       = _DATA_DIR / "benchmark_sector_weights.json"
 _CANDIDATES_PATH      = _DATA_DIR / "analyse_candidates.json"
 _GROUPS_PATH          = _DATA_DIR / "promoter_groups.json"
+_MARKET_CAP_TIER_PATH = _DATA_DIR / "market_cap_tier.json"
 
 
 def _load_seed(path: Path) -> tuple[dict, datetime.datetime]:
@@ -75,6 +76,7 @@ def load_reference_data() -> dict:
     benchmark,    bench_mtime = _load_seed(_BENCHMARK_PATH)
     candidates,   cand_mtime = _load_seed(_CANDIDATES_PATH)
     groups,       grp_mtime  = _load_seed(_GROUPS_PATH)
+    cap_tiers,    cap_mtime  = _load_seed(_MARKET_CAP_TIER_PATH)
     return {
         "fundamentals":           fundamentals,
         "fundamentals_as_of":     fund_mtime,
@@ -86,6 +88,8 @@ def load_reference_data() -> dict:
         "candidates_as_of":       cand_mtime,
         "promoter_groups":        groups,
         "promoter_groups_as_of":  grp_mtime,
+        "market_cap_tiers":       cap_tiers,
+        "market_cap_tiers_as_of": cap_mtime,
     }
 
 
@@ -107,6 +111,20 @@ def _sector_for(symbol: str) -> str:
 # into (sector, industry), this helper becomes the migration point.
 def _industry_for(symbol: str, sector: str) -> str:
     return sector
+
+
+def _to_naive(dt) -> datetime.datetime:
+    """Strip tzinfo from a datetime so it matches `now_ist()` (which
+    returns naive IST). Kite's `historical_data()` returns tz-aware
+    datetimes; mixing those into the same `min()` as naive ones in
+    `PortfolioSnapshot.most_stale_at()` raises
+    `TypeError: can't compare offset-naive and offset-aware
+    datetimes`. Belt-and-braces: accept any datetime, return naive."""
+    if not isinstance(dt, datetime.datetime):
+        return now_ist()
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
 
 
 # ── Long-term technical helpers ────────────────────────────────
@@ -312,10 +330,12 @@ def _enrich_one(
     last_candle_date = (
         daily_candles[-1].get("date") if daily_candles else None
     )
-    candle_at = (
-        last_candle_date if isinstance(last_candle_date, datetime.datetime)
-        else now_ist()
-    )
+    # Kite's historical_data() returns tz-aware datetimes (IST with
+    # tzinfo). Everything else in the snapshot uses naive IST via
+    # now_ist(); mixing the two crashes Snapshot.most_stale_at()'s
+    # min() call with "can't compare offset-naive and offset-aware".
+    # Strip tzinfo here so all `as_of` values share the same shape.
+    candle_at = _to_naive(last_candle_date) if last_candle_date else now_ist()
 
     # 52-week extremes (use the actual last 252 trading days when available).
     window = 252 if len(highs) >= 252 else len(highs)
@@ -361,6 +381,18 @@ def _enrich_one(
                      as_of=now_ist(), note="trade-mode SECTOR_MAP")
     industry_f = Field(value=_industry_for(symbol, sector),
                        source=SRC_SECTOR_MAP, as_of=now_ist())
+
+    # Market-cap tier (LARGE / MID / SMALL / ETF). Hand-curated seed,
+    # refreshed semi-annually after AMFI's mcap-tier publication.
+    tier_lookup = refs.get("market_cap_tiers") or {}
+    tier_value  = tier_lookup.get(symbol, "UNKNOWN")
+    cap_tier_f  = Field(
+        value=tier_value,
+        source=SRC_SECTOR_MAP,
+        as_of=refs.get("market_cap_tiers_as_of") or now_ist(),
+        note=("AMFI tier" if tier_value != "UNKNOWN"
+              else "no market_cap_tier.json entry — refresh seed"),
+    )
 
     # Dividend yield TTM.
     dps = refs["dividends"].get(symbol)
@@ -419,6 +451,7 @@ def _enrich_one(
         rule_horizon=placeholder,
         rule_target_price=placeholder,
         rule_reasoning=placeholder,
+        market_cap_tier=cap_tier_f,
     )
 
 

@@ -350,6 +350,31 @@ def _render_metrics(m: PortfolioMetrics) -> str:
             f'<table class="kvtable">{group_rows}</table></div>'
         )
 
+    # Market-cap tier breakdown (P9).
+    cap_tier_html = ""
+    if m.cap_tier_weights and isinstance(m.cap_tier_weights.value, dict) \
+            and m.cap_tier_weights.value:
+        tier_order = ("LARGE", "MID", "SMALL", "ETF", "UNKNOWN")
+        rows = []
+        for tier in tier_order:
+            pct = m.cap_tier_weights.value.get(tier)
+            if pct is None:
+                continue
+            w = max(2, int(round(pct * 4)))
+            tag = ""
+            if tier == "UNKNOWN":
+                tag = (' <span class="src" style="color:var(--warn-fg)">⚠ '
+                       'refresh data/market_cap_tier.json</span>')
+            rows.append(
+                f'<tr><td>{tier}</td>'
+                f'<td>{pct:.1f}% '
+                f'<span class="sectorbar" style="width:{w}px"></span>{tag}</td></tr>'
+            )
+        cap_tier_html = (
+            '<h2>Market-cap tier (AMFI)</h2><div class="card">'
+            f'<table class="kvtable">{"".join(rows)}</table></div>'
+        )
+
     return f"""
 <h2>Sector weights</h2>
 <div class="card">{sec_html}</div>
@@ -357,6 +382,7 @@ def _render_metrics(m: PortfolioMetrics) -> str:
 <div class="card">{core_html}</div>
 <h2>Risk &amp; return</h2>
 <div class="card">{risk_html}</div>
+{cap_tier_html}
 {group_html}
 {cash_html}
 """
@@ -404,10 +430,14 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
         sign = "+" if pnl >= 0 else ""
         href = f"/portfolio/{html.escape(s.symbol)}"
         action = s.effective_action()
+        cap = (s.market_cap_tier.value
+               if s.market_cap_tier and s.market_cap_tier.value
+               else "—") or "—"
         rows.append(
             f'<tr>'
             f'<td><a href="{href}">{html.escape(s.symbol)}</a></td>'
             f'<td class="muted">{html.escape(_v_str(s.sector, ""))}</td>'
+            f'<td class="muted">{html.escape(str(cap))}</td>'
             f'<td class="right">{int(_v(s.qty))}</td>'
             f'<td class="right">Rs.{_v(s.avg_buy_price):,.2f}</td>'
             f'<td class="right">Rs.{_v(s.current_price):,.2f}</td>'
@@ -423,7 +453,7 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
 <div class="card" style="padding: 8px 12px;">
   <table class="holdings">
     <thead><tr>
-      <th>Symbol</th><th>Sector</th><th class="right">Qty</th>
+      <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th>
       <th class="right">Avg</th><th class="right">LTP</th>
       <th class="right">Value</th><th class="right">Weight</th>
       <th class="right">P&amp;L</th><th>Rule action</th>
@@ -500,11 +530,19 @@ def _render_drilldown_position(s: StockAnalysis) -> str:
 
 
 def _render_drilldown_market(s: StockAnalysis) -> str:
+    cap_tier = (s.market_cap_tier.value
+                if s.market_cap_tier and s.market_cap_tier.value
+                else "n/a") or "n/a"
+    cap_src  = (_src_tag(s.market_cap_tier)
+                if s.market_cap_tier else "missing")
     return f"""
 <h2>Market context</h2>
 <div class="card"><table class="kvtable">
   <tr><td>Sector</td><td>{html.escape(_v_str(s.sector, ""))}
       <span class="src">· {html.escape(_src_tag(s.sector))}</span></td></tr>
+  <tr><td>Market-cap tier (AMFI)</td>
+      <td>{html.escape(str(cap_tier))}
+      <span class="src">· {html.escape(cap_src)}</span></td></tr>
   <tr><td>52-week range</td>
       <td>Rs.{_v(s.low_52w):,.2f} – Rs.{_v(s.high_52w):,.2f}
       ({_v(s.price_vs_high_52w_pct):+.2f}% from high)

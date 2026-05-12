@@ -266,6 +266,23 @@ def compute_metrics(
                        source=SRC_DERIVED, as_of=headline_as_of,
                        note=f"cash / (cash + invested_value)")
 
+    # ── Market-cap tier breakdown (P9) ──
+    # Sums weights into LARGE / MID / SMALL / ETF / UNKNOWN buckets.
+    # An UNKNOWN bucket > 0 is the operator's cue to refresh
+    # `data/market_cap_tier.json`.
+    cap_tier_buckets: dict[str, float] = {}
+    for s in holdings:
+        tier = (s.market_cap_tier.value
+                if s.market_cap_tier and s.market_cap_tier.value
+                else "UNKNOWN") or "UNKNOWN"
+        cap_tier_buckets[tier] = cap_tier_buckets.get(tier, 0.0) \
+                                  + weights.get(s.symbol, 0.0)
+    cap_tier_pct = {k: round(v * 100, 2)
+                    for k, v in cap_tier_buckets.items() if v > 0}
+    cap_tier_f = Field(value=cap_tier_pct, source=SRC_DERIVED,
+                       as_of=headline_as_of,
+                       note="weights from data/market_cap_tier.json")
+
     return PortfolioMetrics(
         sector_weights          = sector_weights,
         hhi_concentration       = hhi_f,
@@ -287,6 +304,7 @@ def compute_metrics(
         annual_dividend_estimate = annual_div_f,
         cash_balance        = cash_f,
         cash_drag_pct       = drag_f,
+        cap_tier_weights    = cap_tier_f,
     )
 
 
