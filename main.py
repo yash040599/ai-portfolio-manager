@@ -4,7 +4,8 @@
 # Entry point. Run this file to start the portfolio manager.
 #
 # Usage:
-#   python main.py --mode analyze                 ← portfolio analysis (read-only)
+#   python main.py --mode analyze                 ← long-term portfolio analysis (NoAI default)
+#   python main.py --mode analyze --ai            ← analyse + Claude qualitative overlay
 #   python main.py --mode trade                   ← NoAI intraday trading (default)
 #   python main.py --mode trade --noai            ← same as default (explicit NoAI)
 #   python main.py --mode trade --ai              ← with Claude AI selection
@@ -111,7 +112,8 @@ def main():
     if mode not in VALID_MODES:
         print("Usage: python main.py --mode [analyze|trade|login|dashboard] [flags]")
         print()
-        print("  analyze                       — read-only portfolio analysis")
+        print("  analyze                       — long-term portfolio analysis (NoAI, default)")
+        print("  analyze --ai                  — analyse + Claude qualitative overlay")
         print()
         print("  trade                         — NoAI intraday trading (default)")
         print("  trade --dryrun                — full strategy, no real orders")
@@ -128,7 +130,9 @@ def main():
         sys.exit(1)
 
     if mode == "analyze":
-        runner = PortfolioAnalyser(Config)
+        # Default flow is NoAI (zero Claude cost). --ai opts in to the
+        # Claude qualitative overlay on top of the same NoAI base.
+        runner = PortfolioAnalyser(Config, use_ai=use_ai)
         runner.run()
 
     elif mode == "trade":

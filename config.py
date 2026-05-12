@@ -1604,6 +1604,20 @@ class Config:
     LTCG_EXEMPTION_LIMIT:  float = 125000.0   # annual LTCG exemption (Rs.1.25L)
 
     # ══════════════════════════════════════════════════════════════
+    # PORTFOLIO ANALYSER (--mode analyze) — risk metrics
+    # ══════════════════════════════════════════════════════════════
+    # RISK_FREE_RATE_PCT: annualised risk-free rate used in Sharpe.
+    #   India 10-year G-Sec yield ≈ 7% historically; refresh quarterly
+    #   as the actual yield drifts.
+    # CASH_DRAG_FLAG_PCT: when (cash / total_account_value) exceeds
+    #   this %, the analyser flags the portfolio as under-invested.
+    # ANALYZE_VOL_LOOKBACK_DAYS: trailing window for daily-return
+    #   volatility (annualised by sqrt(252)).
+    RISK_FREE_RATE_PCT:        float = 7.0
+    CASH_DRAG_FLAG_PCT:        float = 25.0
+    ANALYZE_VOL_LOOKBACK_DAYS: int   = 60
+
+    # ══════════════════════════════════════════════════════════════
     # NSE MARKET HOLIDAY CALENDAR — 2026
     # ══════════════════════════════════════════════════════════════
     # Source: https://zerodha.com/marketintel/holiday-calendar/

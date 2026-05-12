@@ -22,7 +22,12 @@ from pathlib import Path
 from modes.dashboard.live_stats import LiveStats, compute_live_stats
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# `__file__` lives at modes/dashboard/theory_page.py — three .parent
+# hops to reach the workspace root that holds `docs/`. The earlier
+# two-hop version was correct only when the dashboard lived under
+# `services/dashboard/`; preserved here as a comment so a future
+# move catches the regression in review.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DOCS_DIR = _PROJECT_ROOT / "docs"
 
 
@@ -472,11 +477,13 @@ _TEMPLATE = r"""<!doctype html>
 <body>
 <div class="wrap">
   <nav class="topnav">
-    <a href="/">← Dashboard (Live P&amp;L)</a>
+    <a href="/portfolio">Portfolio</a>
+    <span class="sep">·</span>
+    <a href="/trading">Trading (Live P&amp;L)</a>
+    <span class="sep">·</span>
+    <a href="/tax">Tax</a>
     <span class="sep">·</span>
     <span style="color:var(--muted)">Theory</span>
-    <span class="sep">·</span>
-    <a href="/tax">Tax (FY summary) →</a>
     <span class="spacer"></span>
     <div class="docs-pick">
       <label for="docs-select">Docs</label>

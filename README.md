@@ -56,14 +56,29 @@ Three surfaces, one CLI. Pick a mode at the CLI.
 ### Phase 1 — Portfolio analysis (read-only)
 
 - Logs into Zerodha, reads your demat holdings.
-- Sends each holding to Claude with full prior-analysis context.
-- Generates a per-stock recommendation (HOLD / BUY MORE / EXIT / …) plus
-  a portfolio-wide assessment with new ideas.
-- No orders placed.
+- Default flow is **NoAI**: deterministic enrichment from Zerodha
+  (positions, quotes, 52-week range), candle cache (long-term technicals
+  — SMA-50, SMA-200, RSI-daily, beta vs NIFTY), and hand-curated
+  reference files (sector map, dividends, fundamentals seed). Every
+  field carries `source` + `as_of` so you know exactly how stale each
+  number is.
+- `--ai` adds a Claude overlay on top of the same NoAI base — long-term
+  thesis, qualitative risks, peer comparison, news context — without
+  regenerating any of the deterministic numbers.
+- Per-stock recommendation (HOLD / BUY MORE / AVERAGE DOWN /
+  PARTIAL EXIT / FULL EXIT) plus a portfolio-wide review with sector
+  gaps, concentration risks, and "what's missing" suggestions
+  (industry-standard portfolio-analyser checks).
+- Long-term horizon throughout. No orders placed.
+- Surfaced live on the **Dashboard** (`/portfolio` page) — see Phase 3.
 
 ```
-python main.py --mode analyze
+python main.py --mode analyze         # NoAI (default)
+python main.py --mode analyze --ai    # with Claude
 ```
+
+Full plan: [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) (P1-P7
+foundation in flight; D24-D29 dashboard surface in flight).
 
 ### Phase 2 — Intraday trading (V2, default)
 
@@ -94,23 +109,53 @@ python main.py --mode trade           # NoAI (default)
 python main.py --mode trade --ai      # with Claude
 ```
 
-### Phase 3 — Profitability dashboard (D1 + D1.1 + D13 + D16 + D17 shipped)
+### Phase 3 — Dashboard (tool-wide read-only surface)
 
-A dedicated **read-only analytics layer** that answers one question:
-*"is the bot profitable enough to scale capital?"*. Default launch
-starts a local web server and opens an interactive page in the
-browser — the **webpage itself is the config surface** (date range,
-granularity, source toggle), so the CLI is just an entry point.
+The dashboard is the project's **single tool-wide read-only surface**.
+It hosts pages for every mode the project exposes — Portfolio analysis,
+Intraday trading P&L, Tax filing, Theory & strategy reference — and is
+independent of every mode's code path (touches no strategy / order /
+config code). Default launch starts a local web server and opens the
+default page in your browser; the webpage itself is the config surface
+for date range / source toggles / per-stock drill-down / "Analyse now"
+buttons, so the CLI is just an entry point.
 
-- Defaults to current Indian FY (Apr 1 → Mar 31); a single Quick-range dropdown covers This FY / Previous FY / FY before previous / This month / Last month / Last 7d / Last 30d / Last 90d / All time, plus from/to date pickers.
-- Two charts (Chart.js via CDN, zero new Python deps): cumulative net P&L (line, daily) + per-bucket P&L (bar, daily/weekly/monthly switchable). Cumulative chart overlays a thin dashed vertical line at every trading day where the bot's git SHA changed (D13, shipped 2026-04-27); hover shows the commit subject so you can visually correlate strategy ships with equity-curve inflections. Toggle off via `Config.DASHBOARD_STRATEGY_VERSION_OVERLAY = False`.
-- Capital-ladder traffic-light verdict (GREEN / AMBER / RED / GREY) — D1 minimum-viable rules; D6 will plug in win-rate / profit-factor / max-DD / weeks-required gates.
-- Source toggle: **all trades** (verified + provisional, the default) or **verified only** (T+1 frozen, tax-grade). Provisional rows are clearly badged so they can never be mistaken for final numbers.
-- `% of budget` is computed against the **per-day budget actually deployed** (read from each day's `reports/trading/.../trading_data_DD.json` → `config.budget`), not a static config value — matters because `--max` varies day to day.
-- Pending-verification banner lists trading days awaiting Zerodha sheet import.
-- Lives in its own [modes/dashboard/](modes/dashboard/) folder, isolated from the trading bot. Touches no strategy/order code; reads only.
-- **Theory & statistics pages** ([`/theory/<slug>`](modes/dashboard/theory_page.py)) — four reference docs rendered live from `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a theoretical-vs-live snapshot card on top), Trade Strategy reference, Strategy Evolution log, and the India Tax Guide.
-- **Tax page** ([`/tax`](modes/dashboard/tax_page.py)) — FY-summary + projection. Enter your other FY income; the page computes which slab you fall into under Budget-2025 new-regime rules, applies Section 87A rebate + 4% cess, and shows the headline "tax attributable to intraday this FY" (= total-tax-with-intraday minus total-tax-without). Includes click-to-copy ITR-3 Schedule BP fields, a documents checklist, and a cross-link to the Tax Guide for the regulatory reference. Backed by versioned slabs in [`modes/dashboard/tax/slabs.py`](modes/dashboard/tax/slabs.py) — adding a future FY is a one-line config.
+Pages:
+
+- **`/portfolio`** (default landing) — Phase 1 analyser surface.
+  Reads the latest `--mode analyze` run from `data/portfolio_analyses.db`,
+  shows holdings summary + portfolio metrics + "what's missing" panel
+  + a per-stock drill-down with on-demand "Analyse now (NoAI / AI)"
+  buttons. Header carries the most-stale `as_of` across the run so you
+  can see how fresh the analysis is. Login flow integrated for the
+  on-demand runs.
+- **`/trading`** — intraday-trading profitability view (the original
+  Phase 3 SPA from D1.1). Two charts (Chart.js via CDN, zero new
+  Python deps): cumulative net P&L (line, daily) + per-bucket P&L
+  (bar, daily/weekly/monthly switchable). Cumulative chart overlays a
+  thin dashed vertical line at every trading day where the bot's git
+  SHA changed (D13); hover shows the commit subject. Capital-ladder
+  traffic-light verdict (GREEN / AMBER / RED / GREY). Source toggle:
+  all trades (default) or verified only (T+1 frozen, tax-grade).
+  `% of budget` is computed against the per-day budget actually
+  deployed (read from each day's `reports/trading/.../trading_data_DD.json`).
+  Quick-range dropdown (This FY / Previous FY / Last 7d / Last 30d /
+  All time / from-to date pickers). Pending-verification banner lists
+  trading days awaiting Zerodha sheet import.
+- **`/tax`** — FY-summary + projection. Enter your other FY income;
+  computes which slab you fall into under Budget-2025 new-regime
+  rules, applies Section 87A rebate + 4% cess, shows the headline
+  "tax attributable to intraday this FY". Click-to-copy ITR-3
+  Schedule BP fields, documents checklist, cross-link to Tax Guide.
+  Backed by versioned slabs in [`modes/dashboard/tax/slabs.py`](modes/dashboard/tax/slabs.py)
+  — adding a future FY is a one-line config.
+- **`/theory/<slug>`** — four reference docs rendered live from
+  `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a
+  theoretical-vs-live snapshot card on top), Trade Strategy reference,
+  Strategy Evolution log, India Tax Guide.
+
+Lives in its own [modes/dashboard/](modes/dashboard/) folder, isolated
+from every mode's runtime. Touches no strategy/order code; reads only.
 
 ```
 python main.py --mode dashboard                    # interactive (server + browser)
@@ -119,7 +164,9 @@ python main.py --mode dashboard --text             # legacy plain-text
 python main.py --mode dashboard --port 8765        # fixed port
 ```
 
-Full plan: [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) (D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D23 pending).
+Full plan: [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md)
+(D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D29 pending,
+including D24-D29 Portfolio-Analyser sub-module).
 
 ### Historical candle cache
 
@@ -157,7 +204,9 @@ their content.
 | [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
 | [docs/TRADE_EVOLUTION.md](docs/TRADE_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Phase 3 (D1 + D1.1 + D13 + D16 + D17 shipped)** — Profitability dashboard roadmap; lives in its own `modes/dashboard/` folder |
+| [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |
+| [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P8 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag), "what's missing" engine |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide read-only surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages: `/portfolio` + per-stock drill-down + on-demand "Analyse now" + `/login`) all shipped 2026-05-12** |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
 | [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 
@@ -346,7 +395,8 @@ via the `keyring` package instead of `.env` — a future enhancement.
 
 | Command | What it does |
 |---------|--------------|
-| `python main.py --mode analyze` | Phase 1 — read holdings, Claude analysis |
+| `python main.py --mode analyze` | Phase 1 — long-term portfolio analyser, NoAI default (no Claude cost) |
+| `python main.py --mode analyze --ai` | Phase 1 + Claude qualitative overlay (thesis/risks/news) |
 | `python main.py --mode trade` | Phase 2 NoAI (default) |
 | `python main.py --mode trade --ai` | Phase 2 with Claude |
 | `python main.py --mode trade --noai` | Same as default; explicit |
@@ -382,8 +432,16 @@ ai-portfolio-manager/
 │   ├── technical_indicators.py      # Indicators + composite scoring
 │   └── tax_db.py                    # tax-ledger DB helpers
 ├── modes/                           # one folder per CLI mode
-│   ├── analyze/
-│   │   └── analyser.py              # `--mode analyze` (read-only portfolio review)
+│   ├── analyze/                     # `--mode analyze` (read-only long-term review)
+│   │   ├── analyser.py              # 8-step orchestrator (NoAI default; --ai overlay)
+│   │   ├── types.py                 # Field[T] + StockAnalysis + PortfolioMetrics + GapAnalysis + PortfolioSnapshot
+│   │   ├── enrich_noai.py           # deterministic Zerodha + cache + reference-seed enrichment
+│   │   ├── enrich_ai.py             # Claude qualitative overlay (only ai_* slots)
+│   │   ├── recommendation_rules.py  # 7-branch deterministic action engine
+│   │   ├── metrics.py               # HHI / top-5 / Sharpe / vol / max-DD / CAGR / cash drag
+│   │   ├── gaps.py                  # what's-missing engine + suggested additions
+│   │   ├── persistence.py           # data/portfolio_analyses.db (two tables, six read helpers)
+│   │   └── report.py                # .txt + .json output (drops the legacy .tsv)
 │   ├── trade/                       # `--mode trade` (default; --noai or --ai)
 │   │   ├── manager.py               # day orchestrator (run / run_noai / run_test)
 │   │   ├── stock_scanner.py         # candle + indicator scanner
@@ -393,16 +451,21 @@ ai-portfolio-manager/
 │   │   ├── analysis_queue.py        # per-stock Claude analysis (--ai)
 │   │   ├── candidate_telemetry.py   # `intraday_candidates` writer
 │   │   └── volume_baseline.py       # per-symbol intraday RVol baselines
-│   └── dashboard/                   # `--mode dashboard` (read-only analytics)
+│   └── dashboard/                   # `--mode dashboard` (read-only, tool-wide)
 │       ├── cli.py                   # argparse entry
 │       ├── server.py                # stdlib HTTP server SPA backend
 │       ├── data_layer.py            # DB reads, sheet-verified filtering, FY window
-│       ├── metrics.py               # headline P&L, cumulative series
+│       ├── metrics.py               # headline P&L, cumulative series (intraday)
 │       ├── budget_history.py        # per-day budget from trading_data_*.json
 │       ├── verdict.py               # capital-ladder traffic-light engine
-│       ├── render_html.py           # Chart.js SPA shell + JSON payload builder
+│       ├── render_html.py           # /trading Chart.js SPA shell
 │       ├── render_text.py           # plain-text mode (--text)
-│       └── docs/DASHBOARD_ROADMAP.md # plan (D1 + D1.1 done; D2-D23 pending)
+│       ├── portfolio_page.py        # /portfolio + /portfolio/<symbol> + /login (D24-D29)
+│       ├── portfolio_actions.py     # background "Analyse now" worker (D26/D27)
+│       ├── theory_page.py           # /theory/<slug> renderer
+│       ├── tax_page.py              # /tax FY-summary + projection
+│       ├── tax/                     # FY tax sub-package (slabs, fy_summary)
+│       └── docs/DASHBOARD_ROADMAP.md # D1+D1.1+D13+D16+D17+D24-D29 done; D2-D23 pending
 ├── scripts/
 │   ├── trade/                       # trade-mode CLIs (see Section 9)
 │   └── shared/                      # cross-mode CLIs (see Section 10)

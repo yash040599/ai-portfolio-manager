@@ -1,11 +1,29 @@
-# Profitability Dashboard — Roadmap
+# Dashboard — Roadmap
 
-> Separate from `TRADE_ROADMAP.md` because the dashboard is a pure
-> **read-only analytics layer** that will grow over many sessions.
-> Touches NO strategy/order/config code. Safe to iterate on
-> independently of live trading.
+> The dashboard is the **single tool-wide read-only surface** for the
+> AI Portfolio Manager. It hosts pages for every mode the project
+> exposes (Portfolio analysis, Intraday trading P&L, Tax filing,
+> Theory & strategy reference) and is independent of every mode's
+> code path — touches NO strategy / order / config code.
 >
-> **Status:** Phase 3 — D1 + D1.1 shipped 2026-04-23. D13 + D16 + D17 (tax-filing module + tax page) + companion theory pages shipped 2026-04-27. Interactive HTML dashboard live (Chart.js SPA + stdlib HTTP server, in-page date / granularity / source controls, per-day budget from trading reports, vertical reference lines at SHA-change boundaries, FY tax projection + ITR-3 helpers). D2–D12, D14, D15, D18–D23 pending.
+> Naming note (2026-05-12 reframe with D24): the file is still called
+> `DASHBOARD_ROADMAP.md` for git-history continuity, but every
+> "Profitability Dashboard" reference here, in the README, and in the
+> page headers is being moved to plain "Dashboard". The `/portfolio`
+> page is the new default landing surface; the prior intraday view
+> moves to `/trading` (still its own first-class section).
+>
+> **Status:** D1 + D1.1 shipped 2026-04-23. D13 + D16 + D17 (tax-filing
+> module + tax page) + companion theory pages shipped 2026-04-27.
+> Interactive HTML dashboard live (Chart.js SPA + stdlib HTTP server,
+> in-page date / granularity / source controls, per-day budget from
+> trading reports, vertical reference lines at SHA-change boundaries,
+> FY tax projection + ITR-3 helpers). **D24-D29 (Portfolio-Analyser
+> sub-module) shipped 2026-05-12** — dashboard is now tool-wide, default
+> landing is `/portfolio` (live summary + drill-down + on-demand
+> Analyse-now), Zerodha login flow available at `/login`, four-link
+> nav (Portfolio · Trading · Tax · Theory) on every page.
+> D2–D12, D14, D15, D18–D23 still pending.
 >
 > **Companion Theory pages (shipped 2026-04-27):** `/theory/<slug>`
 > renders four reference docs as HTML with KaTeX math and the §0 live
@@ -120,6 +138,67 @@ decisions risks compounding small reporting errors into the wrong call.
 | D21 | **Advance-tax tracker + reminder** — reads projection from D17. Shows the four advance-tax due dates (Jun 15 / Sep 15 / Dec 15 / Mar 15) with cumulative-% targets, amount due each, amount paid so far (manual entry → stored in `advance_tax_payments` table). Highlights upcoming deadline within 14 days. Optional: writes an iCal `.ics` reminder users can import to their calendar | MEDIUM | Medium | Low | Pending |
 | D22 | **AIS / Form 26AS reconciliation helper** — user uploads/pastes their AIS JSON or CSV (downloaded from income-tax e-filing portal). Dashboard cross-checks the broker transaction list against AIS-reported aggregates and surfaces any mismatch (e.g. AIS shows 124 trades, our ledger has 122). Reuse `scripts/trade/verify_trades.py` matching logic. Prevents the "got an IT notice for un-reported trades" failure mode | LOW | High | Medium | Pending |
 | D23 | **ITR-3 schedule pre-fill JSON exporter** — emits a structured JSON containing every value an ITR-3 filer needs to type into the income-tax portal: Schedule BP (speculative gross / expenses / net), Schedule CG (STCG/LTCG), Schedule BS (no-account-case minimal), expense breakdown table, audit-applicability flag, advance-tax-paid total. CA gets one file instead of 5 reports. Out of scope: actual ITR XML upload (income-tax portal API is closed) | LOW | High | Medium | Pending |
+| D24 | **Tool-wide reframe + new default landing page (`/portfolio`).** | HIGH | Highest | Low | ✅ **Shipped 2026-05-12** — [`modes/dashboard/server.py`](../server.py) routes `/` → 302 `/portfolio`, `/trading` serves the legacy intraday SPA. Topnav (Portfolio · Trading · Tax · Theory) unified across [`portfolio_page.py`](../portfolio_page.py), [`render_html.py`](../render_html.py), [`theory_page.py`](../theory_page.py), [`tax_page.py`](../tax_page.py). README §1 + §6 reframed. |
+| D25 | **`/portfolio` summary page reads from `data/portfolio_analyses.db`.** | HIGH | High | Medium | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_page.py::render_portfolio_page`](../portfolio_page.py). Header with portfolio value / P&L / mode badge / most-stale `as_of`; sector-weight bars; concentration + valuation table; risk/return table (vol / Sharpe / max-DD / CAGR); cash position card; "What's missing" panel; full holdings table linking to drill-down; "Analyse all (NoAI / AI)" buttons (D27). Empty state when no run exists yet. |
+| D26 | **`/portfolio/<symbol>` per-stock drill-down + on-demand "Analyse now" buttons.** | HIGH | High | High | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_page.py::render_stock_drilldown`](../portfolio_page.py). Position card, market context, rule-based recommendation, AI overlay block (with placeholder when NoAI), 5-run history strip with action-drift banner. Drill-down's re-analyse buttons re-run the full portfolio (single-stock-only intentionally not supported — would give wrong portfolio metrics). |
+| D27 | **"Analyse all" buttons on `/portfolio` (NoAI / AI).** | MEDIUM | High | Medium | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_actions.py`](../portfolio_actions.py) runs background workers, single-flight semantics (second click while in-flight returns existing job_id), `/api/analyse_run?mode={NOAI,AI}&scope=all` endpoint returns 202 + JSON, `/api/run_status` polled every 2s by the page. Cost-of-AI confirm dialog up-front (`estimate_ai_cost(holdings_count)`). Pre-flight token check fails fast with a clear error pointing at `/login` when no valid Zerodha token. |
+| D28 | **Zerodha login flow on dashboard.** | MEDIUM | High | Medium | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_page.py::render_login_page`](../portfolio_page.py) + `/api/login_submit` POST handler. Auth pill on every page ("Auth: OK" / "Auth: Re-login") shows today's token validity at a glance. Manual paste-back flow only — paste the redirect URL after Kite OAuth and the dashboard exchanges it via `ZerodhaClient._exchange_and_save()`. AUTO/ASSISTED env-driven flows remain CLI-only by design (browser context isn't safe for password storage). |
+| D29 | **Latest-vs-prior diff panel on `/portfolio/<symbol>`.** | LOW | Medium | Low | ✅ **Shipped 2026-05-12** — 5-run history strip rendered by `render_stock_drilldown()`. Action-drift banner highlights any HOLD → BUY MORE / PARTIAL EXIT change vs the previous run. Reuses `history_for_symbol(symbol, limit=5)` from ANALYZE_ROADMAP P2. Per-field deep diff is a follow-up if the drift banner alone proves insufficient. |
+
+### Portfolio-Analyser Sub-Module (D24–D29) — design notes
+
+The dashboard side of the analyse-mode rework. The analyser
+itself, its data model, persistence DB, and report layout live
+in [`docs/ANALYZE_ROADMAP.md`](../../docs/ANALYZE_ROADMAP.md)
+under items P1-P7. The `D` items here are strictly about the
+**dashboard surface** that consumes that data — they touch only
+files under `modes/dashboard/`.
+
+**Folder layout (after D24-D29 ship):**
+
+```
+modes/dashboard/
+├── (existing files unchanged)
+├── portfolio_page.py        # D24/D25 — /portfolio + /portfolio/<symbol>
+├── portfolio_actions.py     # D26/D27 — POST handlers + background runs
+└── login_page.py            # D28 — /login UI
+```
+
+**Read-only contract (mirrored from existing dashboard rules):**
+`modes/dashboard/portfolio_page.py` reads ONLY from
+`data/portfolio_analyses.db` and the static reference files
+maintained by `modes/analyze/` (sector map, candidates list).
+It MUST NOT call `Zerodha.get_holdings()` or anything that hits
+a paid API directly — that's `modes/analyze/`'s job, triggered
+by D26/D27 buttons. This keeps page renders microsecond-fast
+and isolates failure modes (network outage breaks "Analyse now"
+but never breaks page navigation).
+
+**Login flow (D28) caveat.** The dashboard server is by default
+bound to `127.0.0.1` — that is fine for the local-laptop case
+but means SSH-only VM users (who today log into the bot via the
+CLI's `m` paste-the-redirect-URL flow) need a port-forward to
+reach the page. README §8 (Run on a VM) gets a one-line addition
+when D28 ships covering this.
+
+**Cost-of-AI guard rail (D27).** The "Estimated Claude cost"
+banner in D27 reads its number from the same
+`Config.calculate_charges()` helper trade-mode uses (see config
+"COST & TAX PARAMETERS"). The estimate is `holdings_count *
+CLAUDE_COST_PER_CALL`. Surfacing the estimate before the user
+clicks "Run" is the entire reason this is a separate item from
+D26 — bulk runs are where AI costs add up and where the user
+needs the hard number in front of them.
+
+**Drill-down history strip (D29).** Reads via
+`history_for_symbol(symbol, limit=5)`. The strip shows tile cards,
+not a chart, because conviction-tier and action are categorical —
+a sparkline would imply continuous progression that doesn't
+exist. A small price+pnl% sparkline alongside the tiles is
+optional polish if effort permits, but not in scope for the
+initial ship.
+
+---
 
 ### Tax Filing Sub-Module (D16–D23) — design notes
 

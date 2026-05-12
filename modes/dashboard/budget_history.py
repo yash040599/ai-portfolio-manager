@@ -19,7 +19,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Three .parent hops: budget_history.py -> dashboard/ -> modes/ -> root.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 REPORTS_DIR  = PROJECT_ROOT / "reports" / "trading"
 
 

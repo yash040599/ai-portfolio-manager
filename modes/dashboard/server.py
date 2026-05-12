@@ -41,6 +41,13 @@ from modes.dashboard.metrics import (
     headline_pnl,
 )
 from modes.dashboard.render_html import build_payload, render_shell
+from modes.dashboard.portfolio_page import (
+    render_login_page,
+    render_portfolio_page,
+    render_status_json,
+    render_stock_drilldown,
+)
+from modes.dashboard.portfolio_actions import submit_run
 from modes.dashboard.theory_page import render_theory_page
 from modes.dashboard.tax_page import render_tax_api, render_tax_page_v2
 from modes.dashboard.verdict import LadderRung, verdict_for
@@ -156,7 +163,24 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         try:
             if url.path == "/":
+                # D24 (2026-05-12): default landing page is now the
+                # tool-wide Portfolio Analyser. The legacy intraday
+                # P&L SPA moved to /trading.
+                self.send_response(302)
+                self.send_header("Location", "/portfolio")
+                self.end_headers()
+            elif url.path == "/portfolio" or url.path == "/portfolio/":
+                self._serve_portfolio()
+            elif url.path.startswith("/portfolio/"):
+                # /portfolio/<symbol> drill-down (D26 + D29).
+                symbol = url.path[len("/portfolio/"):].strip("/")
+                self._serve_portfolio_drilldown(symbol)
+            elif url.path == "/trading" or url.path == "/trading/":
                 self._serve_shell()
+            elif url.path == "/login" or url.path == "/login/":
+                self._serve_login()
+            elif url.path == "/api/run_status":
+                self._serve_run_status()
             elif url.path == "/theory" or url.path == "/theory/":
                 # Redirect to default theory page so the dropdown reflects state.
                 from modes.dashboard.theory_page import DEFAULT_PAGE
@@ -180,7 +204,116 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             sys.stderr.write(f"[dashboard] ERROR: {exc!r}\n")
             self.send_error(500, f"Server error: {exc}")
 
+    def do_POST(self) -> None:  # noqa: N802
+        url = urlparse(self.path)
+        try:
+            if url.path == "/api/analyse_run":
+                self._serve_analyse_run(parse_qs(url.query))
+            elif url.path == "/api/login_submit":
+                self._serve_login_submit()
+            else:
+                self.send_error(404, "Not found")
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[dashboard] POST ERROR: {exc!r}\n")
+            self.send_error(500, f"Server error: {exc}")
+
     # — Endpoints —
+
+    def _serve_portfolio(self) -> None:
+        body = render_portfolio_page().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_portfolio_drilldown(self, symbol: str) -> None:
+        body = render_stock_drilldown(symbol).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_login(self) -> None:
+        body = render_login_page().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_run_status(self) -> None:
+        body = render_status_json().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_analyse_run(self, qs: dict[str, list[str]]) -> None:
+        mode = (qs.get("mode") or ["NOAI"])[0].upper()
+        if mode not in ("NOAI", "AI"):
+            mode = "NOAI"
+        scope = (qs.get("scope") or ["all"])[0]
+        job = submit_run(mode=mode, scope=scope)
+        body = json.dumps({
+            "job_id": job.job_id,
+            "status": job.status,
+            "mode":   job.mode,
+            "scope":  job.scope,
+        }).encode("utf-8")
+        self.send_response(202)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_login_submit(self) -> None:
+        # Read form-urlencoded body; extract redirect_url; exchange
+        # for an access token via core.zerodha_client. Always redirect
+        # back to /login so the page re-renders the auth pill.
+        from urllib.parse import parse_qs as _pqs, urlparse as _up
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8")
+        form = _pqs(raw)
+        redirect_url = (form.get("redirect_url") or [""])[0]
+
+        request_token = ""
+        if redirect_url:
+            try:
+                q = _pqs(_up(redirect_url).query)
+                request_token = (q.get("request_token") or [""])[0]
+            except Exception:
+                request_token = ""
+
+        ok = False
+        err = ""
+        if request_token:
+            try:
+                from config import Config
+                from core.logger import Logger
+                from core.zerodha_client import ZerodhaClient
+                client = ZerodhaClient(Config, Logger("DashboardLogin"))
+                # `_kite` is None until login() runs; we recreate the
+                # KiteConnect handle ourselves to use the helper.
+                from kiteconnect import KiteConnect
+                client._kite = KiteConnect(api_key=Config.ZERODHA_API_KEY)
+                client._exchange_and_save(request_token)
+                ok = True
+            except Exception as exc:
+                err = str(exc)[:200]
+
+        # 303 redirect with a one-shot query flag for the page to read.
+        target = "/login?ok=1" if ok else f"/login?err={err}"
+        self.send_response(303)
+        self.send_header("Location", target)
+        self.end_headers()
 
     def _serve_shell(self) -> None:
         d_from, d_to = current_fy_window()

@@ -114,7 +114,8 @@ def render_shell(initial_payload: dict, *, server_mode: bool) -> str:
 def write_and_maybe_open(html_str: str, *, date_to: str,
                          open_browser: bool = True) -> Path:
     """Persist the HTML and (optionally) open it in the default browser."""
-    project_root = Path(__file__).resolve().parent.parent
+    # Three .parent hops: render_html.py -> dashboard/ -> modes/ -> root.
+    project_root = Path(__file__).resolve().parent.parent.parent
     out_dir = project_root / "reports" / "dashboard"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"dashboard_{date_to}.html"
@@ -229,13 +230,15 @@ _SHELL_TEMPLATE = r"""<!doctype html>
 <body>
 <div class="wrap">
   <nav class="topnav">
-    <span class="here">Dashboard (Live P&amp;L)</span>
+    <a href="/portfolio">Portfolio</a>
     <span class="sep">·</span>
-    <a href="/theory/statistics">Theory &amp; Statistics →</a>
+    <span class="here">Trading (Live P&amp;L)</span>
     <span class="sep">·</span>
-    <a href="/tax">Tax (FY summary) →</a>
+    <a href="/tax">Tax</a>
+    <span class="sep">·</span>
+    <a href="/theory/statistics">Theory</a>
   </nav>
-  <h1>AI Portfolio Manager — Profitability Dashboard</h1>
+  <h1>AI Portfolio Manager — Trading P&amp;L Dashboard</h1>
   <div class="sub" id="window-sub">…</div>
 
   <div id="static-banner-host"></div>

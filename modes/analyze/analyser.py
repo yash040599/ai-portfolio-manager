@@ -1,201 +1,218 @@
 # ================================================================
 # modes/analyze/analyser.py
 # ================================================================
-# Phase 1 orchestrator — read-only portfolio analysis.
+# Orchestrator for `python main.py --mode analyze`.
 #
-# Responsibilities:
-#   Coordinate the six-step flow in order:
-#     1. Validate config
-#     2. Login to Zerodha
-#     3. Fetch holdings
-#     4. Enrich with market data
-#     5. Analyse via Claude API
-#     6. Save report
+# Pipeline (ANALYZE_ROADMAP P1-P7, 2026-05-12):
 #
-# This class itself is intentionally thin — all real logic lives
-# in the service classes it calls. Adding behaviour here means
-# adding a new step to the flow, not changing an existing one.
+#   1. Validate config + login to Zerodha
+#   2. Fetch holdings
+#   3. NoAI enrichment   (modes/analyze/enrich_noai.py)
+#   4. Compute metrics   (modes/analyze/metrics.py — P6)
+#   5. Run gap analysis  (modes/analyze/gaps.py — P7)
+#   6. AI overlay        (modes/analyze/enrich_ai.py — only if --ai)
+#   7. Persist snapshot  (modes/analyze/persistence.py — P2)
+#   8. Render report     (modes/analyze/report.py — P5)
 #
-# Phase 2 note:
-#   PortfolioManager (modes/trade/manager.py) is structured identically
-#   and uses the same four shared classes. Neither class knows about
-#   the other — main.py decides which one to run.
+# Long-term lens throughout (no intraday). NoAI is the default; --ai
+# adds Claude qualitative overlay on top of the same NoAI base.
 # ================================================================
 
-import os
+from __future__ import annotations
+
 import datetime
 
-from config                        import Config, now_ist
-from core.logger                   import Logger
-from core.zerodha_client           import ZerodhaClient
-from core.claude_client            import ClaudeClient
-from shared.market_data          import MarketData
-from modes.trade.analysis_queue       import AnalysisQueue
-from modes.trade.report_writer        import ReportWriter
-from modes.trade.performance_tracker  import PerformanceTracker
+from config              import Config, now_ist
+from core.claude_client  import ClaudeClient
+from core.logger         import Logger
+from core.zerodha_client import ZerodhaClient
+from modes.analyze.enrich_noai  import enrich_holdings
+from modes.analyze.enrich_ai    import overlay_ai
+from modes.analyze.gaps         import analyse_gaps
+from modes.analyze.metrics      import compute_metrics
+from modes.analyze.persistence  import (
+    runs_between as _runs_between,
+    save_snapshot,
+)
+from modes.analyze.report       import save_report
+from modes.analyze.types        import PortfolioSnapshot
 
 
 class PortfolioAnalyser:
+    """Read-only long-term portfolio analyser.
 
-    def __init__(self, config: type[Config]):
+    Every run produces a `PortfolioSnapshot` that lands in:
+      data/portfolio_analyses.db                                (P2)
+      reports/portfolio/<YYYY>/<MM>/portfolio_report_DD.txt     (P5)
+      reports/portfolio/<YYYY>/<MM>/portfolio_data_DD.json      (P5)
+    """
+
+    def __init__(self, config: type[Config], use_ai: bool = False):
         self.cfg = config
-
-        # Each class gets its own named logger so log entries are
-        # clearly attributed in logs/portfolio.log
+        self.use_ai = bool(use_ai)
         self.log     = Logger("PortfolioAnalyser")
         self.zerodha = ZerodhaClient(config, Logger("ZerodhaClient"))
-        self.claude  = ClaudeClient(config,  Logger("ClaudeClient"))
-        self.market  = MarketData(config, self.zerodha, Logger("MarketData"))
-        self.queue   = AnalysisQueue(config, self.claude, Logger("AnalysisQueue"))
-        self.report  = ReportWriter(config, Logger("ReportWriter"))
-        self.tracker = PerformanceTracker(config, Logger("PerformanceTracker"))
+        self.claude: ClaudeClient | None = (
+            ClaudeClient(config, Logger("ClaudeClient")) if self.use_ai else None
+        )
 
-    # ================================================================
-    # RUN
-    # ================================================================
+    # ── Run ─────────────────────────────────────────────────────
 
-    def run(self):
-        """Executes the full end-to-end analysis flow."""
+    def run(self) -> PortfolioSnapshot | None:
         self._print_banner()
 
-        # ── Check if today's report already exists ────────────────
-        today = now_ist().date()
-        if os.path.exists(ReportWriter.portfolio_report_path(today)):
-            answer = input(
-                f"\n⚠️  Report for {today} already exists and will be overwritten.\n"
-                f"   Do you want to run again? (y/n): "
-            ).strip().lower()
-            if answer != 'y':
-                self.log.info("Skipped — existing report preserved.")
-                return
-
-        # ── Step 1: Validate config ───────────────────────────────
-        missing = self.cfg.validate()
+        # 1. Validate config (Claude only required when --ai)
+        missing = self.cfg.validate(require_claude=self.use_ai)
         if missing:
             self.log.section("CONFIGURATION ERROR")
-            for key in missing:
-                self.log.error(f"Missing in .env file: {key}=your_value_here")
-            self.log.info("Create or edit the .env file in this folder and re-run.")
-            return
+            for k in missing:
+                self.log.error(f"Missing in .env file: {k}=your_value_here")
+            return None
 
         for warning in self.cfg.mismatch_warnings():
             self.log.warning(f"Plan mismatch: {warning}")
 
-        # ── Step 2: Login to Zerodha ──────────────────────────────
+        # 2. Login + account snapshot
         self.log.section("ZERODHA LOGIN")
         self.zerodha.login()
-
-        # ── Step 2b: Show account snapshot ─────────────────────────
-        self._print_account_snapshot()
-
-        # ── Step 3: Fetch holdings ────────────────────────────────
-        self.log.section("FETCHING HOLDINGS")
-        portfolio = self.zerodha.get_holdings()
-        if not portfolio:
-            self.log.warning("No holdings found in your account.")
-            return
-        self.log.success(f"Found {len(portfolio)} stocks in your demat account")
-
-        # ── Step 4: Enrich with market data ───────────────────────
-        self.log.section("ENRICHING WITH MARKET DATA")
-        portfolio = self.market.enrich(portfolio)
-
-        # ── Step 4b: Load previous report for comparison ──────────
-        prev_data = self.tracker.get_latest_portfolio_analysis()
-        if prev_data is None:
-            # Fallback to JSON file scan if DB is empty (first run after DB was added)
-            prev_data = ReportWriter.find_latest_portfolio_data(now_ist().date())
-        if prev_data:
-            self.log.info(f"Previous report found ({prev_data['date']}) — Claude will compare changes")
-        else:
-            self.log.info("No previous report found — first run")
-
-        # ── Step 4c: Load full history + pending actions from DB ──
-        current_symbols = [s["symbol"] for s in portfolio]
-        history = self.tracker.get_full_history_context(current_symbols)
-        pending_actions = self.tracker.get_pending_actions()
-        if history:
-            total_entries = sum(len(v) for v in history.values())
-            self.log.info(f"Loaded {total_entries} historical analyses across {len(history)} stocks")
-        if pending_actions:
-            self.log.info(
-                f"Found {len(pending_actions)} unacted recommendations — "
-                f"Claude will re-evaluate"
-            )
-
-        # ── Step 5: Analyse via Claude API ────────────────────────
-        self.queue.load(
-            portfolio,
-            previous_data=prev_data,
-            history=history,
-            pending_actions=pending_actions,
-        )
-        analyses, skipped, failed_log = self.queue.run()
-
-        # ── Step 5b: Portfolio-level overall review ───────────────
-        portfolio_review = None
-        new_stock_recommendations = []
-        if analyses:
-            self.log.section("PORTFOLIO REVIEW — Overall assessment")
-            try:
-                portfolio_review, new_stock_recommendations = self.queue.run_portfolio_review(portfolio, analyses)
-                self.log.success("Portfolio-level review complete")
-                if new_stock_recommendations:
-                    self.log.info(f"  {len(new_stock_recommendations)} new stock recommendations extracted")
-            except Exception as e:
-                self.log.warning(f"Portfolio review failed: {e} — individual analyses still saved")
-
-        # ── Step 6: Save report ───────────────────────────────────
-        self.log.section("SAVING REPORT")
-        self.report.save(portfolio, analyses, skipped, failed_log, portfolio_review, new_stock_recommendations)
-
-        # ── Step 7: Record to performance database ────────────────
-        self.tracker.record_portfolio_analyses(portfolio, analyses)
-
-        self._print_summary(analyses, skipped, failed_log)
-
-    # ================================================================
-    # DISPLAY HELPERS
-    # ================================================================
-
-    def _print_banner(self):
-        """Shows the active configuration at the top of every run."""
-        plan = self.cfg.claude()
-        zrd  = self.cfg.zerodha()
-        print(f"\n{'='*58}")
-        print("  AI PORTFOLIO MANAGER \u2014 CONFIGURATION")
-        print(f"{'='*58}")
-        print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}")
-        print(f"  \u2192 {plan['note']}")
-        print()
-        print(f"  Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}")
-        print(f"  \u2192 {zrd['note']}")
-        print()
-        print(f"  Claude model   : {plan['model']}")
-        print(f"  Price source   : {zrd['price_source'].upper()}")
-        print(f"{'='*58}\n")
-
-    def _print_account_snapshot(self):
-        """Delegates to ZerodhaClient's shared account snapshot."""
         self.zerodha.print_account_snapshot()
 
-    def _print_summary(
-        self,
-        analyses:   list[dict],
-        skipped:    list[str],
-        failed_log: list[dict],
-    ):
-        today = now_ist().date()
-        print(f"\n{'='*58}")
-        self.log.success(f"Run complete")
-        self.log.success(f"Analysed : {len(analyses)} stocks")
-        if skipped:
-            self.log.warning(f"Skipped  : {len(skipped)} — {', '.join(skipped)}")
-        if failed_log:
-            self.log.error(f"Failed   : {len(failed_log)} (see report for details)")
-        print()
-        print(f"  Report : {ReportWriter.portfolio_report_path(today)}")
-        print(f"  Data   : {ReportWriter.portfolio_data_path(today)}")
-        print()
-        print(f"  Managed budget ready for Phase 2 (dynamic from Zerodha funds)")
-        print(f"{'='*58}\n")
+        # 3. Holdings
+        self.log.section("FETCHING HOLDINGS")
+        holdings = self.zerodha.get_holdings()
+        if not holdings:
+            self.log.warning("No holdings found in your demat account.")
+            return None
+        self.log.success(f"Found {len(holdings)} stock(s) in your demat account")
+
+        # 4. NoAI enrichment (always runs)
+        self.log.section("NOAI ENRICHMENT")
+        records = enrich_holdings(holdings, zerodha=self.zerodha,
+                                  log=self.log, cfg=self.cfg)
+        if not records:
+            self.log.warning("Enrichment produced no records — abort.")
+            return None
+
+        # 5. Portfolio metrics (P6 + P8 risk/return + cash drag)
+        self.log.section("PORTFOLIO METRICS")
+        cash_balance: float | None = None
+        try:
+            cash_balance = self.zerodha.get_available_funds()
+            self.log.info(f"Cash balance available: Rs.{cash_balance:,.2f}")
+        except Exception as e:
+            self.log.warning(f"Cash-balance fetch failed: {e} — cash drag will be skipped")
+        # Prior runs power max-DD + XIRR. Pull a generous window so the
+        # CAGR has a real time anchor; metrics.py filters to >= 30d.
+        prior_runs: list[dict] = []
+        try:
+            today = now_ist().date()
+            d_from = (today - datetime.timedelta(days=400)).isoformat()
+            d_to   = today.isoformat()
+            prior_runs = _runs_between(d_from, d_to)
+        except Exception as e:
+            self.log.debug(f"Prior-run lookup failed: {e}")
+        metrics = compute_metrics(
+            records,
+            cash_balance=cash_balance,
+            prior_runs=prior_runs,
+        )
+        hhi_v  = metrics.hhi_concentration.value
+        top5_v = metrics.top_5_concentration_pct.value
+        pe_v   = metrics.weighted_pe.value
+        hhi_s  = f"{hhi_v:.0f}"  if hhi_v  is not None else "n/a"
+        top5_s = f"{top5_v:.1f}%" if top5_v is not None else "n/a"
+        pe_s   = f"{pe_v:.1f}"   if pe_v   is not None else "n/a"
+        self.log.success(f"HHI {hhi_s}, top-5 {top5_s}, weighted P/E {pe_s}")
+        if metrics.sharpe_ratio and metrics.sharpe_ratio.value is not None:
+            self.log.info(
+                f"Sharpe {metrics.sharpe_ratio.value:.2f}, "
+                f"vol {metrics.volatility_30d_pct.value:.1f}% (annualised)"
+            )
+
+        # 6. Gap analysis (P7)
+        self.log.section("GAP ANALYSIS")
+        gaps = analyse_gaps(records, metrics)
+        if gaps.flags:
+            self.log.info(
+                f"{len(gaps.flags)} gap(s) flagged "
+                f"({sum(1 for f in gaps.flags if f.severity == 'RISK')} RISK, "
+                f"{sum(1 for f in gaps.flags if f.severity == 'WARN')} WARN)"
+            )
+        else:
+            self.log.success("No structural gaps detected against benchmark")
+
+        # 7. AI overlay (only when --ai)
+        mode = "AI" if self.use_ai else "NOAI"
+        if self.use_ai and self.claude is not None:
+            self.log.section("AI OVERLAY (Claude)")
+            overlay_ai(records, claude=self.claude, log=self.log, cfg=self.cfg)
+
+        # 8. Persist + render
+        snapshot = PortfolioSnapshot(
+            timestamp = now_ist(),
+            mode      = mode,
+            holdings  = records,
+            metrics   = metrics,
+            gaps      = gaps,
+            notes     = "",
+        )
+        self.log.section("PERSIST + REPORT")
+        try:
+            run_id = save_snapshot(snapshot)
+            self.log.success(f"Snapshot persisted as run #{run_id}")
+        except Exception as e:
+            self.log.warning(f"Persist failed (continuing with file output): {e}")
+        try:
+            txt_path, json_path = save_report(snapshot, self.log)
+        except Exception as e:
+            self.log.error(f"Report write failed: {e}")
+            txt_path = json_path = None
+
+        self._print_summary(snapshot, txt_path, json_path)
+        return snapshot
+
+    # ── Display ─────────────────────────────────────────────────
+
+    def _print_banner(self) -> None:
+        plan = self.cfg.claude()
+        zrd  = self.cfg.zerodha()
+        mode_label = "AI" if self.use_ai else "NOAI"
+        print(f"\n{'='*64}")
+        print("  AI PORTFOLIO MANAGER — ANALYSE MODE")
+        print(f"{'='*64}")
+        print(f"  Run mode       : {mode_label}  "
+              f"({'Claude overlay enabled' if self.use_ai else 'deterministic only — no Claude calls'})")
+        if self.use_ai:
+            print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}  "
+                  f"(model {plan['model']})")
+        print(f"  Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}  "
+              f"(price source {zrd['price_source']})")
+        print(f"{'='*64}\n")
+
+    def _print_summary(self, snap: PortfolioSnapshot,
+                       txt_path: str | None,
+                       json_path: str | None) -> None:
+        m = snap.metrics
+        invested = (m.total_invested.value or 0) if m.total_invested else 0
+        current  = (m.total_current_value.value or 0) if m.total_current_value else 0
+        pnl      = (m.total_pnl.value or 0) if m.total_pnl else 0
+        pnl_pct  = (m.total_pnl_pct.value or 0) if m.total_pnl_pct else 0
+        most_stale = snap.most_stale_at()
+        print(f"\n{'='*64}")
+        self.log.success("Analyse run complete")
+        self.log.success(
+            f"Holdings : {len(snap.holdings)}  ·  "
+            f"Invested Rs.{invested:,.0f}  ·  Current Rs.{current:,.0f}  ·  "
+            f"P&L Rs.{pnl:+,.0f} ({pnl_pct:+.2f}%)"
+        )
+        self.log.info(
+            f"Most stale field across all enrichment: "
+            f"{most_stale.strftime('%Y-%m-%d %H:%M IST')}"
+        )
+        if txt_path:
+            print(f"\n  Report : {txt_path}")
+        if json_path:
+            print(f"  Data   : {json_path}")
+        print("\n  Re-run with --ai for Claude qualitative overlay" if not self.use_ai
+              else "\n  AI overlay applied")
+        print(f"{'='*64}\n")

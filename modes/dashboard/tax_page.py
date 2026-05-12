@@ -378,11 +378,13 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
     salaried_checked = "checked" if is_salaried else ""
     return f"""
 <nav class="topnav">
-  <a href="/">← Dashboard (Live P&amp;L)</a>
+  <a href="/portfolio">Portfolio</a>
   <span class="sep">·</span>
-  <a href="/theory/statistics">Theory &amp; Statistics</a>
+  <a href="/trading">Trading (Live P&amp;L)</a>
   <span class="sep">·</span>
-  <span style="color:var(--muted)">Tax (FY)</span>
+  <span style="color:var(--muted)">Tax</span>
+  <span class="sep">·</span>
+  <a href="/theory/statistics">Theory</a>
   <span class="spacer"></span>
   <span class="muted small">Pure projection — does not file or pay anything.</span>
 </nav>
