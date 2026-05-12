@@ -21,6 +21,7 @@ import datetime
 import html
 import json
 import os
+import sqlite3
 
 from config import Config
 from modes.analyze.persistence import (
@@ -167,6 +168,52 @@ button.action[disabled] { opacity: 0.55; cursor: not-allowed; }
 .history-strip .tile .act { font-weight: 600; font-size: 14px; margin-top: 4px; }
 footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
 code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+
+/* AI toggle */
+.ai-toggle { display: inline-flex; align-items: center; gap: 8px;
+             padding: 6px 12px; background: var(--card);
+             border: 1px solid var(--line); border-radius: 999px;
+             font-size: 13px; cursor: pointer; user-select: none;
+             margin-right: 12px; }
+.ai-toggle input { margin: 0; cursor: pointer; }
+.ai-toggle .lbl { font-weight: 500; }
+.ai-toggle .hint { color: var(--muted); font-size: 11px; }
+
+/* Loading spinner (used during background analyse runs) */
+.spinner { display: inline-block; width: 14px; height: 14px;
+           border: 2px solid #cfd9eb; border-top-color: var(--accent);
+           border-radius: 50%; animation: spin 0.8s linear infinite;
+           vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Chart canvases */
+.chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+              margin-bottom: 16px; }
+@media (max-width: 760px) { .chart-grid { grid-template-columns: 1fr; } }
+.chart-grid .chart-card { padding: 14px 18px; background: var(--card);
+                          border: 1px solid var(--line); border-radius: 8px; }
+.chart-grid .chart-card h3 { margin: 0 0 8px; font-size: 13px;
+                              text-transform: uppercase; letter-spacing: 0.06em;
+                              color: var(--muted); font-weight: 600; }
+.chart-card canvas { max-height: 280px; }
+
+/* Back link on drill-down */
+.back-link { display: inline-block; padding: 6px 0; margin-bottom: 8px;
+             color: var(--accent); text-decoration: none; font-size: 14px; }
+.back-link:hover { text-decoration: underline; }
+
+/* Suggested-additions cards */
+.sugg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+             gap: 10px; }
+.sugg-grid .card-mini { padding: 10px 12px; background: var(--card);
+                        border: 1px solid var(--line); border-radius: 6px; }
+.sugg-grid .card-mini a { font-weight: 600; color: var(--accent);
+                          text-decoration: none; font-size: 14px; }
+.sugg-grid .card-mini a:hover { text-decoration: underline; }
+.sugg-grid .card-mini .meta { color: var(--muted); font-size: 12px;
+                               margin-top: 4px; }
+.sugg-grid .card-mini .why { font-size: 12px; margin-top: 6px;
+                              color: var(--fg); }
 """
 
 
@@ -181,29 +228,34 @@ def render_portfolio_page() -> str:
 
     if snap is None:
         body.append(_empty_state())
-    else:
-        body.append(_render_header(snap))
-        body.append(_render_actions(snap))
-        body.append(_render_metrics(snap.metrics))
-        body.append(_render_gaps(snap.gaps))
-        body.append(_render_holdings_table(snap))
+        return _wrap("Portfolio", "Portfolio", "".join(body),
+                     holdings_count=0)
 
-    return _wrap("Portfolio", "Portfolio", "".join(body))
+    body.append(_render_header(snap))
+    body.append(_render_actions(snap))
+    body.append(_render_charts(snap))
+    body.append(_render_metrics(snap.metrics))
+    body.append(_render_gaps(snap.gaps))
+    body.append(_render_holdings_table(snap))
+    body.append(_render_suggested(snap))
+    return _wrap("Portfolio", "Portfolio", "".join(body),
+                 holdings_count=len(snap.holdings))
 
 
 def _empty_state() -> str:
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
     return f"""
 <div class="card">
   <h2>No analysis on file yet</h2>
-  <p>Click below to run your first NoAI portfolio analysis. NoAI is
-  free (no Claude calls). Add the AI overlay any time after the first
-  run for qualitative thesis / risks / news context.</p>
+  <p>Click below to run your first portfolio analysis. NoAI is the
+  default and free (no Claude calls). Toggle <em>Use Claude AI overlay</em>
+  to add qualitative thesis / risks / news context (~Rs.{per_call:.0f} per
+  stock).</p>
   <p>
-    <button class="action"
-      onclick="runAnalysis('NOAI', 'all')">Analyse all (NoAI)</button>
-    <button class="action alt"
-      onclick="runAnalysis('AI', 'all')">Analyse all (AI)</button>
+    {_ai_toggle_html()}
+    <button class="action" onclick="runAnalysis('all')">Analyse all</button>
   </p>
+  <div id="job-banner"></div>
   <p class="muted">Reads holdings live from your Zerodha demat account.
   Make sure your access token is valid (Auth pill above).</p>
 </div>
@@ -241,18 +293,15 @@ def _render_header(snap: PortfolioSnapshot) -> str:
 
 
 def _render_actions(snap: PortfolioSnapshot) -> str:
-    cost = estimate_ai_cost(len(snap.holdings))
     return f"""
 <div class="card">
-  <h2>Run a new analysis</h2>
+  <h2>Refresh analysis</h2>
   <p class="muted">A new run reads live prices + cached candles +
-  reference seeds, persists to <code>data/portfolio_analyses.db</code>,
-  and refreshes this page.</p>
+  reference seeds, then refreshes this page. Same-day re-runs
+  overwrite — your DB stays one-row-per-day clean.</p>
   <p>
-    <button class="action"
-      onclick="runAnalysis('NOAI', 'all')">Analyse all (NoAI)</button>
-    <button class="action alt"
-      onclick="runAnalysisAi({len(snap.holdings)}, {cost:.0f})">Analyse all (AI)</button>
+    {_ai_toggle_html()}
+    <button class="action" onclick="runAnalysis('all')">Analyse all</button>
   </p>
   <div id="job-banner"></div>
 </div>
@@ -260,8 +309,149 @@ def _render_actions(snap: PortfolioSnapshot) -> str:
 """
 
 
+def _render_charts(snap: PortfolioSnapshot) -> str:
+    """Render two doughnut charts (sector + market-cap tier) +
+    the top-10 holdings P&L bar. Chart.js is loaded once in the
+    shared shell (`_wrap`)."""
+    m = snap.metrics
+    # ── Sector pie data ──
+    sectors = [(sw.sector, sw.weight_pct) for sw in (m.sector_weights or [])
+               if sw.weight_pct > 0]
+    sector_labels = [s[0] for s in sectors]
+    sector_data   = [s[1] for s in sectors]
+
+    # ── Market-cap tier doughnut data ──
+    cap_data: list[tuple[str, float]] = []
+    if m.cap_tier_weights and isinstance(m.cap_tier_weights.value, dict):
+        for tier in ("LARGE", "MID", "SMALL", "ETF", "UNKNOWN"):
+            v = m.cap_tier_weights.value.get(tier)
+            if v is not None and v > 0:
+                cap_data.append((tier, v))
+    cap_labels = [c[0] for c in cap_data]
+    cap_values = [c[1] for c in cap_data]
+
+    # ── Top-10 P&L bar (sorted by absolute P&L) ──
+    pnl_rows = sorted(
+        ((s.symbol, _v(s.pnl)) for s in snap.holdings),
+        key=lambda t: abs(t[1]), reverse=True,
+    )[:10]
+    pnl_labels = [r[0] for r in pnl_rows]
+    pnl_values = [round(r[1], 0) for r in pnl_rows]
+    pnl_colors = ["#1b8e3a" if v >= 0 else "#c62828" for v in pnl_values]
+
+    # JSON-encode for the inline scripts.
+    sec_json = json.dumps({"labels": sector_labels, "data": sector_data})
+    cap_json = json.dumps({"labels": cap_labels, "data": cap_values})
+    pnl_json = json.dumps({"labels": pnl_labels, "data": pnl_values,
+                           "colors": pnl_colors})
+
+    return f"""
+<h2>At a glance</h2>
+<div class="chart-grid">
+  <div class="chart-card">
+    <h3>Sector mix</h3>
+    <canvas id="chart-sector"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Market-cap tier (AMFI)</h3>
+    <canvas id="chart-cap-tier"></canvas>
+  </div>
+</div>
+<div class="chart-grid" style="grid-template-columns: 1fr;">
+  <div class="chart-card">
+    <h3>Top movers (absolute P&amp;L)</h3>
+    <canvas id="chart-pnl"></canvas>
+  </div>
+</div>
+<script>
+(function () {{
+  if (typeof Chart === 'undefined') return;
+  Chart.defaults.font.family = '-apple-system, "Segoe UI", Roboto, sans-serif';
+  Chart.defaults.font.size = 12;
+
+  var palette = ['#3457d5','#10b981','#f59e0b','#ef4444','#8b5cf6',
+                 '#ec4899','#14b8a6','#f97316','#6366f1','#84cc16',
+                 '#06b6d4','#a3a3a3'];
+
+  var sec = {sec_json};
+  if (sec.labels.length) {{
+    new Chart(document.getElementById('chart-sector'), {{
+      type: 'doughnut',
+      data: {{
+        labels: sec.labels,
+        datasets: [{{
+          data: sec.data,
+          backgroundColor: sec.labels.map(function (_, i) {{ return palette[i % palette.length]; }}),
+          borderWidth: 1, borderColor: '#fff',
+        }}],
+      }},
+      options: {{
+        plugins: {{
+          legend: {{ position: 'right', labels: {{ boxWidth: 12 }} }},
+          tooltip: {{ callbacks: {{ label: function (ctx) {{
+            return ctx.label + ': ' + ctx.parsed.toFixed(1) + '%';
+          }} }} }},
+        }},
+        cutout: '55%',
+      }},
+    }});
+  }}
+
+  var cap = {cap_json};
+  if (cap.labels.length) {{
+    var capColors = {{
+      LARGE: '#1b8e3a', MID: '#3457d5', SMALL: '#f59e0b',
+      ETF: '#8b5cf6', UNKNOWN: '#c62828',
+    }};
+    new Chart(document.getElementById('chart-cap-tier'), {{
+      type: 'doughnut',
+      data: {{
+        labels: cap.labels,
+        datasets: [{{
+          data: cap.data,
+          backgroundColor: cap.labels.map(function (l) {{ return capColors[l] || '#a3a3a3'; }}),
+          borderWidth: 1, borderColor: '#fff',
+        }}],
+      }},
+      options: {{
+        plugins: {{
+          legend: {{ position: 'right', labels: {{ boxWidth: 12 }} }},
+          tooltip: {{ callbacks: {{ label: function (ctx) {{
+            return ctx.label + ': ' + ctx.parsed.toFixed(1) + '%';
+          }} }} }},
+        }},
+        cutout: '55%',
+      }},
+    }});
+  }}
+
+  var pnl = {pnl_json};
+  if (pnl.labels.length) {{
+    new Chart(document.getElementById('chart-pnl'), {{
+      type: 'bar',
+      data: {{
+        labels: pnl.labels,
+        datasets: [{{
+          label: 'P&L (Rs.)', data: pnl.data,
+          backgroundColor: pnl.colors, borderWidth: 0,
+        }}],
+      }},
+      options: {{
+        plugins: {{ legend: {{ display: false }} }},
+        scales: {{
+          y: {{ ticks: {{ callback: function (v) {{
+            return 'Rs.' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v);
+          }} }} }},
+        }},
+      }},
+    }});
+  }}
+}})();
+</script>
+"""
+
+
 def _render_metrics(m: PortfolioMetrics) -> str:
-    rows = []
     if m.sector_weights:
         bars = []
         for sw in m.sector_weights:
@@ -269,7 +459,8 @@ def _render_metrics(m: PortfolioMetrics) -> str:
             bars.append(
                 f'<tr><td>{html.escape(sw.sector)}</td>'
                 f'<td>{sw.weight_pct:.1f}% '
-                f'<span class="sectorbar" style="width:{w}px"></span></td></tr>'
+                f'<span class="sectorbar" style="width:{w}px"></span>'
+                f' <span class="muted">({sw.holdings_count})</span></td></tr>'
             )
         sec_html = '<table class="kvtable">' + "".join(bars) + "</table>"
     else:
@@ -464,14 +655,73 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
 """
 
 
+# ── Suggested-additions panel (clickable into drill-down) ───────
+
+def _sector_for_symbol(symbol: str) -> str:
+    """Resolve sector from the trade-mode SECTOR_MAP (lazy import to
+    avoid pulling the trade-mode tree into dashboard cold paths)."""
+    try:
+        from modes.trade.stock_scanner import SECTOR_MAP
+        return SECTOR_MAP.get(symbol, "OTHER")
+    except Exception:
+        return "OTHER"
+
+
+def _render_suggested(snap: PortfolioSnapshot) -> str:
+    """Below the holdings table: a clickable grid of suggested
+    additions pulled from gap flags. Each card links to the same
+    `/portfolio/<symbol>` drill-down which handles the unheld
+    (wishlist) case automatically."""
+    seen: set[str] = set()
+    items: list[tuple[str, str, str]] = []   # (symbol, sector, reason)
+    for f in snap.gaps.flags:
+        for sym in f.suggested_symbols:
+            if sym in seen:
+                continue
+            seen.add(sym)
+            sector = _sector_for_symbol(sym)
+            items.append((sym, sector, f.headline))
+    if not items:
+        return ""
+
+    cards = []
+    for sym, sec, reason in items:
+        cards.append(
+            '<div class="card-mini">'
+            f'<a href="/portfolio/{html.escape(sym)}">{html.escape(sym)}</a>'
+            f' <span class="meta">· {html.escape(sec)}</span>'
+            f'<div class="why">{html.escape(reason)}</div>'
+            '</div>'
+        )
+    return f"""
+<h2>Suggested additions</h2>
+<div class="card">
+  <p class="muted">Pulled from the "what's missing" engine. Each card
+  links to the drill-down page where you can see deterministic
+  metrics for that name and run a single-stock <em>Analyse this
+  stock</em> pass (NoAI free, AI optional). You don't need to own
+  the stock to drill down.</p>
+  <div class="sugg-grid">
+    {"".join(cards)}
+  </div>
+</div>
+"""
+
+
 # ── /portfolio/<symbol> (D26 + D29 drill-down) ──────────────────
 
 def render_stock_drilldown(symbol: str) -> str:
     """Per-stock drill-down. Pulls latest StockAnalysis from DB and a
-    short history strip for D29. Provides per-stock 'Analyse now'
-    buttons (re-runs the FULL portfolio — running just one stock
-    in the new pipeline isn't supported and would give wrong
-    metrics anyway since metrics need the full set)."""
+    short history strip for D29. Provides per-stock 'Analyse this
+    stock' buttons that re-run enrichment for ONLY this symbol
+    (held → refresh row; not-held → wishlist run that pulls full
+    NoAI enrichment + optional AI overlay so the user can evaluate
+    a candidate before buying).
+
+    The page also embeds a 1-year price chart with the user's
+    average-cost line so the value of holding (or buying) can be
+    seen at a glance.
+    """
     sym = (symbol or "").strip().upper()
     if not sym or not sym.replace("-", "").replace("&", "").isalnum():
         return _wrap(
@@ -481,34 +731,64 @@ def render_stock_drilldown(symbol: str) -> str:
         )
     s = latest_for_symbol(sym)
     history = history_for_symbol(sym, limit=5)
-    body = [_render_drilldown_header(sym, s)]
+    is_held = bool(s and s.qty and (s.qty.value or 0) > 0)
+    body = [
+        '<a class="back-link" href="/portfolio">\u2190 Back to portfolio</a>',
+        _render_drilldown_header(sym, s, is_held=is_held),
+        _render_drilldown_actions(sym),
+    ]
     if s is not None:
-        body.append(_render_drilldown_position(s))
+        if is_held:
+            body.append(_render_drilldown_position(s))
+        else:
+            body.append(_render_drilldown_wishlist_card(sym))
         body.append(_render_drilldown_market(s))
+        body.append(_render_drilldown_chart(sym, s))
         body.append(_render_drilldown_rule(s))
         body.append(_render_drilldown_ai(s))
         body.append(_render_drilldown_history(sym, history))
-    body.append(_render_drilldown_actions())
-    return _wrap(f"{sym} · Drill-down", "Portfolio", "".join(body))
+    else:
+        body.append(_render_drilldown_chart(sym, None))
+    return _wrap(f"{sym} · Drill-down", "Portfolio", "".join(body),
+                 holdings_count=1)
 
 
-def _render_drilldown_header(sym: str, s: StockAnalysis | None) -> str:
+def _render_drilldown_header(sym: str, s: StockAnalysis | None, *,
+                             is_held: bool) -> str:
     if s is None:
+        sec = _sector_for_symbol(sym)
         return f"""
 <h1 class="page-title">{html.escape(sym)}</h1>
-<div class="sub">No analysis on file for this symbol yet.</div>
+<div class="sub">{html.escape(sec)} · no analysis on file yet</div>
 <div class="card">
-  <p>Run an analyse pass first (button below). The pipeline writes
-  every holding from your Zerodha demat to the DB; if this symbol
-  isn't in your demat, it won't appear here.</p>
+  <p>This symbol isn't in your latest snapshot. Click <em>Analyse
+  this stock</em> below to fetch a deterministic snapshot (live
+  price, 52-week range, beta vs NIFTY, sector, market-cap tier,
+  P/E, dividend yield, RSI / SMA-50 / SMA-200) — and optionally
+  add the Claude AI overlay (long-term thesis, risks, peer
+  comparison, recent news).</p>
 </div>
 """
     age = _staleness_label(s.most_stale_at())
     weight = _v(s.weight_in_portfolio_pct)
+    badge = ('<span class="banner info" style="display:inline-block; margin:0 0 0 8px;">'
+             f'{"HELD" if is_held else "WISHLIST"}</span>')
     return f"""
-<h1 class="page-title">{html.escape(s.symbol)} ({html.escape(s.exchange)})</h1>
+<h1 class="page-title">{html.escape(s.symbol)} ({html.escape(s.exchange)}) {badge}</h1>
 <div class="sub">Most stale field: {html.escape(age)} ·
   weight in portfolio: {weight:.1f}%</div>
+"""
+
+
+def _render_drilldown_wishlist_card(sym: str) -> str:
+    return f"""
+<h2>Position</h2>
+<div class="card">
+  <p>You don't hold {html.escape(sym)} (qty = 0). The drill-down
+  shows deterministic market data + (optionally) AI thesis so you
+  can decide whether to add it. Use <em>Analyse this stock</em>
+  above to refresh the data.</p>
+</div>
 """
 
 
@@ -659,25 +939,112 @@ def _action_drift_message(history: list[StockAnalysis]) -> str:
             f'<strong>{html.escape(latest)}</strong> on the latest run.</div>')
 
 
-def _render_drilldown_actions() -> str:
-    # Drill-down can only re-run the FULL portfolio — single-stock
-    # mode would give wrong portfolio metrics + gaps, so don't
-    # pretend it works.
+def _render_drilldown_actions(sym: str) -> str:
+    """Per-stock actions card: AI toggle + 'Analyse this stock' (single)
+    + 'Re-analyse all' (full portfolio)."""
     return f"""
-<h2>Re-analyse</h2>
 <div class="card">
-  <p class="muted">Re-running refreshes the whole portfolio (live
-  prices, indicators, rule engine). Single-stock-only runs aren't
-  supported — they'd give wrong portfolio metrics.</p>
+  <h2>Refresh</h2>
+  <p class="muted">Single-stock refresh re-fetches live price + 1y
+  candles + indicators for {html.escape(sym)} only and merges into
+  the latest snapshot. Portfolio metrics + gaps stay as-is. Re-running
+  the full portfolio also recomputes those.</p>
+  <p>
+    {_ai_toggle_html()}
+  </p>
   <p>
     <button class="action"
-      onclick="runAnalysis('NOAI', 'all')">Re-analyse all (NoAI)</button>
+      onclick="runAnalysis('symbol:{html.escape(sym)}')">Analyse this stock</button>
     <button class="action alt"
-      onclick="runAnalysisAi(0, 0)">Re-analyse all (AI)</button>
+      onclick="runAnalysis('all')">Re-analyse all</button>
   </p>
   <div id="job-banner"></div>
 </div>
 {_runs_polling_script()}
+"""
+
+
+def _render_drilldown_chart(sym: str, s: StockAnalysis | None) -> str:
+    """Embed a 1-year price chart for `sym`. Data is fetched async via
+    `/api/stock_chart?symbol=X`. Renders a horizontal line at the
+    user's average buy price (when held) so cost vs current is
+    visible at a glance."""
+    avg_attr = ""
+    if s and s.avg_buy_price and s.avg_buy_price.value:
+        avg_attr = f' data-avg-price="{float(s.avg_buy_price.value):.2f}"'
+    return f"""
+<h2>Price history (1 year)</h2>
+<div class="card chart-card" id="chart-card-stock"
+     data-symbol="{html.escape(sym)}"{avg_attr}>
+  <p id="chart-stock-msg" class="muted"><span class="spinner"></span>
+    Loading {html.escape(sym)} candles from local cache\u2026</p>
+  <canvas id="chart-stock" style="display:none;"></canvas>
+</div>
+<script>
+(function () {{
+  if (typeof Chart === 'undefined') return;
+  var card = document.getElementById('chart-card-stock');
+  var sym = card.getAttribute('data-symbol');
+  var avg = parseFloat(card.getAttribute('data-avg-price') || '0');
+  fetch('/api/stock_chart?symbol=' + encodeURIComponent(sym))
+    .then(function (r) {{ return r.json(); }})
+    .then(function (j) {{
+      var msg = document.getElementById('chart-stock-msg');
+      if (!j.dates || j.dates.length === 0) {{
+        msg.innerHTML = 'No daily candles cached for ' + sym
+          + '. Run intraday trade-mode at least once with this symbol '
+          + 'in the universe to populate <code>data/candle_cache.db</code>, '
+          + 'or wait for the next scheduled cache refresh.';
+        return;
+      }}
+      msg.style.display = 'none';
+      var canvas = document.getElementById('chart-stock');
+      canvas.style.display = 'block';
+      var datasets = [{{
+        label: sym + ' close',
+        data: j.closes,
+        borderColor: '#3457d5',
+        backgroundColor: 'rgba(52, 87, 213, 0.08)',
+        borderWidth: 1.6,
+        pointRadius: 0,
+        tension: 0.15,
+        fill: true,
+      }}];
+      if (avg > 0) {{
+        datasets.push({{
+          label: 'Your avg cost (Rs.' + avg.toFixed(2) + ')',
+          data: j.dates.map(function () {{ return avg; }}),
+          borderColor: '#c62828',
+          borderWidth: 1.2,
+          borderDash: [6, 4],
+          pointRadius: 0,
+          fill: false,
+        }});
+      }}
+      new Chart(canvas, {{
+        type: 'line',
+        data: {{ labels: j.dates, datasets: datasets }},
+        options: {{
+          plugins: {{
+            legend: {{ position: 'top', labels: {{ boxWidth: 14 }} }},
+            tooltip: {{ mode: 'index', intersect: false }},
+          }},
+          interaction: {{ mode: 'index', intersect: false }},
+          scales: {{
+            x: {{ ticks: {{ maxTicksLimit: 10, autoSkip: true }} }},
+            y: {{ ticks: {{ callback: function (v) {{
+              return 'Rs.' + v.toFixed(0);
+            }} }} }},
+          }},
+        }},
+      }});
+    }})
+    .catch(function (e) {{
+      var m = document.getElementById('chart-stock-msg');
+      if (m) m.innerHTML = 'Chart load error: ' + e;
+    }});
+}})();
+</script>
 """
 
 
@@ -761,6 +1128,58 @@ def render_login_page() -> str:
     return _wrap("Login", "Login", body)
 
 
+# ── /api/stock_chart response builder ───────────────────────────
+
+_CANDLE_CACHE_PATH = os.path.join("data", "candle_cache.db")
+
+
+def render_stock_chart_json(symbol: str, *,
+                            lookback_days: int = 365) -> str:
+    """JSON for the per-stock price chart on the drill-down page.
+
+    Reads daily closes from `data/candle_cache.db` for the last
+    `lookback_days` calendar days. Returns:
+      {dates: [...], closes: [...], lookback_days: int, symbol: str}
+    Empty arrays when no cache exists for the symbol — the page
+    shows a friendly "no candles" message in that case.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym or not sym.replace("-", "").replace("&", "").isalnum():
+        return json.dumps({"dates": [], "closes": [], "symbol": sym,
+                           "error": "invalid symbol"})
+    if not os.path.exists(_CANDLE_CACHE_PATH):
+        return json.dumps({"dates": [], "closes": [], "symbol": sym,
+                           "error": "no candle cache"})
+    rows: list[tuple[str, float]] = []
+    try:
+        conn = sqlite3.connect(_CANDLE_CACHE_PATH)
+        try:
+            res = conn.execute(
+                """SELECT candle_date, close FROM candle_cache
+                   WHERE symbol = ? AND interval = 'day'
+                   ORDER BY candle_date DESC LIMIT ?""",
+                (sym, int(lookback_days)),
+            ).fetchall()
+            # Newest-first → flip to chronological for charting.
+            rows = [(r[0], float(r[1])) for r in res if r[1] is not None]
+            rows.reverse()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as e:
+        return json.dumps({"dates": [], "closes": [], "symbol": sym,
+                           "error": str(e)[:200]})
+    # Strip time component if present (cache stores
+    # "YYYY-MM-DD HH:MM:SS").
+    dates = [r[0].split(" ")[0] for r in rows]
+    closes = [round(r[1], 2) for r in rows]
+    return json.dumps({
+        "symbol": sym,
+        "dates": dates,
+        "closes": closes,
+        "lookback_days": int(lookback_days),
+    })
+
+
 # ── /api/run_status response builder ────────────────────────────
 
 def render_status_json() -> str:
@@ -788,50 +1207,84 @@ def _runs_polling_script() -> str:
     return r"""
 <script>
 function _setBanner(msg, kind) {
-  const host = document.getElementById('job-banner');
+  var host = document.getElementById('job-banner');
   if (!host) return;
-  host.innerHTML = '<div class="banner ' + kind + '">' + msg + '</div>';
+  var spin = (kind === 'info') ? '<span class="spinner"></span>' : '';
+  host.innerHTML = '<div class="banner ' + kind + '">' + spin + msg + '</div>';
 }
-function runAnalysis(mode, scope) {
-  _setBanner('Submitting ' + mode + ' run…', 'info');
-  fetch('/api/analyse_run?mode=' + mode + '&scope=' + scope, {method: 'POST'})
-    .then(r => r.json())
-    .then(j => {
-      _setBanner('Job #' + j.job_id + ' ' + j.status + '…', 'info');
+
+function _disableButtons(disabled) {
+  document.querySelectorAll('button.action').forEach(function (b) {
+    b.disabled = disabled;
+  });
+}
+
+function _aiToggleOn() {
+  var t = document.getElementById('ai-toggle-input');
+  return !!(t && t.checked);
+}
+
+// Run an analyse job. `scope` is 'all' or 'symbol:HDFCBANK'.
+// Mode is taken from the AI toggle (defaults to NoAI).
+function runAnalysis(scope) {
+  var mode = _aiToggleOn() ? 'AI' : 'NOAI';
+  if (mode === 'AI') {
+    var hold = parseInt(document.body.getAttribute('data-holdings') || '0', 10);
+    var per = parseFloat(document.body.getAttribute('data-ai-per-call') || '3');
+    var cost = (hold > 0 ? hold * per : per);
+    var msg = (scope === 'all'
+      ? 'Estimated Claude cost ~Rs.' + cost.toFixed(0) + ' for ' + hold + ' holdings. Proceed?'
+      : 'AI overlay for one stock will use ~Rs.' + per.toFixed(0) + '. Proceed?');
+    if (!confirm(msg)) { return; }
+  }
+  // Show spinner IMMEDIATELY so the user sees feedback on click.
+  var label = (scope === 'all' ? 'Analysing your full portfolio' : 'Analysing ' + scope.replace('symbol:', ''));
+  _setBanner(label + ' (' + mode + ')\u2026 this can take 30-90 seconds for 30+ holdings.', 'info');
+  _disableButtons(true);
+  var url = '/api/analyse_run?mode=' + mode + '&scope=' + encodeURIComponent(scope);
+  fetch(url, {method: 'POST'})
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      _setBanner(label + ' \u2014 job #' + j.job_id + ' started\u2026', 'info');
       _poll();
     })
-    .catch(e => _setBanner('Error: ' + e, 'warn'));
+    .catch(function (e) {
+      _setBanner('Error: ' + e, 'warn');
+      _disableButtons(false);
+    });
 }
-function runAnalysisAi(holdings_count, est_cost) {
-  const msg = est_cost
-    ? 'Estimated Claude cost ~Rs.' + est_cost + ' for '
-      + holdings_count + ' holdings. Proceed?'
-    : 'Re-run with Claude AI overlay (will use credits). Proceed?';
-  if (!confirm(msg)) return;
-  runAnalysis('AI', 'all');
-}
+
 function _poll() {
-  setTimeout(function() {
-    fetch('/api/run_status').then(r => r.json()).then(j => {
+  setTimeout(function () {
+    fetch('/api/run_status').then(function (r) { return r.json(); }).then(function (j) {
       if (j.status === 'IDLE') return;
       if (j.status === 'RUNNING') {
-        _setBanner('Job #' + j.job_id + ' running… (' + j.mode + ')', 'info');
+        var scopeLabel = j.scope === 'all' ? 'full portfolio'
+                                            : (j.scope || '').replace('symbol:', '');
+        _setBanner('Job #' + j.job_id + ' running\u2026 (' + j.mode
+                   + ' / ' + scopeLabel + ')', 'info');
         _poll();
       } else if (j.status === 'DONE') {
-        _setBanner('Job #' + j.job_id + ' DONE — refreshing page…', 'info');
-        setTimeout(function() { window.location.reload(); }, 1500);
+        _setBanner('Job #' + j.job_id + ' done \u2014 refreshing page\u2026', 'info');
+        setTimeout(function () { window.location.reload(); }, 1200);
       } else {
         _setBanner('Job #' + j.job_id + ' FAILED: '
                    + (j.error || 'unknown error'), 'warn');
+        _disableButtons(false);
       }
     });
-  }, 2000);
+  }, 1500);
 }
-window.addEventListener('DOMContentLoaded', function() {
-  fetch('/api/run_status').then(r => r.json()).then(j => {
+
+window.addEventListener('DOMContentLoaded', function () {
+  // If a job is already in flight when the page loads, surface it.
+  fetch('/api/run_status').then(function (r) { return r.json(); }).then(function (j) {
     if (j && j.status === 'RUNNING') {
-      _setBanner('Job #' + j.job_id + ' already running… (' + j.mode + ')',
-                 'info');
+      var scopeLabel = j.scope === 'all' ? 'full portfolio'
+                                          : (j.scope || '').replace('symbol:', '');
+      _setBanner('Job #' + j.job_id + ' already running\u2026 ('
+                 + j.mode + ' / ' + scopeLabel + ')', 'info');
+      _disableButtons(true);
       _poll();
     }
   });
@@ -840,17 +1293,29 @@ window.addEventListener('DOMContentLoaded', function() {
 """
 
 
+def _ai_toggle_html() -> str:
+    """Shared AI/NoAI toggle. Read by `runAnalysis()` JS."""
+    return ('<label class="ai-toggle" title="Toggle to add Claude qualitative overlay (~Rs.5/stock)">'
+            '<input type="checkbox" id="ai-toggle-input">'
+            '<span class="lbl">Use Claude AI overlay</span>'
+            '<span class="hint">(NoAI is the default; AI adds thesis + risks + news)</span>'
+            '</label>')
+
+
 # ── Shared shell ────────────────────────────────────────────────
 
-def _wrap(title: str, here: str, body: str) -> str:
+def _wrap(title: str, here: str, body: str,
+          *, holdings_count: int = 0) -> str:
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>AI Portfolio Manager — {html.escape(title)}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>{_STYLE}</style>
 </head>
-<body>
+<body data-holdings="{holdings_count}" data-ai-per-call="{per_call:.2f}">
 <div class="wrap">
   {_topnav(here)}
   {body}

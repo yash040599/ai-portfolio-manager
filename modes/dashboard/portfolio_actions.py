@@ -158,7 +158,18 @@ def _run_job(job: JobStatus) -> None:
 
         use_ai = (job.mode == "AI")
         runner = PortfolioAnalyser(Config, use_ai=use_ai)
-        snapshot = runner.run()
+
+        # Scope routing:
+        #   "all"            -> full portfolio refresh
+        #   "symbol:<X>"     -> single-stock targeted refresh (held or wishlist)
+        scope = (job.scope or "all").strip()
+        if scope.startswith("symbol:"):
+            sym = scope[len("symbol:"):].strip().upper()
+            if not sym:
+                raise RuntimeError("scope=symbol: requires a symbol after the colon")
+            snapshot = runner.analyse_single_stock(sym)
+        else:
+            snapshot = runner.run()
         if snapshot is None:
             raise RuntimeError(
                 "Analyse run produced no snapshot. Check the bot log "

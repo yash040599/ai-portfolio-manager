@@ -116,9 +116,37 @@ def save_snapshot(snapshot: PortfolioSnapshot, path: str = DB_PATH) -> int:
 
     Returns the new `run_id`. Writes one `portfolio_runs` row plus
     one `stock_analyses` row per holding in a single transaction.
+
+    Same-day idempotency: if a run already exists for `snapshot.timestamp`'s
+    date, the prior run + its `stock_analyses` children are deleted
+    before insert. So clicking "Analyse Now" five times on the same
+    day leaves exactly one row in the DB instead of five — matching
+    how the .txt/.json files already overwrite by date in
+    `report.py`. The history strip on `/portfolio/<symbol>` therefore
+    shows one tile per day (calendar history) rather than per click.
     """
     with _connect(path) as conn:
         _ensure_schema(conn)
+
+        # Same-day cleanup: drop any existing run for this date so
+        # the dashboard's run history is calendar-day-aligned.
+        snap_date = snapshot.timestamp.strftime("%Y-%m-%d")
+        prior = conn.execute(
+            """SELECT run_id FROM portfolio_runs
+               WHERE substr(started_at, 1, 10) = ?""",
+            (snap_date,),
+        ).fetchall()
+        if prior:
+            ids = [int(r["run_id"]) for r in prior]
+            qmarks = ",".join("?" * len(ids))
+            conn.execute(
+                f"DELETE FROM stock_analyses WHERE run_id IN ({qmarks})",
+                ids,
+            )
+            conn.execute(
+                f"DELETE FROM portfolio_runs WHERE run_id IN ({qmarks})",
+                ids,
+            )
 
         finished_at = now_ist().isoformat()
         cur = conn.execute(

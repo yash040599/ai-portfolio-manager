@@ -171,6 +171,135 @@ class PortfolioAnalyser:
         self._print_summary(snapshot, txt_path, json_path)
         return snapshot
 
+    # ── Single-stock targeted re-analysis ───────────────────────
+
+    def analyse_single_stock(self, symbol: str) -> PortfolioSnapshot | None:
+        """Re-run enrichment for ONE symbol and merge into the latest
+        snapshot.
+
+        Two cases:
+          (a) `symbol` is in the user's demat holdings — refresh that
+              one row (price, technicals, AI overlay if enabled);
+              portfolio metrics + gaps stay as-is from the prior run.
+          (b) `symbol` is NOT in holdings — treat as a "wishlist"
+              entry. Synthesise a holding with qty=0 + avg=0, run
+              enrichment, append to the snapshot. Portfolio metrics
+              still come from the prior run (the wishlist row has
+              zero weight so it would not move HHI / sector mix
+              even if we did recompute).
+
+        Returns the updated PortfolioSnapshot, or None when no prior
+        full-portfolio run exists (the user must run "Analyse all"
+        once before single-stock re-analyses make sense).
+        """
+        from modes.analyze.persistence import latest_snapshot, save_snapshot
+
+        symbol = (symbol or "").strip().upper()
+        if not symbol:
+            self.log.error("analyse_single_stock: empty symbol")
+            return None
+
+        # 1. Validate config (Claude only required when --ai)
+        missing = self.cfg.validate(require_claude=self.use_ai)
+        if missing:
+            self.log.section("CONFIGURATION ERROR")
+            for k in missing:
+                self.log.error(f"Missing in .env file: {k}=your_value_here")
+            return None
+
+        # 2. Login
+        self.log.section(f"ZERODHA LOGIN (single-stock {symbol})")
+        self.zerodha.login()
+
+        # 3. Find existing holding row OR build a wishlist row.
+        prior = latest_snapshot()
+        if prior is None:
+            self.log.error(
+                "No prior full-portfolio run on file. Run 'Analyse all' "
+                "once before re-analysing a single stock."
+            )
+            return None
+
+        zerodha_holdings = []
+        try:
+            zerodha_holdings = self.zerodha.get_holdings()
+        except Exception as e:
+            self.log.warning(f"Holdings fetch failed: {e}")
+
+        target = next(
+            (h for h in zerodha_holdings if h.get("symbol") == symbol),
+            None,
+        )
+        if target is None:
+            # Wishlist entry. Treat as a zero-quantity holding so the
+            # enrich pipeline still pulls quote + 1y candles + sector
+            # + tier + dividends + P/E.
+            self.log.info(
+                f"{symbol} not in your demat — running as wishlist entry"
+            )
+            target = {
+                "symbol": symbol,
+                "exchange": "NSE",
+                "quantity": 0,
+                "avg_buy_price": 0.0,
+                "current_price": 0.0,
+                "invested_value": 0.0,
+                "current_value": 0.0,
+                "pnl": 0.0,
+                "pnl_percent": 0.0,
+            }
+
+        # 4. NoAI enrichment for just this one stock.
+        self.log.section(f"NOAI ENRICHMENT ({symbol})")
+        records = enrich_holdings([target], zerodha=self.zerodha,
+                                  log=self.log, cfg=self.cfg)
+        if not records:
+            self.log.error(f"Enrichment produced no record for {symbol}")
+            return None
+        new_record = records[0]
+
+        # 5. Optional AI overlay.
+        if self.use_ai and self.claude is not None:
+            self.log.section(f"AI OVERLAY (Claude) for {symbol}")
+            overlay_ai([new_record], claude=self.claude,
+                       log=self.log, cfg=self.cfg)
+
+        # 6. Merge into prior snapshot.
+        merged_holdings: list = []
+        replaced = False
+        for h in prior.holdings:
+            if h.symbol == symbol:
+                merged_holdings.append(new_record)
+                replaced = True
+            else:
+                merged_holdings.append(h)
+        if not replaced:
+            merged_holdings.append(new_record)
+
+        # Preserve prior metrics + gaps (single-stock refresh doesn't
+        # invalidate them — wishlist row has zero weight; held-row
+        # refresh moves at most the symbol's own value but the diff
+        # is small enough that next full run will reconcile).
+        snapshot = PortfolioSnapshot(
+            timestamp = now_ist(),
+            mode      = "AI" if self.use_ai else "NOAI",
+            holdings  = merged_holdings,
+            metrics   = prior.metrics,
+            gaps      = prior.gaps,
+            notes     = (prior.notes or "") + f" [single-stock refresh: {symbol}]",
+        )
+
+        # 7. Persist (same-day upsert handles dupe-prevention).
+        try:
+            run_id = save_snapshot(snapshot)
+            self.log.success(
+                f"Single-stock refresh persisted as run #{run_id}"
+            )
+        except Exception as e:
+            self.log.warning(f"Persist failed: {e}")
+
+        return snapshot
+
     # ── Display ─────────────────────────────────────────────────
 
     def _print_banner(self) -> None:

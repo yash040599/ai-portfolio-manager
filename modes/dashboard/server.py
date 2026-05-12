@@ -45,6 +45,7 @@ from modes.dashboard.portfolio_page import (
     render_login_page,
     render_portfolio_page,
     render_status_json,
+    render_stock_chart_json,
     render_stock_drilldown,
 )
 from modes.dashboard.portfolio_actions import submit_run
@@ -181,6 +182,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_login()
             elif url.path == "/api/run_status":
                 self._serve_run_status()
+            elif url.path == "/api/stock_chart":
+                self._serve_stock_chart(parse_qs(url.query))
             elif url.path == "/theory" or url.path == "/theory/":
                 # Redirect to default theory page so the dropdown reflects state.
                 from modes.dashboard.theory_page import DEFAULT_PAGE
@@ -248,6 +251,20 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_run_status(self) -> None:
         body = render_status_json().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_stock_chart(self, qs: dict[str, list[str]]) -> None:
+        symbol = (qs.get("symbol") or [""])[0]
+        try:
+            lookback = int((qs.get("lookback") or ["365"])[0])
+        except (TypeError, ValueError):
+            lookback = 365
+        body = render_stock_chart_json(symbol, lookback_days=lookback).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
