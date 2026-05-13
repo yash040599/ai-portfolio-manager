@@ -398,22 +398,37 @@ def render_swing_detail(symbol: str) -> str:
     # ── Summary card ────────────────────────────────────────────
     body.append('<div class="card">')
     body.append('<h2>Recommendation Summary</h2>')
+
+    # Plain-English setup explanation
+    setup_explain = {
+        "BREAKOUT": "This stock is breaking above its recent price ceiling with strong trading activity — a sign that buyers are stepping in.",
+        "PULLBACK_UPTREND": "This stock has been going up overall, but dipped temporarily to a good buy level — like a sale on a stock that's been rising.",
+        "TREND_CONTINUATION": "This stock has been steadily rising across all timeframes — the trend is strong and continuing upward.",
+        "SUPPORT_REVERSAL": "This stock bounced off a major support level where it historically finds buyers — early sign of a potential recovery.",
+    }
+    setup_text = setup_explain.get(cand.setup_type, "Technical setup detected.")
+    body.append(f'<div style="font-size:14px;line-height:1.6;margin-bottom:14px">'
+                f'<strong>Setup: {html.escape(cand.setup_type.replace("_", " ").title())}</strong>'
+                f'<br>{setup_text}</div>')
+
     body.append('<table class="kvtable">')
     _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
-    body.append(_kv("Setup", f'<strong>{html.escape(cand.setup_type)}</strong>'))
-    body.append(_kv("Status", cand.status))
-    body.append(_kv("Score", f'{cand.score:.1f} (rank #{cand.priority_rank})'))
     body.append(_kv("Sector", cand.sector))
     pnl_cls = "pos" if chg >= 0 else "neg"
-    body.append(_kv("Live Price",
-                     f'<span class="{pnl_cls}">Rs.{lprice:,.2f} ({chg:+.1f}%)</span>'))
-    body.append(_kv("Entry", f'Rs.{cand.entry_price:,.2f}'))
-    body.append(_kv("Stop", f'Rs.{cand.stop_price:,.2f}'))
-    body.append(_kv("Target", f'Rs.{cand.target_price:,.2f}'))
-    body.append(_kv("R:R", f'{cand.rr_ratio:.1f}'))
-    body.append(_kv("Suggested Qty", str(cand.suggested_qty)))
-    body.append(_kv("Risk", f'Rs.{cand.risk_rupees:,.2f}'))
-    body.append(_kv("Reward", f'Rs.{cand.reward_rupees:,.2f}'))
+    body.append(_kv("Current Price",
+                     f'<span class="{pnl_cls}">Rs.{lprice:,.2f} ({chg:+.1f}% today)</span>'))
+    body.append(_kv("Suggested Buy Price", f'Rs.{cand.entry_price:,.2f}'))
+    body.append(_kv("Stop Loss (exit if it falls to)",
+                     f'Rs.{cand.stop_price:,.2f}'))
+    body.append(_kv("Target (expected profit zone)",
+                     f'Rs.{cand.target_price:,.2f}'))
+    body.append(_kv("Risk vs Reward",
+                     f'{cand.rr_ratio:.1f}x '
+                     f'<span class="muted">(you risk Rs.{cand.risk_rupees:,.0f} '
+                     f'to potentially make Rs.{cand.reward_rupees:,.0f})</span>'))
+    body.append(_kv("How many to buy", f'{cand.suggested_qty} shares'))
+    body.append(_kv("Confidence Score",
+                     f'{cand.score:.1f} / 10 (rank #{cand.priority_rank} today)'))
     body.append('</table></div>')
 
     # ── Signal Reasons (why we recommend entry) ─────────────────
@@ -426,19 +441,28 @@ def render_swing_detail(symbol: str) -> str:
         body.append('</ol>')
     else:
         body.append('<p class="muted">No detailed reasons stored for this '
-                    'candidate. (Run a fresh scan to populate reasons.)</p>')
+                    'candidate. Run a fresh scan to populate reasons.</p>')
     body.append('</div>')
 
-    # ── Technical Indicators (the checks we did) ────────────────
+    # ── Health Check (plain English) ────────────────────────────
     body.append('<div class="card">')
-    body.append('<h2>Technical Analysis Checklist</h2>')
-    body.append('<table class="holdings" style="max-width:600px">')
-    body.append('<tr><th>Check</th><th>Value</th><th>Status</th></tr>')
+    body.append('<h2>Stock Health Check</h2>')
+    body.append('<p class="muted" style="margin-bottom:12px">'
+                'These are the checks we run on every stock before recommending it. '
+                'More green checks = stronger recommendation.</p>')
+    body.append('<table class="holdings" style="max-width:800px">')
+    body.append('<tr><th>What We Checked</th><th>Result</th>'
+                '<th style="width:40px"></th></tr>')
 
     checks = _build_checks(cand, lprice)
-    for check_name, value, passed in checks:
-        icon = '<span class="pos">&#10003;</span>' if passed else '<span class="neg">&#10007;</span>'
-        body.append(f'<tr><td>{html.escape(check_name)}</td>'
+    for check_name, explanation, value, passed in checks:
+        icon = ('<span class="pos" style="font-size:16px">&#10003;</span>'
+                if passed else
+                '<span class="neg" style="font-size:16px">&#10007;</span>')
+        body.append(f'<tr>'
+                    f'<td><strong>{html.escape(check_name)}</strong>'
+                    f'<br><span class="muted" style="font-size:11px">'
+                    f'{html.escape(explanation)}</span></td>'
                     f'<td>{html.escape(str(value))}</td>'
                     f'<td>{icon}</td></tr>')
 
@@ -481,83 +505,190 @@ def render_swing_detail(symbol: str) -> str:
     return _wrap(f"Swing — {sym}", body)
 
 
-def _build_checks(cand, live_price: float) -> list[tuple[str, str, bool]]:
-    """Build the technical checklist for the detail page.
-    Returns [(check_name, value_str, passed_bool), ...]"""
+def _build_checks(cand, live_price: float) -> list[tuple[str, str, str, bool]]:
+    """Build the stock health checklist for the detail page.
+    Returns [(plain_name, explanation, value_str, passed_bool), ...]
+    Every check is written so anyone can understand it."""
     c = cand
-    checks = []
+    checks: list[tuple[str, str, str, bool]] = []
 
-    # Trend
+    # Long-term trend
     above_sma200 = c.close_price > c.sma_200 if c.sma_200 > 0 else False
+    checks.append((
+        "Long-term trend (200-day)",
+        "Is the stock above its 200-day average price? "
+        "If yes, the long-term direction is up.",
+        f"Price Rs.{c.close_price:,.2f} vs avg Rs.{c.sma_200:,.2f}",
+        above_sma200,
+    ))
+
+    # Medium-term trend
     above_sma50 = c.close_price > c.sma_50 if c.sma_50 > 0 else False
-    checks.append(("Above SMA-200 (long-term trend)",
-                    f"Rs.{c.sma_200:,.2f}", above_sma200))
-    checks.append(("Above SMA-50 (medium-term trend)",
-                    f"Rs.{c.sma_50:,.2f}", above_sma50))
-    checks.append(("EMA-20 (short-term)",
-                    f"Rs.{c.ema_20:,.2f}", c.close_price > c.ema_20 if c.ema_20 > 0 else False))
+    checks.append((
+        "Medium-term trend (50-day)",
+        "Is the stock above its 50-day average price? "
+        "If yes, the medium-term direction is up.",
+        f"Price Rs.{c.close_price:,.2f} vs avg Rs.{c.sma_50:,.2f}",
+        above_sma50,
+    ))
 
-    # SMA stack
+    # Short-term trend
+    above_ema20 = c.close_price > c.ema_20 if c.ema_20 > 0 else False
+    checks.append((
+        "Short-term trend (20-day)",
+        "Is the stock above its recent 20-day trend line? "
+        "If yes, short-term momentum is positive.",
+        f"Price Rs.{c.close_price:,.2f} vs trend Rs.{c.ema_20:,.2f}",
+        above_ema20,
+    ))
+
+    # All trends aligned
     sma_stacked = (c.ema_20 > c.sma_50 > c.sma_200) if (c.sma_50 > 0 and c.sma_200 > 0) else False
-    checks.append(("SMAs stacked (EMA20 > SMA50 > SMA200)",
-                    "Yes" if sma_stacked else "No", sma_stacked))
+    checks.append((
+        "All trends aligned",
+        "Are the short, medium, and long-term trends all pointing up? "
+        "This is the strongest signal that the stock is in a clear uptrend.",
+        "Yes — all aligned" if sma_stacked else "No — trends are mixed",
+        sma_stacked,
+    ))
 
-    # RSI
+    # Buying/selling pressure
     rsi_ok = 30 <= c.rsi_daily <= 70
-    checks.append(("RSI-14 (not extreme)",
-                    f"{c.rsi_daily:.1f}", rsi_ok))
+    if c.rsi_daily > 70:
+        rsi_desc = f"{c.rsi_daily:.0f} — may be overbought (too expensive right now)"
+    elif c.rsi_daily < 30:
+        rsi_desc = f"{c.rsi_daily:.0f} — oversold (might be a bargain, but risky)"
+    else:
+        rsi_desc = f"{c.rsi_daily:.0f} — healthy zone"
+    checks.append((
+        "Buying/selling pressure",
+        "RSI measures if a stock is overbought (>70) or oversold (<30). "
+        "The sweet spot for buying is between 30-70.",
+        rsi_desc,
+        rsi_ok,
+    ))
 
-    # Volume
+    # Trading activity
     vol_ok = c.volume_ratio >= 1.0
-    checks.append(("Volume vs 20d avg",
-                    f"{c.volume_ratio:.1f}x", vol_ok))
+    checks.append((
+        "Trading activity",
+        "Is more money flowing into this stock than usual? "
+        "Higher volume means more traders agree with the move.",
+        f"{c.volume_ratio:.1f}x normal volume",
+        vol_ok,
+    ))
 
-    # Weekly trend
-    checks.append(("Weekly trend up",
-                    "Yes" if c.weekly_trend_up else "No", c.weekly_trend_up))
+    # Weekly direction
+    checks.append((
+        "Weekly trend direction",
+        "Looking at the broader weekly picture, is the stock going up? "
+        "This filters out short-term noise.",
+        "Upward" if c.weekly_trend_up else "Downward or flat",
+        c.weekly_trend_up,
+    ))
 
-    # Relative strength
+    # Beating the market
     rs_ok = c.relative_strength > 0
-    checks.append(("RS vs NIFTY (60d)",
-                    f"{c.relative_strength:+.1f}%", rs_ok))
+    checks.append((
+        "Beating the market?",
+        "Is this stock performing better than NIFTY 50 over the last 60 days? "
+        "Stocks outperforming the market tend to keep outperforming.",
+        f"{c.relative_strength:+.1f}% vs NIFTY",
+        rs_ok,
+    ))
 
-    # R:R
+    # Risk-reward
     rr_ok = c.rr_ratio >= 2.0
-    checks.append(("R:R ratio (min 2.0)",
-                    f"{c.rr_ratio:.1f}", rr_ok))
+    checks.append((
+        "Risk vs reward ratio",
+        "For every Rs.1 you risk, how much could you gain? "
+        "We look for at least 2x reward for the risk taken.",
+        f"{c.rr_ratio:.1f}x (risk Rs.{c.risk_rupees:,.0f}, potential Rs.{c.reward_rupees:,.0f})",
+        rr_ok,
+    ))
 
-    # ATR-based stop distance
+    # Stop-loss distance
     if c.atr_14 > 0:
         stop_atr = (c.entry_price - c.stop_price) / c.atr_14
-        checks.append(("Stop distance (ATR multiples)",
-                        f"{stop_atr:.1f}x ATR", stop_atr >= 1.5))
+        checks.append((
+            "Stop-loss safety margin",
+            "Is the stop far enough from normal daily price swings? "
+            "Too tight = you get stopped out by noise. Too wide = too much risk.",
+            f"{stop_atr:.1f}x daily swing range",
+            1.0 <= stop_atr <= 3.0,
+        ))
 
     # 52-week position
     if c.high_52w > 0:
         pct_from_high = ((c.close_price / c.high_52w) - 1) * 100
-        checks.append(("Distance from 52w high",
-                        f"{pct_from_high:+.1f}%", pct_from_high > -20))
+        if pct_from_high > -5:
+            pos_desc = f"{pct_from_high:+.1f}% from the year's high — near the top"
+        elif pct_from_high > -20:
+            pos_desc = f"{pct_from_high:+.1f}% from the year's high — reasonable range"
+        else:
+            pos_desc = f"{pct_from_high:+.1f}% from the year's high — significantly below"
+        checks.append((
+            "Where in its yearly range?",
+            "How far is the stock from its highest price this year? "
+            "We avoid stocks that have dropped too far (>20%) unless it's a reversal setup.",
+            pos_desc,
+            pct_from_high > -20,
+        ))
 
-    # Extension from EMA-20
+    # Extension check
     if c.ema_20 > 0:
         ext = ((c.close_price / c.ema_20) - 1) * 100
-        checks.append(("Extension from EMA-20",
-                        f"{ext:+.1f}%", abs(ext) < 8))
+        checks.append((
+            "Not too far from trend",
+            "Is the stock extended too far above its trend? "
+            "Chasing a stock that's already run up means buying at a worse price.",
+            f"{ext:+.1f}% from trend line",
+            abs(ext) < 8,
+        ))
 
-    # Breakout specifics
+    # Setup-specific checks
     if c.setup_type == "BREAKOUT":
-        checks.append(("Close above 20d high",
-                        f"Rs.{c.high_20d:,.2f}", c.close_price > c.high_20d * 0.998))
-        checks.append(("Volume confirmation (1.5x+)",
-                        f"{c.volume_ratio:.1f}x", c.volume_ratio >= 1.5))
+        checks.append((
+            "Breaking recent price ceiling",
+            "Has the stock just broken above its highest price in the last 20 days? "
+            "This signals that buyers are pushing it to new highs.",
+            f"Price Rs.{c.close_price:,.2f} vs 20-day high Rs.{c.high_20d:,.2f}",
+            c.close_price > c.high_20d * 0.998,
+        ))
+        checks.append((
+            "Strong volume on breakout",
+            "A breakout with high volume (1.5x+ normal) means the move is backed by real demand, "
+            "not just a few trades.",
+            f"{c.volume_ratio:.1f}x normal",
+            c.volume_ratio >= 1.5,
+        ))
 
-    # Pullback specifics
     if c.setup_type == "PULLBACK_UPTREND":
         dist_ema20 = abs(c.close_price / c.ema_20 - 1) * 100 if c.ema_20 > 0 else 99
-        checks.append(("Pullback to EMA-20 (within 5%)",
-                        f"{dist_ema20:.1f}% away", dist_ema20 <= 5.0))
-        checks.append(("RSI in buy zone (40-60)",
-                        f"{c.rsi_daily:.0f}", 40 <= c.rsi_daily <= 60))
+        checks.append((
+            "Pulled back to a good buy level",
+            "The stock dipped close to its 20-day trend line — "
+            "like buying on a temporary sale in an uptrend.",
+            f"{dist_ema20:.1f}% from the trend line",
+            dist_ema20 <= 5.0,
+        ))
+        checks.append((
+            "Not oversold or overbought",
+            "The buying pressure is in the sweet spot (40-60) — "
+            "not too hot, not too cold, just right for a pullback buy.",
+            f"Pressure reading: {c.rsi_daily:.0f}",
+            40 <= c.rsi_daily <= 60,
+        ))
+
+    if c.setup_type == "SUPPORT_REVERSAL":
+        dist_200 = abs(c.close_price / c.sma_200 - 1) * 100 if c.sma_200 > 0 else 99
+        checks.append((
+            "Near strong support level",
+            "The stock is near its 200-day average — a level where "
+            "buyers historically step in and push it back up.",
+            f"{dist_200:.1f}% from support",
+            dist_200 <= 5.0,
+        ))
 
     return checks
 
