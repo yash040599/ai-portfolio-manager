@@ -15,6 +15,12 @@
 #   python main.py --mode trade --ai --dryrun     ← full AI run, no real orders
 #   python main.py --mode trade --max 30000       ← limit today's budget to Rs.30,000
 #   python main.py --mode trade --nifty 50|100|150|200  ← override scan universe
+#   python main.py --mode swing                   ← NoAI swing scan (after market close)
+#   python main.py --mode swing --ai               ← swing scan + Claude qualitative overlay
+#   python main.py --mode swing --actions           ← list pending swing actions
+#   python main.py --mode swing --positions         ← list open swing book
+#   python main.py --mode swing --confirm <ID> --qty N --price P  ← confirm a pending action
+#   python main.py --mode swing --skip <ID>         ← skip a pending action
 #   python main.py --mode login                   ← test Zerodha login only
 #   python main.py --mode dashboard               ← launch the web dashboard
 #
@@ -39,7 +45,7 @@ from core.zerodha_client import ZerodhaClient
 from modes.analyze.analyser  import PortfolioAnalyser
 from modes.trade.manager   import PortfolioManager
 
-VALID_MODES = {"analyze", "trade", "login", "dashboard"}
+VALID_MODES = {"analyze", "trade", "swing", "login", "dashboard"}
 
 
 def main():
@@ -110,7 +116,7 @@ def main():
         sys.exit(1)
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|login|dashboard] [flags]")
+        print("Usage: python main.py --mode [analyze|trade|swing|login|dashboard] [flags]")
         print()
         print("  analyze                       — long-term portfolio analysis (NoAI, default)")
         print("  analyze --ai                  — analyse + Claude qualitative overlay")
@@ -124,6 +130,13 @@ def main():
         print("  trade --noai                  — same as default (explicit NoAI)")
         print("  trade --max 30000             — limit today's budget to Rs.30,000")
         print("  trade --nifty 50|100|150|200  — override scan universe")
+        print()
+        print("  swing                         — NoAI swing scan (after market close)")
+        print("  swing --ai                    — swing scan + Claude overlay")
+        print("  swing --actions               — list pending swing actions")
+        print("  swing --positions             — list open swing book")
+        print("  swing --confirm <ID> --qty N --price P  — confirm action")
+        print("  swing --skip <ID>             — skip a pending action")
         print()
         print("  login                         — test Zerodha login only")
         print("  dashboard                     — launch the web dashboard")
@@ -163,6 +176,79 @@ def main():
                 runner.run_test(noai=True)
             else:
                 runner.run_noai()
+
+    elif mode == "swing":
+        from modes.swing.manager import SwingManager
+        from modes.swing.persistence import confirm_action, skip_action, init_db
+
+        # Set scan universe override from --nifty flag
+        if nifty_universe is not None:
+            Config.SCAN_UNIVERSE = nifty_universe
+
+        # Sub-commands
+        if "--actions" in sys.argv:
+            init_db()
+            SwingManager(Config).list_actions()
+
+        elif "--positions" in sys.argv:
+            init_db()
+            SwingManager(Config).list_positions()
+
+        elif "--confirm" in sys.argv:
+            init_db()
+            try:
+                aid = int(sys.argv[sys.argv.index("--confirm") + 1])
+            except (IndexError, ValueError):
+                print("  Error: --confirm requires an action ID")
+                sys.exit(1)
+            qty = 0
+            price = 0.0
+            stop = 0.0
+            if "--qty" in sys.argv:
+                try:
+                    qty = int(sys.argv[sys.argv.index("--qty") + 1])
+                except (IndexError, ValueError):
+                    pass
+            if "--price" in sys.argv:
+                try:
+                    price = float(sys.argv[sys.argv.index("--price") + 1])
+                except (IndexError, ValueError):
+                    pass
+            if "--stop" in sys.argv:
+                try:
+                    stop = float(sys.argv[sys.argv.index("--stop") + 1])
+                except (IndexError, ValueError):
+                    pass
+            result = confirm_action(
+                action_id=aid, executed_qty=qty, executed_price=price,
+                source="CLI", confirmed_stop=stop,
+            )
+            if result:
+                print(f"  Confirmed action #{aid} -> position {result.symbol} "
+                      f"(qty={result.managed_qty}, status={result.status})")
+            else:
+                print(f"  Failed to confirm action #{aid} (not found or not pending)")
+
+        elif "--skip" in sys.argv:
+            init_db()
+            try:
+                aid = int(sys.argv[sys.argv.index("--skip") + 1])
+            except (IndexError, ValueError):
+                print("  Error: --skip requires an action ID")
+                sys.exit(1)
+            reason = ""
+            if "--reason" in sys.argv:
+                try:
+                    reason = sys.argv[sys.argv.index("--reason") + 1]
+                except (IndexError, ValueError):
+                    pass
+            ok = skip_action(aid, reason)
+            print(f"  {'Skipped' if ok else 'Failed to skip'} action #{aid}")
+
+        else:
+            # Default: run the swing scan
+            runner = SwingManager(Config, use_ai=use_ai)
+            runner.run(trigger_source="CLI")
 
     elif mode == "login":
         missing = Config.validate()

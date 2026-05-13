@@ -1,0 +1,89 @@
+# ================================================================
+# modes/dashboard/live_quotes.py
+# ================================================================
+# Shared read-only Zerodha quote polling layer (Dashboard D30).
+#
+# Batches visible symbols, respects rate limits, stamps as_of,
+# returns current prices for dashboard display overlay.
+# Does NOT re-run analysis or place orders.
+# ================================================================
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from typing import Any
+
+from config import Config, now_ist
+from core.logger import Logger
+from core.zerodha_client import ZerodhaClient
+
+
+# Rate-limit: minimum seconds between quote batches
+_MIN_POLL_INTERVAL = 5.0
+_last_poll_time = 0.0
+_cached_quotes: dict[str, dict] = {}
+
+
+def get_live_quotes(symbols: list[str],
+                    exchange: str = "NSE") -> dict[str, dict]:
+    """Fetch live quotes for a list of symbols.
+
+    Returns {symbol: {price, as_of, change_pct}} or cached values
+    when called faster than the rate limit. Returns empty dicts for
+    symbols that fail.
+    """
+    global _last_poll_time, _cached_quotes
+
+    if not symbols:
+        return {}
+
+    now = time.monotonic()
+    if now - _last_poll_time < _MIN_POLL_INTERVAL and _cached_quotes:
+        return {s: _cached_quotes.get(s, {}) for s in symbols}
+
+    try:
+        # Check if we have a valid Zerodha token today
+        token_path = os.path.join("data", "access_token.json")
+        if not os.path.exists(token_path):
+            return {s: _cached_quotes.get(s, {}) for s in symbols}
+
+        with open(token_path, encoding="utf-8") as f:
+            saved = json.load(f)
+        if saved.get("date") != str(now_ist().date()):
+            return {s: _cached_quotes.get(s, {}) for s in symbols}
+
+        log = Logger("LiveQuotes")
+        zerodha = ZerodhaClient(Config, log)
+        zerodha.login(interactive=False)
+
+        instruments = [f"{exchange}:{s}" for s in symbols]
+        raw = zerodha.get_quotes(instruments)
+
+        ts = now_ist().isoformat()
+        result: dict[str, dict] = {}
+        for s in symbols:
+            key = f"{exchange}:{s}"
+            q = raw.get(key, {})
+            if q:
+                ltp = q.get("last_price", 0)
+                ohlc = q.get("ohlc", {})
+                prev_close = ohlc.get("close", ltp) if ohlc else ltp
+                change_pct = ((ltp / prev_close - 1) * 100
+                              if prev_close > 0 else 0)
+                result[s] = {
+                    "price": ltp,
+                    "as_of": ts,
+                    "change_pct": round(change_pct, 2),
+                    "volume": q.get("volume", 0),
+                }
+                _cached_quotes[s] = result[s]
+            else:
+                result[s] = _cached_quotes.get(s, {})
+
+        _last_poll_time = time.monotonic()
+        return result
+
+    except Exception:
+        return {s: _cached_quotes.get(s, {}) for s in symbols}

@@ -28,6 +28,10 @@ chosen, what the AI overlay adds, and how to read the report.
 > thesis / risks / peer comparison / news context via Claude on top
 > of the same NoAI base.
 
+On the dashboard, displayed current price and P&L are refreshed through
+a read-only Zerodha live-quote overlay so `/portfolio` remains broker-
+current even when the heavier analysis snapshot is older.
+
 NoAI is the default. AI overlay is opt-in (`--ai`) and never
 overwrites the deterministic numbers — it only adds qualitative
 slots (`ai_thesis_long_term`, `ai_qualitative_risks`,
@@ -76,7 +80,7 @@ Schema lives in [`modes/analyze/types.py`](../modes/analyze/types.py)
 |-------|---------|--------|
 | `qty` | Quantity held | `zerodha_api` |
 | `avg_buy_price` | FIFO average cost (Zerodha-reported) | `zerodha_api` |
-| `current_price` | Last traded price | `zerodha_api` (paid plan) |
+| `current_price` | Last traded price from the analyse run; dashboard display may be overlaid with fresher Zerodha live quotes | `zerodha_api` (paid plan) |
 | `invested_value` | qty × avg_buy_price | `derived` |
 | `current_value` | qty × current_price | `derived` |
 | `pnl` | current_value − invested_value | `derived` |
@@ -344,10 +348,16 @@ Read helpers (`latest_run`, `latest_snapshot`, `latest_for_symbol`,
 `history_for_symbol`, `stocks_for_run`, `runs_between`) are pure
 SQL + JSON decode. Microseconds.
 
-The dashboard reads exclusively from this DB (never re-runs the
-enrichment pipeline on page load). Live runs are triggered ONLY by
+The dashboard reads analysis structure from this DB and never re-runs
+the enrichment pipeline on page load. Live runs are triggered ONLY by
 the "Analyse now" buttons, which spawn a background worker via
 [`modes/dashboard/portfolio_actions.py`](../modes/dashboard/portfolio_actions.py).
+
+The dashboard may separately poll Zerodha live quotes for currently
+visible holdings. That overlay updates displayed current price, current
+value, P&L, and P&L percentage with an `as_of` timestamp, but it does
+not change recommendations, AI text, stored run history, or the persisted
+analysis snapshot.
 
 ---
 
@@ -373,8 +383,10 @@ Outputs printed at end of run:
 ================================================================
 ```
 
-The same data appears live on the dashboard `/portfolio` page; the
-dashboard auto-refreshes after each "Analyse now" click.
+The same analysis appears on the dashboard `/portfolio` page; the
+dashboard auto-refreshes after each "Analyse now" click. Current price
+and P&L display should also poll Zerodha live quotes so those numbers
+stay exact as of the latest broker response without re-running analysis.
 
 ---
 
@@ -382,8 +394,8 @@ dashboard auto-refreshes after each "Analyse now" click.
 
 | Page | What it shows |
 |------|---------------|
-| `/portfolio` | Latest snapshot summary: holdings table, sector weights with bars, concentration + valuation table, risk/return table, cash position, what's-missing panel with suggestions. "Analyse all (NoAI)" + "Analyse all (AI)" buttons spawn background runs |
-| `/portfolio/<symbol>` | Per-stock drill-down: position, market context, rule-based recommendation, AI overlay (or placeholder), 5-run history strip with action-drift banner. Re-analyse buttons re-run the FULL portfolio (single-stock-only is intentionally not supported because it would give wrong portfolio metrics) |
+| `/portfolio` | Latest snapshot summary: holdings table, sector weights with bars, concentration + valuation table, risk/return table, cash position, what's-missing panel with suggestions. Displayed current price/current value/P&L poll Zerodha live quotes with an as-of timestamp. "Analyse all (NoAI)" + "Analyse all (AI)" buttons spawn background runs |
+| `/portfolio/<symbol>` | Per-stock drill-down: position, market context, rule-based recommendation, AI overlay (or placeholder), 5-run history strip with action-drift banner. Displayed current price/P&L poll Zerodha live quotes. Re-analyse buttons re-run the FULL portfolio (single-stock-only is intentionally not supported because it would give wrong portfolio metrics) |
 | `/login` | Zerodha login page. Shows current token validity. Manual paste-back flow only — paste the redirect URL after Kite OAuth and the dashboard exchanges it for an access token. AUTO/ASSISTED env-driven flows are CLI-only by design (browser context isn't safe for password storage) |
 
 Roadmap items behind these pages: D24-D29 in
@@ -415,6 +427,9 @@ Roadmap items behind these pages: D24-D29 in
    every JSON seed include `as_of` and refresh cadence. Auto-fetch
    was tried and rejected (P-X in
    [ANALYZE_ROADMAP.md](ANALYZE_ROADMAP.md)).
+8. **Live quote overlay is display-only.** Dashboard current price and
+   P&L may poll Zerodha, but recommendations and persisted analysis
+   change only after an explicit Analyse run.
 
 ---
 

@@ -110,16 +110,18 @@ python main.py --mode trade           # NoAI (default)
 python main.py --mode trade --ai      # with Claude
 ```
 
-### Phase 3 — Dashboard (tool-wide read-only surface)
+### Phase 3 — Dashboard (tool-wide operator surface)
 
-The dashboard is the project's **single tool-wide read-only surface**.
+The dashboard is the project's **single tool-wide operator surface**.
 It hosts pages for every mode the project exposes — Portfolio analysis,
 Intraday trading P&L, Tax filing, Theory & strategy reference — and is
-independent of every mode's code path (touches no strategy / order /
-config code). Default launch starts a local web server and opens the
-default page in your browser; the webpage itself is the config surface
-for date range / source toggles / per-stock drill-down / "Analyse now"
-buttons, so the CLI is just an entry point.
+independent of every mode's order path. It never places broker orders.
+It may poll Zerodha live quotes for displayed prices/P&L and may write
+local workflow ledgers such as swing confirmations. Default launch
+starts a local web server and opens the default page in your browser;
+the webpage itself is the config surface for date range / source toggles
+/ per-stock drill-down / "Analyse now" buttons, so the CLI is just an
+entry point.
 
 Pages:
 
@@ -128,8 +130,13 @@ Pages:
   shows holdings summary + portfolio metrics + "what's missing" panel
   + a per-stock drill-down with on-demand "Analyse now (NoAI / AI)"
   buttons. Header carries the most-stale `as_of` across the run so you
-  can see how fresh the analysis is. Login flow integrated for the
-  on-demand runs.
+  can see how fresh the analysis is. Displayed current price/P&L should
+  poll Zerodha live quotes when a valid token exists. Login flow
+  integrated for the on-demand runs.
+- **`/swing`** (planned) — delivery swing dashboard. After market close,
+  shows entry recommendations on top, tracks confirmed swing positions
+  below with live Zerodha prices, and lets the user mark Done/Exit for
+  manual broker actions without placing automated orders.
 - **`/trading`** — intraday-trading profitability view (the original
   Phase 3 SPA from D1.1). Two charts (Chart.js via CDN, zero new
   Python deps): cumulative net P&L (line, daily) + per-bucket P&L
@@ -156,7 +163,8 @@ Pages:
   Strategy Evolution log, India Tax Guide.
 
 Lives in its own [modes/dashboard/](modes/dashboard/) folder, isolated
-from every mode's runtime. Touches no strategy/order code; reads only.
+from every mode's runtime. Touches no strategy/order code; broker access
+from the dashboard is read-only quotes.
 
 ```
 python main.py --mode dashboard                    # interactive (server + browser)
@@ -166,8 +174,8 @@ python main.py --mode dashboard --port 8765        # fixed port
 ```
 
 Full plan: [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md)
-(D1 + D1.1 + D13 + theory/tax pages done; D2–D12, D14, D15, D18–D29 pending,
-including D24-D29 Portfolio-Analyser sub-module).
+(D1 + D1.1 + D13 + theory/tax pages + D24-D29 + D30-D31 done;
+D2-D12, D14, D15, D18-D23 pending).
 
 ### Historical candle cache
 
@@ -207,7 +215,9 @@ their content.
 | [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
 | [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |
 | [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P9 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag, AMFI mcap-tier breakdown), "what's missing" engine |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide read-only surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages: `/portfolio` + per-stock drill-down + on-demand "Analyse now" + `/login`) all shipped 2026-05-12** |
+| [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
+| [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | **S1-S4, S6-S10, S15-S16, S18 shipped 2026-05-13** — swing package, CLI, DB, scanner, risk, review, report, AI overlay, dashboard `/swing`, terminal parity. S5/S11-S14/S17 pending (holding isolation, backtest, live execution, tax) |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages) shipped 2026-05-12** + **D30-D31 (live quotes + /swing page) shipped 2026-05-13** |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
 | [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 

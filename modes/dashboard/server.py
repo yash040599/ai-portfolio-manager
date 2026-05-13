@@ -52,6 +52,10 @@ from modes.dashboard.portfolio_actions import submit_run
 from modes.dashboard.theory_page import render_theory_page
 from modes.dashboard.tax_page import render_tax_api, render_tax_page_v2
 from modes.dashboard.verdict import LadderRung, verdict_for
+from modes.dashboard.swing_page import (
+    render_swing_page, render_swing_data_json, render_swing_status_json,
+)
+from modes.dashboard.swing_actions import submit_swing_run
 
 
 def _parse_int(val: str | None) -> int | None:
@@ -197,6 +201,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_tax(parse_qs(url.query))
             elif url.path == "/api/tax":
                 self._serve_tax_api(parse_qs(url.query))
+            elif url.path == "/swing" or url.path == "/swing/":
+                self._serve_swing()
+            elif url.path == "/api/swing/data":
+                self._serve_swing_data()
+            elif url.path == "/api/swing/run_status":
+                self._serve_swing_run_status()
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -214,6 +224,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_analyse_run(parse_qs(url.query))
             elif url.path == "/api/login_submit":
                 self._serve_login_submit()
+            elif url.path == "/api/login_assisted":
+                self._serve_login_assisted()
+            elif url.path == "/api/swing/run":
+                self._serve_swing_run(parse_qs(url.query))
+            elif url.path.startswith("/api/swing/actions/") and url.path.endswith("/confirm"):
+                self._serve_swing_action_confirm(url.path)
+            elif url.path.startswith("/api/swing/actions/") and url.path.endswith("/skip"):
+                self._serve_swing_action_skip(url.path)
+            elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/exit"):
+                self._serve_swing_position_exit(url.path)
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001
@@ -291,6 +311,155 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # — Swing endpoints (D31) —
+
+    def _serve_swing(self) -> None:
+        body = render_swing_page().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_data(self) -> None:
+        body = render_swing_data_json().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_run_status(self) -> None:
+        body = render_swing_status_json().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_run(self, qs: dict[str, list[str]]) -> None:
+        mode = (qs.get("mode") or ["NOAI"])[0].upper()
+        if mode not in ("NOAI", "AI"):
+            mode = "NOAI"
+        capital = _parse_float((qs.get("capital") or ["0"])[0], 0.0)
+        job = submit_swing_run(mode=mode, trigger_source="DASHBOARD_BUTTON",
+                               swing_capital=capital)
+        body = json.dumps({
+            "job_id": job.job_id,
+            "status": job.status,
+            "mode":   job.mode,
+        }).encode("utf-8")
+        self.send_response(202)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_action_confirm(self, path: str) -> None:
+        # /api/swing/actions/<id>/confirm
+        parts = path.strip("/").split("/")
+        try:
+            action_id = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid action ID")
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        from modes.swing.persistence import confirm_action
+        result = confirm_action(
+            action_id=action_id,
+            executed_qty=int(data.get("qty", 0)),
+            executed_price=float(data.get("price", 0)),
+            source="DASHBOARD",
+            confirmed_stop=float(data.get("stop", 0)),
+        )
+        body = json.dumps({"ok": result is not None}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_action_skip(self, path: str) -> None:
+        parts = path.strip("/").split("/")
+        try:
+            action_id = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid action ID")
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        from modes.swing.persistence import skip_action
+        ok = skip_action(action_id, data.get("reason", ""))
+        body = json.dumps({"ok": ok}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_position_exit(self, path: str) -> None:
+        # /api/swing/positions/<id>/exit — creates a FULL_EXIT action + confirms it
+        parts = path.strip("/").split("/")
+        try:
+            pos_id = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid position ID")
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+
+        from modes.swing.persistence import open_positions, confirm_action, _connect, _ensure_schema
+        from modes.swing.types import SwingAction, ACTION_FULL_EXIT, STATUS_PENDING
+        from config import now_ist as _now
+
+        # Find the position
+        positions = open_positions()
+        pos = next((p for p in positions if p.position_id == pos_id), None)
+        if not pos:
+            body = json.dumps({"ok": False, "error": "Position not found"}).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Create an exit action and immediately confirm it
+        ts = _now().isoformat()
+        from modes.swing.persistence import DB_PATH
+        with _connect(DB_PATH) as conn:
+            _ensure_schema(conn)
+            cur = conn.execute("""
+                INSERT INTO swing_actions (
+                    position_id, symbol, exchange, action_type, status,
+                    suggested_qty, suggested_price, created_at
+                ) VALUES (?, ?, ?, 'FULL_EXIT', 'PENDING', ?, ?, ?)
+            """, (pos_id, pos.symbol, pos.exchange,
+                  int(data.get("qty", pos.managed_qty)),
+                  float(data.get("price", 0)), ts))
+            exit_action_id = int(cur.lastrowid or 0)
+
+        result = confirm_action(
+            action_id=exit_action_id,
+            executed_qty=int(data.get("qty", pos.managed_qty)),
+            executed_price=float(data.get("price", 0)),
+            source="DASHBOARD",
+        )
+        body = json.dumps({"ok": result is not None}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_login_submit(self) -> None:
         # Read form-urlencoded body; extract redirect_url; exchange
         # for an access token via core.zerodha_client. Always redirect
@@ -327,6 +496,34 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 err = str(exc)[:200]
 
         # 303 redirect with a one-shot query flag for the page to read.
+        target = "/login?ok=1" if ok else f"/login?err={err}"
+        self.send_response(303)
+        self.send_header("Location", target)
+        self.end_headers()
+
+    def _serve_login_assisted(self) -> None:
+        """Assisted login: password from .env, OTP from form field."""
+        from urllib.parse import parse_qs as _pqs
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8")
+        form = _pqs(raw)
+        otp = (form.get("otp") or [""])[0].strip()
+
+        ok = False
+        err = ""
+        if otp:
+            try:
+                from config import Config
+                from core.logger import Logger
+                from core.zerodha_client import ZerodhaClient
+                client = ZerodhaClient(Config, Logger("DashboardAssistedLogin"))
+                client.login_assisted_with_otp(otp)
+                ok = True
+            except Exception as exc:
+                err = str(exc)[:200]
+        else:
+            err = "No OTP provided"
+
         target = "/login?ok=1" if ok else f"/login?err={err}"
         self.send_response(303)
         self.send_header("Location", target)

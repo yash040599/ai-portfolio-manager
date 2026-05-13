@@ -289,6 +289,85 @@ class ZerodhaClient:
         # Step 4 — exchange + cache (reuses existing helper)
         self._exchange_and_save(request_token)
 
+    def login_assisted_with_otp(self, otp: str) -> None:
+        """Dashboard-friendly assisted login: password from env, OTP from caller.
+
+        Unlike `_login_programmatic` which uses `input()` for ASSISTED mode,
+        this method accepts the 6-digit OTP as a string parameter so the
+        dashboard can pass it from a form field. Requires KITE_USER_ID and
+        KITE_PASSWORD in .env.
+        """
+        from kiteconnect import KiteConnect
+        self._kite = KiteConnect(api_key=self.cfg.ZERODHA_API_KEY)
+        login_url = self._kite.login_url()
+
+        user_id  = getattr(self.cfg, "KITE_USER_ID", "") or ""
+        password = getattr(self.cfg, "KITE_PASSWORD", "") or ""
+
+        if not user_id or not password:
+            raise RuntimeError("KITE_USER_ID and KITE_PASSWORD must be set in .env")
+        if not otp or not otp.strip().isdigit() or len(otp.strip()) != 6:
+            raise RuntimeError(f"Invalid OTP: expected 6 digits, got '{otp}'")
+
+        try:
+            import requests
+        except ImportError:
+            raise RuntimeError("`requests` not installed (pip install requests)")
+
+        session = requests.Session()
+        session.headers.update({"User-Agent": "Mozilla/5.0 (kite-login)"})
+
+        # Step 1 — password
+        r = session.post(
+            f"{self.KITE_LOGIN_HOST}/api/login",
+            data={"user_id": user_id, "password": password},
+            timeout=10,
+        )
+        if r.status_code != 200 or r.json().get("status") != "success":
+            raise RuntimeError(f"Password step failed: {r.text[:200]}")
+        d1 = r.json().get("data") or {}
+        request_id = d1.get("request_id")
+        twofa_type = (d1.get("twofa_type") or "totp").lower()
+
+        # Step 2 — 2FA with the provided OTP
+        r = session.post(
+            f"{self.KITE_LOGIN_HOST}/api/twofa",
+            data={
+                "user_id":      user_id,
+                "request_id":   request_id,
+                "twofa_value":  otp.strip(),
+                "twofa_type":   twofa_type,
+                "skip_session": "",
+            },
+            timeout=10,
+        )
+        if r.status_code != 200 or r.json().get("status") != "success":
+            raise RuntimeError(f"OTP verification failed: {r.text[:200]}")
+
+        # Step 3 — follow redirects to capture request_token
+        from urllib.parse import parse_qs as _qs, urlparse as _up
+        r = session.get(login_url, allow_redirects=False, timeout=10)
+        request_token = None
+        for _ in range(6):
+            if r.status_code not in (301, 302, 303, 307, 308):
+                break
+            loc = r.headers.get("Location", "")
+            params = _qs(_up(loc).query)
+            if "request_token" in params:
+                request_token = params["request_token"][0]
+                break
+            if loc.startswith("/"):
+                loc = self.KITE_LOGIN_HOST + loc
+            if not loc.startswith(self.KITE_LOGIN_HOST):
+                raise RuntimeError(f"Redirect left kite.zerodha.com: {loc[:120]}")
+            r = session.get(loc, allow_redirects=False, timeout=10)
+
+        if not request_token:
+            raise RuntimeError("Could not capture request_token from redirect chain")
+
+        # Step 4 — exchange + save
+        self._exchange_and_save(request_token)
+
     def _two_factor_code(self, totp_seed: str, mode: str) -> str:
         """AUTO mode computes via pyotp; ASSISTED mode prompts the user."""
         if mode == "AUTO":

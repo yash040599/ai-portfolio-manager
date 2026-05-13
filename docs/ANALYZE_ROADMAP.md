@@ -22,6 +22,9 @@ Scope:
   live in [`modes/dashboard/docs/DASHBOARD_ROADMAP.md`](../modes/dashboard/docs/DASHBOARD_ROADMAP.md)
   with the `D` prefix; cross-references between the two roadmaps
   are explicit.
+- Dashboard current-price and P&L display may use the shared live
+   Zerodha quote overlay planned as Dashboard D30. That overlay is
+   display-only and does not replace explicit analyse runs.
 
 ---
 
@@ -67,6 +70,11 @@ Every analyse run is written to `data/portfolio_analyses.db` (a new
 SQLite store, schema in P2). The dashboard reads from this DB; it
 does NOT re-run analysis on every page load. "Analyse now"
 explicitly triggers a new run; the page then re-reads the DB.
+
+Live current price/current value/P&L on `/portfolio` are a separate
+dashboard overlay: the page may poll Zerodha quotes for visible symbols
+and recompute displayed P&L with an `as_of` timestamp, but it must not
+mutate the persisted analysis or recommendation history.
 
 This keeps the dashboard responsive (DB read is microseconds,
 analysis is seconds-to-minutes) and gives free historical

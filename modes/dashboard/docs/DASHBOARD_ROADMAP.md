@@ -1,10 +1,13 @@
 # Dashboard — Roadmap
 
-> The dashboard is the **single tool-wide read-only surface** for the
+> The dashboard is the **single tool-wide operator surface** for the
 > AI Portfolio Manager. It hosts pages for every mode the project
 > exposes (Portfolio analysis, Intraday trading P&L, Tax filing,
 > Theory & strategy reference) and is independent of every mode's
-> code path — touches NO strategy / order / config code.
+> code path — touches NO strategy / order / config code. It never
+> places broker orders. It may perform read-only Zerodha quote polling
+> for live prices and may write local workflow ledgers such as swing
+> action confirmations.
 >
 > Naming note (2026-05-12 reframe with D24): the file is still called
 > `DASHBOARD_ROADMAP.md` for git-history continuity, but every
@@ -23,7 +26,7 @@
 > landing is `/portfolio` (live summary + drill-down + on-demand
 > Analyse-now), Zerodha login flow available at `/login`, four-link
 > nav (Portfolio · Trading · Tax · Theory) on every page.
-> D2–D12, D14, D15, D18–D23 still pending.
+> D2-D12, D14, D15, D18-D23 still pending.
 >
 > **Companion Theory pages (shipped 2026-04-27):** `/theory/<slug>`
 > renders four reference docs as HTML with KaTeX math and the §0 live
@@ -36,8 +39,10 @@
 >
 > **Location:** all dashboard code, docs, templates, and tests live
 > under the top-level `modes/dashboard/` folder, isolated from the trading
-> bot. Trading bot remains the source of truth for the SQLite DB and
-> Zerodha sheet files; the dashboard only **reads** them.
+> bot. Trading bot remains the source of truth for intraday order state
+> and Zerodha sheet files. Dashboard broker access is read-only quotes;
+> dashboard writes are limited to local workflow tables such as swing
+> confirmations, skips, manual-review flags, and tax/proof metadata.
 
 ---
 
@@ -64,10 +69,13 @@ modes/dashboard/
     └── test_verdict.py
 ```
 
-**Rules:**
-- `modes/dashboard/` is **read-only** w.r.t. trading state. No imports from
-  `modes/trade/order_engine.py`, `modes/trade/manager.py`, or any module
-  that can place orders. Safe even if dashboard code has bugs.
+- `modes/dashboard/` is **non-ordering** w.r.t. broker/trading state.
+  No imports from `modes/trade/order_engine.py`, `modes/trade/manager.py`,
+  or any module that can place orders. Safe even if dashboard code has bugs.
+- Read-only Zerodha quote polling is allowed for dashboard display values
+  such as current price and P&L. It must never trigger order placement.
+- Local workflow writes are allowed for dashboard-owned ledgers, for
+  example swing Done/Skip/Exit confirmations and tax/proof metadata.
 - `modes/dashboard/` may import from `config.py` (for `CAPITAL_LADDER`,
   paths) and `shared/tax_db.py` helpers, but only their pure-read
   functions.
@@ -87,6 +95,7 @@ modes/dashboard/
 4. **Data finality awareness** — clearly distinguish API-verified (day-of, may change) from sheet-verified (T+1, frozen). Numbers shown as final must come ONLY from sheet-verified rows.
 5. **In-loop verification trigger** — when sheet verification is pending, the HTML can launch the import flow with one click. Closes the gap between *"I should run the importer"* and *"I actually did"*.
 6. **Tax-filing-ready** — turn a year of trades into ITR-3-shaped numbers, an advance-tax schedule, a proof-document folder, and a CA-friendly export. Make ITR season a 30-minute task instead of a weekend of spreadsheet wrangling. See [TRADE_TAX_GUIDE.md](../../docs/TRADE_TAX_GUIDE.md) for the regulatory rules this builds on.
+7. **Broker-current prices where the user is looking** — `/portfolio` and `/swing` must poll Zerodha live quotes for visible symbols so current price and P&L are exact as of the latest broker quote, even when the heavier analysis snapshot is older.
 
 ---
 
@@ -144,6 +153,8 @@ decisions risks compounding small reporting errors into the wrong call.
 | D27 | **"Analyse all" buttons on `/portfolio` (NoAI / AI).** | MEDIUM | High | Medium | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_actions.py`](../portfolio_actions.py) runs background workers, single-flight semantics (second click while in-flight returns existing job_id), `/api/analyse_run?mode={NOAI,AI}&scope=all` endpoint returns 202 + JSON, `/api/run_status` polled every 2s by the page. Cost-of-AI confirm dialog up-front (`estimate_ai_cost(holdings_count)`). Pre-flight token check fails fast with a clear error pointing at `/login` when no valid Zerodha token. |
 | D28 | **Zerodha login flow on dashboard.** | MEDIUM | High | Medium | ✅ **Shipped 2026-05-12** — [`modes/dashboard/portfolio_page.py::render_login_page`](../portfolio_page.py) + `/api/login_submit` POST handler. Auth pill on every page ("Auth: OK" / "Auth: Re-login") shows today's token validity at a glance. Manual paste-back flow only — paste the redirect URL after Kite OAuth and the dashboard exchanges it via `ZerodhaClient._exchange_and_save()`. AUTO/ASSISTED env-driven flows remain CLI-only by design (browser context isn't safe for password storage). |
 | D29 | **Latest-vs-prior diff panel on `/portfolio/<symbol>`.** | LOW | Medium | Low | ✅ **Shipped 2026-05-12** — 5-run history strip rendered by `render_stock_drilldown()`. Action-drift banner highlights any HOLD → BUY MORE / PARTIAL EXIT change vs the previous run. Reuses `history_for_symbol(symbol, limit=5)` from ANALYZE_ROADMAP P2. Per-field deep diff is a follow-up if the drift banner alone proves insufficient. |
+| D30 | **Shared live Zerodha quote polling layer for `/portfolio` and `/swing`.** | HIGH | High | Medium | ✅ **Shipped 2026-05-13** — [`modes/dashboard/live_quotes.py`](../live_quotes.py). Batches visible symbols, rate-limited (5s min interval), stamps `as_of`, caches quotes, falls back to cached values on failure. Used by `/swing` page for live prices in recommendations + open swing book. |
+| D31 | **`/swing` dashboard page with auto EOD scan and manual ledger confirmations.** | HIGH | Highest | High | ✅ **Shipped 2026-05-13** — [`modes/dashboard/swing_page.py`](../swing_page.py) + [`swing_actions.py`](../swing_actions.py). Priority-sorted entry recommendations, broker-entry instruction card, open swing book with live prices, Done/Skip/Exit controls, capital input defaulting to Zerodha balance, loading banner with polling, auto-run note, NoAI/AI mode controls (auto-scans always NoAI). |
 
 ### Portfolio-Analyser Sub-Module (D24–D29) — design notes
 
@@ -164,15 +175,36 @@ modes/dashboard/
 └── login_page.py            # D28 — /login UI
 ```
 
-**Read-only contract (mirrored from existing dashboard rules):**
-`modes/dashboard/portfolio_page.py` reads ONLY from
-`data/portfolio_analyses.db` and the static reference files
-maintained by `modes/analyze/` (sector map, candidates list).
-It MUST NOT call `Zerodha.get_holdings()` or anything that hits
-a paid API directly — that's `modes/analyze/`'s job, triggered
-by D26/D27 buttons. This keeps page renders microsecond-fast
-and isolates failure modes (network outage breaks "Analyse now"
-but never breaks page navigation).
+**Planned folder additions (D30-D31):**
+
+```
+modes/dashboard/
+├── live_quotes.py           # D30 — read-only Zerodha LTP/quote polling
+├── swing_page.py            # D31 — /swing UI
+└── swing_actions.py         # D31 — background scan + confirm/skip/exit jobs
+```
+
+**Swing dashboard AI rule (D31).** Any dashboard timer/page-open scan is
+NoAI. AI requires an explicit user click on the AI control. If today's
+NoAI run exists and the user clicks Run AI swing analysis, the dashboard
+submits a separate AI run for the same trading day and updates AI fields;
+opening the page later must not rerun AI automatically.
+
+**Persistence plus live overlay contract:**
+`modes/dashboard/portfolio_page.py` reads analysis structure from
+`data/portfolio_analyses.db` and the static reference files maintained
+by `modes/analyze/` (sector map, candidates list). It does not re-run
+the analyser on page load.
+
+D30 adds a narrow exception for display freshness: the page may call the
+dashboard live-quote service to fetch Zerodha current prices for visible
+symbols, then recompute current value and P&L in the browser/server
+payload. This does not update recommendation fields, does not place
+orders, and does not mutate `data/portfolio_analyses.db`.
+
+This keeps page navigation fast while making displayed price/P&L exact
+as of the latest broker quote. Network or token failure should degrade
+to the persisted snapshot with a stale banner, not crash the page.
 
 **Login flow (D28) caveat.** The dashboard server is by default
 bound to `127.0.0.1` — that is fine for the local-laptop case

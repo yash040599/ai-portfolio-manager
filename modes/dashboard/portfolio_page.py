@@ -69,6 +69,7 @@ def _topnav(here: str) -> str:
     """Render the four-link nav with `here` highlighted as <span>."""
     items = [
         ("Portfolio", "/portfolio"),
+        ("Swing", "/swing"),
         ("Trading (Live P&L)", "/trading"),
         ("Tax", "/tax"),
         ("Theory", "/theory/statistics"),
@@ -1085,6 +1086,39 @@ def render_login_page() -> str:
 </div>
 """
 
+    # Check if assisted login is available (KITE_USER_ID + KITE_PASSWORD set)
+    has_creds = bool(
+        (getattr(Config, "KITE_USER_ID", "") or "")
+        and (getattr(Config, "KITE_PASSWORD", "") or "")
+    )
+
+    assisted_html = ""
+    if has_creds:
+        user_id = getattr(Config, "KITE_USER_ID", "")
+        assisted_html = f"""
+<h2>Quick login (saved credentials)</h2>
+<div class="card">
+  <p>Your Kite user ID <strong>{html.escape(user_id)}</strong> and password are
+  saved in <code>.env</code>. Just enter your 6-digit authenticator code below.</p>
+  <form method="post" action="/api/login_assisted" style="margin-top: 10px;">
+    <div style="display:flex;gap:8px;align-items:center">
+      <input type="text" name="otp" required
+        placeholder="6-digit code"
+        pattern="[0-9]{{6}}" maxlength="6" inputmode="numeric"
+        autocomplete="one-time-code"
+        style="width: 140px; padding: 8px 10px; font: inherit; font-size: 18px;
+               letter-spacing: 4px; text-align: center;
+               border: 1px solid #cfd9eb; border-radius: 5px;" />
+      <button class="action" type="submit">Login</button>
+    </div>
+  </form>
+  <p class="muted" style="margin-top: 8px; font-size: 12px;">
+    Open your authenticator app (Apple Passwords / Authy / Google Auth)
+    and enter the current 6-digit code for Zerodha Kite.
+  </p>
+</div>
+"""
+
     body = f"""
 <h1 class="page-title">Zerodha Login</h1>
 <div class="sub">
@@ -1092,8 +1126,8 @@ def render_login_page() -> str:
   today's token until then.
 </div>
 {status_html}
-
-<h2>Manual login (works on any device)</h2>
+{assisted_html}
+<h2>Manual login (paste redirect URL)</h2>
 <div class="card">
   <ol>
     <li>Click the link to open Zerodha's login page in a new tab.

@@ -18,6 +18,10 @@ Scope:
   weekly trend confirmation.
 - Swing-managed quantities are tracked in `data/swing.db` and are
   isolated from long-term portfolio holdings shown by `--mode analyze`.
+- Default operator surface is the local dashboard `/swing`; terminal
+  commands must expose the same scan, confirm, skip, and list actions.
+- Dashboard prices and P&L must poll Zerodha live quotes for tracked
+  symbols so displayed values are broker-current, not stale DB values.
 - No intraday MIS lifecycle, no F&O, no overnight cash-equity shorts.
 
 Sister docs:
@@ -74,6 +78,9 @@ and rejection reasons. AI can add thesis, news/catalyst context,
 peer comparison, and risk narrative, but it must not overwrite the
 deterministic signal or risk math.
 
+All automatic runs are NoAI. AI is used only when the user explicitly
+requests it from the dashboard or CLI for that run.
+
 ### 4. Plan first, execute later
 
 The first production version should not place orders. It should:
@@ -106,33 +113,74 @@ we can later audit:
 - Score bucket behavior.
 - AI overlay usefulness.
 
+### 7. Dashboard confirmation is the manual execution boundary
+
+Swing mode does not need an always-on VM while it is report-only. The
+daily workflow should run from the local dashboard:
+
+1. User opens `/swing` and clicks Run scan after market close.
+2. Dashboard shows a table report with setup, entry, stop, target,
+   suggested quantity, risk, and live/latest price.
+3. User manually takes or skips the broker action outside the tool.
+4. User returns to the dashboard and clicks Done on the exact action.
+5. Dashboard prompts for executed quantity and executed price, then
+  records that as the swing-managed lot in `data/swing.db`.
+
+The Done click is not a broker order. It is the user's explicit ledger
+confirmation that this action was taken and should be tracked from the
+next run onward. If the user does not click Done, the action remains
+PENDING/EXPIRED and no swing-managed quantity is created.
+
+Entry recommendations live in the top table. Once an ENTRY action is
+confirmed, it moves out of the recommendation table and into the open
+swing book below it. The open swing book has its own Exit/Mark Exit
+Done control; confirming an exit closes tracking, computes realised
+gross P&L, delivery/regulatory charges, and net P&L, then contributes
+that result to the swing P&L summary at the top of the page.
+
+Above the entry recommendation table, the dashboard must show a concise
+broker-instruction card that tells the user exactly how to place the
+recommended action in Zerodha: product type, side, order type, quantity,
+entry/trigger/limit price, and stop/GTT reminder. Initially this is an
+operator checklist only, not an automated broker order.
+
+### 8. EOD scans are time-gated and idempotent
+
+The daily scan must use completed daily candles only. Before market
+close it should refuse to run and show a clear "wait for market close"
+message. After market close:
+
+- The Run scan button can manually start today's EOD scan.
+- If the dashboard server is already running at 15:30 IST or later,
+  it should auto-submit one NoAI scan for the trading day if none exists.
+- If the dashboard was not open and the user first opens `/swing` at
+  16:30 IST, the page should auto-trigger today's NoAI scan if it has
+  not already completed or started.
+- Same-day scan submission is single-flight/idempotent by run mode: if
+  a NoAI scan is running or already completed for the trading day, do
+  not start a duplicate NoAI scan unless the user explicitly requests a
+  force re-run later.
+- An AI run is a separate, explicit user action. If today's latest scan
+  is NoAI and the user clicks Run AI swing analysis, run the same daily
+  scan with the AI overlay and update candidates/actions with AI fields.
+  Do not auto-run AI from timers or page-open logic.
+
 ---
 
 ## Status Overview
 
-### Pending (17 items)
+### Pending (7 items)
 
 Sorted by priority, then dependency order.
 
 | # | Improvement | Priority | Impact | Effort |
 |---|-------------|----------|--------|--------|
-| S1 | Create `modes/swing/` package skeleton: `manager.py`, `scanner.py`, `signals.py`, `risk.py`, `types.py`, `persistence.py`, `report.py`, `ai_overlay.py`. | HIGH | Highest | Medium |
-| S2 | Add `--mode swing` CLI dispatch in `main.py`. Default is NoAI report-only; `--ai` adds qualitative overlay; `--execute` remains blocked until S12-S14 ship. | HIGH | Highest | Low |
-| S3 | Add `SWING_STRATEGY.md` and keep it synced with code as implementation lands. | HIGH | High | Low |
-| S4 | Build `data/swing.db` schema: `swing_runs`, `swing_candidates`, `swing_positions`, `swing_events`. | HIGH | Highest | Medium |
 | S5 | Implement long-term-holding isolation. Swing exits only ledger-managed quantity; overlapping symbols require explicit swing lots. | CRITICAL | Highest | Medium |
-| S6 | Daily/weekly candle fetcher. Reuse `shared.candle_cache` and Zerodha historical API, but support 400-900 daily-candle lookbacks without intraday cache cleanup assumptions. | HIGH | High | Medium |
-| S7 | NoAI swing scanner. Score breakout, pullback, trend-continuation, and support-reversal setups using daily + weekly context. | HIGH | Highest | High |
-| S8 | Swing risk engine. Compute ATR/swing-low stop, 2R+ target, risk-per-trade position size, max sector exposure, max total open risk. | HIGH | Highest | Medium |
-| S9 | Open-position review engine. Daily action: HOLD, TIGHTEN_STOP, PARTIAL_EXIT, FULL_EXIT, WATCH. | HIGH | High | Medium |
-| S10 | Swing report writer under `reports/swing/<YYYY>/<MM>/swing_report_DD.txt` and JSON data dump. | HIGH | High | Low |
 | S11 | Backtest/replay MVP for swing candidates over daily candles. Required before any live execution. | HIGH | Highest | High |
 | S12 | Zerodha CNC order wrappers. Separate from intraday `place_order()` so MIS cannot leak into swing execution. | HIGH | Highest | Medium |
 | S13 | GTT/OCO support or explicit manual-stop enforcement. Overnight swing risk must have a stop plan outside the Python process. | HIGH | Highest | High |
 | S14 | Execution reconciliation. Match broker holdings/orders/fills back to `swing_positions` without touching long-term holdings. | HIGH | Highest | High |
-| S15 | Optional AI overlay. Adds thesis, risks, recent news/catalysts, peer comparison, and qualitative warning flags. | MEDIUM | Medium | Medium |
-| S16 | Dashboard `/swing` page. Show open swing book, candidates, stops, targets, R multiples, sector exposure, and action list. | MEDIUM | High | Medium |
-| S17 | Tax/report integration. Keep swing realised P&L separate from intraday tax ledger and long-term portfolio analysis. | MEDIUM | High | Medium |
+| S17 | Tax/report integration. Keep swing realised P&L and delivery/regulatory charges separate from intraday tax ledger and long-term portfolio analysis. | MEDIUM | High | Medium |
 
 ### Pending - Awaiting Data (0 items)
 
@@ -151,10 +199,28 @@ Examples that should wait for data:
 
 No swing ideas have been rejected yet.
 
-### Completed (0 items)
+### Completed (11 items)
 
-No implementation has shipped yet. This roadmap is the starting
-planning artifact for the first swing-mode build.
+Shipped 2026-05-13 in the first swing-mode build.
+
+| # | Improvement | Category | Date |
+|---|-------------|----------|------|
+| S1 | Package skeleton: `modes/swing/` with `manager.py`, `scanner.py`, `signals.py`, `risk.py`, `types.py`, `persistence.py`, `report.py`, `ai_overlay.py`. | Infra | 2026-05-13 |
+| S2 | CLI dispatch `--mode swing` in `main.py` with `--ai`, `--actions`, `--positions`, `--confirm`, `--skip` sub-commands. | Infra | 2026-05-13 |
+| S3 | `SWING_STRATEGY.md` written and kept in sync with code. | Infra | 2026-05-13 |
+| S4 | `data/swing.db` schema: `swing_runs`, `swing_candidates`, `swing_actions`, `swing_positions`, `swing_events`. Full CRUD + action confirm/skip. | Infra | 2026-05-13 |
+| S6 | Daily candle fetcher via `shared.candle_cache` + Zerodha historical API. 750-day lookback. Pre-close scans use yesterday's completed candle. | Indicators | 2026-05-13 |
+| S7 | NoAI swing scanner: breakout, pullback-uptrend, trend-continuation, support-reversal setup detectors with composite scoring. | Indicators | 2026-05-13 |
+| S8 | Swing risk engine: ATR-based stop, 2R+ target, risk-budget position sizing, portfolio-level risk/sector caps, broker instruction generator. | Risk | 2026-05-13 |
+| S9 | Open-position review engine: industry-standard exit stack (stop breach, target, SMA break, trailing, time stop, RS deterioration). | Execution | 2026-05-13 |
+| S10 | Swing report writer: `reports/swing/<YYYY>/<MM>/swing_report_DD.txt` + JSON data dump. | Infra | 2026-05-13 |
+| S15 | AI overlay: Claude qualitative overlay (thesis, risks, news, peers). User-initiated only; auto-scans always NoAI. | Indicators | 2026-05-13 |
+| S16 | Dashboard `/swing` page: P&L summary, broker-entry instructions, priority-sorted recommendations with live quotes, open swing book, Done/Skip/Exit controls, capital input from Zerodha balance, loading banner with polling, auto-run note. Dashboard D30 (live_quotes.py) + D31 (swing_page.py + swing_actions.py). | Infra | 2026-05-13 |
+| S18 | Terminal parity: `--actions`, `--positions`, `--confirm <ID> --qty N --price P`, `--skip <ID>`. Same service layer as dashboard. | Infra | 2026-05-13 |
+
+Also shipped (not in original roadmap):
+- Dashboard quick-login: OTP-only assisted login on `/login` when `KITE_USER_ID` + `KITE_PASSWORD` are set in `.env`. No more URL paste-back needed for daily login.
+- Zerodha `login_assisted_with_otp()` method in `core/zerodha_client.py`.
 
 ---
 
@@ -218,7 +284,7 @@ behavior must update the strategy doc in the same change.
 **Today.** Intraday uses `data/trades.db`; analyse uses
 `data/portfolio_analyses.db`. Swing needs its own source of truth.
 
-**Fix.** Add `data/swing.db` with four tables:
+**Fix.** Add `data/swing.db` with five tables:
 
 ```sql
 CREATE TABLE swing_runs (
@@ -228,8 +294,14 @@ CREATE TABLE swing_runs (
     mode            TEXT NOT NULL,   -- NOAI | AI
     universe        TEXT,
     market_regime   TEXT,
+    run_for_date    TEXT,
+    trigger_source  TEXT,     -- CLI | DASHBOARD_BUTTON | DASHBOARD_AUTO | PAGE_OPEN_AUTO
+    user_requested_ai INTEGER NOT NULL DEFAULT 0,
+    rerun_of_run_id INTEGER,
+    rerun_reason    TEXT,
     candidates_seen INTEGER,
     candidates_kept INTEGER,
+    blocked_reason  TEXT,
     notes           TEXT
 );
 
@@ -240,6 +312,8 @@ CREATE TABLE swing_candidates (
     exchange        TEXT NOT NULL DEFAULT 'NSE',
     setup_type      TEXT NOT NULL,
     score           REAL,
+    priority_rank   INTEGER,
+    priority_score  REAL,
     close_price     REAL,
     entry_price     REAL,
     stop_price      REAL,
@@ -250,7 +324,35 @@ CREATE TABLE swing_candidates (
     suggested_qty   INTEGER,
     status          TEXT NOT NULL,   -- SCORED | ACCEPTED | REJECTED | PLANNED
     rejected_reason TEXT,
+    broker_instruction_json TEXT,
+    ai_overlay_json TEXT,
     snapshot_json   TEXT NOT NULL
+);
+
+CREATE TABLE swing_actions (
+    action_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id          INTEGER NOT NULL REFERENCES swing_runs(run_id),
+    candidate_id    INTEGER REFERENCES swing_candidates(id),
+    position_id     INTEGER REFERENCES swing_positions(position_id),
+    symbol          TEXT NOT NULL,
+    exchange        TEXT NOT NULL DEFAULT 'NSE',
+    action_type     TEXT NOT NULL,   -- ENTRY | TIGHTEN_STOP | PARTIAL_EXIT | FULL_EXIT | WATCH
+    status          TEXT NOT NULL,   -- PENDING | CONFIRMED | SKIPPED | EXPIRED | MANUAL_REVIEW
+    suggested_qty   INTEGER,
+    suggested_price REAL,
+    suggested_stop  REAL,
+    suggested_target REAL,
+    priority_rank   INTEGER,
+    live_price      REAL,
+    broker_instruction_json TEXT,
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT,
+    confirmed_at    TEXT,
+    executed_qty    INTEGER,
+    executed_price  REAL,
+    confirmed_stop  REAL,
+    confirmation_source TEXT,        -- DASHBOARD | CLI | RECONCILED
+    notes           TEXT
 );
 
 CREATE TABLE swing_positions (
@@ -265,8 +367,17 @@ CREATE TABLE swing_positions (
     target_price    REAL,
     trailing_stop   REAL,
     status          TEXT NOT NULL,   -- OPEN | CLOSED | MANUAL_REVIEW
-    source          TEXT NOT NULL,   -- TOOL | ADOPTED_MANUAL
+    source          TEXT NOT NULL,   -- DASHBOARD_DONE | CLI_CONFIRM | ADOPTED_MANUAL | RECONCILED
     linked_run_id   INTEGER,
+    linked_action_id INTEGER,
+    exit_date       TEXT,
+    exit_price      REAL,
+    exit_qty        INTEGER,
+    gross_pnl       REAL,
+    charges         REAL,
+    net_pnl         REAL,
+    charge_breakdown_json TEXT,
+    closed_action_id INTEGER,
     notes           TEXT
 );
 
@@ -274,7 +385,7 @@ CREATE TABLE swing_events (
     event_id        INTEGER PRIMARY KEY AUTOINCREMENT,
     position_id     INTEGER REFERENCES swing_positions(position_id),
     event_time      TEXT NOT NULL,
-    event_type      TEXT NOT NULL,   -- ENTRY | STOP_MOVE | PARTIAL_EXIT | EXIT | REVIEW
+    event_type      TEXT NOT NULL,   -- ENTRY | STOP_MOVE | PARTIAL_EXIT | EXIT | EXIT_CONFIRMED | REVIEW
     old_value       TEXT,
     new_value       TEXT,
     reason          TEXT,
@@ -362,6 +473,25 @@ looking for new entries. Possible actions:
 - FULL_EXIT: stop/trend/time rule says exit.
 - WATCH: no action, but thesis warning logged.
 
+The exit engine must be smarter than "hold until target or stop". It
+should use an industry-standard stack of exit signals:
+
+- Hard stop breach on close or broker-side stop confirmation.
+- Target/extension zone reached.
+- ATR or swing-low trailing stop.
+- Break of SMA-50/EMA-20 for trend setups, depending on setup type.
+- Weekly trend break or lower-high/lower-low structure.
+- Relative strength deterioration versus NIFTY.
+- High-volume distribution or bearish reversal candle at resistance.
+- Time stop when there is no progress after the configured holding
+  window.
+- Gap-down or event-risk warning that invalidates the setup.
+
+Exit recommendations appear on the open swing book row. The dashboard
+Exit/Mark Exit Done control is a ledger confirmation in report-only
+mode: it asks for executed exit quantity and price, computes realised
+P&L and charges, and then closes or reduces the tracked swing position.
+
 ### S10 - Report writer
 
 **Today.** Analyse and trade modes already write human-readable
@@ -379,10 +509,11 @@ Report sections:
 1. Header: run mode, universe, market regime, generated time.
 2. Open swing book: symbol, qty, entry, stop, target, R multiple,
    action.
-3. New candidates: setup type, entry, stop, target, qty, score.
+3. New entry candidates: setup type, entry, stop, target, qty, score.
 4. Rejections: top rejected candidates and reasons.
-5. Risk summary: open risk, sector exposure, capital used, cash left.
-6. AI overlay block when `--ai` is used.
+5. Realised swing P&L summary: gross P&L, charges, net P&L.
+6. Risk summary: open risk, sector exposure, capital used, cash left.
+7. AI overlay block when `--ai` is used.
 
 ### S11 - Backtest/replay MVP
 
@@ -449,19 +580,108 @@ fills only qualitative fields:
 - Reasons to skip despite technical setup.
 - Change since prior scan.
 
+AI run semantics:
+
+- Default scan is always NoAI.
+- Dashboard auto-runs and page-open auto-runs are always NoAI.
+- The dashboard may show an AI mode checkbox or "Run AI swing analysis"
+  button, but using AI requires an explicit user click.
+- If today's latest completed scan is NoAI and the user requests AI,
+  run a new AI scan for the same trading day and update the report with
+  AI fields.
+- If today's latest completed scan is already AI, do not rerun just
+  because the user opens the page; only a manual force re-run should do
+  that.
+- AI must not change entry price, stop, target, quantity, risk, or R:R;
+  it can change qualitative ranking notes, risk warnings, and thesis.
+
 ### S16 - Dashboard `/swing`
 
 **Today.** Dashboard has portfolio/analyse and intraday P&L pages.
+Swing does not need a VM in the report-only phase because no automated
+broker order loop is running.
 
-**Fix.** Add a read-only swing page with:
+**Fix.** Add an interactive local swing page. It may write only to
+`data/swing.db`; it must not place broker orders until S12-S14 ship.
 
-- Open swing positions.
-- Today's action list.
-- Candidate table.
-- Risk at stop.
-- Sector exposure.
+Required sections:
+
+- Top summary: realised swing gross P&L, charges, net P&L, open
+  unrealised P&L, and latest quote timestamp.
+- Run scan button for the EOD scan. Before market close, it must show
+  "wait for market close" and refuse to scan incomplete daily candles.
+- NoAI/AI control: default NoAI. AI mode is user-initiated only and must
+  never be used by the automatic 15:30/page-open scans.
+- Broker instruction card above the entry table. It explains how to add
+  the stock in Zerodha: buy CNC/delivery equity on NSE, not MIS or F&O;
+  use the suggested quantity; use the recommended limit/trigger price;
+  set or note the stop/GTT plan; then return and click Done after the
+  broker order actually executes.
+- If Zerodha supports an entry trigger such as AMO/GTT/trigger-limit for
+  the symbol and product, show a separate "set for next market open"
+  checklist so the user can place the trigger after EOD. The dashboard
+  still waits for the user to confirm Done the next day with actual
+  executed quantity and price before tracking the position.
+- Entry recommendation table with action id, symbol, setup, score, entry,
+  stop, target, suggested quantity, risk, R:R, live/latest price,
+  and reason.
+- Pending action controls: Done, Skip, and Manual review.
+- Done modal/form asking at minimum executed quantity and executed
+  price for entry/exit actions, or confirmed stop price for stop-only
+  actions. Optional fields can include execution date/time, order id,
+  GTT confirmation, and notes.
+- Open swing book below the report table, fed only from confirmed
+  swing positions. It shows symbol, managed quantity, entry, live
+  Zerodha price, stop, target, unrealised P&L, R multiple, age, and
+  daily action such as HOLD, TIGHTEN_STOP, PARTIAL_EXIT, FULL_EXIT, or
+  WATCH.
+- Exit/Mark Exit Done control on each open swing row. In report-only
+  mode this does not place a broker order; it confirms that the user
+  already exited manually, asks for exit quantity and price, computes
+  gross P&L, delivery/regulatory charges, and net P&L, and closes or
+  reduces the tracked position.
+- Sector exposure and open risk at stop.
 - Position chart with entry/stop/target markers.
-- Run swing scan button.
+
+Important behavior:
+
+- Recommendations must be sorted by priority, with rank 1 as the best
+  candidate. Priority combines deterministic setup score, R:R, liquidity,
+  risk fit, sector/open-risk constraints, and optional AI warning/boost
+  notes when the user explicitly ran AI.
+- Clicking Done creates or updates the swing-managed lot from the
+  user-entered executed quantity and price.
+- A candidate must stop appearing as a pending entry after it is
+  confirmed, skipped, or expired.
+- Open positions appear below the report table and remain tracked
+  until the exit/partial-exit action is confirmed.
+- The page polls Zerodha live quotes for symbols in both the entry
+  recommendation table and open swing book, then recomputes displayed
+  current price and P&L from the latest quote.
+- Realised swing P&L must include regulatory/delivery charges, not just
+  gross entry-vs-exit difference.
+- A dashboard server that is running after 15:30 IST should auto-submit
+  one NoAI EOD scan per trading day. Opening `/swing` after 15:30 IST
+  should also auto-submit today's NoAI scan if no run exists yet.
+- If a NoAI scan exists and the user explicitly requests AI, run an AI
+  overlay scan even though the NoAI scan already exists. Same-mode runs
+  remain idempotent unless force rerun is added later.
+- If a confirmed position overlaps with long-term holdings, the page
+  must show Zerodha total quantity, swing-managed quantity, and
+  unmanaged quantity separately.
+
+Dashboard API sketch:
+
+```text
+GET  /swing
+GET  /api/swing/data
+GET  /api/swing/live
+POST /api/swing/run
+POST /api/swing/actions/<action_id>/confirm
+POST /api/swing/actions/<action_id>/skip
+POST /api/swing/actions/<action_id>/manual_review
+POST /api/swing/positions/<position_id>/exit
+```
 
 ### S17 - Tax/report integration
 
@@ -472,20 +692,65 @@ separate.
 not pollute intraday performance stats, and it should be distinguishable
 from long-term portfolio analysis.
 
+Realised P&L must store:
+
+- Entry value.
+- Exit value.
+- Gross P&L.
+- Delivery/regulatory charges, with a charge-breakdown JSON.
+- Net P&L after charges.
+
+Delivery equity brokerage is usually zero at Zerodha, but statutory
+charges still matter: STT, exchange transaction charges, GST on
+brokerage/transaction charges where applicable, SEBI charges, stamp
+duty on buy-side, and any other broker-reported charges. The calculator
+must be delivery/CNC-aware and not reuse intraday MIS assumptions
+blindly.
+
+### S18 - Terminal parity for dashboard actions
+
+**Today.** Swing is planned as a dashboard-first workflow, but every
+state-changing dashboard action must also be possible from terminal for
+backup, scripting, and auditability.
+
+**Fix.** The dashboard API and terminal commands should call the same
+service layer, so there is only one implementation of scan/confirm/skip.
+
+Planned commands:
+
+```text
+python main.py --mode swing                         # EOD scan + print table
+python main.py --mode swing --ai                    # user-initiated AI scan
+python main.py --mode swing --actions               # pending actions
+python main.py --mode swing --positions             # open swing book
+python main.py --mode swing --confirm <ACTION_ID> --qty 10 --price 1450.50
+python main.py --mode swing --close-position <POSITION_ID> --qty 10 --price 1510.25
+python main.py --mode swing --live                  # live prices + open swing book P&L
+python main.py --mode swing --skip <ACTION_ID> --reason "not taken"
+python main.py --mode swing --manual-review <ACTION_ID> --reason "broker mismatch"
+```
+
+CLI confirmations must write the same fields as the dashboard Done
+form: action id, executed quantity, executed price or confirmed stop,
+confirmation time, source, and optional notes.
+
+The default EOD scan command must refuse to scan before market close
+and print the same "wait for market close" reason as the dashboard.
+
 ---
 
 ## Implementation Order
 
-Recommended first build sequence:
+First build shipped 2026-05-13: S1-S4, S6-S10, S15-S16, S18.
 
-1. S1-S4: package, CLI stub, DB, docs.
-2. S5: holding isolation before any scanner excitement.
-3. S6-S8: daily/weekly scanner + risk math.
-4. S9-S10: position review + report.
-5. S11: replay/backtest.
-6. S15-S16: AI overlay + dashboard.
-7. S12-S14: live execution only after evidence and safety are in place.
+Remaining sequence:
 
-The first usable milestone is not live trading. It is a daily report
-that says: "Here are open swing positions, here is what changed, here
-are candidate setups, here is the exact risk if you take them."
+1. S5: holding isolation (safety gate before live execution).
+2. S11: backtest/replay MVP (evidence before live execution).
+3. S12-S14: CNC wrappers, GTT/OCO, execution reconciliation.
+4. S17: tax/report integration for swing realised P&L.
+
+The current usable milestone is: daily EOD scan on the dashboard with
+priority-sorted recommendations, broker-entry instructions, manual
+Done/Skip confirmation, open swing book with live prices, and
+realised P&L tracking with delivery charges.
