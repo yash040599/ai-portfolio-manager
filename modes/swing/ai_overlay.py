@@ -60,6 +60,25 @@ def overlay_ai_on_candidates(
 
 def _build_prompt(c: SwingCandidate) -> str:
     """Build the Claude prompt for one swing candidate."""
+
+    ath_section = ""
+    if c.setup_type == "ATH_DIP":
+        ath_section = f"""
+IMPORTANT — ATH DIP-BUY CANDIDATE:
+This stock was flagged because it is {c.score:.1f}% below its all-time high.
+CRITICAL CHECK: Has this stock undergone a stock split, bonus issue, demerger,
+or any corporate action in the last 2 years that would have artificially reduced
+the share price? If YES, the apparent "dip from ATH" is NOT a real dip — the
+pre-split ATH is not comparable to the current post-split price. Flag this
+clearly in your RISKS section and recommend SKIPPING if the dip is entirely
+due to a corporate action.
+
+Examples of false dips:
+- Stock split 1:5 → price drops 80% mechanically, not a dip
+- Demerger → value carved out to new entity, price drops
+- Bonus issue 1:1 → price halves, not a real decline
+"""
+
     return f"""You are a swing trading analyst. Review this candidate and provide a brief qualitative assessment.
 
 FIXED DATA (do NOT change these numbers):
@@ -73,10 +92,10 @@ FIXED DATA (do NOT change these numbers):
 - RSI: {c.rsi_daily:.1f}
 - Relative Strength vs NIFTY: {c.relative_strength:+.1f}%
 - Volume ratio: {c.volume_ratio:.1f}x
-- Above SMA-200: {'Yes' if c.close_price > c.sma_200 else 'No'}
+- Above SMA-200: {'Yes' if c.close_price > c.sma_200 and c.sma_200 > 0 else 'No' if c.sma_200 > 0 else 'N/A'}
 - Weekly trend: {'Up' if c.weekly_trend_up else 'Down'}
 - Sector: {c.sector}
-
+{ath_section}
 Provide ONLY:
 1. THESIS (2-3 bullets on why this setup works)
 2. RISKS (2-3 specific risks for this name)

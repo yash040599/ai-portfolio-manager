@@ -24,7 +24,7 @@ from config import Config, now_ist
 from modes.swing.persistence import (
     init_db, open_positions, pending_actions, realised_pnl_summary,
     latest_run_for_date, latest_run, actions_for_run,
-    candidate_by_symbol, candidates_for_run,
+    candidate_by_symbol, ath_candidate_by_symbol, candidates_for_run,
 )
 from modes.swing.types import SwingAction, SwingPosition
 from modes.dashboard.live_quotes import get_live_quotes
@@ -257,6 +257,38 @@ def render_swing_page() -> str:
     tech_actions = [a for a in entry_actions
                     if not (a.notes and "ATH" in a.notes.upper())]
 
+    # ── Combined Top Picks (best from both strategies) ───────────
+    all_entry = ath_actions + tech_actions
+    if len(all_entry) > 5:
+        # Normalize scores: technical 0-10 → 0-100; ATH dip% is already 10-30 range
+        # Combine by simple ranking: interleave top from each
+        top_picks: list = []
+        seen: set[str] = set()
+        # Alternate: best ATH, best technical, ...
+        ath_sorted = list(ath_actions)
+        tech_sorted = list(tech_actions)
+        while len(top_picks) < 5 and (ath_sorted or tech_sorted):
+            if tech_sorted:
+                a = tech_sorted.pop(0)
+                if a.symbol not in seen:
+                    top_picks.append(a)
+                    seen.add(a.symbol)
+            if ath_sorted and len(top_picks) < 5:
+                a = ath_sorted.pop(0)
+                if a.symbol not in seen:
+                    top_picks.append(a)
+                    seen.add(a.symbol)
+
+        if top_picks:
+            body.append('<div class="card">')
+            body.append(f'<h2>Top Picks — Best of Both Strategies ({len(top_picks)})</h2>')
+            body.append('<p class="muted" style="margin-bottom:10px">'
+                        'The strongest opportunities combining technical setups and '
+                        'ATH dip-buy signals. Click a stock for full details.</p>')
+            body.append(_render_action_table(top_picks, live, candidates_by_symbol,
+                                             show_setup_as="Strategy"))
+            body.append('</div>')
+
     # ── ATH Dip-Buy Opportunities ──────────────────────────────
     body.append('<div class="card">')
     body.append(f'<h2>ATH Dip-Buy Opportunities ({len(ath_actions)})</h2>')
@@ -411,7 +443,8 @@ def render_swing_detail(symbol: str) -> str:
     """Render the per-stock swing detail page."""
     init_db()
     sym = symbol.strip().upper()
-    cand = candidate_by_symbol(sym)
+    cand = candidate_by_symbol(sym)          # prefers technical candidate
+    ath_cand = ath_candidate_by_symbol(sym)   # ATH candidate if exists
 
     body = []
     body.append(_topnav("/swing"))
@@ -419,11 +452,16 @@ def render_swing_detail(symbol: str) -> str:
     body.append(f'<h1 class="page-title">{html.escape(sym)} — Swing Detail</h1>')
     body.append('<div class="sub"><a href="/swing">&larr; Back to Swing Dashboard</a></div>')
 
-    if not cand:
+    if not cand and not ath_cand:
         body.append('<div class="card"><p class="muted">No swing analysis '
                     f'found for {html.escape(sym)}.</p></div>')
         body.append('</div>')
         return _wrap(f"Swing — {sym}", body)
+
+    # Use the best available candidate for the main display
+    # (technical has richer data; fall back to ATH if no technical)
+    if not cand:
+        cand = ath_cand
 
     # Live quote
     lq = get_live_quotes([sym])
@@ -503,6 +541,25 @@ def render_swing_detail(symbol: str) -> str:
                     f'<td>{icon}</td></tr>')
 
     body.append('</table></div>')
+
+    # ── ATH Dip Info (if available) ─────────────────────────────
+    if ath_cand and ath_cand.status == "ACCEPTED":
+        body.append('<div class="card">')
+        body.append('<h2>ATH Dip-Buy Signal</h2>')
+        body.append('<p style="font-size:13px;line-height:1.7">')
+        for r in (ath_cand.reasons or []):
+            body.append(f'{html.escape(r)}<br>')
+        if not ath_cand.reasons:
+            body.append(f'Stock is currently below its all-time high. '
+                        f'Score: {ath_cand.score:.1f}% dip.')
+        body.append('</p>')
+        body.append('<table class="kvtable" style="max-width:400px">')
+        _kv2 = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
+        body.append(_kv2("ATH Dip Entry", f'Rs.{ath_cand.entry_price:,.2f}'))
+        body.append(_kv2("ATH Stop", f'Rs.{ath_cand.stop_price:,.2f}'))
+        body.append(_kv2("ATH Target", f'Rs.{ath_cand.target_price:,.2f}'))
+        body.append(_kv2("ATH Qty", str(ath_cand.suggested_qty)))
+        body.append('</table></div>')
 
     # ── AI Overlay (if available) ───────────────────────────────
     if cand.ai_overlay_json:

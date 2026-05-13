@@ -27,6 +27,7 @@ from modes.swing.types import (
     SwingCandidate, SwingAction, ACTION_ENTRY, STATUS_PENDING,
 )
 from modes.swing.risk import generate_broker_instruction
+from modes.swing.signals import compute_swing_indicators
 
 
 # ── Default parameters ──────────────────────────────────────────
@@ -152,6 +153,17 @@ class ATHScanner:
                     f"Buy Rs.{buy_amount:,.0f} worth = {qty} shares at Rs.{current:,.2f}",
                 ]
 
+                # Compute indicators for the detail page
+                ind = compute_swing_indicators(candles)
+                _sma_50 = ind.get("sma_50", 0) if ind.get("valid") else 0
+                _sma_200 = ind.get("sma_200", 0) if ind.get("valid") else 0
+                _ema_20 = ind.get("ema_20", 0) if ind.get("valid") else 0
+                _rsi = ind.get("rsi", 0) if ind.get("valid") else 0
+                _atr = ind.get("atr_14", 0) if ind.get("valid") else 0
+                _vol_ratio = ind.get("vol_ratio", 0) if ind.get("valid") else 0
+                _rs = ind.get("rel_strength", 0) if ind.get("valid") else 0
+                _weekly_up = ind.get("weekly_trend_up", False) if ind.get("valid") else False
+
                 c = SwingCandidate(
                     symbol=symbol,
                     exchange="NSE",
@@ -166,8 +178,18 @@ class ATHScanner:
                     rr_ratio=round(rr, 2),
                     suggested_qty=qty,
                     sector=sector,
+                    sma_50=_sma_50,
+                    sma_200=_sma_200,
+                    ema_20=_ema_20,
+                    rsi_daily=_rsi,
+                    atr_14=_atr,
+                    relative_strength=_rs,
+                    volume_ratio=_vol_ratio,
+                    high_20d=ind.get("high_20d", 0) if ind.get("valid") else 0,
+                    high_50d=ind.get("high_50d", 0) if ind.get("valid") else 0,
                     high_52w=max(highs[-252:]) if len(highs) >= 252 else ath,
                     low_52w=min([c["low"] for c in candles[-252:]]) if len(candles) >= 252 else min([c["low"] for c in candles]),
+                    weekly_trend_up=_weekly_up,
                     reasons=reasons,
                     status="ACCEPTED",
                     broker_instruction_json=json.dumps(

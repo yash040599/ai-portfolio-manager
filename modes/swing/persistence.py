@@ -485,14 +485,42 @@ def candidates_for_run(run_id: int, path: str = DB_PATH) -> list[SwingCandidate]
 
 
 def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
-    """Most recent candidate record for a symbol (any status)."""
+    """Most recent candidate record for a symbol (any status).
+    Prefers non-ATH_DIP candidates when multiple exist for the same run."""
+    if not os.path.exists(path):
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        # First try: most recent non-ATH candidate (has richer data)
+        row = conn.execute(
+            """SELECT * FROM swing_candidates
+               WHERE symbol = ? AND setup_type != 'ATH_DIP'
+               ORDER BY run_id DESC, id DESC
+               LIMIT 1""",
+            (symbol.upper(),),
+        ).fetchone()
+        if row:
+            return _row_to_candidate(row)
+        # Fallback: any candidate including ATH
+        row = conn.execute(
+            """SELECT * FROM swing_candidates
+               WHERE symbol = ?
+               ORDER BY run_id DESC, id DESC
+               LIMIT 1""",
+            (symbol.upper(),),
+        ).fetchone()
+        return _row_to_candidate(row) if row else None
+
+
+def ath_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
+    """Most recent ATH_DIP candidate for a symbol."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
         row = conn.execute(
             """SELECT * FROM swing_candidates
-               WHERE symbol = ?
+               WHERE symbol = ? AND setup_type = 'ATH_DIP'
                ORDER BY run_id DESC, id DESC
                LIMIT 1""",
             (symbol.upper(),),
