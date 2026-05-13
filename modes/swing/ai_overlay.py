@@ -43,7 +43,7 @@ def overlay_ai_on_candidates(
     for c in accepted:
         try:
             prompt = _build_prompt(c)
-            response = claude.ask(prompt)
+            response = claude.call(prompt)
             if response:
                 c.ai_overlay_json = json.dumps({
                     "raw_response": response[:2000],

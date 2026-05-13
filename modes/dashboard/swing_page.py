@@ -195,11 +195,15 @@ def render_swing_page() -> str:
                 f'Default: Zerodha available funds (Rs.{default_capital:,.0f})</span>')
     body.append('</div>')
 
-    body.append('<div style="display:flex;gap:8px;align-items:center">')
-    body.append('<button class="action" onclick="runSwingScan(\'NOAI\')">'
-                'Run Scan (NoAI)</button>')
-    body.append('<button class="action alt" onclick="runSwingScan(\'AI\')">'
-                'Run AI Swing Analysis</button>')
+    body.append('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">')
+    body.append('<button class="action" onclick="runSwingScan()">'
+                'Run Scan</button>')
+    body.append('<label class="ai-toggle" '
+                'title="Toggle to add Claude qualitative overlay">' 
+                '<input type="checkbox" id="swing-ai-toggle">'
+                '<span class="lbl">Use Claude AI overlay</span>'
+                '<span class="hint">(NoAI is default; AI adds thesis + risks + news)</span>'
+                '</label>')
 
     if latest_run_row:
         mode_badge = latest_run_row.get("mode", "NOAI")
@@ -648,7 +652,10 @@ function _swingDisableButtons(disabled) {
     });
 }
 
-function runSwingScan(mode) {
+function runSwingScan() {
+    var aiToggle = document.getElementById('swing-ai-toggle');
+    var mode = (aiToggle && aiToggle.checked) ? 'AI' : 'NOAI';
+
     // If a run already exists today, ask before rerunning
     if (window._swingHasRunToday) {
         var lastMode = window._swingLastMode || 'NoAI';
@@ -826,4 +833,11 @@ button.action[disabled] { opacity: 0.55; cursor: not-allowed; }
            vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
+.ai-toggle { display: inline-flex; align-items: center; gap: 8px;
+             padding: 6px 12px; background: var(--card);
+             border: 1px solid var(--line); border-radius: 999px;
+             font-size: 13px; cursor: pointer; user-select: none; }
+.ai-toggle input { margin: 0; cursor: pointer; }
+.ai-toggle .lbl { font-weight: 500; }
+.ai-toggle .hint { color: var(--muted); font-size: 11px; }
 """
