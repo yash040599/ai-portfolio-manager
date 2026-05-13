@@ -126,6 +126,22 @@ def render_swing_page() -> str:
     body.append('<div class="wrap">')
     body.append('<h1 class="page-title">Swing Trading</h1>')
 
+    # ── Data freshness line ─────────────────────────────────────
+    if latest_run_row:
+        run_when = latest_run_row.get('finished_at', '')[:19].replace('T', ' ')
+        run_date = latest_run_row.get('run_for_date', '')
+        run_mode = latest_run_row.get('mode', 'NOAI')
+        body.append(f'<div class="sub">Last analysis: {run_mode} run '
+                    f'completed {run_when} IST &middot; '
+                    f'data through {run_date}</div>')
+    else:
+        body.append('<div class="sub">No swing analysis run yet.</div>')
+
+    if all_symbols:
+        body.append('<div class="sub" style="margin-top:-12px">' 
+                    'Live prices refresh every 5 seconds '
+                    '(Zerodha quote polling)</div>')
+
     # ── P&L summary ────────────────────────────────────────────
     body.append('<div class="card">')
     body.append('<h2>Realised Swing P&amp;L</h2>')

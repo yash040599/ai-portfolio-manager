@@ -282,6 +282,7 @@ def _render_header(snap: PortfolioSnapshot) -> str:
 <div class="sub">
   Run completed {html.escape(when)} · most-stale field: {html.escape(age)}
   · holdings: {len(snap.holdings)}
+  <br><span class="muted" style="font-size:11px">Live prices refresh every 5 seconds (Zerodha quote polling)</span>
 </div>
 <div class="card">
   <table class="kvtable">
