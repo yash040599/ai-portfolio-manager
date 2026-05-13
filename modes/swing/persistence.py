@@ -467,6 +467,39 @@ def pending_actions(path: str = DB_PATH) -> list[SwingAction]:
         return [_row_to_action(r) for r in rows]
 
 
+def candidates_for_run(run_id: int, path: str = DB_PATH) -> list[SwingCandidate]:
+    """All candidates for a given run, accepted first, by priority."""
+    if not os.path.exists(path):
+        return []
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT * FROM swing_candidates
+               WHERE run_id = ?
+               ORDER BY
+                 CASE status WHEN 'ACCEPTED' THEN 0 ELSE 1 END,
+                 priority_rank ASC, id ASC""",
+            (run_id,),
+        ).fetchall()
+        return [_row_to_candidate(r) for r in rows]
+
+
+def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
+    """Most recent candidate record for a symbol (any status)."""
+    if not os.path.exists(path):
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            """SELECT * FROM swing_candidates
+               WHERE symbol = ?
+               ORDER BY run_id DESC, id DESC
+               LIMIT 1""",
+            (symbol.upper(),),
+        ).fetchone()
+        return _row_to_candidate(row) if row else None
+
+
 def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:
     """All actions for a given run."""
     if not os.path.exists(path):
@@ -537,6 +570,19 @@ def realised_pnl_summary(path: str = DB_PATH) -> dict:
 def _row_to_action(row: sqlite3.Row) -> SwingAction:
     d = dict(row)
     return SwingAction.from_dict(d)
+
+
+def _row_to_candidate(row: sqlite3.Row) -> SwingCandidate:
+    d = dict(row)
+    # Reconstruct from snapshot_json if present (has the full data)
+    snap = d.get("snapshot_json")
+    if snap:
+        try:
+            full = json.loads(snap)
+            return SwingCandidate.from_dict(full)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return SwingCandidate.from_dict(d)
 
 
 def _row_to_position(row: sqlite3.Row) -> SwingPosition:

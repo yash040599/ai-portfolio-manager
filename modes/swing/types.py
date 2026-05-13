@@ -110,6 +110,9 @@ class SwingCandidate:
     high_52w: float = 0.0
     weekly_trend_up: bool = False
 
+    # Signal reasons (human-readable)
+    reasons: list[str] = field(default_factory=list)
+
     # AI overlay (None when NoAI)
     ai_overlay_json: str = ""
     broker_instruction_json: str = ""

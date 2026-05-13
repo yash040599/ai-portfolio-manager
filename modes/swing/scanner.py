@@ -169,6 +169,7 @@ class SwingScanner:
                     low_52w=ind["low_52w"],
                     high_52w=ind["high_52w"],
                     weekly_trend_up=ind["weekly_trend_up"],
+                    reasons=reasons,
                 )
 
                 if risk.rejected:

@@ -24,6 +24,7 @@ from config import Config, now_ist
 from modes.swing.persistence import (
     init_db, open_positions, pending_actions, realised_pnl_summary,
     latest_run_for_date, latest_run, actions_for_run,
+    candidate_by_symbol, candidates_for_run,
 )
 from modes.swing.types import SwingAction, SwingPosition
 from modes.dashboard.live_quotes import get_live_quotes
@@ -104,14 +105,18 @@ def render_swing_page() -> str:
     except Exception:
         pass  # fallback to 100k
 
-    # Get pending entry actions (priority sorted)
+    # Get pending entry actions (priority sorted) + candidates for reasons
     entry_actions: list[SwingAction] = []
     run_actions: list[SwingAction] = []
+    candidates_by_symbol: dict[str, Any] = {}
     if latest_run_row:
         run_actions = actions_for_run(int(latest_run_row["run_id"]))
         entry_actions = [a for a in run_actions
                          if a.action_type == "ENTRY" and a.status == "PENDING"]
         entry_actions.sort(key=lambda a: a.priority_rank or 999)
+        # Load candidates to get setup_type + reasons
+        for c in candidates_for_run(int(latest_run_row["run_id"])):
+            candidates_by_symbol[c.symbol] = c
 
     # Live quotes
     all_symbols = list({a.symbol for a in entry_actions} |
@@ -127,20 +132,22 @@ def render_swing_page() -> str:
     body.append('<h1 class="page-title">Swing Trading</h1>')
 
     # ── Data freshness line ─────────────────────────────────────
+    freshness_parts = []
     if latest_run_row:
         run_when = latest_run_row.get('finished_at', '')[:19].replace('T', ' ')
         run_date = latest_run_row.get('run_for_date', '')
         run_mode = latest_run_row.get('mode', 'NOAI')
-        body.append(f'<div class="sub">Last analysis: {run_mode} run '
-                    f'completed {run_when} IST &middot; '
-                    f'data through {run_date}</div>')
+        freshness_parts.append(
+            f'Last analysis: {run_mode} run completed {run_when} IST '
+            f'&middot; data through {run_date}')
     else:
-        body.append('<div class="sub">No swing analysis run yet.</div>')
+        freshness_parts.append('No swing analysis run yet.')
 
     if all_symbols:
-        body.append('<div class="sub" style="margin-top:-12px">' 
-                    'Live prices refresh every 5 seconds '
-                    '(Zerodha quote polling)</div>')
+        freshness_parts.append(
+            'Live prices refresh every 5 seconds (Zerodha quote polling)')
+
+    body.append('<div class="sub">' + '<br>'.join(freshness_parts) + '</div>')
 
     # ── P&L summary ────────────────────────────────────────────
     body.append('<div class="card">')
@@ -247,11 +254,12 @@ def render_swing_page() -> str:
     if entry_actions:
         body.append('<table class="holdings">')
         body.append('<tr>'
-                    '<th>#</th><th>Symbol</th><th>Setup</th><th class="right">Score</th>'
+                    '<th>#</th><th>Symbol</th><th>Setup</th>'
                     '<th class="right">Live Price</th>'
                     '<th class="right">Entry</th><th class="right">Stop</th>'
                     '<th class="right">Target</th>'
                     '<th class="right">Qty</th><th class="right">R:R</th>'
+                    '<th>Reason</th>'
                     '<th>Actions</th>'
                     '</tr>')
         for a in entry_actions:
@@ -260,12 +268,21 @@ def render_swing_page() -> str:
             chg = lq.get("change_pct", 0)
             chg_cls = "pos" if chg >= 0 else "neg"
 
+            cand = candidates_by_symbol.get(a.symbol)
+            setup = cand.setup_type if cand else "ENTRY"
+            short_reason = ""
+            if cand and cand.reasons:
+                short_reason = cand.reasons[0]
+                if len(cand.reasons) > 1:
+                    short_reason += f" (+{len(cand.reasons)-1} more)"
+
             body.append(
                 f'<tr>'
                 f'<td>{a.priority_rank}</td>'
-                f'<td><strong>{html.escape(a.symbol)}</strong></td>'
-                f'<td>{html.escape(a.action_type)}</td>'
-                f'<td class="right">{a.priority_rank}</td>'
+                f'<td><a href="/swing/{html.escape(a.symbol)}" '
+                f'style="color:var(--fg);font-weight:600">'
+                f'{html.escape(a.symbol)}</a></td>'
+                f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
                 f'<td class="right"><span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
                 f' <span class="muted">({chg:+.1f}%)</span></td>'
                 f'<td class="right">Rs.{a.suggested_price:,.2f}</td>'
@@ -273,6 +290,8 @@ def render_swing_page() -> str:
                 f'<td class="right">Rs.{a.suggested_target:,.2f}</td>'
                 f'<td class="right">{a.suggested_qty}</td>'
                 f'<td class="right">{_rr(a):.1f}</td>'
+                f'<td style="font-size:11px;max-width:200px">'
+                f'{html.escape(short_reason)}</td>'
                 f'<td>'
                 f'<button class="action" onclick="confirmAction({a.action_id})" '
                 f'style="padding:4px 8px;font-size:12px">Done</button> '
@@ -345,6 +364,198 @@ def render_swing_page() -> str:
     body.append(_js())
 
     return _wrap("Swing", body)
+
+
+# ── Detail page for /swing/<symbol> ────────────────────────────
+
+def render_swing_detail(symbol: str) -> str:
+    """Render the per-stock swing detail page."""
+    init_db()
+    sym = symbol.strip().upper()
+    cand = candidate_by_symbol(sym)
+
+    body = []
+    body.append(_topnav("/swing"))
+    body.append('<div class="wrap">')
+    body.append(f'<h1 class="page-title">{html.escape(sym)} — Swing Detail</h1>')
+    body.append('<div class="sub"><a href="/swing">&larr; Back to Swing Dashboard</a></div>')
+
+    if not cand:
+        body.append('<div class="card"><p class="muted">No swing analysis '
+                    f'found for {html.escape(sym)}.</p></div>')
+        body.append('</div>')
+        return _wrap(f"Swing — {sym}", body)
+
+    # Live quote
+    lq = get_live_quotes([sym])
+    lprice = lq.get(sym, {}).get("price", cand.close_price) or cand.close_price
+    chg = lq.get(sym, {}).get("change_pct", 0)
+
+    # ── Summary card ────────────────────────────────────────────
+    body.append('<div class="card">')
+    body.append('<h2>Recommendation Summary</h2>')
+    body.append('<table class="kvtable">')
+    _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
+    body.append(_kv("Setup", f'<strong>{html.escape(cand.setup_type)}</strong>'))
+    body.append(_kv("Status", cand.status))
+    body.append(_kv("Score", f'{cand.score:.1f} (rank #{cand.priority_rank})'))
+    body.append(_kv("Sector", cand.sector))
+    pnl_cls = "pos" if chg >= 0 else "neg"
+    body.append(_kv("Live Price",
+                     f'<span class="{pnl_cls}">Rs.{lprice:,.2f} ({chg:+.1f}%)</span>'))
+    body.append(_kv("Entry", f'Rs.{cand.entry_price:,.2f}'))
+    body.append(_kv("Stop", f'Rs.{cand.stop_price:,.2f}'))
+    body.append(_kv("Target", f'Rs.{cand.target_price:,.2f}'))
+    body.append(_kv("R:R", f'{cand.rr_ratio:.1f}'))
+    body.append(_kv("Suggested Qty", str(cand.suggested_qty)))
+    body.append(_kv("Risk", f'Rs.{cand.risk_rupees:,.2f}'))
+    body.append(_kv("Reward", f'Rs.{cand.reward_rupees:,.2f}'))
+    body.append('</table></div>')
+
+    # ── Signal Reasons (why we recommend entry) ─────────────────
+    body.append('<div class="card">')
+    body.append('<h2>Why This Stock?</h2>')
+    if cand.reasons:
+        body.append('<ol style="font-size:13px;line-height:1.8">')
+        for reason in cand.reasons:
+            body.append(f'<li>{html.escape(reason)}</li>')
+        body.append('</ol>')
+    else:
+        body.append('<p class="muted">No detailed reasons stored for this '
+                    'candidate. (Run a fresh scan to populate reasons.)</p>')
+    body.append('</div>')
+
+    # ── Technical Indicators (the checks we did) ────────────────
+    body.append('<div class="card">')
+    body.append('<h2>Technical Analysis Checklist</h2>')
+    body.append('<table class="holdings" style="max-width:600px">')
+    body.append('<tr><th>Check</th><th>Value</th><th>Status</th></tr>')
+
+    checks = _build_checks(cand, lprice)
+    for check_name, value, passed in checks:
+        icon = '<span class="pos">&#10003;</span>' if passed else '<span class="neg">&#10007;</span>'
+        body.append(f'<tr><td>{html.escape(check_name)}</td>'
+                    f'<td>{html.escape(str(value))}</td>'
+                    f'<td>{icon}</td></tr>')
+
+    body.append('</table></div>')
+
+    # ── AI Overlay (if available) ───────────────────────────────
+    if cand.ai_overlay_json:
+        body.append('<div class="card">')
+        body.append('<h2>AI Analysis</h2>')
+        try:
+            import json as _j
+            ai = _j.loads(cand.ai_overlay_json)
+            raw = ai.get("raw_response", "")
+            if raw:
+                body.append(f'<div style="font-size:13px;line-height:1.7;'
+                            f'white-space:pre-wrap">{html.escape(raw)}</div>')
+            err = ai.get("error", "")
+            if err:
+                body.append(f'<div class="banner warn">AI error: '
+                            f'{html.escape(err)}</div>')
+        except Exception:
+            body.append('<p class="muted">Could not parse AI overlay.</p>')
+        body.append('</div>')
+    else:
+        body.append('<div class="card">')
+        body.append('<h2>AI Analysis</h2>')
+        body.append('<p class="muted">No AI analysis for this stock. '
+                    'Run an AI swing scan from the dashboard to add '
+                    'qualitative thesis, risks, and news context.</p>')
+        body.append('</div>')
+
+    # ── Rejected reason (if not accepted) ───────────────────────
+    if cand.rejected_reason:
+        body.append('<div class="card">')
+        body.append('<h2>Rejection Reason</h2>')
+        body.append(f'<p>{html.escape(cand.rejected_reason)}</p>')
+        body.append('</div>')
+
+    body.append('</div>')  # .wrap
+    return _wrap(f"Swing — {sym}", body)
+
+
+def _build_checks(cand, live_price: float) -> list[tuple[str, str, bool]]:
+    """Build the technical checklist for the detail page.
+    Returns [(check_name, value_str, passed_bool), ...]"""
+    c = cand
+    checks = []
+
+    # Trend
+    above_sma200 = c.close_price > c.sma_200 if c.sma_200 > 0 else False
+    above_sma50 = c.close_price > c.sma_50 if c.sma_50 > 0 else False
+    checks.append(("Above SMA-200 (long-term trend)",
+                    f"Rs.{c.sma_200:,.2f}", above_sma200))
+    checks.append(("Above SMA-50 (medium-term trend)",
+                    f"Rs.{c.sma_50:,.2f}", above_sma50))
+    checks.append(("EMA-20 (short-term)",
+                    f"Rs.{c.ema_20:,.2f}", c.close_price > c.ema_20 if c.ema_20 > 0 else False))
+
+    # SMA stack
+    sma_stacked = (c.ema_20 > c.sma_50 > c.sma_200) if (c.sma_50 > 0 and c.sma_200 > 0) else False
+    checks.append(("SMAs stacked (EMA20 > SMA50 > SMA200)",
+                    "Yes" if sma_stacked else "No", sma_stacked))
+
+    # RSI
+    rsi_ok = 30 <= c.rsi_daily <= 70
+    checks.append(("RSI-14 (not extreme)",
+                    f"{c.rsi_daily:.1f}", rsi_ok))
+
+    # Volume
+    vol_ok = c.volume_ratio >= 1.0
+    checks.append(("Volume vs 20d avg",
+                    f"{c.volume_ratio:.1f}x", vol_ok))
+
+    # Weekly trend
+    checks.append(("Weekly trend up",
+                    "Yes" if c.weekly_trend_up else "No", c.weekly_trend_up))
+
+    # Relative strength
+    rs_ok = c.relative_strength > 0
+    checks.append(("RS vs NIFTY (60d)",
+                    f"{c.relative_strength:+.1f}%", rs_ok))
+
+    # R:R
+    rr_ok = c.rr_ratio >= 2.0
+    checks.append(("R:R ratio (min 2.0)",
+                    f"{c.rr_ratio:.1f}", rr_ok))
+
+    # ATR-based stop distance
+    if c.atr_14 > 0:
+        stop_atr = (c.entry_price - c.stop_price) / c.atr_14
+        checks.append(("Stop distance (ATR multiples)",
+                        f"{stop_atr:.1f}x ATR", stop_atr >= 1.5))
+
+    # 52-week position
+    if c.high_52w > 0:
+        pct_from_high = ((c.close_price / c.high_52w) - 1) * 100
+        checks.append(("Distance from 52w high",
+                        f"{pct_from_high:+.1f}%", pct_from_high > -20))
+
+    # Extension from EMA-20
+    if c.ema_20 > 0:
+        ext = ((c.close_price / c.ema_20) - 1) * 100
+        checks.append(("Extension from EMA-20",
+                        f"{ext:+.1f}%", abs(ext) < 8))
+
+    # Breakout specifics
+    if c.setup_type == "BREAKOUT":
+        checks.append(("Close above 20d high",
+                        f"Rs.{c.high_20d:,.2f}", c.close_price > c.high_20d * 0.998))
+        checks.append(("Volume confirmation (1.5x+)",
+                        f"{c.volume_ratio:.1f}x", c.volume_ratio >= 1.5))
+
+    # Pullback specifics
+    if c.setup_type == "PULLBACK_UPTREND":
+        dist_ema20 = abs(c.close_price / c.ema_20 - 1) * 100 if c.ema_20 > 0 else 99
+        checks.append(("Pullback to EMA-20 (within 5%)",
+                        f"{dist_ema20:.1f}% away", dist_ema20 <= 5.0))
+        checks.append(("RSI in buy zone (40-60)",
+                        f"{c.rsi_daily:.0f}", 40 <= c.rsi_daily <= 60))
+
+    return checks
 
 
 # ── Data API for AJAX ──────────────────────────────────────────

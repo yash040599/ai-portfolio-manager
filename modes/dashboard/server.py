@@ -54,6 +54,7 @@ from modes.dashboard.tax_page import render_tax_api, render_tax_page_v2
 from modes.dashboard.verdict import LadderRung, verdict_for
 from modes.dashboard.swing_page import (
     render_swing_page, render_swing_data_json, render_swing_status_json,
+    render_swing_detail,
 )
 from modes.dashboard.swing_actions import submit_swing_run
 
@@ -203,6 +204,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_tax_api(parse_qs(url.query))
             elif url.path == "/swing" or url.path == "/swing/":
                 self._serve_swing()
+            elif url.path.startswith("/swing/") and not url.path.startswith("/swing/api"):
+                # /swing/<symbol> detail page
+                sym = url.path[len("/swing/"):].strip("/")
+                self._serve_swing_detail(sym)
             elif url.path == "/api/swing/data":
                 self._serve_swing_data()
             elif url.path == "/api/swing/run_status":
@@ -315,6 +320,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     def _serve_swing(self) -> None:
         body = render_swing_page().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_detail(self, symbol: str) -> None:
+        body = render_swing_detail(symbol).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
