@@ -245,6 +245,30 @@ def main():
             ok = skip_action(aid, reason)
             print(f"  {'Skipped' if ok else 'Failed to skip'} action #{aid}")
 
+        elif "--backtest" in sys.argv:
+            # ATH dip-buy backtest: runs X/Y matrix simulation
+            from modes.swing.ath_backtest import ATHBacktester, format_backtest_report
+            missing = Config.validate()
+            if missing:
+                for key in missing:
+                    print(f"Missing in .env: {key}")
+                sys.exit(1)
+            from core.zerodha_client import ZerodhaClient
+            zerodha = ZerodhaClient(Config, Logger("ZerodhaClient"))
+            zerodha.login()
+            bt = ATHBacktester(zerodha, Logger("ATHBacktest"))
+            matrix = bt.run_matrix()
+            report = format_backtest_report(matrix)
+            print(report)
+            # Save report
+            import os, json
+            os.makedirs("reports/backtest", exist_ok=True)
+            with open("reports/backtest/ath_backtest.txt", "w") as f:
+                f.write(report)
+            with open("reports/backtest/ath_backtest.json", "w") as f:
+                json.dump(matrix.to_dict(), f, indent=2, default=str)
+            print(f"  Saved: reports/backtest/ath_backtest.txt + .json")
+
         else:
             # Default: run the swing scan
             runner = SwingManager(Config, use_ai=use_ai)

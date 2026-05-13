@@ -25,6 +25,7 @@ from core.claude_client import ClaudeClient
 from core.logger import Logger
 from core.zerodha_client import ZerodhaClient
 from modes.swing.scanner import SwingScanner
+from modes.swing.ath_scanner import ATHScanner
 from modes.swing.review import review_position
 from modes.swing.persistence import (
     init_db, save_run, open_positions, realised_pnl_summary,
@@ -186,6 +187,20 @@ class SwingManager:
             nifty_candles=nifty_candles,
             candle_to_date=candle_to_date,
         )
+
+        # 7b. ATH dip-buy scan
+        self.log.section("ATH DIP SCAN")
+        open_symbols = {p.symbol for p in positions}
+        # Also exclude symbols already accepted by the technical scan
+        open_symbols |= {c.symbol for c in candidates if c.status == "ACCEPTED"}
+
+        ath_scanner = ATHScanner(self.cfg, self.zerodha, self.log)
+        ath_candidates, ath_actions = ath_scanner.scan(
+            existing_symbols=open_symbols,
+            candle_to_date=candle_to_date,
+        )
+        candidates.extend(ath_candidates)
+        entry_actions.extend(ath_actions)
 
         # 8. AI overlay (only if explicitly requested)
         if self.use_ai and self.claude:

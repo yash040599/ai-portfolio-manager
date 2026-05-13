@@ -251,63 +251,41 @@ def render_swing_page() -> str:
                     '</div>')
         body.append('</div>')
 
-    # ── Entry recommendations ──────────────────────────────────
+    # Split actions into ATH dip-buy and technical scan
+    ath_actions = [a for a in entry_actions
+                   if a.notes and "ATH" in a.notes.upper()]
+    tech_actions = [a for a in entry_actions
+                    if not (a.notes and "ATH" in a.notes.upper())]
+
+    # ── ATH Dip-Buy Opportunities ──────────────────────────────
     body.append('<div class="card">')
-    body.append(f'<h2>Entry Recommendations ({len(entry_actions)})</h2>')
+    body.append(f'<h2>ATH Dip-Buy Opportunities ({len(ath_actions)})</h2>')
+    body.append('<p class="muted" style="margin-bottom:10px">'
+                'Stocks that have fallen significantly from their all-time high. '
+                'Strategy: buy the dip, sell when it recovers a fixed percentage.</p>')
 
-    if entry_actions:
-        body.append('<table class="holdings">')
-        body.append('<tr>'
-                    '<th>#</th><th>Symbol</th><th>Setup</th>'
-                    '<th class="right">Live Price</th>'
-                    '<th class="right">Entry</th><th class="right">Stop</th>'
-                    '<th class="right">Target</th>'
-                    '<th class="right">Qty</th><th class="right">R:R</th>'
-                    '<th>Reason</th>'
-                    '<th>Actions</th>'
-                    '</tr>')
-        for a in entry_actions:
-            lq = live.get(a.symbol, {})
-            lprice = lq.get("price", a.live_price) or a.live_price
-            chg = lq.get("change_pct", 0)
-            chg_cls = "pos" if chg >= 0 else "neg"
-
-            cand = candidates_by_symbol.get(a.symbol)
-            setup = cand.setup_type if cand else "ENTRY"
-            short_reason = ""
-            if cand and cand.reasons:
-                short_reason = cand.reasons[0]
-                if len(cand.reasons) > 1:
-                    short_reason += f" (+{len(cand.reasons)-1} more)"
-
-            body.append(
-                f'<tr>'
-                f'<td>{a.priority_rank}</td>'
-                f'<td><a href="/swing/{html.escape(a.symbol)}" '
-                f'style="color:var(--fg);font-weight:600">'
-                f'{html.escape(a.symbol)}</a></td>'
-                f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
-                f'<td class="right"><span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
-                f' <span class="muted">({chg:+.1f}%)</span></td>'
-                f'<td class="right">Rs.{a.suggested_price:,.2f}</td>'
-                f'<td class="right">Rs.{a.suggested_stop:,.2f}</td>'
-                f'<td class="right">Rs.{a.suggested_target:,.2f}</td>'
-                f'<td class="right">{a.suggested_qty}</td>'
-                f'<td class="right">{_rr(a):.1f}</td>'
-                f'<td style="font-size:11px;max-width:200px">'
-                f'{html.escape(short_reason)}</td>'
-                f'<td>'
-                f'<button class="action" onclick="confirmAction({a.action_id})" '
-                f'style="padding:4px 8px;font-size:12px">Done</button> '
-                f'<button class="action alt" onclick="skipAction({a.action_id})" '
-                f'style="padding:4px 8px;font-size:12px">Skip</button>'
-                f'</td>'
-                f'</tr>'
-            )
-        body.append('</table>')
+    if ath_actions:
+        body.append(_render_action_table(ath_actions, live, candidates_by_symbol,
+                                         show_setup_as="% Below ATH"))
     else:
         if latest_run_row:
-            body.append('<div class="muted">No new entry recommendations from the latest scan.</div>')
+            body.append('<div class="muted">No stocks currently 15%+ below their all-time high.</div>')
+        else:
+            body.append('<div class="muted">Run a scan to find ATH dip opportunities.</div>')
+    body.append('</div>')
+
+    # ── Technical Entry Recommendations ────────────────────────
+    body.append('<div class="card">')
+    body.append(f'<h2>Technical Entry Recommendations ({len(tech_actions)})</h2>')
+    body.append('<p class="muted" style="margin-bottom:10px">'
+                'Stocks with strong technical setups: breakouts, pullbacks in uptrends, '
+                'trend continuations, or support reversals.</p>')
+
+    if tech_actions:
+        body.append(_render_action_table(tech_actions, live, candidates_by_symbol))
+    else:
+        if latest_run_row:
+            body.append('<div class="muted">No new technical entry recommendations from the latest scan.</div>')
         else:
             body.append('<div class="muted">No scan run yet. '
                         'Click "Run Scan" to start.</div>')
@@ -370,6 +348,63 @@ def render_swing_page() -> str:
     return _wrap("Swing", body)
 
 
+def _render_action_table(actions: list, live: dict,
+                         candidates_by_symbol: dict,
+                         show_setup_as: str = "Setup") -> str:
+    """Render the entry recommendations table. Shared by ATH and technical."""
+    parts: list[str] = []
+    parts.append('<table class="holdings">')
+    parts.append('<tr>'
+                 '<th>#</th><th>Symbol</th><th>' + html.escape(show_setup_as) + '</th>'
+                 '<th class="right">Live Price</th>'
+                 '<th class="right">Entry</th><th class="right">Stop</th>'
+                 '<th class="right">Target</th>'
+                 '<th class="right">Qty</th><th class="right">R:R</th>'
+                 '<th>Reason</th>'
+                 '<th>Actions</th>'
+                 '</tr>')
+    for a in actions:
+        lq = live.get(a.symbol, {})
+        lprice = lq.get("price", a.live_price) or a.live_price
+        chg = lq.get("change_pct", 0)
+        chg_cls = "pos" if chg >= 0 else "neg"
+
+        cand = candidates_by_symbol.get(a.symbol)
+        setup = cand.setup_type.replace("_", " ").title() if cand else "Entry"
+        short_reason = ""
+        if cand and cand.reasons:
+            short_reason = cand.reasons[0]
+            if len(cand.reasons) > 1:
+                short_reason += f" (+{len(cand.reasons)-1} more)"
+
+        parts.append(
+            f'<tr>'
+            f'<td>{a.priority_rank}</td>'
+            f'<td><a href="/swing/{html.escape(a.symbol)}" '
+            f'style="color:var(--fg);font-weight:600">'
+            f'{html.escape(a.symbol)}</a></td>'
+            f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
+            f'<td class="right"><span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
+            f' <span class="muted">({chg:+.1f}%)</span></td>'
+            f'<td class="right">Rs.{a.suggested_price:,.2f}</td>'
+            f'<td class="right">Rs.{a.suggested_stop:,.2f}</td>'
+            f'<td class="right">Rs.{a.suggested_target:,.2f}</td>'
+            f'<td class="right">{a.suggested_qty}</td>'
+            f'<td class="right">{_rr(a):.1f}</td>'
+            f'<td style="font-size:11px;max-width:200px">'
+            f'{html.escape(short_reason)}</td>'
+            f'<td>'
+            f'<button class="action" onclick="confirmAction({a.action_id})" '
+            f'style="padding:4px 8px;font-size:12px">Done</button> '
+            f'<button class="action alt" onclick="skipAction({a.action_id})" '
+            f'style="padding:4px 8px;font-size:12px">Skip</button>'
+            f'</td>'
+            f'</tr>'
+        )
+    parts.append('</table>')
+    return "\n".join(parts)
+
+
 # ── Detail page for /swing/<symbol> ────────────────────────────
 
 def render_swing_detail(symbol: str) -> str:
@@ -405,6 +440,7 @@ def render_swing_detail(symbol: str) -> str:
         "PULLBACK_UPTREND": "This stock has been going up overall, but dipped temporarily to a good buy level — like a sale on a stock that's been rising.",
         "TREND_CONTINUATION": "This stock has been steadily rising across all timeframes — the trend is strong and continuing upward.",
         "SUPPORT_REVERSAL": "This stock bounced off a major support level where it historically finds buyers — early sign of a potential recovery.",
+        "ATH_DIP": "This stock has fallen significantly from its all-time high. The strategy is to buy the dip and sell when it recovers by a fixed percentage — works best with quality stocks that tend to bounce back.",
     }
     setup_text = setup_explain.get(cand.setup_type, "Technical setup detected.")
     body.append(f'<div style="font-size:14px;line-height:1.6;margin-bottom:14px">'

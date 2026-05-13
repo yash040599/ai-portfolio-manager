@@ -38,8 +38,9 @@ def review_position(
 ) -> SwingAction:
     """Review one open swing position. Returns a recommended action.
 
-    `daily_candles` should be the full daily history for the symbol
-    (oldest first), including today's completed candle.
+    For ATH_DIP positions (detected by notes containing 'ATH'), uses
+    the simple target-based exit. For technical swing positions, uses
+    the full industry-standard exit stack.
     """
     ts = now_ist().isoformat()
     action = SwingAction(
@@ -53,6 +54,39 @@ def review_position(
 
     if not daily_candles or len(daily_candles) < 10:
         action.notes = "Insufficient candle data for review"
+        return action
+
+    current = daily_candles[-1]["close"]
+
+    # ── ATH dip positions: simple target/stop exit ──────────────
+    is_ath = "ATH" in (pos.notes or "").upper()
+    if is_ath:
+        entry = pos.entry_price
+        target = pos.target_price or (entry * 1.15)
+        stop = pos.stop_price
+
+        if current <= stop:
+            action.action_type = ACTION_FULL_EXIT
+            action.suggested_price = current
+            action.suggested_qty = pos.managed_qty
+            action.notes = (f"ATH position hit stop: Rs.{current:,.2f} "
+                            f"<= Rs.{stop:,.2f}. Exit to limit loss.")
+            return action
+
+        if current >= target * 0.98:
+            action.action_type = ACTION_FULL_EXIT
+            action.suggested_price = current
+            action.suggested_qty = pos.managed_qty
+            pnl_pct = ((current / entry) - 1) * 100
+            action.notes = (f"ATH position near target: Rs.{current:,.2f} "
+                            f"(+{pnl_pct:.1f}% from entry). Take profits.")
+            return action
+
+        # Still holding — show progress
+        pnl_pct = ((current / entry) - 1) * 100
+        to_target = ((target / current) - 1) * 100
+        action.notes = (f"ATH position: {pnl_pct:+.1f}% from entry, "
+                        f"{to_target:.1f}% to target. Hold.")
         return action
 
     ind = compute_swing_indicators(daily_candles, nifty_candles)
