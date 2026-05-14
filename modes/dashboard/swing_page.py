@@ -768,11 +768,23 @@ def _render_action_table(actions: list, live: dict,
             f'<td class="right">{_rr(a):.1f}</td>'
             f'<td style="font-size:11px;max-width:200px">'
             f'{html.escape(short_reason)}</td>'
+            # Single Add+ button (S46, 2026-05-14): the table widened
+            # after the % Below 52w High + dip-buy columns landed, so
+            # the original "Done | Skip" pair stopped fitting on one
+            # line. Skip was a no-op anyway in a permanently-report-
+            # only world (the bot doesn't auto-act on un-skipped
+            # rows; PENDING is just a "not yet noted" marker), so
+            # collapsing to a single Add+ button removes the visual
+            # crowd AND the never-useful action. The button still
+            # routes through `confirmAction()` which prompts for
+            # qty / price / stop and adds the position to the
+            # open swing book.
             f'<td>'
             f'<button class="action" onclick="confirmAction({a.action_id})" '
-            f'style="padding:4px 8px;font-size:12px">Done</button> '
-            f'<button class="action alt" onclick="skipAction({a.action_id})" '
-            f'style="padding:4px 8px;font-size:12px">Skip</button>'
+            f'style="padding:4px 10px;font-size:12px;font-weight:600" '
+            f'title="Add this stock to your open swing book — '
+            f'enters qty / price / stop after you fill them on Kite">'
+            f'Add+</button>'
             f'</td>'
             f'</tr>'
         )
@@ -1589,14 +1601,14 @@ function confirmAction(actionId) {
         .catch(function(e) { alert('Network error: ' + e); });
 }
 
-function skipAction(actionId) {
-    const reason = prompt('Reason for skipping (optional):') || '';
-    fetch('/api/swing/actions/' + actionId + '/skip', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({reason: reason})
-    }).then(() => location.reload());
-}
+// `skipAction` removed in S46 (2026-05-14): the Skip button was a
+// no-op in a permanently-report-only world (the bot never auto-acts
+// on un-skipped rows; PENDING is just a "not yet noted" marker), so
+// the per-row "Done | Skip" pair collapsed to a single Add+ button.
+// The server endpoint `/api/swing/actions/<id>/skip` and the
+// `skip_action()` persistence helper are kept for the CLI
+// `--mode swing --skip <ID>` path which is still useful for
+// scripting / batch reviews.
 
 function exitPosition(posId) {
     var qtyRaw = prompt('Exit quantity:');
@@ -1776,13 +1788,12 @@ function _renderSingleResult(host, data) {
         }
 
         if (actionId) {
+            // S46: collapsed Done|Skip pair to a single Add+ button
+            // (skip was a no-op in report-only mode).
             html += '<div style="margin-top:8px;display:flex;gap:8px">';
             html += '<button class="action" onclick="confirmAction(' +
-                    actionId + ')" style="padding:5px 10px;font-size:12px">' +
-                    'Done — add to swing book</button>';
-            html += '<button class="action alt" onclick="skipAction(' +
-                    actionId + ')" style="padding:5px 10px;font-size:12px">' +
-                    'Skip</button>';
+                    actionId + ')" style="padding:5px 12px;font-size:12px;' +
+                    'font-weight:600">Add+ to swing book</button>';
             html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
                     '" style="padding:5px 10px;font-size:12px;' +
                     'border:1px solid #cfd9eb;border-radius:5px;text-decoration:none">' +
