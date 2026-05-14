@@ -508,6 +508,33 @@ def render_swing_page() -> str:
     body.append('<div id="single-result-host"></div>')
     body.append('</div>')
 
+    # ── What changed since prior trading-day scan (S52) ────────
+    # Diffs the latest full-scan run against the most recent
+    # full-scan run from a *different* trade date. Surfaces:
+    #   - new entries (in latest, not in prior)
+    #   - dropped (in prior, not in latest)
+    #   - rank movers (|Δrank| ≥ 3)
+    # When nothing changed since yesterday's scan the helper walks
+    # further back so the user always gets a meaningful "last big
+    # change" report instead of an empty card. The card body is
+    # rendered client-side from /api/swing/changes_since so a
+    # re-scan on the same page refreshes the diff without needing
+    # a full HTML reload. Origin: 2026-05-14 user asked "how will
+    # I know what all was changed by the latest run".
+    body.append('<div class="card">')
+    body.append('<h2>What changed since last trading day</h2>')
+    body.append(
+        '<p class="muted" style="margin-bottom:10px">'
+        'Compares the latest scan against the most recent scan from '
+        'a different trading date. New entries, drops, and rank '
+        'moves of 3+ positions are highlighted. If nothing changed '
+        'since the most recent prior scan, this card walks further '
+        "back to surface the last meaningful change instead.</p>"
+    )
+    body.append('<div id="changes-since-host">'
+                '<span class="muted">Loading…</span></div>')
+    body.append('</div>')
+
     # ── Compare up to 4 stocks (S45) ───────────────────────────
     # Side-by-side scoring table. Two ways to seed:
     #   1. Type a comma-separated list of NSE tickers.
@@ -2119,6 +2146,157 @@ function _renderCompareResult(host, data) {
         });
     }
 }
+
+// ── What changed since last trading day (S52) ──────────────────
+//
+// Loads /api/swing/changes_since once on page-load and renders a
+// 3-section diff card (new entries / dropped / rank movers) into
+// #changes-since-host. Re-fetches itself when the in-page scan
+// completes (hooked from the existing scan-status poller below)
+// so a fresh scan immediately refreshes the diff.
+window._loadChangesSince = function () {
+    var host = document.getElementById('changes-since-host');
+    if (!host) return;
+    fetch('/api/swing/changes_since')
+        .then(function (r) { return r.json(); })
+        .then(function (j) { _renderChangesSince(host, j || {}); })
+        .catch(function () {
+            host.innerHTML = '<span class="muted">Unable to load ' +
+                             'change diff.</span>';
+        });
+};
+
+function _renderChangesSince(host, d) {
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+        });
+    }
+    if (!d || !d.current_run_id) {
+        host.innerHTML = '<span class="muted">No scan history yet ' +
+                         '— run a scan to start tracking changes.</span>';
+        return;
+    }
+    if (!d.prior_run_id) {
+        host.innerHTML = '<span class="muted">First scan in the DB ' +
+                         '— no prior trading day to compare against.' +
+                         '</span>';
+        return;
+    }
+    var html = '';
+    // Header line: "Comparing latest scan (...) vs <prior label>".
+    var priorLabel = d.prior_run_age_label || ('scan from ' +
+                     (d.prior_run_date || '?'));
+    var curStamp = d.current_run_finished_at || d.current_run_date || '';
+    html += '<div style="font-size:13px;margin-bottom:10px">';
+    html += '<strong>Comparing latest scan</strong> ' +
+            '<span class="muted">(' + esc(d.current_run_date) +
+            (curStamp && curStamp !== d.current_run_date
+                ? ' · ' + esc(curStamp.slice(11, 16))
+                : '') + ')</span>';
+    html += ' <strong>vs ' + esc(priorLabel) + '</strong>';
+    if (d.skipped_runs && d.skipped_runs > 0) {
+        html += ' <span class="muted">· ' + d.skipped_runs +
+                ' intervening scan' + (d.skipped_runs === 1 ? '' : 's') +
+                ' had no notable changes</span>';
+    }
+    html += '</div>';
+
+    var nIn  = (d.new_entries || []).length;
+    var nOut = (d.dropped || []).length;
+    var nMov = (d.rank_movers || []).length;
+    if (nIn === 0 && nOut === 0 && nMov === 0) {
+        html += '<div class="muted">No table changes between these ' +
+                'two scans.</div>';
+        host.innerHTML = html;
+        return;
+    }
+
+    // Headline tally chip-row.
+    html += '<div style="margin-bottom:12px;font-size:13px">';
+    if (nIn) html += '<span style="background:#e6f4ea;color:#1b5e20;' +
+                    'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                    'font-weight:600">+' + nIn + ' new</span>';
+    if (nOut) html += '<span style="background:#fde8e8;color:#7a1f1f;' +
+                     'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                     'font-weight:600">−' + nOut + ' dropped</span>';
+    if (nMov) html += '<span style="background:#fff4cc;color:#7a5500;' +
+                     'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                     'font-weight:600">⇅ ' + nMov + ' rank mover' +
+                     (nMov === 1 ? '' : 's') + '</span>';
+    html += '</div>';
+
+    function _link(sym) {
+        return '<a href="/swing/' + encodeURIComponent(sym) +
+               '" style="font-weight:600;color:var(--fg)">' +
+               esc(sym) + '</a>';
+    }
+
+    if (nIn) {
+        html += '<div style="margin-bottom:10px"><strong>New entries</strong>' +
+                ' <span class="muted">— in the latest scan but not in ' +
+                esc(priorLabel) + ':</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.new_entries.forEach(function (e) {
+            html += '• ' + _link(e.symbol) +
+                    ' <span class="muted">(rank #' + e.rank +
+                    ', score ' + (Number(e.score) || 0).toFixed(1) +
+                    ', ' + esc(e.setup_type || '') + ')</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    if (nOut) {
+        html += '<div style="margin-bottom:10px"><strong>Dropped</strong>' +
+                ' <span class="muted">— were in ' + esc(priorLabel) +
+                ' but not in the latest scan:</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.dropped.forEach(function (e) {
+            var noteCls = e.now_status === 'REJECTED' ? '' : 'muted';
+            var note = e.now_status === 'REJECTED'
+                ? 'now REJECTED in latest'
+                : (e.now_status === 'MISSING'
+                    ? 'not present in latest'
+                    : ('now ' + e.now_status));
+            html += '• ' + _link(e.symbol) +
+                    ' <span class="muted">(was rank #' + e.prior_rank +
+                    ', score ' + (Number(e.prior_score) || 0).toFixed(1) +
+                    ', ' + esc(e.prior_setup_type || '') + ')</span> ' +
+                    '<span class="' + noteCls + '">— ' + esc(note) +
+                    '</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    if (nMov) {
+        html += '<div style="margin-bottom:6px"><strong>Rank movers</strong>' +
+                ' <span class="muted">— in both scans, |Δrank| ≥ 3:' +
+                '</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.rank_movers.forEach(function (e) {
+            var dir = e.delta > 0 ? '↑' : '↓';
+            var col = e.delta > 0 ? '#1b5e20' : '#7a1f1f';
+            html += '• ' + _link(e.symbol) +
+                    ' <span style="color:' + col + ';font-weight:600">' +
+                    dir + Math.abs(e.delta) + '</span> ' +
+                    '<span class="muted">(#' + e.prior_rank +
+                    ' → #' + e.new_rank;
+            if (e.score_delta && Math.abs(e.score_delta) >= 0.1) {
+                html += ', Δscore ' +
+                        (e.score_delta > 0 ? '+' : '') +
+                        Number(e.score_delta).toFixed(1);
+            }
+            html += ')</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    host.innerHTML = html;
+}
+
+window.addEventListener('DOMContentLoaded', function () {
+    if (window._loadChangesSince) window._loadChangesSince();
+});
 </script>"""
 
 

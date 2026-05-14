@@ -729,6 +729,205 @@ def latest_full_scan_rank_by_symbol(
         return (rank, total)
 
 
+def diff_latest_vs_prior_day(
+    path: str = DB_PATH,
+    *,
+    rank_move_threshold: int = 3,
+    history_limit: int = 30,
+) -> dict | None:
+    """Compare the latest full-scan run with the most recent prior
+    full-scan run from a *different trade date*, and walk further
+    back through history if the latest run is identical so the user
+    always gets a meaningful "last big change" report.
+
+    Filtering — both ends of the diff are limited to runs that pass
+    the same gates as `latest_run()`: `is_snapshot=0` AND
+    `trigger_source != 'SEARCH_BOX'`.
+
+    Returns `None` when no full-scan history exists at all (fresh DB
+    or only SEARCH_BOX rows).
+
+    Returns a dict shaped like:
+      {
+        "current_run_id": int,
+        "current_run_date": str (YYYY-MM-DD),
+        "current_run_finished_at": str | None,
+        "prior_run_id": int | None,
+        "prior_run_date": str | None,
+        "prior_run_finished_at": str | None,
+        "compared_to_latest": bool,    # False when we walked back
+        "skipped_runs": int,           # how many identical runs we skipped
+        "new_entries":   [{"symbol", "rank", "score", "setup_type"}, ...],
+        "dropped":       [{"symbol", "prior_rank", "prior_score",
+                            "prior_setup_type", "now_status"}, ...],
+        "rank_movers":   [{"symbol", "prior_rank", "new_rank",
+                            "delta", "score_delta"}, ...],
+        "summary": str (one-line plain-English headline),
+      }
+
+    `rank_move_threshold` — minimum |Δrank| to count a position as a
+    notable mover. Default 3 keeps the noise low when the universe
+    has 70+ candidates and 1-2 swap places.
+
+    `history_limit` — safety cap on how far back to walk when every
+    intervening run is identical (so we don't scan the entire DB
+    for a fresh laptop with one stale yesterday-run).
+
+    Origin: 2026-05-14 user reported that two consecutive scans
+    looked nearly identical and asked for a "what changed since
+    yesterday" surface. Anchored on `run_for_date` (not finished_at)
+    so a same-day re-scan never counts as the "prior" run.
+    """
+    if not os.path.exists(path):
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        # Pull the most recent full-scan runs in date order. We need
+        # the chain because consecutive runs may be identical and we
+        # have to keep walking back.
+        rows = conn.execute(
+            """SELECT run_id, run_for_date, finished_at, started_at
+                 FROM swing_runs
+                WHERE COALESCE(is_snapshot, 0) = 0
+                  AND COALESCE(trigger_source, '') != 'SEARCH_BOX'
+                ORDER BY run_id DESC
+                LIMIT ?""",
+            (max(2, int(history_limit)),),
+        ).fetchall()
+        if not rows:
+            return None
+        latest = rows[0]
+        latest_id = int(latest["run_id"])
+        latest_date = latest["run_for_date"] or ""
+        latest_fin = latest["finished_at"] or latest["started_at"]
+
+        # Build the latest run's accepted-candidate map once.
+        def _accepted_map(run_id: int) -> dict[str, dict]:
+            crows = conn.execute(
+                """SELECT symbol, priority_rank, score, setup_type, status
+                     FROM swing_candidates
+                    WHERE run_id = ? AND status = 'ACCEPTED'""",
+                (run_id,),
+            ).fetchall()
+            return {
+                r["symbol"]: {
+                    "symbol": r["symbol"],
+                    "rank": int(r["priority_rank"] or 0),
+                    "score": float(r["score"] or 0.0),
+                    "setup_type": r["setup_type"] or "",
+                }
+                for r in crows
+            }
+
+        def _all_status_map(run_id: int) -> dict[str, str]:
+            crows = conn.execute(
+                "SELECT symbol, status FROM swing_candidates WHERE run_id = ?",
+                (run_id,),
+            ).fetchall()
+            return {r["symbol"]: (r["status"] or "") for r in crows}
+
+        latest_map = _accepted_map(latest_id)
+        latest_all = _all_status_map(latest_id)
+
+        # Walk back — first try a different trade date; if every
+        # prior run on a different date is empty-diff, keep walking.
+        skipped = 0
+        for prior in rows[1:]:
+            prior_date = prior["run_for_date"] or ""
+            if prior_date == latest_date:
+                # Same-day re-scan — skip but don't count as a
+                # walked-over identical run (it's a different concept).
+                continue
+            prior_id = int(prior["run_id"])
+            prior_map = _accepted_map(prior_id)
+            new_entries = sorted(
+                [
+                    {**v, "rank": v["rank"]}
+                    for s, v in latest_map.items() if s not in prior_map
+                ],
+                key=lambda d: d["rank"] or 9_999,
+            )
+            dropped = sorted(
+                [
+                    {
+                        "symbol": s,
+                        "prior_rank": v["rank"],
+                        "prior_score": v["score"],
+                        "prior_setup_type": v["setup_type"],
+                        "now_status": latest_all.get(s, "MISSING"),
+                    }
+                    for s, v in prior_map.items() if s not in latest_map
+                ],
+                key=lambda d: d["prior_rank"] or 9_999,
+            )
+            rank_movers: list[dict] = []
+            for s, v in latest_map.items():
+                if s not in prior_map:
+                    continue
+                pr = prior_map[s]["rank"]
+                nr = v["rank"]
+                if pr <= 0 or nr <= 0:
+                    continue
+                delta = pr - nr  # +ve = moved up (smaller rank number)
+                if abs(delta) >= int(rank_move_threshold):
+                    rank_movers.append({
+                        "symbol": s,
+                        "prior_rank": pr,
+                        "new_rank": nr,
+                        "delta": delta,
+                        "score_delta": round(
+                            v["score"] - prior_map[s]["score"], 2),
+                    })
+            rank_movers.sort(key=lambda d: -abs(d["delta"]))
+
+            no_change = (not new_entries
+                         and not dropped and not rank_movers)
+            if no_change:
+                skipped += 1
+                continue
+            # First diff that has content — return it.
+            n_in = len(new_entries); n_out = len(dropped)
+            n_mov = len(rank_movers)
+            bits = []
+            if n_in:  bits.append(f"{n_in} new")
+            if n_out: bits.append(f"{n_out} dropped")
+            if n_mov: bits.append(f"{n_mov} rank mover" + ("s" if n_mov != 1 else ""))
+            headline = " · ".join(bits) if bits else "no notable changes"
+            return {
+                "current_run_id": latest_id,
+                "current_run_date": latest_date,
+                "current_run_finished_at": latest_fin,
+                "prior_run_id": prior_id,
+                "prior_run_date": prior_date,
+                "prior_run_finished_at": prior["finished_at"]
+                                        or prior["started_at"],
+                "compared_to_latest": (skipped == 0),
+                "skipped_runs": skipped,
+                "new_entries": new_entries,
+                "dropped": dropped,
+                "rank_movers": rank_movers,
+                "summary": headline,
+            }
+
+        # No prior run on a different date — return an empty diff
+        # struct so the dashboard can render "first scan ever, no
+        # prior data to compare against".
+        return {
+            "current_run_id": latest_id,
+            "current_run_date": latest_date,
+            "current_run_finished_at": latest_fin,
+            "prior_run_id": None,
+            "prior_run_date": None,
+            "prior_run_finished_at": None,
+            "compared_to_latest": True,
+            "skipped_runs": 0,
+            "new_entries": [],
+            "dropped": [],
+            "rank_movers": [],
+            "summary": "no prior trading-day scan to compare against",
+        }
+
+
 def latest_candidate_row_id_by_symbol(symbol: str,
                                       path: str = DB_PATH) -> int | None:
     """Return the `swing_candidates.id` of the latest ACCEPTED row

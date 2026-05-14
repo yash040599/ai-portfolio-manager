@@ -216,6 +216,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_compare(parse_qs(url.query))
             elif url.path == "/api/swing/sectors":
                 self._serve_swing_sectors()
+            elif url.path == "/api/swing/changes_since":
+                self._serve_swing_changes_since()
             elif url.path == "/api/live_prices":
                 self._serve_live_prices(parse_qs(url.query))
             elif url.path == "/api/errors":
@@ -471,6 +473,53 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_changes_since(self) -> None:
+        """GET /api/swing/changes_since — diff the latest full-scan
+        run vs the most recent prior trading-day full-scan run.
+
+        Returns the dict shape from
+        `persistence.diff_latest_vs_prior_day` plus a `prior_run_age`
+        plain-English label for the UI ("yesterday's scan",
+        "last Friday's scan", "scan from 2026-05-09").
+
+        Same gates as the recommendations table: snapshots and
+        SEARCH_BOX runs are skipped on both ends. When the latest
+        run is identical to yesterday's, the helper walks further
+        back so the user always gets a meaningful "last big change"
+        report.
+        """
+        from modes.swing.persistence import diff_latest_vs_prior_day
+        diff = diff_latest_vs_prior_day() or {}
+        # Compute the human-friendly age label server-side so the
+        # JS doesn't have to re-parse dates with Date() (which is
+        # unreliable with bare YYYY-MM-DD strings across browsers).
+        age_label = ""
+        try:
+            import datetime as _dt
+            cur_d = diff.get("current_run_date") or ""
+            prior_d = diff.get("prior_run_date") or ""
+            if cur_d and prior_d:
+                cur = _dt.date.fromisoformat(cur_d)
+                prior = _dt.date.fromisoformat(prior_d)
+                delta_days = (cur - prior).days
+                if delta_days == 1:
+                    age_label = f"yesterday ({prior_d})"
+                elif 1 < delta_days <= 4:
+                    age_label = (f"{prior.strftime('%A').lower()}'s "
+                                 f"scan ({prior_d})")
+                else:
+                    age_label = f"scan from {prior_d}"
+        except Exception:
+            age_label = ""
+        diff["prior_run_age_label"] = age_label
+        body = json.dumps(diff, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
