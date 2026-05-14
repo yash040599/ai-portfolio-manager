@@ -31,9 +31,14 @@ Sister docs:
 > AI is optional, user-initiated only, and only adds qualitative
 > thesis/risk/news context.
 
-Default mode should be NoAI, dashboard-first, and report-only. Live
-order placement is a later explicit `--execute` phase after CNC/GTT
-safety and ledger reconciliation are implemented.
+Default mode is NoAI, dashboard-first, and **report-only by
+permanent design** (decision recorded 2026-05-14). The bot **never
+places broker orders** for swing trades; the user does that manually
+on Zerodha Kite and comes back to click Done / Mark-Exit-Done with
+the actual fill numbers. Items that previously tracked execution
+automation (CNC order wrappers S12, GTT/OCO S13, broker
+reconciliation S14, ledger isolation S5) are in the Removed section
+of [SWING_ROADMAP.md](SWING_ROADMAP.md).
 
 Automatic scans are always NoAI. AI runs happen only when the user
 explicitly clicks the AI control or passes `--ai` in the terminal.
@@ -854,8 +859,9 @@ The dashboard must clearly distinguish:
 - Swing positions from swing mode.
 
 The dashboard may write to `data/swing.db` for action confirmations,
-skips, and manual-review flags. It must not place broker orders until
-the later live execution phase is explicitly implemented.
+skips, and manual-review flags. It **never** places broker orders
+(swing mode is permanently report-only; the user trades on Kite
+manually).
 
 The dashboard should poll Zerodha live quotes for symbols visible in
 the recommendation table and open swing book. Displayed prices and P&L
@@ -897,15 +903,10 @@ or updating swing-managed lots.
 All automated dashboard-triggered scans use the non-AI form. `--ai` is
 manual only.
 
-Future execution flags:
-
-```bash
-python main.py --mode swing --execute
-python main.py --mode swing --dryrun
-```
-
-`--execute` must remain blocked until CNC/GTT wrappers and ledger
-reconciliation are complete.
+> **No `--execute` flag is planned.** Swing mode is report-only by
+> design (see SWING_ROADMAP Removed section for the full rationale).
+> If the operator wants to automate execution they should switch to
+> `--mode trade` for intraday or use the broker UI for delivery.
 
 ---
 
@@ -916,16 +917,20 @@ reconciliation are complete.
 3. Swing mode never sells more than `swing_positions.managed_qty`.
 4. Swing mode never treats all Zerodha holdings as swing positions.
 5. Swing mode fails closed on broker/ledger quantity mismatch.
-6. Swing mode starts report-only; live execution is explicit.
+6. **Swing mode is report-only by permanent design** — never places
+   broker orders. Operator trades manually on Kite.
 7. NoAI numeric fields are the source of truth.
 8. AI is qualitative only.
 9. Every candidate and rejection is persisted.
-10. Backtest/replay comes before live execution.
+10. Backtest/replay (S11) is purely a strategy-validation aid; it
+    runs offline against historical data and never touches the
+    broker.
 11. A recommended entry/exit becomes tracked only after Done/confirm
     records executed quantity and price; a stop-only action needs the
     confirmed stop price.
-12. Dashboard action buttons write only to the swing ledger until live
-  execution is explicitly shipped.
+12. Dashboard action buttons write only to the swing ledger
+  (`data/swing.db`). They never call the broker — execution is
+  manual on Kite, by permanent design.
 13. Displayed current prices and P&L must come from Zerodha live quotes
   whenever the dashboard has a valid token.
 14. EOD scans must refuse to run before market close.
