@@ -61,6 +61,14 @@ The exporter writes:
 - refreshed `symbols/*.csv`
 - refreshed `manifest.json` with source hash, row counts, ranges, checksums, and the generating code commit
 
+The legacy simplified replay harness now reads `backtest_data/candles/intraday_15m.sqlite` by default when that repo is present, and falls back to `data/candle_cache.db` only when the Stage 1 data repo has not been cloned:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --symbol RELIANCE
+```
+
+This is a data-plumbing bridge, not the final Chan-grade replay. The script still uses simplified scoring until T1.1 replaces clock-sensitive live scanner calls with replay-safe time injection.
+
 ## Environment
 
 Set these in `.env`:

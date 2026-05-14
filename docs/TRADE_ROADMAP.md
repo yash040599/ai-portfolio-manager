@@ -71,6 +71,7 @@ Data architecture decision for Stage 1:
 - Clone/sync that repo into local gitignored `backtest_data/`; replay reads the local copy at runtime on both Windows and the Linux VM.
 - Use `scripts/shared/sync_backtest_data.py` for clone/pull/status/push. It is a Git snapshot sync, not the row-merge operational backup flow.
 - Use `scripts/trade/export_backtest_data.py` to seed the first SQLite/CSV replay dataset from `data/candle_cache.db` without broker/network calls.
+- `scripts/trade/backtest.py` now reads `backtest_data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned.
 - Treat `market-research` as standalone ATH-dip research/reference material, not as an intraday replay runtime dependency.
 - Full data contract: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md).
 
@@ -78,7 +79,7 @@ Deliverables:
 
 | ID | Work | Done When |
 |---|---|---|
-| T1.0 | Decide the normalized backtest data contract and sync model. | Shipped 2026-05-15: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md) defines repo roles, `backtest_data/`, manifest fields, SQLite/CSV shape, Linux VM pull flow, `scripts/shared/sync_backtest_data.py`, and `scripts/trade/export_backtest_data.py`. |
+| T1.0 | Decide the normalized backtest data contract and sync model. | Shipped 2026-05-15: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md) defines repo roles, `backtest_data/`, manifest fields, SQLite/CSV shape, Linux VM pull flow, sync/export scripts, seeded data repo, and the backtest data-root bridge. |
 | T1.1 | Parameterise the scanner/replay clock so backtest can use live scoring logic instead of simplified scoring. | Replay can run the real score path for historical candles without `now_ist()` leakage. |
 | T1.2 | Replay accepted and rejected candidates by config hash. | Backtest output can explain why each candidate entered or failed. |
 | T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | PF/expectancy are reported after costs. |

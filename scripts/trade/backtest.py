@@ -43,8 +43,8 @@ Usage
     python scripts/trade/backtest.py --from 2026-04-01 --to 2026-05-09
     python scripts/trade/backtest.py --from 2026-04-01 --to 2026-05-09 \
         --symbol RELIANCE --min-score 6
-    # Default symbol set = every symbol present in `data/candle_cache.db`
-    # (which is normally the live trading universe). Use `--symbol` to
+    # Default symbol set = every symbol present in Stage 1 `backtest_data/`
+    # when available, otherwise `data/candle_cache.db`. Use `--symbol` to
     # restrict to one name; multi-name filtering will arrive with the
     # backtest v1 universe-loader follow-up.
 ================================================================
@@ -72,6 +72,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from config import Config  # noqa: E402
 
 CANDLE_DB = os.path.join(PROJECT_ROOT, "data", "candle_cache.db")
+BACKTEST_DATA_ROOT = os.path.join(PROJECT_ROOT, os.getenv("BACKTEST_DATA_PATH", "backtest_data"))
 OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "backtest")
 
 
@@ -159,12 +160,75 @@ def score_bar(candles_15m: list[dict]) -> float:
 
 
 # ────────────────────────────────────────────────────────────────
-# Candle cache reader
+# Candle readers
 # ────────────────────────────────────────────────────────────────
-def _load_15m(symbol: str, exchange: str, start: datetime.date, end: datetime.date) -> list[dict]:
-    if not os.path.isfile(CANDLE_DB):
+def _resolve_candle_source(data_root: str | None = None) -> tuple[str, str]:
+    root = data_root or BACKTEST_DATA_ROOT
+    backtest_db = os.path.join(root, "candles", "intraday_15m.sqlite")
+    if os.path.isfile(backtest_db):
+        return "backtest_data", backtest_db
+    return "legacy_candle_cache", CANDLE_DB
+
+
+def _load_15m(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+    source_kind: str,
+) -> list[dict]:
+    if source_kind == "backtest_data":
+        return _load_15m_backtest_data(symbol, exchange, start, end, db_path)
+    return _load_15m_legacy_cache(symbol, exchange, start, end, db_path)
+
+
+def _load_15m_backtest_data(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+) -> list[dict]:
+    if not os.path.isfile(db_path):
         return []
-    with sqlite3.connect(CANDLE_DB) as conn:
+    start_ts = f"{start.isoformat()}T00:00:00+05:30"
+    end_ts = f"{end.isoformat()}T23:59:59+05:30"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT ts_ist, open, high, low, close, volume
+                 FROM candles
+                WHERE symbol = ? AND exchange = ? AND interval = '15minute'
+                  AND ts_ist BETWEEN ? AND ?
+                ORDER BY ts_ist ASC""",
+            (symbol, exchange, start_ts, end_ts),
+        ).fetchall()
+    out = []
+    for r in rows:
+        try:
+            ts = datetime.datetime.fromisoformat(r["ts_ist"])
+        except ValueError:
+            continue
+        out.append({
+            "ts": ts,
+            "open": float(r["open"]), "high": float(r["high"]),
+            "low": float(r["low"]),   "close": float(r["close"]),
+            "volume": int(r["volume"] or 0),
+        })
+    return out
+
+
+def _load_15m_legacy_cache(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+) -> list[dict]:
+    if not os.path.isfile(db_path):
+        return []
+    with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """SELECT candle_date, open, high, low, close, volume
@@ -189,12 +253,13 @@ def _load_15m(symbol: str, exchange: str, start: datetime.date, end: datetime.da
     return out
 
 
-def _list_symbols() -> list[str]:
-    if not os.path.isfile(CANDLE_DB):
+def _list_symbols(db_path: str, source_kind: str) -> list[str]:
+    if not os.path.isfile(db_path):
         return []
-    with sqlite3.connect(CANDLE_DB) as conn:
+    table = "candles" if source_kind == "backtest_data" else "candle_cache"
+    with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
-            "SELECT DISTINCT symbol FROM candle_cache "
+            f"SELECT DISTINCT symbol FROM {table} "
             "WHERE interval = '15minute' AND exchange = 'NSE' "
             "ORDER BY symbol"
         ).fetchall()
@@ -305,6 +370,8 @@ def main():
                         help="Score threshold for opening a synthetic trade.")
     parser.add_argument("--max-trades-per-day", type=int, default=10,
                         help="Cap trades per session (mirrors live cap).")
+    parser.add_argument("--data-root", default=None,
+                        help="Stage 1 backtest-data root (default: BACKTEST_DATA_PATH or ./backtest_data).")
     parser.add_argument("--out", default=None,
                         help="Output JSON path override.")
     args = parser.parse_args()
@@ -313,26 +380,28 @@ def main():
     end = datetime.date.fromisoformat(args.dt_to)
     if end < start:
         print("  ! --to must be >= --from"); sys.exit(2)
-    if not os.path.isfile(CANDLE_DB):
-        print(f"  ! Candle cache not found at {CANDLE_DB}."); sys.exit(1)
+    source_kind, candle_db = _resolve_candle_source(args.data_root)
+    if not os.path.isfile(candle_db):
+        print(f"  ! Candle source not found at {candle_db}."); sys.exit(1)
 
     cfg = Config()
     version, cfg_hash = Config.snapshot_hash()
     print(f"  Config: {version} / {cfg_hash}")
     print(f"  Window: {start} .. {end}")
     print(f"  Min score: {args.min_score}")
+    print(f"  Candle source: {source_kind} ({os.path.relpath(candle_db, PROJECT_ROOT)})")
 
     if args.symbol:
         symbols = [args.symbol.upper()]
     else:
-        symbols = _list_symbols()
-    print(f"  Symbols: {len(symbols)} from candle cache")
+        symbols = _list_symbols(candle_db, source_kind)
+    print(f"  Symbols: {len(symbols)} from candle source")
 
     trades: list[dict] = []
     per_day_count: dict[str, int] = {}
 
     for sym in symbols:
-        candles = _load_15m(sym, "NSE", start, end)
+        candles = _load_15m(sym, "NSE", start, end, candle_db, source_kind)
         if len(candles) < 30:
             continue
         for i in range(20, len(candles) - 1):

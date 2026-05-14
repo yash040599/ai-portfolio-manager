@@ -49,6 +49,7 @@ External research/data context:
 - Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
 - Seed/export script: `scripts/trade/export_backtest_data.py` converts local `data/candle_cache.db` into `backtest_data/candles/intraday_15m.sqlite`, `backtest_data/candles/daily.sqlite`, symbol CSVs, and a stamped `manifest.json` without broker/network calls.
+- Backtest bridge: `scripts/trade/backtest.py` now reads `backtest_data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. This is still simplified scoring, not final full-fidelity replay.
 
 ## Chan-Framework Decision Rule
 
