@@ -580,6 +580,15 @@ class ZerodhaClient:
           30minute, 60minute, day
         For intraday intervals, pass datetime objects with time
         components for from_date/to_date.
+
+        Chunking (S44 hardening, 2026-05-14): Zerodha caps a single
+        `historical_data` call at 2000 days for daily candles and
+        smaller windows for intraday intervals. The swing dip-buy
+        scanner asks for ~3650 calendar days (10y) so any wide
+        request used to fail with "interval exceeds max limit: 2000
+        days" and silently return zero bars. We now split the
+        range into <=1500-day chunks (with a 350ms throttle between
+        chunks per the rate limit), fetch each, and concatenate.
         """
         self._require_login()
 
@@ -594,6 +603,75 @@ class ZerodhaClient:
             self.log.warning(f"No instrument token found for {symbol} ({exchange})")
             return []
 
+        # Normalise to datetime.date for arithmetic; keep the original
+        # datetime values for the actual API call so intraday callers
+        # who pass times don't lose the time component.
+        _from_d = (from_date.date() if isinstance(from_date, datetime.datetime)
+                   else from_date)
+        _to_d = (to_date.date() if isinstance(to_date, datetime.datetime)
+                 else to_date)
+        span_days = max(0, (_to_d - _from_d).days)
+
+        # Per-interval Zerodha caps (calendar days). Daily candles
+        # cap at 2000d; intraday is much smaller. Use 1500/55/55/35
+        # to stay safely under and avoid edge-of-window 400 errors.
+        cap_by_interval = {
+            "day":      1500,
+            "60minute":   55,
+            "30minute":   55,
+            "15minute":   55,
+            "10minute":   55,
+            "5minute":    55,
+            "3minute":    55,
+            "minute":     35,
+        }
+        cap = cap_by_interval.get(interval, 1500)
+
+        if span_days <= cap:
+            return self._historical_call_throttled(
+                token, from_date, to_date, interval)
+
+        # Chunk: walk forward from `from_date` in `cap`-day windows
+        # until we reach `to_date`. Concatenate. Dedup on the unlikely
+        # boundary overlap (Zerodha is exclusive on `to_date` for
+        # daily but defensive coding here).
+        out: list[dict] = []
+        seen_ts = set()
+        chunk_start = _from_d
+        while chunk_start <= _to_d:
+            chunk_end = min(chunk_start + datetime.timedelta(days=cap), _to_d)
+            try:
+                bars = self._historical_call_throttled(
+                    token, chunk_start, chunk_end, interval)
+            except Exception as exc:
+                self.log.warning(
+                    f"Historical chunk {chunk_start}..{chunk_end} for "
+                    f"{symbol}: {exc}"
+                )
+                bars = []
+            for b in bars:
+                key = b.get("date")
+                # Dedup by date string (Kite returns datetime objects).
+                k = str(key) if key is not None else None
+                if k is not None and k in seen_ts:
+                    continue
+                if k is not None:
+                    seen_ts.add(k)
+                out.append(b)
+            # Step forward; +1 day so chunks don't overlap on the
+            # boundary day (Kite is end-inclusive for daily).
+            chunk_start = chunk_end + datetime.timedelta(days=1)
+        return out
+
+    def _historical_call_throttled(
+        self,
+        token: int,
+        from_date: datetime.date | datetime.datetime,
+        to_date: datetime.date | datetime.datetime,
+        interval: str,
+    ) -> list[dict]:
+        """One throttled `kite.historical_data` call. Caller handles
+        chunking + concatenation."""
         # Throttle: ensure at least 350ms between historical API calls
         # (Zerodha rate limit is ~3 req/sec)
         now = time.time()

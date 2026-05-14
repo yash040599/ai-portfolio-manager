@@ -150,14 +150,24 @@ class SwingScanner:
                 if not ind.get("valid"):
                     continue
 
-                # All-time high (running max of close prices over the
-                # full available history) — used as a context column on
-                # the unified entry-recommendations table so a technical
-                # candidate also surfaces "% below ATH" alongside its
-                # setup score, and lets the ATH dip-buy strategy and
-                # the technical scan share the same dashboard row.
+                # 52-week high context (S44 hardening, 2026-05-14):
+                # Use the rolling N-day high (default 252 trading bars
+                # ≈ 52 weeks) as the reference, NOT the full-history
+                # close max. Pre-S44 the column on the dashboard was
+                # labelled "% Below 52w High" but actually computed
+                # the dip from the all-history max — so a NIFTY 50
+                # name 14% below its 2024 ATH (still 8% above its
+                # rolling 52w high) read as "14% below 52w high".
+                # The dip-buy scanner already uses the same lookback
+                # for its qualification threshold; the technical
+                # scanner now matches.
+                _lookback = max(20, int(getattr(
+                    self.cfg, "SWING_DIP_LOOKBACK_DAYS", 252)))
                 _closes_all = [c["close"] for c in candles if c.get("close")]
-                _ath_price = max(_closes_all) if _closes_all else 0.0
+                _ref_window = (_closes_all[-_lookback:]
+                               if len(_closes_all) >= _lookback
+                               else _closes_all)
+                _ath_price = max(_ref_window) if _ref_window else 0.0
                 _dip_pct = (
                     ((_ath_price - ind["current"]) / _ath_price) * 100.0
                     if _ath_price > 0 else 0.0
@@ -375,10 +385,16 @@ class SwingScanner:
             )
             return cand, None
 
-        # Reference high (full-history close max — same as the
-        # technical-scanner path computes for the unified table).
+        # Reference high (rolling 252-day max-close — matches the
+        # universe scan path; see the matching block in `scan()` for
+        # the S44 rationale).
+        _lookback = max(20, int(getattr(
+            self.cfg, "SWING_DIP_LOOKBACK_DAYS", 252)))
         _closes_all = [c["close"] for c in candles if c.get("close")]
-        _ath_price = max(_closes_all) if _closes_all else 0.0
+        _ref_window = (_closes_all[-_lookback:]
+                       if len(_closes_all) >= _lookback
+                       else _closes_all)
+        _ath_price = max(_ref_window) if _ref_window else 0.0
         _dip_pct = (
             ((_ath_price - ind["current"]) / _ath_price) * 100.0
             if _ath_price > 0 else 0.0
@@ -398,7 +414,14 @@ class SwingScanner:
                 score_breakout, score_pullback,
                 score_trend_continuation, score_support_reversal,
             )
-            from modes.swing.risk import generate_broker_instruction
+            # `generate_broker_instruction` is already imported at
+            # module level (`from modes.swing.risk import ...`); a
+            # second `from .. import ..` here would silently shadow
+            # the module-level binding for the WHOLE function body
+            # because Python treats any name assigned anywhere in a
+            # function as local for the entire function. That broke
+            # the successful-technical path (which is below this
+            # branch) with `UnboundLocalError`. Don't re-import.
             dip_pct_cfg = float(getattr(self.cfg, "SWING_DIP_PCT", 18.0))
             target_pct_cfg = float(getattr(self.cfg, "SWING_DIP_TARGET_PCT", 12.0))
             buy_amount_cfg = float(getattr(self.cfg, "SWING_DIP_BUY_AMOUNT", 10000.0))

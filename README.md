@@ -415,12 +415,54 @@ via the `keyring` package instead of `.env` — a future enhancement.
 | `python main.py --mode trade --test` | See pipeline only (no Claude, no trades, no cost) |
 | `python main.py --mode trade --max 30000` | Cap today's capital at Rs.30,000 |
 | `python main.py --mode trade --nifty 150` | Override scan universe |
+| `python main.py --mode swing` | Phase 4 — swing scan (NoAI). Report-only by permanent design — see SWING_ROADMAP. Best run after market close (3:30 PM IST). |
+| `python main.py --mode swing --ai` | Same scan + Claude qualitative overlay (~Rs.45 capped). See [Swing CLI reference](#swing-cli-reference) below for the full sub-command list. |
 | `python main.py --mode login` | Test Zerodha login only |
 | `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) |
 
 **Ctrl+C** triggers graceful shutdown — squares off all positions first.
 Phase 2 can be started any time (handles weekends / NSE holidays / late
 starts / token expiry automatically).
+
+### Swing CLI reference
+
+Swing mode is **permanently report-only** — the CLI commands cover every
+state-changing dashboard action so you can run the entire workflow from
+the terminal too. (Same service layer powers both surfaces.)
+
+| Command | What it does |
+|---------|--------------|
+| `python main.py --mode swing` | Run today's NoAI swing scan. Prints accepted candidates + open swing book. Refuses to scan before market close (uses yesterday's completed daily candle when run pre-close). |
+| `python main.py --mode swing --ai` | Same scan + Claude AI overlay capped at the top `SWING_AI_MAX_CANDIDATES` (default 15) accepted candidates by `priority_rank`. Pre-AI snapshot is written first so a Ctrl+C still leaves a usable report. |
+| `python main.py --mode swing --nifty 100` | Override the scan universe (`50` / `100` / `150` / `200`). |
+| `python main.py --mode swing --actions` | List all PENDING swing actions (entry recommendations not yet confirmed/skipped). Prints action_id, symbol, qty, suggested entry/stop. |
+| `python main.py --mode swing --positions` | List all OPEN swing positions (entries you've confirmed via Done). Prints position_id, symbol, managed_qty, entry, stop, entry date. |
+| `python main.py --mode swing --confirm <ID> --qty N --price P` | Confirm a PENDING ENTRY action — same flow as the dashboard's "Done" button. Mandatory: `--qty` (executed share count), `--price` (executed fill price). Optional: `--stop X` (overrides `action.suggested_stop`). Creates the position in the open swing book. |
+| `python main.py --mode swing --skip <ID>` | Skip a PENDING action. Optional: `--reason "..."`. Idempotent — re-skipping an already-skipped action returns success rather than an error. |
+| `python main.py --mode swing --backtest` | Run the X/Y dip-buy parameter sweep on the cached candle history. Writes `reports/backtest/ath_backtest.{txt,json}` with the full XIRR matrix. Pure-offline; never touches the broker. |
+
+**Read-only inspection from the CLI** (no separate flag — just SQL via
+the persistence helpers):
+
+```powershell
+# Last full-scan run summary (skips SEARCH_BOX + snapshot rows)
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_run; r = latest_run(); print(r)"
+
+# All pending actions across runs
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import pending_actions; [print(a.action_id, a.symbol, a.action_type, a.suggested_price) for a in pending_actions()]"
+
+# All open positions with realised P&L
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import open_positions, realised_pnl_summary; [print(p.position_id, p.symbol, p.managed_qty, p.entry_price) for p in open_positions()]; print(realised_pnl_summary())"
+
+# AI overlay for a specific symbol (with timestamp)
+.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_ai_overlay_for_symbol; r = latest_ai_overlay_for_symbol('SBIN'); print(r[1] if r else None); print(r[0][:500] if r else 'no overlay')"
+```
+
+Reports written by every swing run live under
+`reports/swing/<YYYY>/<MM>/swing_report_<DD>.txt` (plus the JSON twin) —
+plain-text and grep-able for any external tooling. Same data also flows
+through the dashboard's `/swing` page; the two surfaces never disagree
+because both call the same persistence helpers.
 
 ---
 
