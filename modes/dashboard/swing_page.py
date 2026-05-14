@@ -507,6 +507,54 @@ def render_swing_page() -> str:
     body.append('<div id="single-result-host"></div>')
     body.append('</div>')
 
+    # ── Compare up to 4 stocks (S45) ───────────────────────────
+    # Side-by-side scoring table. Two ways to seed:
+    #   1. Type a comma-separated list of NSE tickers.
+    #   2. Pick a sector — the top 4 stocks in that sector
+    #      (per `SECTOR_MAP` order) are auto-loaded into the input.
+    # The result table below highlights the winning value per
+    # row and shows a "X of N metrics" tally so the user can see
+    # WHY one stock is rated better than another.
+    body.append('<div class="card">')
+    body.append('<h2>Compare Stocks (up to 4)</h2>')
+    body.append(
+        '<p class="muted" style="margin-bottom:10px">'
+        'Side-by-side comparison of up to 4 NSE swing candidates. '
+        'Type a comma-separated list of tickers OR pick a sector to '
+        'auto-populate the top 4. Each metric row highlights the '
+        'winning value so you can see WHY one stock outranks another '
+        '(example: <em>HDFCBANK vs SBIN — RS vs NIFTY +12% vs -5%, '
+        'weekly trend up vs down, etc.</em>).'
+        '</p>'
+    )
+    body.append(
+        '<div style="display:flex;gap:8px;align-items:center;'
+        'flex-wrap:wrap;margin-bottom:8px">'
+        '<input type="text" id="compare-symbols" '
+        'placeholder="e.g. HDFCBANK, SBIN, ICICIBANK, KOTAKBANK" '
+        'style="flex:1;min-width:280px;padding:6px 10px;font:inherit;'
+        'border:1px solid #cfd9eb;border-radius:5px;text-transform:uppercase" '
+        'onkeydown="if(event.key===\'Enter\'){compareNow();}" />'
+        '<select id="compare-sector" '
+        'style="padding:6px 10px;font:inherit;'
+        'border:1px solid #cfd9eb;border-radius:5px">'
+        '<option value="">— or pick a sector —</option>'
+        '</select>'
+        '<button class="action" onclick="compareNow()">Compare</button>'
+        '<button class="action alt" onclick="compareClear()" '
+        'style="padding:5px 10px;font-size:12px">Clear</button>'
+        '</div>'
+    )
+    body.append(
+        '<p class="muted" style="font-size:11px;margin:0 0 10px 0">'
+        'Sector dropdown loads top-4 by SECTOR_MAP order (e.g. BANKING '
+        'gives HDFCBANK, ICICIBANK, KOTAKBANK, AXISBANK). You can '
+        'edit the input afterwards before clicking Compare.'
+        '</p>'
+    )
+    body.append('<div id="compare-result-host"></div>')
+    body.append('</div>')
+
     # ── Broker instructions ────────────────────────────────────
     if entry_actions:
         body.append('<div class="card">')
@@ -1818,6 +1866,165 @@ function analyseOne() {
             host.innerHTML = '<div class="banner warn">Network error: ' +
                 e + '</div>';
         });
+}
+
+// ── Compare up to 4 stocks (S45 search box) ────────────────────
+//
+// Two seed paths:
+//  1. Free-text comma-separated tickers in #compare-symbols.
+//  2. Sector dropdown (#compare-sector) — when changed, the input
+//     auto-fills with the top 4 in that sector via /api/swing/compare.
+// "Compare" button posts to /api/swing/compare and renders the
+// metrics-x-stocks matrix below with winner cells highlighted in
+// green and a "X of N metrics" tally per stock.
+window.addEventListener('DOMContentLoaded', function () {
+    var sel = document.getElementById('compare-sector');
+    if (!sel) return;
+    fetch('/api/swing/sectors')
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            var sectors = (j && j.sectors) || [];
+            sectors.forEach(function (s) {
+                var opt = document.createElement('option');
+                opt.value = s; opt.textContent = s;
+                sel.appendChild(opt);
+            });
+        })
+        .catch(function () { /* silent — dropdown stays minimal */ });
+    sel.addEventListener('change', function () {
+        var sector = sel.value;
+        if (!sector) return;
+        // Pre-fetch the symbols list so the input box mirrors what
+        // the Compare click will fetch.
+        fetch('/api/swing/compare?sector=' + encodeURIComponent(sector))
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (j && j.symbols) {
+                    var inp = document.getElementById('compare-symbols');
+                    if (inp) inp.value = j.symbols.join(', ');
+                    // Render the result that came back.
+                    _renderCompareResult(
+                        document.getElementById('compare-result-host'), j);
+                }
+            })
+            .catch(function () { /* silent */ });
+    });
+});
+
+function compareNow() {
+    var inp = document.getElementById('compare-symbols');
+    var sel = document.getElementById('compare-sector');
+    var host = document.getElementById('compare-result-host');
+    if (!host) return;
+    var syms = (inp && inp.value || '').trim();
+    var sector = (sel && sel.value || '').trim();
+    if (!syms && !sector) {
+        host.innerHTML = '<div class="banner warn">' +
+            'Type tickers OR pick a sector first.</div>';
+        return;
+    }
+    var url = syms
+        ? '/api/swing/compare?symbols=' + encodeURIComponent(syms)
+        : '/api/swing/compare?sector=' + encodeURIComponent(sector);
+    host.innerHTML = '<p class="muted"><span class="spinner"></span> ' +
+        'Fetching candles + computing comparison ' +
+        '(this can take 5-15 seconds for 4 names)...</p>';
+    fetch(url)
+        .then(function (r) { return r.json().then(function (j) {
+            return {ok: r.ok, body: j}; }); })
+        .then(function (res) {
+            if (!res.ok || !res.body.ok) {
+                host.innerHTML = '<div class="banner warn">' +
+                    'Compare failed: ' +
+                    (res.body && res.body.error || 'unknown') + '</div>';
+                return;
+            }
+            _renderCompareResult(host, res.body);
+        })
+        .catch(function (e) {
+            host.innerHTML = '<div class="banner warn">Network error: ' +
+                e + '</div>';
+        });
+}
+
+function compareClear() {
+    var inp = document.getElementById('compare-symbols');
+    var sel = document.getElementById('compare-sector');
+    var host = document.getElementById('compare-result-host');
+    if (inp) inp.value = '';
+    if (sel) sel.value = '';
+    if (host) host.innerHTML = '';
+}
+
+function _renderCompareResult(host, data) {
+    if (!host) return;
+    var syms = data.symbols || [];
+    if (!syms.length) {
+        host.innerHTML = '<div class="banner warn">No data.</div>';
+        return;
+    }
+    var winnerCounts = data.win_counts || [];
+    var headOverall = data.winner_overall;
+    var html = '';
+    // Headline tally.
+    if (headOverall) {
+        html += '<div style="margin:6px 0 10px 0;font-size:13px">';
+        html += '<strong>' + esc(headOverall) + '</strong> wins ' +
+                'most metrics. Tally: ';
+        var bits = [];
+        for (var i = 0; i < syms.length; i++) {
+            bits.push('<span style="font-weight:' +
+                      (syms[i] === headOverall ? '600' : '400') + '">' +
+                      esc(syms[i]) + ' ' + winnerCounts[i] + '</span>');
+        }
+        html += bits.join(' &middot; ');
+        html += '</div>';
+    }
+    if (data.sector) {
+        html += '<div class="muted" style="font-size:11px;margin-bottom:6px">' +
+                'Sector: <strong>' + esc(data.sector) + '</strong> &middot; ' +
+                'top ' + syms.length + ' by SECTOR_MAP order.</div>';
+    }
+    // Table.
+    html += '<div style="overflow-x:auto"><table class="holdings" ' +
+            'style="font-size:12.5px"><thead><tr>';
+    html += '<th style="text-align:left;min-width:180px">Metric</th>';
+    syms.forEach(function (s) {
+        html += '<th style="text-align:center;min-width:120px">' +
+                '<a href="/swing/' + encodeURIComponent(s) + '" ' +
+                'style="color:var(--fg);font-weight:600">' +
+                esc(s) + '</a></th>';
+    });
+    html += '</tr></thead><tbody>';
+    (data.rows || []).forEach(function (row) {
+        html += '<tr>';
+        var lbl = esc(row.label);
+        if (row.explain) {
+            lbl = '<span title="' + esc(row.explain) + '" ' +
+                  'style="border-bottom:1px dotted #cfd9eb;cursor:help">' +
+                  lbl + '</span>';
+        }
+        html += '<td style="text-align:left">' + lbl + '</td>';
+        (row.values || []).forEach(function (v, i) {
+            var winning = (row.winner_idx === i);
+            var bg = winning ? 'background:#e6f4ea;font-weight:600' : '';
+            html += '<td style="text-align:center;' + bg + '">' +
+                    esc(v) + '</td>';
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    if (data.notes && data.notes.length) {
+        html += '<div class="muted" style="font-size:11px;margin-top:8px">' +
+                data.notes.map(esc).join('<br>') + '</div>';
+    }
+    host.innerHTML = html;
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+        });
+    }
 }
 </script>"""
 

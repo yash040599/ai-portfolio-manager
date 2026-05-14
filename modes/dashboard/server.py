@@ -212,6 +212,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_data()
             elif url.path == "/api/swing/run_status":
                 self._serve_swing_run_status()
+            elif url.path == "/api/swing/compare":
+                self._serve_swing_compare(parse_qs(url.query))
+            elif url.path == "/api/swing/sectors":
+                self._serve_swing_sectors()
             elif url.path == "/api/live_prices":
                 self._serve_live_prices(parse_qs(url.query))
             elif url.path == "/api/errors":
@@ -359,6 +363,114 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_compare(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/swing/compare?symbols=A,B,C,D
+           GET /api/swing/compare?sector=BANKING
+
+        Compare up to 4 NSE symbols side-by-side. Either an explicit
+        comma-separated list, or auto-pick the top 4 in a sector
+        (`?sector=BANK`). Returns the matrix as JSON; the dashboard
+        renders the table client-side. Roadmap S45.
+
+        Auth-shaped Zerodha errors surface via the usual
+        `core.error_sink` toast path because `scan_one()` calls
+        `zerodha.login(interactive=False)` which raises (post-S42)
+        on a stale token.
+        """
+        from modes.swing.compare import (
+            MAX_COMPARE_STOCKS, normalise_sector, top_n_in_sector,
+            compare_symbols,
+        )
+        from modes.swing.scanner import SwingScanner
+        from core.zerodha_client import ZerodhaClient
+        from core.logger import Logger
+        from core.error_sink import record_external_error
+
+        symbols_param = (qs.get("symbols") or [""])[0].strip()
+        sector_param = (qs.get("sector") or [""])[0].strip()
+
+        chosen_sector = ""
+        if sector_param:
+            chosen_sector = normalise_sector(sector_param)
+            symbols = top_n_in_sector(chosen_sector, n=MAX_COMPARE_STOCKS)
+        else:
+            symbols = [s for s in symbols_param.split(",") if s.strip()]
+
+        if not symbols:
+            err = json.dumps({
+                "ok": False,
+                "error": ("No symbols. Pass ?symbols=A,B,C,D or ?sector=NAME "
+                          "(e.g. BANKING / IT / PHARMA / AUTO / FMCG)."),
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        log = Logger("SwingCompare")
+        try:
+            zerodha = ZerodhaClient(Config, log)
+            zerodha.login(interactive=False)
+        except Exception as exc:
+            record_external_error("zerodha", exc, log=log)
+            err = json.dumps({
+                "ok": False,
+                "error": f"Zerodha login failed: {exc}",
+            }).encode("utf-8")
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        scanner = SwingScanner(Config, zerodha, log)
+
+        def _scan_one(sym: str):
+            return scanner.scan_one(sym, swing_capital=100_000.0)
+
+        result = compare_symbols(symbols, scan_one=_scan_one,
+                                 sector=chosen_sector)
+
+        # Serialise the dataclasses for the JSON wire.
+        rows_json = [{
+            "label": r.label,
+            "values": r.values,
+            "winner_idx": r.winner_idx,
+            "direction": r.direction,
+            "explain": r.explain,
+        } for r in result.rows]
+        body = json.dumps({
+            "ok": True,
+            "symbols": result.symbols,
+            "sector": result.sector,
+            "rows": rows_json,
+            "winner_overall": result.winner_overall(),
+            "win_counts": [result.win_count(i)
+                           for i in range(len(result.symbols))],
+            "notes": result.notes,
+        }, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_sectors(self) -> None:
+        """GET /api/swing/sectors — list all known SECTOR_MAP keys.
+        Used by the dashboard's compare-sector dropdown."""
+        from modes.swing.compare import list_known_sectors
+        body = json.dumps({"sectors": list_known_sectors()}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=3600")
         self.end_headers()
         self.wfile.write(body)
 

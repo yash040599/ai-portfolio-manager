@@ -439,6 +439,8 @@ the terminal too. (Same service layer powers both surfaces.)
 | `python main.py --mode swing --positions` | List all OPEN swing positions (entries you've confirmed via Done). Prints position_id, symbol, managed_qty, entry, stop, entry date. |
 | `python main.py --mode swing --confirm <ID> --qty N --price P` | Confirm a PENDING ENTRY action — same flow as the dashboard's "Done" button. Mandatory: `--qty` (executed share count), `--price` (executed fill price). Optional: `--stop X` (overrides `action.suggested_stop`). Creates the position in the open swing book. |
 | `python main.py --mode swing --skip <ID>` | Skip a PENDING action. Optional: `--reason "..."`. Idempotent — re-skipping an already-skipped action returns success rather than an error. |
+| `python main.py --mode swing --compare HDFCBANK,SBIN,ICICIBANK,KOTAKBANK` | Compare up to 4 NSE symbols side-by-side (S45). Prints a metrics-x-stocks table marking the winning value per row (composite score, % below 52w high, RSI, RS vs NIFTY, volume, R:R, weekly trend up, etc.) plus a "X of N winning metrics" tally per stock so you can see WHY one stock outranks another. Truncates input >4. |
+| `python main.py --mode swing --compare-sector BANKING` | Auto-pick the top 4 stocks in a sector (per `SECTOR_MAP` order) and run the same comparison. Sector aliases accepted: `BANK`/`BANKING`, `IT`/`TECH`, `PHARMA`/`HEALTH`, `AUTO`, `ENERGY`/`OIL`, `METALS`, `FMCG`/`CONSUMER`, `INFRA`/`POWER`, `TELECOM`, `CAPGOODS`/`DEFENCE`, `FINANCE`/`NBFC`. |
 | `python main.py --mode swing --backtest` | Run the X/Y dip-buy parameter sweep on the cached candle history. Writes `reports/backtest/ath_backtest.{txt,json}` with the full XIRR matrix. Pure-offline; never touches the broker. |
 
 **Read-only inspection from the CLI** (no separate flag — just SQL via
@@ -456,6 +458,15 @@ the persistence helpers):
 
 # AI overlay for a specific symbol (with timestamp)
 .\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_ai_overlay_for_symbol; r = latest_ai_overlay_for_symbol('SBIN'); print(r[1] if r else None); print(r[0][:500] if r else 'no overlay')"
+```
+
+The same compare flow is also reachable via HTTP when the dashboard
+server is running:
+
+```
+GET /api/swing/compare?symbols=HDFCBANK,SBIN,ICICIBANK,KOTAKBANK
+GET /api/swing/compare?sector=BANKING
+GET /api/swing/sectors          # list of known SECTOR_MAP keys
 ```
 
 Reports written by every swing run live under

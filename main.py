@@ -21,6 +21,10 @@
 #   python main.py --mode swing --positions         ← list open swing book
 #   python main.py --mode swing --confirm <ID> --qty N --price P  ← confirm a pending action
 #   python main.py --mode swing --skip <ID>         ← skip a pending action
+#   python main.py --mode swing --compare HDFCBANK,SBIN,ICICIBANK,KOTAKBANK
+#                                                    ← side-by-side compare up to 4
+#   python main.py --mode swing --compare-sector BANKING
+#                                                    ← top 4 in a sector, auto-picked
 #   python main.py --mode login                   ← test Zerodha login only
 #   python main.py --mode dashboard               ← launch the web dashboard
 #
@@ -244,6 +248,68 @@ def main():
                     pass
             ok = skip_action(aid, reason)
             print(f"  {'Skipped' if ok else 'Failed to skip'} action #{aid}")
+
+        elif "--compare" in sys.argv or "--compare-sector" in sys.argv:
+            # Compare up to 4 stocks side-by-side (S45).
+            #   --compare HDFCBANK,SBIN,ICICIBANK,KOTAKBANK
+            #   --compare-sector BANKING
+            init_db()
+            missing = Config.validate()
+            if missing:
+                for key in missing:
+                    print(f"Missing in .env: {key}")
+                sys.exit(1)
+            from modes.swing.compare import (
+                MAX_COMPARE_STOCKS, normalise_sector, top_n_in_sector,
+                compare_symbols, render_text_table, list_known_sectors,
+            )
+            from modes.swing.scanner import SwingScanner
+            from core.zerodha_client import ZerodhaClient
+
+            chosen_sector = ""
+            symbols: list[str] = []
+            if "--compare-sector" in sys.argv:
+                try:
+                    sec_raw = sys.argv[sys.argv.index("--compare-sector") + 1]
+                except (IndexError, ValueError):
+                    print("  Error: --compare-sector requires a sector name. "
+                          f"Known: {', '.join(list_known_sectors())}")
+                    sys.exit(1)
+                chosen_sector = normalise_sector(sec_raw)
+                symbols = top_n_in_sector(
+                    chosen_sector, n=MAX_COMPARE_STOCKS)
+                if not symbols:
+                    print(f"  Error: no symbols found in sector "
+                          f"{chosen_sector!r}. "
+                          f"Known: {', '.join(list_known_sectors())}")
+                    sys.exit(1)
+            else:
+                try:
+                    raw = sys.argv[sys.argv.index("--compare") + 1]
+                except (IndexError, ValueError):
+                    print("  Error: --compare requires a comma-separated "
+                          "list of NSE tickers (max 4).")
+                    sys.exit(1)
+                symbols = [s.strip().upper()
+                           for s in raw.split(",") if s.strip()]
+                if not symbols:
+                    print("  Error: no symbols parsed from --compare.")
+                    sys.exit(1)
+                if len(symbols) > MAX_COMPARE_STOCKS:
+                    print(f"  Note: truncating to first {MAX_COMPARE_STOCKS} "
+                          f"symbols (got {len(symbols)}).")
+                    symbols = symbols[:MAX_COMPARE_STOCKS]
+
+            zerodha = ZerodhaClient(Config, Logger("ZerodhaClient"))
+            zerodha.login()
+            scanner = SwingScanner(Config, zerodha, Logger("SwingCompare"))
+
+            def _scan_one(sym: str):
+                return scanner.scan_one(sym, swing_capital=100_000.0)
+
+            result = compare_symbols(
+                symbols, scan_one=_scan_one, sector=chosen_sector)
+            print(render_text_table(result))
 
         elif "--backtest" in sys.argv:
             # ATH dip-buy backtest: runs X/Y matrix simulation
