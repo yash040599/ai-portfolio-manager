@@ -807,6 +807,41 @@ python scripts/shared/backup_data.py --all-remote      # full overwrite of local
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.
 
+### Backtest/replay data sync (private repo)
+
+Stage 1 of the Chan reset uses a separate private repository for
+normalized historical replay data:
+`https://github.com/yash040599/ai-portfolio-backtest-data`.
+
+This is intentionally separate from the operational data repo above.
+Operational data is mutable and needs row-level SQLite merges; replay
+datasets should be versioned snapshots. The repo is cloned into the
+gitignored local path `backtest_data/` on both the Windows dev machine
+and the Linux trading VM.
+
+Set these in `.env`:
+
+```bash
+BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/yash040599/ai-portfolio-backtest-data.git
+BACKTEST_DATA_REPO_URL_SSH=git@github.com:yash040599/ai-portfolio-backtest-data.git
+BACKTEST_DATA_PATH=backtest_data
+```
+
+Common commands:
+
+```bash
+python scripts/shared/sync_backtest_data.py              # clone/pull + status using HTTPS/env default
+python scripts/shared/sync_backtest_data.py --ssh        # Linux VM flow using SSH
+python scripts/shared/sync_backtest_data.py --status     # show data repo status
+python scripts/shared/sync_backtest_data.py --push --commit --message "update replay dataset"
+```
+
+The VM should pull the repo before replay or strategy-research workflows
+need historical data, then read local files from `backtest_data/`. Do not
+fetch candles directly from GitHub during replay/trading runtime.
+
+Full contract: [docs/TRADE_BACKTEST_DATA.md](docs/TRADE_BACKTEST_DATA.md).
+
 **GitHub 100 MB file limit**
 
 GitHub rejects any single file > 100 MB on push. The sync script will

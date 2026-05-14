@@ -42,10 +42,12 @@ For implementation work, also inspect the relevant code path:
 
 External research/data context:
 
-- The user has a separate market-research repository with about 10 years of research/backtest-relevant data: `https://github.com/yash040599/market-research`.
-- Before building full-fidelity replay or a new strategy dataset, inspect that repo and decide whether to consume it directly, mirror a small derived dataset into this tool, or ask the user to create a separate data-heavy feed repository.
+- The user has a separate market-research repository: `https://github.com/yash040599/market-research`.
+- It has now been inspected: it is a standalone daily ATH-dip research sandbox using `yfinance`, a hardcoded current NIFTY 50 list, and result matrices. Treat it as reference/seed material, not as the intraday replay runtime source.
 - Keep this repo as the trade tool. Do not bloat it with large raw datasets unless the user explicitly approves that storage decision.
-- Preferred Stage 1 data model: create a separate private backtest-data repo for normalized replay-ready data, sync it into a local gitignored path such as `backtest_data/`, and keep it separate from the existing operational data repo that stores current ignored data/reports.
+- Stage 1 data model: use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready data. Clone/sync it into local gitignored `backtest_data/` with `scripts/shared/sync_backtest_data.py`.
+- Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
+- Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
 
 ## Chan-Framework Decision Rule
 
