@@ -74,7 +74,12 @@ class CompareRow:
     values: list[str]              # one cell per stock, already formatted
     raw: list[float | bool | None] # numeric values for winner picking
     direction: str                 # see comment above
-    winner_idx: int | None = None  # index of winning column, None if no winner
+    winner_idx: int | None = None  # primary winner (back-compat)
+    # Multi-winner: every cell index that should be highlighted. For
+    # boolean rows ALL True cells are winners (S53, 2026-05-14 — the
+    # user reported "only first tick is green, rest are ignored");
+    # for single-winner rows this is `[winner_idx]` (or empty).
+    winners_idx: list[int] = field(default_factory=list)
     explain: str = ""              # one-line tooltip
 
 
@@ -89,22 +94,37 @@ class CompareResult:
     def winner_overall(self) -> str | None:
         """Return the symbol with the most "winner" cells across rows.
         None if no row has a winner. Used as the headline takeaway
-        line ("HDFCBANK wins 7 of 11 metrics")."""
+        line ("HDFCBANK wins 7 of 11 metrics").
+
+        Counts multi-winner rows (S53): on a True/False row where
+        every stock has the boolean True, every stock gets a win
+        credit on that row. Fair when the metric is "yes/no" rather
+        than "pick one".
+        """
         if not self.rows or not self.symbols:
             return None
         wins = [0] * len(self.symbols)
-        total = 0
+        total_winning_cells = 0
         for r in self.rows:
-            if r.winner_idx is not None:
-                wins[r.winner_idx] += 1
-                total += 1
-        if total == 0:
+            ws = r.winners_idx or (
+                [r.winner_idx] if r.winner_idx is not None else [])
+            for w in ws:
+                if 0 <= w < len(wins):
+                    wins[w] += 1
+                    total_winning_cells += 1
+        if total_winning_cells == 0:
             return None
         best = max(range(len(wins)), key=lambda i: wins[i])
         return self.symbols[best]
 
     def win_count(self, idx: int) -> int:
-        return sum(1 for r in self.rows if r.winner_idx == idx)
+        n = 0
+        for r in self.rows:
+            ws = r.winners_idx or (
+                [r.winner_idx] if r.winner_idx is not None else [])
+            if idx in ws:
+                n += 1
+        return n
 
 
 # ── Public API ────────────────────────────────────────────────
@@ -281,6 +301,13 @@ def _winner_true(raw: list) -> int | None:
     return trues[0] if trues else None
 
 
+def _winners_true_all(raw: list) -> list[int]:
+    """Every True cell — all bools are winners on yes/no rows.
+    Origin: 2026-05-14 user reported "only first tick is green,
+    rest are ignored" on the SMA-50 / SMA-200 / EMA-20 rows."""
+    return [i for i, x in enumerate(raw) if x is True]
+
+
 def _winner_rsi(raw: list) -> int | None:
     """Closest to 50 wins (sweet spot)."""
     nums = [(i, x) for i, x in enumerate(raw)
@@ -328,6 +355,18 @@ def _pick_winner(direction: str, raw: list,
     return None  # neutral
 
 
+def _pick_winners_all(direction: str, raw: list,
+                      cands: list[SwingCandidate] | None = None,
+                      ) -> list[int]:
+    """Every cell index that should be highlighted. For boolean rows
+    every True cell is a winner; for single-winner rows this returns
+    `[winner_idx]` (or empty)."""
+    if direction == "true":
+        return _winners_true_all(raw)
+    primary = _pick_winner(direction, raw, cands)
+    return [primary] if primary is not None else []
+
+
 def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
     """Build the metrics-x-stocks matrix as a list of `CompareRow`."""
     rows: list[CompareRow] = []
@@ -337,36 +376,42 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
              explain: str = "") -> None:
         raw = [getter(c) for c in cands]
         values = [fmt(v) for v in raw]
-        winner = _pick_winner(direction, raw, cands)
+        winners = _pick_winners_all(direction, raw, cands)
+        winner = winners[0] if winners else None
         rows.append(CompareRow(
             label=label, values=values, raw=raw,
-            direction=direction, winner_idx=winner, explain=explain,
+            direction=direction, winner_idx=winner,
+            winners_idx=winners, explain=explain,
         ))
 
-    # Today's overall rank (lower wins). The home page sorts by this
-    # — it's THE answer to "which stock does the bot pick first?".
-    # Pulled from the latest full-scan run (skipping SEARCH_BOX +
-    # snapshot rows). When a candidate is missing from that run we
-    # fall back to its in-memory `priority_rank` (set by scan_one),
-    # which the picker treats as a number so the row still renders.
-    # Origin: 2026-05-14 user asked "Can we have an overall score so
-    # we know which is better" — composite scores aren't directly
-    # comparable across setup families (technical 0-10 vs dip-buy
-    # 18-30%) so the unified rank is the only honest answer.
+    # Pre-compute "is this symbol in the latest full-scan universe?"
+    # so the rank + status rows can both reflect it. Origin:
+    # 2026-05-14 user reported APOLLOHOSP showing rank #1 alongside
+    # DRREDDY's rank #1 — APOLLOHOSP is a NIFTY100 borderline stock
+    # that wasn't in the user's `Config.SCAN_UNIVERSE` so the
+    # `latest_full_scan_rank_by_symbol` lookup returned None and the
+    # old fallback used the in-memory `priority_rank` from scan_one's
+    # 1-stock SEARCH_BOX run, which is always 1. Fix: drop the
+    # fake-rank fallback entirely and add an explicit "In latest
+    # scan universe?" row so the user sees WHY the rank is "—".
     from modes.swing.persistence import latest_full_scan_rank_by_symbol
 
+    in_latest_scan = {
+        c.symbol: (latest_full_scan_rank_by_symbol(c.symbol) is not None)
+        for c in cands
+    }
+    rank_lookup = {
+        c.symbol: latest_full_scan_rank_by_symbol(c.symbol)
+        for c in cands
+    }
+
     def _rank_for(c: SwingCandidate) -> float | None:
-        info = latest_full_scan_rank_by_symbol(c.symbol)
-        if info is not None:
-            return float(info[0])
-        # Fall back to the in-memory rank from the just-ran scan_one,
-        # but only if it's > 0 (0 = "never ranked").
-        r = int(getattr(c, "priority_rank", 0) or 0)
-        return float(r) if r > 0 else None
+        info = rank_lookup.get(c.symbol)
+        return float(info[0]) if info is not None else None
 
     def _rank_fmt(v: float | None) -> str:
         if v is None:
-            return "—"
+            return "— (not in latest scan)"
         return f"#{int(v)}"
 
     _row("Today's overall rank (lower wins)", _rank_for, _rank_fmt,
@@ -374,7 +419,18 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
          "Single bot-wide ranking across BOTH technical and dip-buy "
          "candidates — lower number = bot picks this stock first. "
          "Composite scores below are NOT directly comparable across "
-         "setup families; this row is.")
+         "setup families; this row is. Stocks outside Config."
+         "SCAN_UNIVERSE show '—' because they were never ranked "
+         "against the full pool.")
+    _row("In latest scan universe?",
+         lambda c: in_latest_scan.get(c.symbol, False),
+         _fmt_bool, "true",
+         "✓ = the symbol was in the latest full-scan universe and "
+         "ranked against every other candidate. ✗ = the symbol is "
+         "outside Config.SCAN_UNIVERSE (e.g. NIFTY 200 stock when "
+         "the universe is set to NIFTY 100); its metrics below are "
+         "real, but its score and rank are NOT directly comparable "
+         "to ranked stocks in this table.")
 
     # Status / setup
     _row("Status", lambda c: c.status,
@@ -388,6 +444,24 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
          "Across families the scales differ (technical 0-10 vs "
          "dip-buy 18-30+ %) — use the rank row above for the "
          "cross-family comparison.")
+    # Why this score — uses the candidate's own `reasons` list. Lets
+    # the user see WHY one setup ranks higher than another even when
+    # the visible boolean / numeric rows look better for the loser.
+    # Origin: 2026-05-14 user reported "in all rows SUNPHARMA looks
+    # better than DRREDDY then why is DRREDDY #1" — DRREDDY's
+    # PULLBACK_UPTREND setup gets a higher composite score because
+    # the pullback-to-EMA20 entry is a higher-conviction signal than
+    # plain trend-continuation; the visible ✗ on EMA-20 is exactly
+    # the pullback. Showing the bot's own reason text closes that
+    # gap without forcing the user to read source code.
+    _row("Why this score (top reasons)",
+         lambda c: list(getattr(c, "reasons", []) or [])[:3],
+         lambda v: " · ".join(v) if v else "—",
+         "neutral",
+         "The bot's own reason list for this candidate (top 3 from "
+         "the scanner). Setup-specific signals (NR7, sector leader, "
+         "pullback-to-EMA20, etc.) drive the composite score and "
+         "are not always visible in the boolean rows below.")
     _row("Sector", lambda c: c.sector,
          lambda v: str(v) if v else "—", "neutral")
 

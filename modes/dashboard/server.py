@@ -444,6 +444,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             "label": r.label,
             "values": r.values,
             "winner_idx": r.winner_idx,
+            "winners_idx": r.winners_idx,
             "direction": r.direction,
             "explain": r.explain,
         } for r in result.rows]

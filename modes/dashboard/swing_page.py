@@ -916,6 +916,37 @@ def render_swing_detail(symbol: str) -> str:
     else:
         rank_html = (' <span class="muted">(not present in the '
                      'latest full scan)</span>')
+    # Out-of-universe banner (S53). When the symbol isn't in the
+    # latest full-scan run AT ALL (rank_info is None) AND the
+    # universe builder confirms it's outside `Config.SCAN_UNIVERSE`,
+    # surface a yellow warning. Pre-S53 the detail page silently
+    # let users compare e.g. APOLLOHOSP (NIFTY 200) against ranked
+    # NIFTY 100 names without ever flagging that its score wasn't
+    # ranked against the same pool. The check is symmetric with the
+    # compare table's new "In latest scan universe?" row.
+    if rank_info is None:
+        try:
+            from modes.swing.scanner import _build_universe
+            cur_universe = getattr(Config, "SCAN_UNIVERSE", "NIFTY100")
+            in_universe = sym in set(_build_universe(cur_universe))
+        except Exception:
+            in_universe = True   # fail open — never gate on this
+        if not in_universe:
+            body.append(
+                '<div class="banner warn" style="margin:8px 0;'
+                'background:#fff4cc;border-left:4px solid #d4a000;'
+                'padding:10px 12px;font-size:13px">'
+                '<strong>⚠ Outside the latest scan universe '
+                f'({cur_universe}).</strong> '
+                'This stock\'s score and any rank below are real for '
+                'a one-stock analyse, but they were NOT ranked '
+                'against the full universe pool — so the rank is '
+                'not directly comparable to the other recommendations '
+                f'on /swing. Add the symbol to <code>Config.'
+                'SCAN_UNIVERSE</code> or scan a wider universe '
+                '(NIFTY 150 / 200) to get a comparable rank.'
+                '</div>'
+            )
     body.append(_kv("Composite Score",
                      f'{cand.score:.1f} {score_unit}{rank_html}'
                      f'{family_note}'))
@@ -2126,7 +2157,16 @@ function _renderCompareResult(host, data) {
         }
         html += '<td style="text-align:left">' + lbl + '</td>';
         (row.values || []).forEach(function (v, i) {
-            var winning = (row.winner_idx === i);
+            // Multi-winner support (S53): bool rows highlight ALL
+            // True cells, not just the first. Falls back to the
+            // legacy single `winner_idx` if `winners_idx` missing.
+            var wins = row.winners_idx;
+            var winning = false;
+            if (Array.isArray(wins) && wins.length) {
+                winning = wins.indexOf(i) !== -1;
+            } else {
+                winning = (row.winner_idx === i);
+            }
             var bg = winning ? 'background:#e6f4ea;font-weight:600' : '';
             html += '<td style="text-align:center;' + bg + '">' +
                     esc(v) + '</td>';
