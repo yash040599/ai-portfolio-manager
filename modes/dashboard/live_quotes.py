@@ -58,28 +58,40 @@ def get_live_quotes(symbols: list[str],
         zerodha = ZerodhaClient(Config, log)
         zerodha.login(interactive=False)
 
-        instruments = [f"{exchange}:{s}" for s in symbols]
-        raw = zerodha.get_quotes(instruments)
+        # `ZerodhaClient.get_quotes()` expects a list of
+        # `{"symbol": ..., "exchange": ...}` dicts (NOT a list of
+        # "EXCHANGE:SYMBOL" strings). Passing strings here was the
+        # 2026-05-14 source of the user-visible "string indices
+        # must be integers, not 'str'" toast — the inner code did
+        # `s["exchange"]` on each entry, which silently does string
+        # indexing on a string and raises that exact TypeError.
+        stocks = [{"symbol": s, "exchange": exchange} for s in symbols]
+        raw = zerodha.get_quotes(stocks)
 
         ts = now_ist().isoformat()
         result: dict[str, dict] = {}
         for s in symbols:
             key = f"{exchange}:{s}"
-            q = raw.get(key, {})
-            if q:
-                ltp = q.get("last_price", 0)
-                ohlc = q.get("ohlc", {})
-                prev_close = ohlc.get("close", ltp) if ohlc else ltp
+            q = raw.get(key) if isinstance(raw, dict) else None
+            if isinstance(q, dict):
+                ltp = q.get("last_price", 0) or 0
+                ohlc = q.get("ohlc")
+                if isinstance(ohlc, dict):
+                    prev_close = ohlc.get("close", ltp) or ltp
+                else:
+                    prev_close = ltp
                 change_pct = ((ltp / prev_close - 1) * 100
                               if prev_close > 0 else 0)
                 result[s] = {
                     "price": ltp,
                     "as_of": ts,
                     "change_pct": round(change_pct, 2),
-                    "volume": q.get("volume", 0),
+                    "volume": q.get("volume", 0) or 0,
                 }
                 _cached_quotes[s] = result[s]
             else:
+                # Sparse Kite response (illiquid name, paused, etc.)
+                # — keep whatever was cached and move on quietly.
                 result[s] = _cached_quotes.get(s, {})
 
         _last_poll_time = time.monotonic()
