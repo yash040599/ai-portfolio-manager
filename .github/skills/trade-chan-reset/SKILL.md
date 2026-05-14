@@ -48,6 +48,7 @@ External research/data context:
 - Stage 1 data model: use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready data. Clone/sync it into local gitignored `backtest_data/` with `scripts/shared/sync_backtest_data.py`.
 - Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
+- Seed/export script: `scripts/trade/export_backtest_data.py` converts local `data/candle_cache.db` into `backtest_data/candles/intraday_15m.sqlite`, `backtest_data/candles/daily.sqlite`, symbol CSVs, and a stamped `manifest.json` without broker/network calls.
 
 ## Chan-Framework Decision Rule
 

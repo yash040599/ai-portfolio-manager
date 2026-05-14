@@ -836,6 +836,14 @@ python scripts/shared/sync_backtest_data.py --status     # show data repo status
 python scripts/shared/sync_backtest_data.py --push --commit --message "update replay dataset"
 ```
 
+Seed the first replay dataset from the local candle cache:
+
+```bash
+python scripts/trade/export_backtest_data.py --dry-run
+python scripts/trade/export_backtest_data.py
+python scripts/shared/sync_backtest_data.py --push --commit --message "seed replay data from candle cache"
+```
+
 The VM should pull the repo before replay or strategy-research workflows
 need historical data, then read local files from `backtest_data/`. Do not
 fetch candles directly from GitHub during replay/trading runtime.

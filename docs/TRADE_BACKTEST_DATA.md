@@ -37,6 +37,30 @@ After a data-build script writes or updates files inside `backtest_data/`, push 
 
 This script does not merge SQLite rows. If two machines edit the same dataset, fix it in the data repo as a Git conflict. The expected flow is one writer for dataset builds and many readers for replay/trading machines.
 
+## Seed Export
+
+The first local seed dataset comes from the existing `data/candle_cache.db`. This is not enough to validate a strategy by itself because the 15-minute cache currently covers only the recent live window, but it gives Stage 1 a real local dataset with the same shape the Linux VM will consume.
+
+Dry-run source summary:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py --dry-run
+```
+
+Write the normalized dataset into `backtest_data/`:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py
+.\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --push --commit --message "seed replay data from candle cache"
+```
+
+The exporter writes:
+
+- `candles/intraday_15m.sqlite`
+- `candles/daily.sqlite`
+- refreshed `symbols/*.csv`
+- refreshed `manifest.json` with source hash, row counts, ranges, checksums, and the generating code commit
+
 ## Environment
 
 Set these in `.env`:
@@ -115,5 +139,6 @@ T1.0 is complete when:
 
 - `backtest_data/` is a clone of the private data repo on both machines.
 - `manifest.json` exists and names the dataset version/source/date range.
+- `scripts/trade/export_backtest_data.py` can seed the contract from the local candle cache without broker/network calls.
 - replay code reads only local `backtest_data/` files.
 - the VM can run `python scripts/shared/sync_backtest_data.py --ssh` and land on the same manifest as the dev machine.
