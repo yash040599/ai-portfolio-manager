@@ -461,6 +461,72 @@ Mild: your Kite **password** sits in `.env` next to your existing
 For maximum hygiene store the password in Windows Credential Manager
 via the `keyring` package instead of `.env` — a future enhancement.
 
+### 5.5 New machine restore
+
+Use this when replacing the laptop or bringing up a fresh Linux VM. The
+goal is to restore the code, private operational data, `.env`, Copilot
+runbooks, and replay datasets without manually copying folders.
+
+| Repo / data | Restored by | Default local path |
+|---|---|---|
+| Main code | `git clone` | `ai-portfolio-manager/` |
+| Operational data, reports, logs, runbooks | [scripts/shared/backup_data.py](scripts/shared/backup_data.py) | `../ai-portfolio-manager-data/` plus local `data/`, `reports/`, `logs/`, `copilot/` |
+| `.env` | [scripts/shared/backup_data.py](scripts/shared/backup_data.py) with `--include-env` | project root |
+| Replay/backtest datasets | [scripts/shared/sync_backtest_data.py](scripts/shared/sync_backtest_data.py) | `../ai-portfolio-backtest-data/` |
+
+On the old laptop, do the final private-data push first:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-local --dry-run
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-local --yes
+.\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
+.\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --push --commit --message "sync replay data before machine move"
+```
+
+On the new Windows machine:
+
+```powershell
+git clone <repo-url> ai-portfolio-manager
+cd ai-portfolio-manager
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Edit the temporary `.env` so it contains at least one operational data
+repo URL:
+
+```env
+BACKUP_REPO_URL_HTTPS=https://github.com/<user>/<private-data-repo>.git
+# or
+BACKUP_REPO_URL_SSH=git@github.com:<user>/<private-data-repo>.git
+```
+
+Then restore the private data and replay dataset:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-remote --yes
+.\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
+```
+
+On the Linux VM, use the same flow with `python3 -m venv venv`,
+`source venv/bin/activate`, and add `--ssh` to both sync commands.
+
+After restore, run read-only smoke checks:
+
+```powershell
+.\.venv\Scripts\python.exe -c "from config import Config; print(Config.snapshot_hash())"
+.\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py --dry-run
+.\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --min-score 999
+.\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
+```
+
+`promotion_check.py` is expected to fail while the Chan reset is paused;
+that means the ledger is readable, not that live trading should resume.
+Full migration notes are mirrored in [copilot/machine-migration.md](copilot/machine-migration.md).
+
 ---
 
 ## 6. Run modes
@@ -734,11 +800,12 @@ All scripts support `--help`.
 
 ### Data sync (private repo)
 
-`data/`, `reports/`, `logs/` are personal — keep them in a **separate
+`data/`, `reports/`, `logs/`, and `copilot/` are personal — keep them in a **separate
 private repo** so they're portable across machines. The default sync
-is a glob walk of those three folders so any new file (e.g. a new
-DB, a new report subfolder) is picked up automatically with no code
-change.
+is a glob walk of those folders so any new file (e.g. a new DB, report
+subfolder, or private runbook) is picked up automatically with no code
+change. The top-level `.env` is opt-in via `--include-env` for trusted
+private-repo machine migration only.
 
 **Synced as of 2026-05-11 (everything in these locations):**
 - `data/trades.db` — trades, intraday_tax_ledger, capital_gains_ledger, **`intraday_candidates`** (Roadmap #259, full SCORED → ENTERED/REJECTED → OUTCOME chain stamped with `Config.snapshot_hash()`)
@@ -748,21 +815,26 @@ change.
 - `data/candle_cache.db` — git-tracked alongside the code repo (already identical across machines, NOT in the data backup)
 - `reports/dashboard/`, `reports/modes/trade/`, `reports/trading/`, **`reports/backtest/`** (Roadmap #24, per-trade JSON stamped with `Config.snapshot_hash()` so two machines with the same config produce comparable runs)
 - `logs/portfolio.log*`
+- `copilot/` — private runbooks/checklists that should follow you to a new laptop/VM
+- `.env` — only when `--include-env` is explicitly passed
 
-**Never synced (operator secrets / local-only):** `data/access_token.json`, `data/access_token.json.bak`, `data/ZerodhaTaxPL/`, `__pycache__/`.
+**Never synced by default (operator secrets / local-only):** `.env`, `data/access_token.json`, `data/access_token.json.bak`, `data/ZerodhaTaxPL/`, `__pycache__/`.
 
 ```bash
 python scripts/shared/backup_data.py            # two-way append-merge + push (HTTPS)
 python scripts/shared/backup_data.py --ssh      # SSH (Linux VMs)
 python scripts/shared/backup_data.py --dry-run  # preview, no writes
+python scripts/shared/backup_data.py --include-env --dry-run  # preview one-time .env migration
 
 # Manual-fix flow (you edited a row/report on this machine — make it the truth)
 python scripts/shared/backup_data.py --prefer local    # local wins, edits propagate via UPSERT
 python scripts/shared/backup_data.py --prefer remote   # remote wins (rare — adopt VM's version)
 
-# Nuclear reset (also DELETES files not on the chosen side; prompts y/n)
+# Nuclear reset (also DELETES files not on the chosen side; prompts unless --yes)
 python scripts/shared/backup_data.py --all-local       # full overwrite of remote
 python scripts/shared/backup_data.py --all-remote      # full overwrite of local
+python scripts/shared/backup_data.py --include-env --all-local --yes
+python scripts/shared/backup_data.py --include-env --all-remote --yes
 ```
 
 | Scenario | Action |
@@ -796,13 +868,12 @@ python scripts/shared/backup_data.py --all-remote      # full overwrite of local
 
   This propagates row deletions correctly (Roadmap #270). Use the dry-run first whenever you’re about to overwrite the remote DB so you see exactly which tables differ. The legacy nuclear `--all-local` still works but copies *all* files; `--canonical-trades` is the surgical option for canonical DBs only. As of 2026-05-11 the canonical set is `data/trades.db` + `data/volume_baseline.db` — both will be diffed and replaced together in a single pass when you use the flag, with one timestamped backup per file.
 
-**Bringing up a new machine** (clean checkout):
+**Moving to a new machine**
 
-1. Clone this repo, set up the venv, fill in `.env` (Zerodha + optional `KITE_TOTP_SECRET` for unattended login).
-2. `python scripts/shared/backup_data.py --ssh` (or HTTPS) — pulls the data repo into `../ai-portfolio-manager-data` and merges into local `data/`, `reports/`, `logs/`. The new machine now has the full trade ledger, tax ledger, telemetry rows, and any backtest runs another machine produced.
-3. `python -c "from config import Config; print(Config.snapshot_hash())"` — confirm the same `(version, hash)` pair on both machines. Different hashes mean a config knob differs in `config.py` and any backtest comparison is invalid until reconciled.
-4. Optional: `python scripts/trade/build_volume_baseline.py --dry-run` to confirm the baseline DB on the new machine; the file syncs in step 2 but the builder is fully reproducible from `data/candle_cache.db` (which is in the code repo, identical across machines), so a rebuild produces an identical DB.
-5. Optional: `python scripts/trade/promotion_check.py` — read-only, confirms the new machine sees the same PASS/FAIL state as the old one (proves the trade ledger merged correctly).
+Use [Section 5.5](#55-new-machine-restore) as the canonical restore
+checklist. This data-sync section documents the mechanics behind that
+flow; the setup section keeps the actual old-laptop and new-machine
+commands in one place.
 
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.
@@ -815,16 +886,18 @@ normalized historical replay data:
 
 This is intentionally separate from the operational data repo above.
 Operational data is mutable and needs row-level SQLite merges; replay
-datasets should be versioned snapshots. The repo is cloned into the
-gitignored local path `backtest_data/` on both the Windows dev machine
-and the Linux trading VM.
+datasets should be versioned snapshots. The repo is cloned beside the
+main checkout at `../ai-portfolio-backtest-data` by default on both the
+Windows dev machine and the Linux trading VM. The old in-checkout
+`backtest_data/` path is still supported only when `BACKTEST_DATA_PATH`
+or `--path` points there.
 
 Set these in `.env`:
 
 ```bash
 BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/yash040599/ai-portfolio-backtest-data.git
 BACKTEST_DATA_REPO_URL_SSH=git@github.com:yash040599/ai-portfolio-backtest-data.git
-BACKTEST_DATA_PATH=backtest_data
+BACKTEST_DATA_PATH=../ai-portfolio-backtest-data
 ```
 
 Common commands:
@@ -845,7 +918,7 @@ python scripts/shared/sync_backtest_data.py --push --commit --message "seed repl
 ```
 
 The VM should pull the repo before replay or strategy-research workflows
-need historical data, then read local files from `backtest_data/`. Do not
+need historical data, then read local files from `../ai-portfolio-backtest-data`. Do not
 fetch candles directly from GitHub during replay/trading runtime.
 
 Full contract: [docs/TRADE_BACKTEST_DATA.md](docs/TRADE_BACKTEST_DATA.md).

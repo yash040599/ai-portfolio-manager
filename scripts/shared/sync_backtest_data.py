@@ -1,9 +1,11 @@
 """
-Sync the private replay/backtest data repository into ./backtest_data.
+Sync the private replay/backtest data repository beside the project.
 
 This is intentionally simpler than backup_data.py. Operational trading data
 needs row-level SQLite merges; replay datasets should be versioned snapshots
 that a dev machine or Linux VM can clone, pull, and push as a normal Git repo.
+By default this clones to ../ai-portfolio-backtest-data, mirroring the
+operational data repo layout used by backup_data.py.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ except ImportError:  # pragma: no cover - dependency is in requirements.txt
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_PATH = PROJECT_ROOT / "backtest_data"
+DEFAULT_DATA_REPO_NAME = "ai-portfolio-backtest-data"
+DEFAULT_DATA_PATH = PROJECT_ROOT.parent / DEFAULT_DATA_REPO_NAME
 MAX_GITHUB_FILE_BYTES = 100 * 1024 * 1024
 
 
@@ -217,7 +220,7 @@ def main() -> int:
     )
     parser.add_argument("--ssh", action="store_true", help="Use BACKTEST_DATA_REPO_URL_SSH.")
     parser.add_argument("--repo-url", help="Override BACKTEST_DATA_REPO_URL_* for this run.")
-    parser.add_argument("--path", help="Local clone path. Defaults to ./backtest_data.")
+    parser.add_argument("--path", help="Local clone path. Defaults to ../ai-portfolio-backtest-data.")
     parser.add_argument("--pull", action="store_true", help="Clone if needed, then git pull --ff-only.")
     parser.add_argument("--status", action="store_true", help="Show git status for the data repo.")
     parser.add_argument("--push", action="store_true", help="Push committed data repo changes.")

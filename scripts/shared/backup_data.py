@@ -30,6 +30,9 @@ Usage
     python scripts/shared/backup_data.py              # full two-way sync (HTTPS)
     python scripts/shared/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/shared/backup_data.py --dry-run    # show what would change (no writes)
+    python scripts/shared/backup_data.py --include-env --all-local
+                                                     # one-time machine migration:
+                                                     # include .env in private repo
 
     # Smart conflict resolution (non-interactive) — for the manual-fix flow
     python scripts/shared/backup_data.py --prefer local   # local wins all conflicts (UPSERT into remote)
@@ -65,6 +68,8 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 # This script syncs the repository's runtime data (data/, reports/,
 # logs/, copilot/) to a SEPARATE *private* GitHub repo so it survives
 # reinstalls and is shareable across machines (e.g. dev laptop ↔ VM).
+# .env is intentionally opt-in via --include-env because it contains
+# API keys/secrets. Use that flag for a private, one-time machine move.
 #
 # Set ONE or BOTH of these in .env (HTTPS for laptops with `gh auth`,
 # SSH for headless VMs with an SSH key on the GitHub account):
@@ -126,6 +131,8 @@ SYNC_ITEMS = [
     "copilot",
 ]
 
+OPTIONAL_ENV_ITEM = ".env"
+
 # Skip these within synced folders
 SKIP_NAMES = {
     "__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini",
@@ -139,11 +146,16 @@ def should_skip(name: str) -> bool:
 
 def collect_files(base: str, folder: str) -> dict[str, str]:
     """
-    Walk a folder and return {relative_path: absolute_path} for all
-    non-skipped files, relative to `base`.
+    Walk a folder or single file and return {relative_path: absolute_path}
+    for all non-skipped files, relative to `base`.
     """
     result = {}
     full = os.path.join(base, folder)
+    if os.path.isfile(full):
+        name = os.path.basename(full)
+        if not should_skip(name):
+            result[folder] = full
+        return result
     if not os.path.isdir(full):
         return result
     for root, dirs, files in os.walk(full):
@@ -155,6 +167,14 @@ def collect_files(base: str, folder: str) -> dict[str, str]:
             rel_path = os.path.relpath(abs_path, base)
             result[rel_path] = abs_path
     return result
+
+
+def sync_items(include_env: bool) -> list[str]:
+    """Return the relative roots/files included in this sync run."""
+    items = list(SYNC_ITEMS)
+    if include_env:
+        items.append(OPTIONAL_ENV_ITEM)
+    return items
 
 
 def copy_file(src: str, dst: str, dry_run: bool):
@@ -764,6 +784,11 @@ def main():
                              "rows). Backs up the existing remote DB first to "
                              "<file>.bak.<UTC stamp>. Combine with --dry-run "
                              "to preview row-count and checksum diffs only.")
+    parser.add_argument("--include-env", action="store_true",
+                        help="Include top-level .env in the private backup sync. "
+                             "Use only for trusted private repos / machine migration.")
+    parser.add_argument("--yes", action="store_true",
+                        help="Confirm --all-local/--all-remote without an interactive prompt.")
     args = parser.parse_args()
 
     if args.all_local and args.all_remote:
@@ -803,6 +828,8 @@ def main():
 
     mode = "DRY RUN" if args.dry_run else "SYNC"
     print(f"\n  [{mode}] Two-way sync: local <-> {os.path.basename(BACKUP_ROOT)}/")
+    if args.include_env:
+        print("  Including .env in this run. Ensure the backup repo is private.")
 
     # Step 1: Pull latest remote data
     if not args.dry_run:
@@ -829,20 +856,34 @@ def main():
         dst_root  = BACKUP_ROOT  if args.all_local else PROJECT_ROOT
         print(f"  [{direction}] Full overwrite of {'remote' if args.all_local else 'local'} data\n")
 
+        if args.include_env:
+            env_src = os.path.join(src_root, OPTIONAL_ENV_ITEM)
+            if not os.path.isfile(env_src):
+                print(
+                    f"  ! --include-env requested, but source .env is missing: {env_src}\n"
+                    f"    A real run would remove .env from the destination. "
+                    f"Push .env from the old machine first, or omit --include-env."
+                )
+                if not args.dry_run:
+                    return 1
+
         # Destructive — confirm unless dry-run.
         if not args.dry_run:
-            side_label = "remote backup repo" if args.all_local else "local project"
-            confirm = input(
-                f"  ! This will OVERWRITE the {side_label} (and DELETE any "
-                f"files not on the {'local' if args.all_local else 'remote'} "
-                f"side). Continue? [y/n]: "
-            ).strip().lower()
-            if confirm != "y":
-                print("  Aborted.")
-                return
+            if args.yes:
+                print("  Auto-confirmed by --yes.")
+            else:
+                side_label = "remote backup repo" if args.all_local else "local project"
+                confirm = input(
+                    f"  ! This will OVERWRITE the {side_label} (and DELETE any "
+                    f"files not on the {'local' if args.all_local else 'remote'} "
+                    f"side). Continue? [y/n]: "
+                ).strip().lower()
+                if confirm != "y":
+                    print("  Aborted.")
+                    return
 
         copied = 0
-        for item in SYNC_ITEMS:
+        for item in sync_items(args.include_env):
             src_files = collect_files(src_root, item)
             dst_files = collect_files(dst_root, item)
             # Copy all source files to destination
@@ -872,7 +913,7 @@ def main():
     # Step 2: Collect all files from both sides
     local_files  = {}
     remote_files = {}
-    for item in SYNC_ITEMS:
+    for item in sync_items(args.include_env):
         local_files.update(collect_files(PROJECT_ROOT, item))
         remote_files.update(collect_files(BACKUP_ROOT, item))
 

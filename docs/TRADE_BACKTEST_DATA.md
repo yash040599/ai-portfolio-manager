@@ -8,13 +8,13 @@ This contract is part of the 2026-05-15 Chan Research Reset. Stage 1 needs repla
 |---|---|
 | `ai-portfolio-manager` | Trading, replay, dashboards, reports, and sync scripts. No large historical datasets. |
 | Existing private operational data repo | Mutable runtime data: trade ledgers, tax DBs, telemetry, reports, and logs synced by `scripts/shared/backup_data.py`. |
-| `https://github.com/yash040599/ai-portfolio-backtest-data` | Private replay-data repo for normalized historical datasets. It is cloned locally into `backtest_data/`. |
-| `backtest_data/` | Gitignored local clone/cache read by replay on both the dev machine and Linux VM. |
+| `https://github.com/yash040599/ai-portfolio-backtest-data` | Private replay-data repo for normalized historical datasets. It is cloned locally beside the main repo at `../ai-portfolio-backtest-data` by default. |
+| `../ai-portfolio-backtest-data/` | Local clone/cache read by replay on both the dev machine and Linux VM. `backtest_data/` remains a supported legacy override only. |
 | `https://github.com/yash040599/market-research` | Standalone ATH-dip research sandbox. Use as reference/seed material, not as an intraday replay runtime dependency. |
 
 ## Sync Model
 
-The new backtest-data repo is a normal Git repo cloned inside the main checkout at `backtest_data/`. The main repo ignores that directory, so data commits are made in the data repo only.
+The new backtest-data repo is a normal Git repo cloned beside the main checkout at `../ai-portfolio-backtest-data`, matching the operational data repo layout. Data commits are made in the data repo only; the main repo stores code and contract docs.
 
 Normal pulls:
 
@@ -28,7 +28,7 @@ Linux VM pulls with SSH:
 python scripts/shared/sync_backtest_data.py --ssh
 ```
 
-After a data-build script writes or updates files inside `backtest_data/`, push from the dev machine:
+After a data-build script writes or updates files inside `../ai-portfolio-backtest-data/`, push from the dev machine:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --status
@@ -47,7 +47,7 @@ Dry-run source summary:
 .\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py --dry-run
 ```
 
-Write the normalized dataset into `backtest_data/`:
+Write the normalized dataset into `../ai-portfolio-backtest-data/`:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py
@@ -61,7 +61,7 @@ The exporter writes:
 - refreshed `symbols/*.csv`
 - refreshed `manifest.json` with source hash, row counts, ranges, checksums, and the generating code commit
 
-The legacy simplified replay harness now reads `backtest_data/candles/intraday_15m.sqlite` by default when that repo is present, and falls back to `data/candle_cache.db` only when the Stage 1 data repo has not been cloned:
+The legacy simplified replay harness now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` by default when that repo is present, and falls back to `data/candle_cache.db` only when the Stage 1 data repo has not been cloned:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --symbol RELIANCE
@@ -76,7 +76,7 @@ Set these in `.env`:
 ```text
 BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/yash040599/ai-portfolio-backtest-data.git
 BACKTEST_DATA_REPO_URL_SSH=git@github.com:yash040599/ai-portfolio-backtest-data.git
-BACKTEST_DATA_PATH=backtest_data
+BACKTEST_DATA_PATH=../ai-portfolio-backtest-data
 ```
 
 Use HTTPS on the Windows dev machine if `gh auth login` is already configured. Use SSH on the Linux VM with a GitHub SSH key.
@@ -86,7 +86,7 @@ Use HTTPS on the Windows dev machine if `gh auth login` is already configured. U
 Use dependency-light formats first. This repo does not currently depend on pandas, pyarrow, polars, or duckdb, so the first contract is CSV metadata plus SQLite candle stores.
 
 ```text
-backtest_data/
+../ai-portfolio-backtest-data/
   README.md
   manifest.json
   symbols/
@@ -139,14 +139,14 @@ SQLite tables should use a unique key on `(symbol, interval, ts_ist, source)` so
 
 ## Linux VM Rule
 
-The VM should never fetch individual candles from GitHub during trading or replay. It should pull the repo once before a run, then read local files from `backtest_data/`. That keeps replay deterministic, avoids network/runtime surprises, and makes the dev machine and VM use the same dataset version.
+The VM should never fetch individual candles from GitHub during trading or replay. It should pull the repo once before a run, then read local files from `../ai-portfolio-backtest-data/`. That keeps replay deterministic, avoids network/runtime surprises, and makes the dev machine and VM use the same dataset version.
 
 ## Stage 1 Acceptance
 
 T1.0 is complete when:
 
-- `backtest_data/` is a clone of the private data repo on both machines.
+- `../ai-portfolio-backtest-data/` is a clone of the private data repo on both machines.
 - `manifest.json` exists and names the dataset version/source/date range.
 - `scripts/trade/export_backtest_data.py` can seed the contract from the local candle cache without broker/network calls.
-- replay code reads only local `backtest_data/` files.
+- replay code reads only local `../ai-portfolio-backtest-data/` files.
 - the VM can run `python scripts/shared/sync_backtest_data.py --ssh` and land on the same manifest as the dev machine.

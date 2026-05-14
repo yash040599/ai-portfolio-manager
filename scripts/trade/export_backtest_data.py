@@ -15,6 +15,7 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -24,6 +25,12 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -35,7 +42,10 @@ from shared.nifty_universe import get_universe  # noqa: E402
 
 
 SOURCE_DB = PROJECT_ROOT / "data" / "candle_cache.db"
-BACKTEST_DATA_ROOT = PROJECT_ROOT / "backtest_data"
+DEFAULT_BACKTEST_DATA_ROOT = PROJECT_ROOT.parent / "ai-portfolio-backtest-data"
+BACKTEST_DATA_ROOT = Path(os.getenv("BACKTEST_DATA_PATH", "").strip() or str(DEFAULT_BACKTEST_DATA_ROOT))
+if not BACKTEST_DATA_ROOT.is_absolute():
+    BACKTEST_DATA_ROOT = (PROJECT_ROOT / BACKTEST_DATA_ROOT).resolve()
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 UNIVERSE_EFFECTIVE_FROM = "2026-05-14"
 

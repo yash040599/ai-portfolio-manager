@@ -63,6 +63,12 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+except ImportError:
+    pass
+
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -72,7 +78,12 @@ if hasattr(sys.stdout, "reconfigure"):
 from config import Config  # noqa: E402
 
 CANDLE_DB = os.path.join(PROJECT_ROOT, "data", "candle_cache.db")
-BACKTEST_DATA_ROOT = os.path.join(PROJECT_ROOT, os.getenv("BACKTEST_DATA_PATH", "backtest_data"))
+DEFAULT_BACKTEST_DATA_ROOT = os.path.join(os.path.dirname(PROJECT_ROOT), "ai-portfolio-backtest-data")
+LEGACY_BACKTEST_DATA_ROOT = os.path.join(PROJECT_ROOT, "backtest_data")
+CONFIGURED_BACKTEST_DATA_ROOT = os.getenv("BACKTEST_DATA_PATH", "").strip()
+BACKTEST_DATA_ROOT = os.path.abspath(
+    os.path.join(PROJECT_ROOT, CONFIGURED_BACKTEST_DATA_ROOT or DEFAULT_BACKTEST_DATA_ROOT)
+)
 OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "backtest")
 
 
@@ -163,10 +174,13 @@ def score_bar(candles_15m: list[dict]) -> float:
 # Candle readers
 # ────────────────────────────────────────────────────────────────
 def _resolve_candle_source(data_root: str | None = None) -> tuple[str, str]:
-    root = data_root or BACKTEST_DATA_ROOT
-    backtest_db = os.path.join(root, "candles", "intraday_15m.sqlite")
-    if os.path.isfile(backtest_db):
-        return "backtest_data", backtest_db
+    roots = [data_root] if data_root else [BACKTEST_DATA_ROOT, LEGACY_BACKTEST_DATA_ROOT]
+    for root in roots:
+        if not root:
+            continue
+        backtest_db = os.path.join(root, "candles", "intraday_15m.sqlite")
+        if os.path.isfile(backtest_db):
+            return "backtest_data", backtest_db
     return "legacy_candle_cache", CANDLE_DB
 
 
@@ -371,7 +385,7 @@ def main():
     parser.add_argument("--max-trades-per-day", type=int, default=10,
                         help="Cap trades per session (mirrors live cap).")
     parser.add_argument("--data-root", default=None,
-                        help="Stage 1 backtest-data root (default: BACKTEST_DATA_PATH or ./backtest_data).")
+                        help="Stage 1 backtest-data root (default: BACKTEST_DATA_PATH or ../ai-portfolio-backtest-data).")
     parser.add_argument("--out", default=None,
                         help="Output JSON path override.")
     args = parser.parse_args()

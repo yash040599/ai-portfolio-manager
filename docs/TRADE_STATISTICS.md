@@ -127,9 +127,10 @@ Stage 1 data policy:
 |---|---|
 | `market-research` repo | Standalone daily ATH-dip research using `yfinance` and current NIFTY 50 membership. Use as reference/seed material, not an intraday replay runtime dependency. |
 | Backtest data storage | Use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready datasets. |
-| Main repo runtime access | Read from local gitignored `backtest_data/`, not GitHub on every replay run. |
+| Main repo runtime access | Read from local sibling `../ai-portfolio-backtest-data/`, not GitHub on every replay run. |
 | Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
 | Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
+| Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
 | First format | CSV metadata plus SQLite candle stores; avoid parquet-first until the dependency/tooling choice is deliberate. |
 
 ## 5. Metrics To Track From Here
