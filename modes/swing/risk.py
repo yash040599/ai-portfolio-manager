@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import datetime
 import math
 from dataclasses import dataclass
+
+from config import Config
 
 
 # ── Configurable defaults ───────────────────────────────────────
@@ -22,6 +25,48 @@ DEFAULT_MAX_TOTAL_RISK_PCT  = 5.0    # 5% total open risk
 DEFAULT_MAX_SECTOR_PCT      = 30.0   # 30% max sector exposure
 DEFAULT_MIN_RR              = 2.0    # minimum R:R
 DEFAULT_ATR_STOP_MULT       = 2.0    # stop = entry - 2 × ATR
+
+# Earnings-blackout horizon (calendar days). Swing positions are
+# held overnight, so unlike trade mode (same-day only) we want to
+# skip names announcing in the next few days too — a result-day
+# gap on a position entered the prior evening is the classic
+# overnight-risk failure mode the 10% hard stop doesn't size for.
+EARNINGS_BLACKOUT_DAYS_FORWARD = 3
+
+
+def earnings_blackout_symbols(
+    today: datetime.date | None = None,
+    cfg: type[Config] = Config,
+) -> dict[str, str]:
+    """Return `{SYMBOL: 'YYYY-MM-DD'}` for symbols announcing
+    earnings within the next `EARNINGS_BLACKOUT_DAYS_FORWARD`
+    calendar days (today + 2 by default).
+
+    The value carries the announcement date so callers can surface
+    a precise rejection reason like "earnings 2026-04-25 (T+1)".
+
+    Reads from `Config.EARNINGS_BLACKOUT_SYMBOLS_<year>` (the
+    user-maintained dict) and respects the
+    `EARNINGS_BLACKOUT_ENABLED` kill-switch — when disabled the
+    function returns an empty dict and the scanner sees no rejection.
+    Empty dict on missing-year-key is intentional (the user simply
+    hasn't populated the calendar for that year yet).
+    """
+    if not getattr(cfg, "EARNINGS_BLACKOUT_ENABLED", True):
+        return {}
+    today = today or datetime.date.today()
+    out: dict[str, str] = {}
+    for offset in range(EARNINGS_BLACKOUT_DAYS_FORWARD):
+        d = today + datetime.timedelta(days=offset)
+        d_str = d.isoformat()
+        # Year may roll over between today and the horizon — read
+        # the dict from whichever year owns the date.
+        cal = getattr(cfg, f"EARNINGS_BLACKOUT_SYMBOLS_{d.year}", {}) or {}
+        for sym in cal.get(d_str, []):
+            # Keep the earliest date per symbol if it appears twice.
+            if sym not in out:
+                out[sym] = d_str
+    return out
 
 
 @dataclass

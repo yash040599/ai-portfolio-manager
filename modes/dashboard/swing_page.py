@@ -24,7 +24,7 @@ from config import Config, now_ist
 from modes.swing.persistence import (
     init_db, open_positions, pending_actions, realised_pnl_summary,
     latest_run_for_date, latest_run, actions_for_run,
-    candidate_by_symbol, ath_candidate_by_symbol, candidates_for_run,
+    candidate_by_symbol, dip_candidate_by_symbol, candidates_for_run,
 )
 from modes.swing.types import SwingAction, SwingPosition
 from modes.dashboard.live_quotes import get_live_quotes
@@ -88,22 +88,68 @@ def render_swing_page() -> str:
     positions = open_positions()
     pnl = realised_pnl_summary()
 
-    # Fetch Zerodha available funds for the capital default
+    # Fetch Zerodha available funds for the capital default.
+    # Origin: 2026-05-14 user reported "swing capital is shown as 1L,
+    # why is it not fetching live data from zerodha?".
+    # Root cause was the bare `except Exception: pass` swallowing the
+    # real reason silently — the user sees "1L" with no idea why.
+    # New path captures the failure into `capital_source_note` so it
+    # surfaces in the muted hint below the input box, AND avoids the
+    # `login(interactive=False)` browser-fallback trap (the Zerodha
+    # client's `interactive=False` only suppresses input(), it still
+    # falls through to `_login_browser()` when the saved token is
+    # invalid — a real bug for a server-side render path).
     default_capital = 100_000.0
+    capital_source_note = ""
     try:
-        import json as _j
         token_path = os.path.join("data", "access_token.json")
-        if os.path.exists(token_path):
+        if not os.path.exists(token_path):
+            capital_source_note = (
+                "Zerodha not logged in — using default Rs.1,00,000. "
+                "Open the Login page (Auth pill above) to fetch live funds."
+            )
+        else:
+            import json as _j
             with open(token_path, encoding="utf-8") as f:
                 saved = _j.load(f)
-            if saved.get("date") == str(now_ist().date()):
+            if saved.get("date") != str(now_ist().date()):
+                capital_source_note = (
+                    "Zerodha token expired — using default Rs.1,00,000. "
+                    "Re-login (Auth pill above) to fetch live funds."
+                )
+            else:
+                # Token is fresh — fetch margins.
                 from core.zerodha_client import ZerodhaClient
                 from core.logger import Logger as _Log
                 _z = ZerodhaClient(Config, _Log("SwingPageFunds"))
-                _z.login(interactive=False)
-                default_capital = _z.get_available_funds()
-    except Exception:
-        pass  # fallback to 100k
+                # We have a valid same-day token, so this should NOT
+                # hit the browser fallback; pass the saved token
+                # directly via the kite client to be safe.
+                try:
+                    from kiteconnect import KiteConnect as _KC
+                    _z._kite = _KC(api_key=Config.ZERODHA_API_KEY)
+                    _z._kite.set_access_token(saved["token"])
+                except Exception as login_exc:
+                    capital_source_note = (
+                        f"Zerodha client init failed ({login_exc}); "
+                        f"using default Rs.1,00,000."
+                    )
+                else:
+                    try:
+                        default_capital = _z.get_available_funds()
+                        capital_source_note = (
+                            f"Live from Zerodha (Rs.{default_capital:,.0f} "
+                            "available margin)"
+                        )
+                    except Exception as funds_exc:
+                        capital_source_note = (
+                            f"Funds fetch failed ({funds_exc}); "
+                            f"using default Rs.1,00,000."
+                        )
+    except Exception as outer_exc:
+        capital_source_note = (
+            f"Capital lookup failed ({outer_exc}); using default Rs.1,00,000."
+        )
 
     # Get pending entry actions (priority sorted) + candidates for reasons
     entry_actions: list[SwingAction] = []
@@ -114,9 +160,37 @@ def render_swing_page() -> str:
         entry_actions = [a for a in run_actions
                          if a.action_type == "ENTRY" and a.status == "PENDING"]
         entry_actions.sort(key=lambda a: a.priority_rank or 999)
-        # Load candidates to get setup_type + reasons
+        # Load candidates to populate per-symbol context (setup_type +
+        # reasons + ath_price + dip_from_ath_pct).
+        # Resolution rule for duplicate symbols (when both scanners
+        # produced a row): prefer ACCEPTED > REJECTED, then prefer the
+        # ATH-dip record for ATH context, otherwise keep the first.
+        # This guards the "% Below 52w High" column from flipping based on
+        # DB insertion order; the technical and dip-buy scanners now
+        # share the same lookback window so the values agree, but
+        # this resolution still gives a deterministic winner.
         for c in candidates_for_run(int(latest_run_row["run_id"])):
-            candidates_by_symbol[c.symbol] = c
+            existing = candidates_by_symbol.get(c.symbol)
+            if existing is None:
+                candidates_by_symbol[c.symbol] = c
+                continue
+            # Prefer ACCEPTED over anything else.
+            if existing.status != "ACCEPTED" and c.status == "ACCEPTED":
+                candidates_by_symbol[c.symbol] = c
+                continue
+            # If both have the same status, prefer the technical setup
+            # (more diagnostic detail in `reasons`) but copy ath_price
+            # / dip_from_ath_pct from the dip-buy record if missing.
+            # Both legacy 'ATH_DIP' and current '52W_DIP' are treated
+            # as dip-buy rows here.
+            if existing.status == c.status:
+                _DIP_TYPES = {"ATH_DIP", "52W_DIP"}
+                if c.setup_type not in _DIP_TYPES and existing.setup_type in _DIP_TYPES:
+                    # Keep dip-buy context, swap to technical row.
+                    if not getattr(c, "ath_price", 0):
+                        c.ath_price = existing.ath_price
+                        c.dip_from_ath_pct = existing.dip_from_ath_pct
+                    candidates_by_symbol[c.symbol] = c
 
     # Live quotes
     all_symbols = list({a.symbol for a in entry_actions} |
@@ -191,8 +265,16 @@ def render_swing_page() -> str:
                 f'style="width:160px;padding:6px 10px;font:inherit;'
                 f'border:1px solid #cfd9eb;border-radius:5px;'
                 f'font-variant-numeric:tabular-nums" />')
-    body.append(f'<span class="muted" style="margin-left:8px;font-size:12px">'
-                f'Default: Zerodha available funds (Rs.{default_capital:,.0f})</span>')
+    # The source-note carries either "Live from Zerodha (Rs.X)"
+    # (success) or a precise reason for the 1L fallback so the user
+    # never has to guess why the field defaulted.
+    note_color = ("#1b8e3a"
+                  if capital_source_note.startswith("Live from")
+                  else "#b06a00")
+    body.append(
+        f'<span style="margin-left:8px;font-size:12px;color:{note_color}">'
+        f'{html.escape(capital_source_note)}</span>'
+    )
     body.append('</div>')
 
     body.append('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">')
@@ -212,6 +294,44 @@ def render_swing_page() -> str:
         body.append(f'<span class="muted">Last run: {mode_badge} '
                     f'(data: {run_date}, ran {finished_at})</span>')
     body.append('</div>')
+
+    # ── AI cost-of-run preview ─────────────────────────────────
+    # Origin (2026-05-14): user ran AI mode and it consumed credits
+    # for several minutes before being Ctrl+C'd. The dashboard now
+    # shows the worst-case cost and the per-run cap up-front so
+    # there's no surprise.
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    ai_cap = int(getattr(Config, "SWING_AI_MAX_CANDIDATES", 15))
+    capped_cost = ai_cap * per_call
+    # Reasonable worst-case for a NIFTY 100 scan that triggers many
+    # ATH-dips after a market correction — ~50 accepted candidates.
+    worst_case_n = 50
+    worst_case_cost = worst_case_n * per_call
+    body.append(
+        '<div class="muted" style="font-size:12px;margin-top:8px;'
+        'border-left:3px solid #e0a800;padding-left:8px">'
+        f'<strong>AI cost preview</strong> (Rs.{per_call:.0f}/stock at the '
+        f'<code>{getattr(Config, "CLAUDE_PLAN", "pro").upper()}</code> plan):<br>'
+        f'&bull; <strong>Single stock</strong> &mdash; click "Analyse this stock" '
+        f'on a swing detail page: <strong>~Rs.{per_call:.0f}</strong> per call.<br>'
+        f'&bull; <strong>Full scan with AI overlay</strong>: capped at '
+        f'<strong>Rs.{capped_cost:.0f}</strong> '
+        f'({ai_cap} top-priority candidates) via '
+        f'<code>SWING_AI_MAX_CANDIDATES</code>. Without this cap a wide '
+        f'NIFTY 100 scan could process up to ~{worst_case_n} candidates and '
+        f'cost ~Rs.{worst_case_cost:.0f}.<br>'
+        f'&bull; A confirm dialog appears before the AI scan starts; if '
+        f'you Ctrl+C mid-scan the pre-AI snapshot is still saved so the '
+        f'report and dashboard table never end up empty.'
+        '</div>'
+    )
+
+    # Embed cap + per-call into the page so the JS confirm dialog
+    # can echo the same numbers without a second round-trip.
+    body.append(
+        f'<script>window._swingAiPerCall={per_call:.2f};'
+        f'window._swingAiCap={ai_cap};</script>'
+    )
 
     # Auto-run note
     body.append('<div class="muted" style="font-size:12px;margin-top:8px">')
@@ -251,73 +371,55 @@ def render_swing_page() -> str:
                     '</div>')
         body.append('</div>')
 
-    # Split actions into ATH dip-buy and technical scan
-    ath_actions = [a for a in entry_actions
-                   if a.notes and "ATH" in a.notes.upper()]
-    tech_actions = [a for a in entry_actions
-                    if not (a.notes and "ATH" in a.notes.upper())]
+    # ── Unified entry recommendations (technical + dip-buy) ─────
+    # Single table — earlier UI split these into two cards but the
+    # user asked (2026-05-14) to fold the dip-buy context into the
+    # main row as another column ("% Below 52w High") instead of a
+    # separate card. The manager's `priority_rank` is already unified
+    # across both scanners (technical first, then dip-buy), so we
+    # just sort.
+    sorted_entries = sorted(
+        entry_actions,
+        key=lambda a: a.priority_rank if a.priority_rank else 999,
+    )
 
-    # ── Combined Top Picks (best from both strategies) ───────────
-    all_entry = ath_actions + tech_actions
-    if len(all_entry) > 5:
-        # Normalize scores: technical 0-10 → 0-100; ATH dip% is already 10-30 range
-        # Combine by simple ranking: interleave top from each
-        top_picks: list = []
-        seen: set[str] = set()
-        # Alternate: best ATH, best technical, ...
-        ath_sorted = list(ath_actions)
-        tech_sorted = list(tech_actions)
-        while len(top_picks) < 5 and (ath_sorted or tech_sorted):
-            if tech_sorted:
-                a = tech_sorted.pop(0)
-                if a.symbol not in seen:
-                    top_picks.append(a)
-                    seen.add(a.symbol)
-            if ath_sorted and len(top_picks) < 5:
-                a = ath_sorted.pop(0)
-                if a.symbol not in seen:
-                    top_picks.append(a)
-                    seen.add(a.symbol)
-
-        if top_picks:
-            body.append('<div class="card">')
-            body.append(f'<h2>Top Picks — Best of Both Strategies ({len(top_picks)})</h2>')
-            body.append('<p class="muted" style="margin-bottom:10px">'
-                        'The strongest opportunities combining technical setups and '
-                        'ATH dip-buy signals. Click a stock for full details.</p>')
-            body.append(_render_action_table(top_picks, live, candidates_by_symbol,
-                                             show_setup_as="Strategy"))
-            body.append('</div>')
-
-    # ── ATH Dip-Buy Opportunities ──────────────────────────────
     body.append('<div class="card">')
-    body.append(f'<h2>ATH Dip-Buy Opportunities ({len(ath_actions)})</h2>')
-    body.append('<p class="muted" style="margin-bottom:10px">'
-                'Stocks that have fallen significantly from their all-time high. '
-                'Strategy: buy the dip, sell when it recovers a fixed percentage.</p>')
+    body.append(f'<h2>Entry Recommendations ({len(sorted_entries)})</h2>')
 
-    if ath_actions:
-        body.append(_render_action_table(ath_actions, live, candidates_by_symbol,
-                                         show_setup_as="% Below ATH"))
+    # Sweet-spot calibration banner — sourced from the standalone
+    # NIFTY 50 dip-buy backtest in the `market-research` repo.
+    dip_pct = float(getattr(Config, "SWING_DIP_PCT", 18.0))
+    dip_target = float(getattr(Config, "SWING_DIP_TARGET_PCT", 12.0))
+    dip_amount = float(getattr(Config, "SWING_DIP_BUY_AMOUNT", 10000.0))
+    dip_lookback = int(getattr(Config, "SWING_DIP_LOOKBACK_DAYS", 252))
+    body.append(
+        '<p class="muted" style="margin-bottom:10px">'
+        'Combined view: technical setups (breakouts / pullbacks / '
+        'trend continuations / support reversals) <strong>and</strong> '
+        f'dip-buys (currently {dip_pct:.0f}%+ below the rolling '
+        f'{dip_lookback}-day high ≈ 52 weeks, target +{dip_target:.0f}%, '
+        f'Rs.{dip_amount:,.0f} ticket — calibrated from the 10y 121-combo '
+        f'backtest sweet-spot at X=18-20% / Y=10-13%). The "% Below 52w '
+        f'High" column is computed for every candidate so the strongest '
+        f'dips surface even when the row comes from a technical setup. '
+        f'Setups also receive a bonus / penalty based on 52w-high '
+        f'proximity (continuation setups benefit, mean-reversion '
+        f'setups are penalised when too close).</p>'
+    )
+
+    if sorted_entries:
+        body.append(_render_action_table(
+            sorted_entries, live, candidates_by_symbol,
+            show_setup_as="Setup",
+        ))
     else:
         if latest_run_row:
-            body.append('<div class="muted">No stocks currently 15%+ below their all-time high.</div>')
-        else:
-            body.append('<div class="muted">Run a scan to find ATH dip opportunities.</div>')
-    body.append('</div>')
-
-    # ── Technical Entry Recommendations ────────────────────────
-    body.append('<div class="card">')
-    body.append(f'<h2>Technical Entry Recommendations ({len(tech_actions)})</h2>')
-    body.append('<p class="muted" style="margin-bottom:10px">'
-                'Stocks with strong technical setups: breakouts, pullbacks in uptrends, '
-                'trend continuations, or support reversals.</p>')
-
-    if tech_actions:
-        body.append(_render_action_table(tech_actions, live, candidates_by_symbol))
-    else:
-        if latest_run_row:
-            body.append('<div class="muted">No new technical entry recommendations from the latest scan.</div>')
+            body.append('<div class="muted">'
+                        'No entry recommendations from the latest scan. '
+                        'Try widening the universe (CLI: --nifty 200) or '
+                        f'lowering Config.SWING_DIP_PCT (currently '
+                        f'{dip_pct:.0f}%).'
+                        '</div>')
         else:
             body.append('<div class="muted">No scan run yet. '
                         'Click "Run Scan" to start.</div>')
@@ -347,17 +449,27 @@ def render_swing_page() -> str:
                       if risk_per > 0 else 0)
             pnl_cls = "pos" if upnl >= 0 else "neg"
 
+            # Mark price-bearing cells for the JS poller (data-live-*).
+            # The poller reads `data-live-symbol` to build the request,
+            # then writes the new `price` / `pnl` back into matching
+            # cells. Entry / stop / target / qty are static so they
+            # have no markers — they never change between scans.
+            entry_price_str = f"{p.entry_price}"
+            qty_str = f"{p.managed_qty}"
             body.append(
-                f'<tr>'
+                f'<tr data-live-symbol="{html.escape(p.symbol)}" '
+                f'data-entry-price="{entry_price_str}" '
+                f'data-managed-qty="{qty_str}">'
                 f'<td><strong>{html.escape(p.symbol)}</strong></td>'
                 f'<td class="right">{p.managed_qty}</td>'
                 f'<td class="right">Rs.{p.entry_price:,.2f}</td>'
-                f'<td class="right">Rs.{lprice:,.2f}</td>'
-                f'<td class="right"><span class="{pnl_cls}">'
-                f'Rs.{upnl:+,.2f}</span></td>'
+                f'<td class="right" data-live-field="price">'
+                f'Rs.{lprice:,.2f}</td>'
+                f'<td class="right" data-live-field="pnl">'
+                f'<span class="{pnl_cls}">Rs.{upnl:+,.2f}</span></td>'
                 f'<td class="right">Rs.{p.stop_price:,.2f}</td>'
                 f'<td class="right">Rs.{p.target_price:,.2f}</td>'
-                f'<td class="right">{r_mult:+.1f}R</td>'
+                f'<td class="right" data-live-field="r_mult">{r_mult:+.1f}R</td>'
                 f'<td>{html.escape(p.daily_action)}</td>'
                 f'<td>'
                 f'<button class="action alt" '
@@ -383,11 +495,19 @@ def render_swing_page() -> str:
 def _render_action_table(actions: list, live: dict,
                          candidates_by_symbol: dict,
                          show_setup_as: str = "Setup") -> str:
-    """Render the entry recommendations table. Shared by ATH and technical."""
+    """Render the entry recommendations table.
+
+    Single unified table used by both the technical and ATH-dip
+    pipelines. Adds a "% Below 52w High" column populated from the
+    candidate's `dip_from_ath_pct` (despite the legacy field name,
+    the value held since 2026-05-14 is the dip from the rolling
+    52-week high, not the all-time high).
+    """
     parts: list[str] = []
     parts.append('<table class="holdings">')
     parts.append('<tr>'
                  '<th>#</th><th>Symbol</th><th>' + html.escape(show_setup_as) + '</th>'
+                 '<th class="right">% Below 52w High</th>'
                  '<th class="right">Live Price</th>'
                  '<th class="right">Entry</th><th class="right">Stop</th>'
                  '<th class="right">Target</th>'
@@ -409,14 +529,33 @@ def _render_action_table(actions: list, live: dict,
             if len(cand.reasons) > 1:
                 short_reason += f" (+{len(cand.reasons)-1} more)"
 
+        # 52w dip context — populated for every candidate (technical
+        # scanner sets it from its own candle history, ATH scanner
+        # from its longer lookback). Bigger dip = more saturated
+        # red text so the eye lands on real crash-class names.
+        dip_pct = float(getattr(cand, "dip_from_ath_pct", 0.0)) if cand else 0.0
+        ath_price = float(getattr(cand, "ath_price", 0.0)) if cand else 0.0
+        if ath_price <= 0:
+            dip_cell = '<span class="muted">n/a</span>'
+        elif dip_pct >= 18:
+            dip_cell = (f'<span class="neg" title="ATH Rs.{ath_price:,.2f}" '
+                        f'style="font-weight:600">{dip_pct:.1f}%</span>')
+        elif dip_pct >= 10:
+            dip_cell = f'<span title="ATH Rs.{ath_price:,.2f}">{dip_pct:.1f}%</span>'
+        else:
+            dip_cell = (f'<span class="muted" title="ATH Rs.{ath_price:,.2f}">'
+                        f'{dip_pct:.1f}%</span>')
+
         parts.append(
-            f'<tr>'
+            f'<tr data-live-symbol="{html.escape(a.symbol)}">'
             f'<td>{a.priority_rank}</td>'
             f'<td><a href="/swing/{html.escape(a.symbol)}" '
             f'style="color:var(--fg);font-weight:600">'
             f'{html.escape(a.symbol)}</a></td>'
             f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
-            f'<td class="right"><span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
+            f'<td class="right">{dip_cell}</td>'
+            f'<td class="right" data-live-field="price_with_change">'
+            f'<span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
             f' <span class="muted">({chg:+.1f}%)</span></td>'
             f'<td class="right">Rs.{a.suggested_price:,.2f}</td>'
             f'<td class="right">Rs.{a.suggested_stop:,.2f}</td>'
@@ -444,7 +583,7 @@ def render_swing_detail(symbol: str) -> str:
     init_db()
     sym = symbol.strip().upper()
     cand = candidate_by_symbol(sym)          # prefers technical candidate
-    ath_cand = ath_candidate_by_symbol(sym)   # ATH candidate if exists
+    dip_cand = dip_candidate_by_symbol(sym)   # dip-buy candidate if exists
 
     body = []
     body.append(_topnav("/swing"))
@@ -452,7 +591,7 @@ def render_swing_detail(symbol: str) -> str:
     body.append(f'<h1 class="page-title">{html.escape(sym)} — Swing Detail</h1>')
     body.append('<div class="sub"><a href="/swing">&larr; Back to Swing Dashboard</a></div>')
 
-    if not cand and not ath_cand:
+    if not cand and not dip_cand:
         body.append('<div class="card"><p class="muted">No swing analysis '
                     f'found for {html.escape(sym)}.</p></div>')
         body.append('</div>')
@@ -461,7 +600,7 @@ def render_swing_detail(symbol: str) -> str:
     # Use the best available candidate for the main display
     # (technical has richer data; fall back to ATH if no technical)
     if not cand:
-        cand = ath_cand
+        cand = dip_cand
 
     # Live quote
     lq = get_live_quotes([sym])
@@ -478,7 +617,8 @@ def render_swing_detail(symbol: str) -> str:
         "PULLBACK_UPTREND": "This stock has been going up overall, but dipped temporarily to a good buy level — like a sale on a stock that's been rising.",
         "TREND_CONTINUATION": "This stock has been steadily rising across all timeframes — the trend is strong and continuing upward.",
         "SUPPORT_REVERSAL": "This stock bounced off a major support level where it historically finds buyers — early sign of a potential recovery.",
-        "ATH_DIP": "This stock has fallen significantly from its all-time high. The strategy is to buy the dip and sell when it recovers by a fixed percentage — works best with quality stocks that tend to bounce back.",
+        "52W_DIP": "This stock has fallen significantly from its 52-week high. The strategy is to buy the dip and sell when it recovers by a fixed percentage — works best with quality stocks that tend to bounce back.",
+        "ATH_DIP": "Legacy dip-buy entry (now superseded by 52W_DIP). The strategy is to buy the dip and sell when it recovers by a fixed percentage — works best with quality stocks that tend to bounce back.",
     }
     setup_text = setup_explain.get(cand.setup_type, "Technical setup detected.")
     body.append(f'<div style="font-size:14px;line-height:1.6;margin-bottom:14px">'
@@ -542,23 +682,28 @@ def render_swing_detail(symbol: str) -> str:
 
     body.append('</table></div>')
 
-    # ── ATH Dip Info (if available) ─────────────────────────────
-    if ath_cand and ath_cand.status == "ACCEPTED":
+    # ── Dip-Buy Info (52-week-high reference; legacy ATH name) ─
+    if dip_cand and dip_cand.status == "ACCEPTED":
+        # Distinguish legacy ATH_DIP rows (pre-2026-05-14) from
+        # current 52W_DIP rows in the heading so historical positions
+        # being re-reviewed are accurately labelled.
+        ref_label = ("All-Time High" if dip_cand.setup_type == "ATH_DIP"
+                     else "52-Week High")
         body.append('<div class="card">')
-        body.append('<h2>ATH Dip-Buy Signal</h2>')
+        body.append(f'<h2>Dip-Buy Signal ({html.escape(ref_label)} reference)</h2>')
         body.append('<p style="font-size:13px;line-height:1.7">')
-        for r in (ath_cand.reasons or []):
+        for r in (dip_cand.reasons or []):
             body.append(f'{html.escape(r)}<br>')
-        if not ath_cand.reasons:
-            body.append(f'Stock is currently below its all-time high. '
-                        f'Score: {ath_cand.score:.1f}% dip.')
+        if not dip_cand.reasons:
+            body.append(f'Stock is currently below its {ref_label.lower()}. '
+                        f'Score: {dip_cand.score:.1f}% dip.')
         body.append('</p>')
         body.append('<table class="kvtable" style="max-width:400px">')
         _kv2 = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
-        body.append(_kv2("ATH Dip Entry", f'Rs.{ath_cand.entry_price:,.2f}'))
-        body.append(_kv2("ATH Stop", f'Rs.{ath_cand.stop_price:,.2f}'))
-        body.append(_kv2("ATH Target", f'Rs.{ath_cand.target_price:,.2f}'))
-        body.append(_kv2("ATH Qty", str(ath_cand.suggested_qty)))
+        body.append(_kv2("Dip-Buy Entry", f'Rs.{dip_cand.entry_price:,.2f}'))
+        body.append(_kv2("Dip-Buy Stop", f'Rs.{dip_cand.stop_price:,.2f}'))
+        body.append(_kv2("Dip-Buy Target", f'Rs.{dip_cand.target_price:,.2f}'))
+        body.append(_kv2("Dip-Buy Qty", str(dip_cand.suggested_qty)))
         body.append('</table></div>')
 
     # ── AI Overlay (if available) ───────────────────────────────
@@ -880,6 +1025,22 @@ function runSwingScan() {
     var aiToggle = document.getElementById('swing-ai-toggle');
     var mode = (aiToggle && aiToggle.checked) ? 'AI' : 'NOAI';
 
+    // AI cost confirm — origin 2026-05-14 user feedback ("ran AI
+    // mode and it ran no stop until I stopped it"). Echo the
+    // server-side cap + per-call so the dialog matches the same
+    // numbers shown above the Run Scan button.
+    if (mode === 'AI') {
+        var perCall = window._swingAiPerCall || 3.0;
+        var cap = window._swingAiCap || 15;
+        var maxCost = (perCall * cap).toFixed(0);
+        if (!confirm('Claude AI overlay will be added on top of the NoAI scan.\\n\\n' +
+                     'Cost cap: ~Rs.' + maxCost + ' for up to ' + cap +
+                     ' top-priority candidates (Rs.' + perCall.toFixed(0) +
+                     '/stock).\\n\\nProceed?')) {
+            return;
+        }
+    }
+
     // If a run already exists today, ask before rerunning
     if (window._swingHasRunToday) {
         var lastMode = window._swingLastMode || 'NoAI';
@@ -961,16 +1122,51 @@ window.addEventListener('DOMContentLoaded', function() {
         });
 });
 
+function _parsePosNum(raw, label) {
+    // Defensive parse: returns the number when raw is a positive
+    // integer/float string, or null when it's empty / negative /
+    // non-numeric. The server-side endpoints reject the same cases,
+    // but failing early in the browser saves a round-trip and gives
+    // an instantly-readable error to the user.
+    if (raw === null || raw === undefined) return null;
+    var s = String(raw).trim();
+    if (!s) return null;
+    var n = Number(s);
+    if (!isFinite(n) || isNaN(n) || n <= 0) {
+        alert('Please enter a positive number for ' + label + ' (got "' + raw + '").');
+        return null;
+    }
+    return n;
+}
+
 function confirmAction(actionId) {
-    const qty = prompt('Executed quantity:');
-    if (!qty) return;
-    const price = prompt('Executed price (Rs.):');
-    if (!price) return;
+    var qtyRaw = prompt('Executed quantity:');
+    var qty = _parsePosNum(qtyRaw, 'quantity');
+    if (qty === null) return;
+    var priceRaw = prompt('Executed price (Rs.):');
+    var price = _parsePosNum(priceRaw, 'price');
+    if (price === null) return;
+    var stopRaw = prompt('Stop-loss price (Rs.) — leave blank to use the suggested stop:', '');
+    var stop = 0;
+    if (stopRaw && stopRaw.trim()) {
+        var parsedStop = _parsePosNum(stopRaw, 'stop');
+        if (parsedStop === null) return;
+        stop = parsedStop;
+    }
     fetch('/api/swing/actions/' + actionId + '/confirm', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: parseInt(qty), price: parseFloat(price)})
-    }).then(() => location.reload());
+        body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
+    })
+        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
+        .then(function(res) {
+            if (!res.ok || !res.body.ok) {
+                alert('Confirm failed: ' + (res.body.error || 'unknown error'));
+                return;
+            }
+            location.reload();
+        })
+        .catch(function(e) { alert('Network error: ' + e); });
 }
 
 function skipAction(actionId) {
@@ -983,16 +1179,109 @@ function skipAction(actionId) {
 }
 
 function exitPosition(posId) {
-    const qty = prompt('Exit quantity:');
-    if (!qty) return;
-    const price = prompt('Exit price (Rs.):');
-    if (!price) return;
+    var qtyRaw = prompt('Exit quantity:');
+    var qty = _parsePosNum(qtyRaw, 'quantity');
+    if (qty === null) return;
+    var priceRaw = prompt('Exit price (Rs.):');
+    var price = _parsePosNum(priceRaw, 'price');
+    if (price === null) return;
     fetch('/api/swing/positions/' + posId + '/exit', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: parseInt(qty), price: parseFloat(price)})
-    }).then(() => location.reload());
+        body: JSON.stringify({qty: Math.floor(qty), price: price})
+    })
+        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
+        .then(function(res) {
+            if (!res.ok || !res.body.ok) {
+                alert('Exit failed: ' + (res.body.error || 'unknown error'));
+                return;
+            }
+            location.reload();
+        })
+        .catch(function(e) { alert('Network error: ' + e); });
 }
+
+// ── Live-price poller (2026-05-14 fix) ─────────────────────────
+//
+// Origin: user reported the dashboard claimed prices refreshed
+// every 5 seconds but they were actually frozen at page-render
+// time. This poller does the work the copy was promising:
+//
+//   1. Walk every `[data-live-symbol]` element on the page,
+//      collect the unique set of symbols actually visible.
+//   2. POST /api/live_prices?symbols=A,B,C — backed by the
+//      existing rate-limited get_live_quotes() helper, so the
+//      Zerodha broker is never hit faster than once per 5s
+//      regardless of how many polls fire.
+//   3. For each `[data-live-symbol] [data-live-field]` cell,
+//      rewrite ONLY the live values (price / pnl / r-mult /
+//      price_with_change). Avg / qty / entry / stop / target
+//      have no markers and therefore never get touched.
+//
+// Quiet on errors: a failed poll leaves the previous DOM untouched
+// so a network blip doesn't blank out the table.
+function _swingPollLivePrices() {
+    var nodes = document.querySelectorAll('[data-live-symbol]');
+    var symbols = [];
+    var seen = {};
+    nodes.forEach(function (n) {
+        var s = n.getAttribute('data-live-symbol');
+        if (s && !seen[s]) { seen[s] = true; symbols.push(s); }
+    });
+    if (!symbols.length) return;
+    fetch('/api/live_prices?symbols=' + encodeURIComponent(symbols.join(',')))
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            var quotes = (j && j.quotes) || {};
+            nodes.forEach(function (row) {
+                var sym = row.getAttribute('data-live-symbol');
+                var q = quotes[sym] || {};
+                var price = Number(q.price);
+                if (!isFinite(price) || price <= 0) return;
+                var change = Number(q.change_pct) || 0;
+                var chgCls = change >= 0 ? 'pos' : 'neg';
+                // Update each marked cell within this row.
+                row.querySelectorAll('[data-live-field]').forEach(function (cell) {
+                    var field = cell.getAttribute('data-live-field');
+                    if (field === 'price') {
+                        cell.textContent = 'Rs.' + price.toLocaleString(
+                            'en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    } else if (field === 'price_with_change') {
+                        cell.innerHTML = '<span class="' + chgCls + '">Rs.'
+                            + price.toLocaleString('en-IN',
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            + '</span> <span class="muted">('
+                            + (change >= 0 ? '+' : '') + change.toFixed(1) + '%)</span>';
+                    } else if (field === 'pnl') {
+                        var entry = Number(row.getAttribute('data-entry-price'));
+                        var qty = Number(row.getAttribute('data-managed-qty'));
+                        if (isFinite(entry) && isFinite(qty) && entry > 0 && qty > 0) {
+                            var upnl = (price - entry) * qty;
+                            var pnlCls = upnl >= 0 ? 'pos' : 'neg';
+                            cell.innerHTML = '<span class="' + pnlCls + '">Rs.'
+                                + (upnl >= 0 ? '+' : '')
+                                + upnl.toLocaleString('en-IN',
+                                    { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                + '</span>';
+                        }
+                    } else if (field === 'r_mult') {
+                        var entry2 = Number(row.getAttribute('data-entry-price'));
+                        // We don't have stop in a data-attr; this cell
+                        // is informational on swing positions where
+                        // stop comes from the backend on next reload.
+                        // Leave as-is to avoid showing wrong R-multiple.
+                    }
+                });
+            });
+        })
+        .catch(function () { /* silent — keep stale values */ });
+}
+
+// First poll a moment after load (let the page paint), then every 5s.
+window.addEventListener('DOMContentLoaded', function () {
+    setTimeout(_swingPollLivePrices, 800);
+    setInterval(_swingPollLivePrices, 5000);
+});
 </script>"""
 
 

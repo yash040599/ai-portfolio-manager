@@ -256,6 +256,7 @@ def _empty_state() -> str:
     {_ai_toggle_html()}
     <button class="action" onclick="runAnalysis('all')">Analyse all</button>
   </p>
+  {_ai_cost_card(holdings_count=0)}
   <div id="job-banner"></div>
   <p class="muted">Reads holdings live from your Zerodha demat account.
   Make sure your access token is valid (Auth pill above).</p>
@@ -305,6 +306,7 @@ def _render_actions(snap: PortfolioSnapshot) -> str:
     {_ai_toggle_html()}
     <button class="action" onclick="runAnalysis('all')">Analyse all</button>
   </p>
+  {_ai_cost_card(holdings_count=len(snap.holdings))}
   <div id="job-banner"></div>
 </div>
 {_runs_polling_script()}
@@ -626,18 +628,27 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
         cap = (s.market_cap_tier.value
                if s.market_cap_tier and s.market_cap_tier.value
                else "—") or "—"
+        # Price-bearing cells get data-live-* markers consumed by the
+        # JS poller (see `_runs_polling_script()`'s _pollLivePrices).
+        # Avg / qty / sector / cap are static between scans so they
+        # have no markers.
+        avg_buy = _v(s.avg_buy_price)
+        qty_val = int(_v(s.qty))
         rows.append(
-            f'<tr>'
+            f'<tr data-live-symbol="{html.escape(s.symbol)}" '
+            f'data-avg-buy="{avg_buy}" data-qty="{qty_val}">'
             f'<td><a href="{href}">{html.escape(s.symbol)}</a></td>'
             f'<td class="muted">{html.escape(_v_str(s.sector, ""))}</td>'
             f'<td class="muted">{html.escape(str(cap))}</td>'
-            f'<td class="right">{int(_v(s.qty))}</td>'
-            f'<td class="right">Rs.{_v(s.avg_buy_price):,.2f}</td>'
-            f'<td class="right">Rs.{_v(s.current_price):,.2f}</td>'
-            f'<td class="right">Rs.{_v(s.current_value):,.0f}</td>'
+            f'<td class="right">{qty_val}</td>'
+            f'<td class="right">Rs.{avg_buy:,.2f}</td>'
+            f'<td class="right" data-live-field="price">'
+            f'Rs.{_v(s.current_price):,.2f}</td>'
+            f'<td class="right" data-live-field="value">'
+            f'Rs.{_v(s.current_value):,.0f}</td>'
             f'<td class="right">{weight:.1f}%</td>'
-            f'<td class="right {cls}">{sign}Rs.{abs(pnl):,.0f} '
-            f'({pnl_pct:+.2f}%)</td>'
+            f'<td class="right {cls}" data-live-field="pnl">'
+            f'{sign}Rs.{abs(pnl):,.0f} ({pnl_pct:+.2f}%)</td>'
             f'<td>{html.escape(action)}</td>'
             "</tr>"
         )
@@ -960,6 +971,7 @@ def _render_drilldown_actions(sym: str) -> str:
     <button class="action alt"
       onclick="runAnalysis('all')">Re-analyse all</button>
   </p>
+  {_ai_cost_card(holdings_count=0)}
   <div id="job-banner"></div>
 </div>
 {_runs_polling_script()}
@@ -1324,17 +1336,121 @@ window.addEventListener('DOMContentLoaded', function () {
     }
   });
 });
+
+// ── Live-price poller (2026-05-14 fix) ─────────────────────────
+//
+// Origin: user reported the dashboard claimed prices refreshed
+// every 5 seconds but they were actually frozen at page-render
+// time. This poller does the work the copy was promising.
+//
+// Walks every `[data-live-symbol]` row in the holdings table,
+// posts the symbol set to /api/live_prices (rate-limited to one
+// Zerodha hit per 5s by the shared get_live_quotes() helper),
+// then rewrites only the `[data-live-field]` cells (price /
+// value / pnl). Avg / qty / sector / cap / weight have no
+// markers so they never get touched. A failed poll leaves the
+// previous DOM untouched so a network blip never blanks out the
+// table.
+function _portfolioPollLivePrices() {
+  var rows = document.querySelectorAll('tr[data-live-symbol]');
+  var symbols = [];
+  var seen = {};
+  rows.forEach(function (r) {
+    var s = r.getAttribute('data-live-symbol');
+    if (s && !seen[s]) { seen[s] = true; symbols.push(s); }
+  });
+  if (!symbols.length) return;
+  fetch('/api/live_prices?symbols=' + encodeURIComponent(symbols.join(',')))
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      var quotes = (j && j.quotes) || {};
+      rows.forEach(function (row) {
+        var sym = row.getAttribute('data-live-symbol');
+        var q = quotes[sym] || {};
+        var price = Number(q.price);
+        if (!isFinite(price) || price <= 0) return;
+        var avg = Number(row.getAttribute('data-avg-buy'));
+        var qty = Number(row.getAttribute('data-qty'));
+        var fmtRupee = function (n, frac) {
+          return 'Rs.' + Number(n).toLocaleString('en-IN', {
+            minimumFractionDigits: frac, maximumFractionDigits: frac });
+        };
+        row.querySelectorAll('[data-live-field]').forEach(function (cell) {
+          var field = cell.getAttribute('data-live-field');
+          if (field === 'price') {
+            cell.textContent = fmtRupee(price, 2);
+          } else if (field === 'value' && isFinite(qty) && qty > 0) {
+            cell.textContent = fmtRupee(price * qty, 0);
+          } else if (field === 'pnl' && isFinite(avg) && isFinite(qty)
+                     && avg > 0 && qty > 0) {
+            var pnl = (price - avg) * qty;
+            var pnlPct = (price / avg - 1) * 100;
+            var cls = pnl >= 0 ? 'pos' : 'neg';
+            // Keep the cell's existing classes but toggle pos/neg.
+            cell.classList.remove('pos', 'neg');
+            cell.classList.add(cls);
+            var sign = pnl >= 0 ? '+' : '';
+            cell.textContent = sign + fmtRupee(Math.abs(pnl), 0)
+              + ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%)';
+          }
+        });
+      });
+    })
+    .catch(function () { /* silent — keep stale values */ });
+}
+
+window.addEventListener('DOMContentLoaded', function () {
+  setTimeout(_portfolioPollLivePrices, 800);
+  setInterval(_portfolioPollLivePrices, 5000);
+});
 </script>
 """
 
 
 def _ai_toggle_html() -> str:
-    """Shared AI/NoAI toggle. Read by `runAnalysis()` JS."""
-    return ('<label class="ai-toggle" title="Toggle to add Claude qualitative overlay (~Rs.5/stock)">'
-            '<input type="checkbox" id="ai-toggle-input">'
-            '<span class="lbl">Use Claude AI overlay</span>'
-            '<span class="hint">(NoAI is the default; AI adds thesis + risks + news)</span>'
-            '</label>')
+    """Shared AI/NoAI toggle. Read by `runAnalysis()` JS.
+
+    Hint text inlines the *real* per-call cost from Config so a plan
+    upgrade (free → pro → max) is reflected without a code change.
+    """
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    return (f'<label class="ai-toggle" '
+            f'title="Toggle to add Claude qualitative overlay '
+            f'(~Rs.{per_call:.0f}/stock)">'
+            f'<input type="checkbox" id="ai-toggle-input">'
+            f'<span class="lbl">Use Claude AI overlay</span>'
+            f'<span class="hint">(NoAI is the default; AI adds '
+            f'thesis + risks + news. Cost: ~Rs.{per_call:.0f}/stock '
+            f'\u2014 a single-stock click is Rs.{per_call:.0f}, a '
+            f'full-portfolio re-analyse is holdings &times; Rs.{per_call:.0f}.)'
+            f'</span>'
+            f'</label>')
+
+
+def _ai_cost_card(holdings_count: int) -> str:
+    """Yellow-tinted info card showing the explicit AI cost map.
+
+    Origin (2026-05-14): user reported a swing AI scan ran "no stop"
+    until cancelled. We now surface the per-action cost up-front on
+    every analyse surface so the click never feels open-ended.
+    """
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    full_cost = per_call * max(holdings_count, 1)
+    plan = str(getattr(Config, "CLAUDE_PLAN", "pro")).upper()
+    return (
+        '<div class="muted" style="font-size:12px;margin-top:8px;'
+        'border-left:3px solid #e0a800;padding-left:8px">'
+        f'<strong>AI cost preview</strong> '
+        f'(plan <code>{html.escape(plan)}</code>, '
+        f'~Rs.{per_call:.0f}/Claude call):<br>'
+        f'&bull; <strong>Single stock</strong> &mdash; click "Analyse '
+        f'this stock" on the drilldown page: <strong>~Rs.{per_call:.0f}</strong>.<br>'
+        f'&bull; <strong>Full portfolio</strong> &mdash; "Analyse all" with '
+        f'{holdings_count} holdings: <strong>~Rs.{full_cost:.0f}</strong> '
+        f'(holdings &times; Rs.{per_call:.0f}). A confirm dialog with the '
+        f'exact number appears before the run starts.'
+        '</div>'
+    )
 
 
 # ── Shared shell ────────────────────────────────────────────────

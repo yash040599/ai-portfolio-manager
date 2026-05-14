@@ -65,7 +65,8 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             candidates_seen INTEGER,
             candidates_kept INTEGER,
             blocked_reason  TEXT,
-            notes           TEXT
+            notes           TEXT,
+            is_snapshot     INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS swing_candidates (
@@ -169,6 +170,19 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             ON swing_runs(run_for_date DESC);
     """)
 
+    # Migration (S29): older `data/swing.db` files were created
+    # before `swing_runs.is_snapshot` existed. SQLite has no
+    # `ADD COLUMN IF NOT EXISTS`, so we probe via PRAGMA and only
+    # ALTER when the column is missing. Default value 0 means every
+    # legacy row is treated as a "real" (non-snapshot) run, matching
+    # behaviour from before S29 shipped.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(swing_runs)")}
+    if "is_snapshot" not in cols:
+        conn.execute(
+            "ALTER TABLE swing_runs ADD COLUMN is_snapshot "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+
 
 def init_db(path: str = DB_PATH) -> None:
     """Create DB + schema. Idempotent."""
@@ -178,9 +192,18 @@ def init_db(path: str = DB_PATH) -> None:
 
 # ── Write: runs ─────────────────────────────────────────────────
 
-def save_run(result: SwingRunResult, path: str = DB_PATH) -> int:
+def save_run(result: SwingRunResult, path: str = DB_PATH,
+             is_snapshot: bool = False) -> int:
     """Persist a complete swing run: run row + candidates + actions.
-    Returns the run_id."""
+    Returns the run_id.
+
+    `is_snapshot=True` (S29) marks the row as a pre-AI checkpoint
+    written by `SwingManager.run()` BEFORE the AI overlay loop —
+    snapshots are filtered out by `latest_run()` so the dashboard
+    always shows the post-AI row when one exists. Snapshots remain
+    queryable for audit (full candidate + action lists are still
+    persisted).
+    """
     with _connect(path) as conn:
         _ensure_schema(conn)
 
@@ -188,8 +211,9 @@ def save_run(result: SwingRunResult, path: str = DB_PATH) -> int:
             INSERT INTO swing_runs (
                 started_at, finished_at, mode, universe, market_regime,
                 run_for_date, trigger_source, user_requested_ai,
-                candidates_seen, candidates_kept, blocked_reason, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                candidates_seen, candidates_kept, blocked_reason,
+                notes, is_snapshot
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             result.started_at,
             result.finished_at,
@@ -203,6 +227,7 @@ def save_run(result: SwingRunResult, path: str = DB_PATH) -> int:
             sum(1 for c in result.candidates if c.status in ("ACCEPTED", "PLANNED")),
             result.blocked_reason,
             result.notes,
+            1 if is_snapshot else 0,
         ))
         run_id = int(cur.lastrowid or 0)
 
@@ -408,20 +433,27 @@ def skip_action(action_id: int, reason: str = "",
 # ── Read: runs ──────────────────────────────────────────────────
 
 def latest_run(path: str = DB_PATH) -> dict | None:
-    """Most recent swing run regardless of date."""
+    """Most recent swing run regardless of date.
+
+    Filters out pre-AI snapshot rows (S29) so the dashboard always
+    shows the post-AI run when one exists. Snapshots are still
+    queryable explicitly via `latest_snapshot_run()` for audit.
+    """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
         row = conn.execute(
-            "SELECT * FROM swing_runs ORDER BY run_id DESC LIMIT 1"
+            """SELECT * FROM swing_runs
+               WHERE COALESCE(is_snapshot, 0) = 0
+               ORDER BY run_id DESC LIMIT 1"""
         ).fetchone()
         return dict(row) if row else None
 
 
 def latest_run_for_date(trade_date: str,
                         path: str = DB_PATH) -> dict | None:
-    """Latest run row for a given trading date."""
+    """Latest non-snapshot run row for a given trading date."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
@@ -429,6 +461,7 @@ def latest_run_for_date(trade_date: str,
         row = conn.execute(
             """SELECT * FROM swing_runs
                WHERE run_for_date = ?
+                 AND COALESCE(is_snapshot, 0) = 0
                ORDER BY run_id DESC LIMIT 1""",
             (trade_date,),
         ).fetchone()
@@ -437,7 +470,7 @@ def latest_run_for_date(trade_date: str,
 
 def latest_run_for_date_and_mode(trade_date: str, mode: str,
                                  path: str = DB_PATH) -> dict | None:
-    """Latest run row for a given date + mode (NOAI / AI)."""
+    """Latest non-snapshot run row for a given date + mode (NOAI / AI)."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
@@ -445,6 +478,7 @@ def latest_run_for_date_and_mode(trade_date: str, mode: str,
         row = conn.execute(
             """SELECT * FROM swing_runs
                WHERE run_for_date = ? AND mode = ?
+                 AND COALESCE(is_snapshot, 0) = 0
                ORDER BY run_id DESC LIMIT 1""",
             (trade_date, mode),
         ).fetchone()
@@ -486,22 +520,28 @@ def candidates_for_run(run_id: int, path: str = DB_PATH) -> list[SwingCandidate]
 
 def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
     """Most recent candidate record for a symbol (any status).
-    Prefers non-ATH_DIP candidates when multiple exist for the same run."""
+    Prefers technical (non-dip-buy) candidates when multiple exist for
+    the same run, since they carry richer indicator detail. Treats
+    both legacy 'ATH_DIP' and current '52W_DIP' as dip-buy rows.
+    """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        # First try: most recent non-ATH candidate (has richer data)
+        # First try: most recent technical (non-dip-buy) candidate.
+        # Both legacy 'ATH_DIP' and current '52W_DIP' rows are
+        # excluded so the technical candidate wins by default.
         row = conn.execute(
             """SELECT * FROM swing_candidates
-               WHERE symbol = ? AND setup_type != 'ATH_DIP'
+               WHERE symbol = ?
+                 AND setup_type NOT IN ('ATH_DIP', '52W_DIP')
                ORDER BY run_id DESC, id DESC
                LIMIT 1""",
             (symbol.upper(),),
         ).fetchone()
         if row:
             return _row_to_candidate(row)
-        # Fallback: any candidate including ATH
+        # Fallback: any candidate including dip-buy rows.
         row = conn.execute(
             """SELECT * FROM swing_candidates
                WHERE symbol = ?
@@ -512,20 +552,28 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
         return _row_to_candidate(row) if row else None
 
 
-def ath_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
-    """Most recent ATH_DIP candidate for a symbol."""
+def dip_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
+    """Most recent dip-buy candidate (legacy ATH_DIP or current 52W_DIP)."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
         row = conn.execute(
             """SELECT * FROM swing_candidates
-               WHERE symbol = ? AND setup_type = 'ATH_DIP'
+               WHERE symbol = ?
+                 AND setup_type IN ('ATH_DIP', '52W_DIP')
                ORDER BY run_id DESC, id DESC
                LIMIT 1""",
             (symbol.upper(),),
         ).fetchone()
         return _row_to_candidate(row) if row else None
+
+
+# Legacy alias — pre-2026-05-14 callers (and any external scripts /
+# copilot skills) used `ath_candidate_by_symbol`. The function now
+# returns the most recent dip-buy candidate regardless of which
+# setup_type the row was tagged with.
+ath_candidate_by_symbol = dip_candidate_by_symbol
 
 
 def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:

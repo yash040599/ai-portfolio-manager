@@ -25,7 +25,7 @@ from core.claude_client import ClaudeClient
 from core.logger import Logger
 from core.zerodha_client import ZerodhaClient
 from modes.swing.scanner import SwingScanner
-from modes.swing.ath_scanner import ATHScanner
+from modes.swing.ath_scanner import DipBuyScanner
 from modes.swing.review import review_position
 from modes.swing.persistence import (
     init_db, save_run, open_positions, realised_pnl_summary,
@@ -34,7 +34,7 @@ from modes.swing.persistence import (
 from modes.swing.report import save_report
 from modes.swing.types import (
     SwingRunResult, SwingAction, SwingCandidate, SwingPosition,
-    ACTION_ENTRY, STATUS_PENDING,
+    ACTION_ENTRY, STATUS_PENDING, DIP_SETUP_TYPES,
 )
 
 
@@ -188,13 +188,13 @@ class SwingManager:
             candle_to_date=candle_to_date,
         )
 
-        # 7b. ATH dip-buy scan
-        self.log.section("ATH DIP SCAN")
+        # 7b. Dip-buy scan (52-week-high reference; legacy ATH name)
+        self.log.section("DIP-BUY SCAN")
         open_symbols = {p.symbol for p in positions}
         # Also exclude symbols already accepted by the technical scan
         open_symbols |= {c.symbol for c in candidates if c.status == "ACCEPTED"}
 
-        ath_scanner = ATHScanner(self.cfg, self.zerodha, self.log)
+        ath_scanner = DipBuyScanner(self.cfg, self.zerodha, self.log)
         ath_candidates, ath_actions = ath_scanner.scan(
             existing_symbols=open_symbols,
             candle_to_date=candle_to_date,
@@ -202,12 +202,97 @@ class SwingManager:
         candidates.extend(ath_candidates)
         entry_actions.extend(ath_actions)
 
+        # 7b1. Sector-rotation bonus (S28).
+        # Compute today's per-sector mean relative-strength from the
+        # full candidate pool (accepted + rejected — both carry RS
+        # via compute_swing_indicators). Add +0.5 to each accepted
+        # candidate sitting in the top-3 sectors so a strong setup
+        # in a leading sector outranks an equally-strong setup in a
+        # lagging sector. Manager-level so we have access to the
+        # whole universe's RS map without per-symbol fundamentals.
+        from modes.swing.signals import (
+            compute_sector_rs, top_n_sectors_by_rs,
+            SECTOR_LEADER_BONUS, SECTOR_LEADER_TOP_N,
+        )
+        sector_rs = compute_sector_rs(candidates)
+        leader_sectors = top_n_sectors_by_rs(sector_rs)
+        if leader_sectors:
+            self.log.info(
+                f"Sector leaders today (top {SECTOR_LEADER_TOP_N} by mean RS): "
+                + ", ".join(
+                    f"{s} ({sector_rs[s]:+.1f}%)" for s in leader_sectors
+                )
+            )
+            for c in candidates:
+                if (c.status == "ACCEPTED"
+                        and (c.sector or "") in leader_sectors):
+                    c.score = round(float(c.score) + SECTOR_LEADER_BONUS, 2)
+                    c.reasons = list(c.reasons or []) + [
+                        f"Sector leader: {c.sector} "
+                        f"(mean RS {sector_rs[c.sector]:+.1f}%)"
+                    ]
+
+        # 7c. Unify priority_rank across both scanners.
+        # Each scanner ranks within its own pool; for the dashboard's
+        # single combined entry table we want one global ranking so
+        # the AI overlay budget (capped) lands on the best signal
+        # mix. Convention: technical first (rank 1..N), dip-buy after
+        # (rank N+1..M). DIP_SETUP_TYPES covers both the legacy
+        # "ATH_DIP" string and the current "52W_DIP" string.
+        # Sort uses the *post-bonus* score from §7b1 so leading-sector
+        # candidates float to the top of their setup family.
+        accepted = [c for c in candidates if c.status == "ACCEPTED"]
+        accepted.sort(key=lambda c: (
+            0 if c.setup_type not in DIP_SETUP_TYPES else 1,
+            -float(c.score),
+        ))
+        for unified_rank, c in enumerate(accepted, 1):
+            c.priority_rank = unified_rank
+        # Mirror the unified rank onto entry_actions so the
+        # dashboard table can sort by it directly.
+        rank_by_symbol = {c.symbol: c.priority_rank for c in accepted}
+        for a in entry_actions:
+            new_rank = rank_by_symbol.get(a.symbol)
+            if new_rank is not None:
+                a.priority_rank = new_rank
+
         # 8. AI overlay (only if explicitly requested)
+        # Persist BEFORE the AI overlay so a Ctrl+C / network failure
+        # mid-overlay still leaves a saved scan + report on disk
+        # (origin: 2026-05-14 user reported "ran AI mode and it ran
+        # no stop; stopped it; got no report"). Cost-cap is enforced
+        # inside `overlay_ai_on_candidates` (Config.SWING_AI_MAX_CANDIDATES).
         if self.use_ai and self.claude:
+            # Pre-AI snapshot so a partial AI run is recoverable.
+            try:
+                pre_ai_actions = review_actions + entry_actions
+                pre_ai_result = SwingRunResult(
+                    started_at=ts_start.isoformat(),
+                    mode="AI",
+                    universe=result.universe,
+                    run_for_date=trade_date,
+                    trigger_source=trigger_source,
+                    candidates=list(candidates),
+                    actions=list(pre_ai_actions),
+                    positions=list(positions),
+                    finished_at=now_ist().isoformat(),
+                    notes=(result.notes or "") + " | pre-AI snapshot",
+                )
+                save_run(pre_ai_result, is_snapshot=True)
+                self.log.info("Pre-AI snapshot persisted (cost-safe checkpoint)")
+            except Exception as exc:
+                self.log.warning(f"Pre-AI snapshot save failed: {exc}")
+
             self.log.section("AI OVERLAY")
             from modes.swing.ai_overlay import overlay_ai_on_candidates
-            candidates = overlay_ai_on_candidates(
-                candidates, self.claude, self.log)
+            try:
+                candidates = overlay_ai_on_candidates(
+                    candidates, self.claude, self.log)
+            except KeyboardInterrupt:
+                self.log.warning(
+                    "AI overlay interrupted by user — keeping pre-AI "
+                    "snapshot and continuing to write the report.")
+                # fall through; downstream save_run + save_report run
 
         # 9. Assemble result
         all_actions = review_actions + entry_actions

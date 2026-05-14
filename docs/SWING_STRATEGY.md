@@ -432,6 +432,127 @@ This setup should receive smaller default size than breakout/pullback
 because catching reversals is lower-confidence than trading an intact
 trend.
 
+### 5.5 Dip-buy (52-week-high reference)
+
+A stock has fallen meaningfully from its **rolling 52-week-high
+close** and is bought as a fixed-rupee position with a fixed-percentage
+take-profit.
+
+> Originally shipped 2026-05-14 against the **all-time** high
+> (`max(closes)` over the full lookback). Switched the same day to
+> the rolling 52-week high (`max(closes[-N:])` where N defaults to
+> `Config.SWING_DIP_LOOKBACK_DAYS = 252`). Rationale: the 52w high
+> resets every year so the trigger is responsive to the current
+> regime — a stock that's been declining for 3 years no longer sits
+> silently 60 % below an old ATH ignored by the gate. The 52w high
+> is also the canonical large-cap-investor anchor (it's the standard
+> breakout-watch level for trend followers), so using it as the
+> single reference removes a buy-side / trend-side blind spot in
+> one window.
+
+Mechanical rule (the entire strategy):
+
+1. Track the **rolling 52-week-high** of the daily close for each
+   stock — `max(closes[-N:])` where N defaults to
+   `SWING_DIP_LOOKBACK_DAYS = 252` trading bars (~52 weeks).
+   Setting N to a larger number widens the reference window
+   (`750` ≈ 3 years, `3650` ≈ 10 years for the legacy ATH behaviour).
+2. Enter Rs.`SWING_DIP_BUY_AMOUNT` (default Rs.10,000) on the first
+   close that is at least `SWING_DIP_PCT` (default 18 %) below
+   that 52w high.
+3. Exit the entire position on the first close that is at least
+   `SWING_DIP_TARGET_PCT` (default 12 %) above the buy price.
+4. After the exit, the name is immediately re-eligible for a fresh
+   buy if the rule fires again from a new (or unchanged) 52w high.
+
+Calibration. The defaults were picked from a 10-year, 121-combo X/Y
+backtest over the current NIFTY 50, run in the standalone
+[market-research](https://github.com/yash040599/market-research)
+repo. The original heatmap was computed against the **ATH** reference;
+the post-COVID 5-year slice of the same data shows the **52w-high**
+variant of the rule tracks the ATH variant within ~150 bps XIRR in
+the (X∈[16,20], Y∈[10,13]) sweet-spot — which is why the (18, 12)
+default carries over. **Every cell of the X∈[10,20] × Y∈[10,20] grid
+was profitable** on XIRR; the sweet-spot corner is X=18–20 %,
+Y=10–13 %:
+
+| | Best XIRR (ATH backtest) | NIFTY-50 reference |
+|---|---|---|
+| (X=20, Y=10) | 29.5 % | 13-14 % CAGR |
+| (X=18, Y=12) **(default)** | 25.6 % | |
+| (X=10, Y=10) (worst) | 20.0 % | |
+
+Default (18, 12) was chosen over (20, 10) because dip frequency at
+X=18 is roughly twice that at X=20 (more shots over a multi-year
+horizon) and Y=12 retains comfortable headroom over real-world
+charges + execution noise on a Rs.10,000 ticket. See `config.py`'s
+"Swing — Dip-buy parameters" block for the verbatim rationale, and
+the `swing-review.md` skill (Step 7) for the procedure that re-runs
+the backtest against the 52w-high variant before the next live
+parameter shift.
+
+Two non-obvious things this setup deliberately does *not* do:
+
+- **No fundamental filter.** The strategy buys names purely on
+  price-from-52w-high; quality is provided by the universe
+  (NIFTY 50 / 100). The reviewer (and the AI overlay when enabled)
+  is responsible for catching dip-from-corp-action false positives —
+  splits, bonuses, demergers — before confirming.
+- **No simultaneous-position cap.** Multiple dip-buy positions can
+  be open at once. The 10y ATH backtest's peak simultaneous capital
+  was ~₹4 lakh on a 48-stock universe at ₹10k a clip — that's
+  the cash buffer the user must keep available. The 52w-high variant
+  fires *less often* than the ATH variant (yearly reference resets
+  retire stale dips), so realised peak capital should be lower.
+
+Candidate signs (live):
+
+- Close ≤ rolling-52w-high × (1 − `SWING_DIP_PCT`/100).
+- Symbol not already in the open swing book.
+- Symbol not already accepted by the technical scanner this run
+  (the technical scanner runs first and gets first dibs on the
+  name; the unified `priority_rank` puts technical above dip-buy
+  in the dashboard table).
+
+Risk plan baked into the candidate:
+
+- Stop = entry × 0.90 (10 % hard floor below the dip-buy).
+- Target = entry × (1 + `SWING_DIP_TARGET_PCT` / 100).
+- Quantity = `SWING_DIP_BUY_AMOUNT` ÷ entry (integer floor, min 1).
+
+### 5.6 52-week-high proximity bonus / penalty (cross-setup modifier)
+
+Independent of the four base setups + the dip-buy strategy, every
+candidate's score is adjusted by a 52-week-high proximity component
+computed in `signals.py::score_52w_high_proximity()`:
+
+| Distance from 52w high | Bonus |
+|---|---|
+| Closing AT or ABOVE the prior 52w high (fresh-high day) | +2.0 |
+| Within 1.5 % below | +1.5 |
+| Within 3 % below | +1.0 |
+| Within 5 % below | +0.5 |
+| > 5 % below | 0.0 |
+
+Wired in `classify_setup()` as:
+
+- **Bonus** for continuation setups (`BREAKOUT`, `TREND_CONTINUATION`)
+  — a stock perched near its 52w high is exactly what these setups
+  are looking to buy. Most institutional momentum buyers add at the
+  52w break, so positions stalling within ~3% of the 52w high get
+  continuation-priced before the actual breakout candle.
+- **Penalty (same magnitude)** for mean-reversion setups
+  (`PULLBACK_UPTREND`, `SUPPORT_REVERSAL`) — a "pullback" or "reversal"
+  trigger that fires within 3 % of the 52w high is by definition not a
+  pullback, it's an extended continuation in disguise. Penalising it
+  prevents fully-extended names slipping through under the wrong
+  label.
+
+Magnitude (+0.5 to +2.0) was picked to match the existing
+volume/relative-strength bumps so adding the modifier never
+single-handedly flips a setup's verdict.
+
+
 ---
 
 ## 6. Scoring model
@@ -625,6 +746,45 @@ Run semantics:
   rerun AI. A later force-rerun control can be explicit.
 - AI can add news/catalyst context, risk warnings, thesis, and ranking
   notes, but numeric fields remain NoAI-owned.
+
+### 9.1 AI cost cap (`SWING_AI_MAX_CANDIDATES`)
+
+A NIFTY 100 swing scan after a market correction can flag dozens of
+ATH-dip candidates. Without a cap, the AI overlay would loop through
+every accepted candidate at `Config.CLAUDE_COST_PER_CALL` rupees a
+shot — comfortably north of Rs.150 per scan on the Pro plan.
+
+Origin (2026-05-14): the user ran AI swing mode once, watched it
+loop "no stop" for several minutes, Ctrl+C'd it, and got no report.
+Two structural fixes shipped together:
+
+1. `Config.SWING_AI_MAX_CANDIDATES` (default 15) caps how many
+   accepted candidates the overlay will Claude. The cap selects
+   the top-N by unified `priority_rank` (technical first, ATH-dip
+   after) so the budget always lands on the strongest signals.
+2. The manager now writes a *pre-AI snapshot* of the run
+   (candidates + actions + positions) to `data/swing.db` BEFORE
+   the AI overlay starts. A Ctrl+C / network failure mid-overlay
+   therefore still produces a saved scan + a written report — the
+   AI fields are simply blank for the candidates that didn't get
+   their turn.
+
+Worst-case live cost preview (visible on the dashboard `/swing` page
+above the **Run Scan** button):
+
+| Click | Calls | Cost (Pro plan, ~Rs.3/call) |
+|---|---|---|
+| Single-stock AI on a swing detail page | 1 | ~Rs.3 |
+| Full scan with AI overlay (capped at 15) | ≤ 15 | ~Rs.45 |
+| Full scan WITHOUT the cap (~50 accepts after a correction) | ~50 | ~Rs.150 |
+
+To widen the cap, edit `Config.SWING_AI_MAX_CANDIDATES`. To narrow
+it (e.g. on the Free Haiku plan you may want N=20 for ~Rs.20),
+same knob — no other code edit required.
+
+The dashboard JS confirm dialog echoes the same numbers from the
+server-side Config so the click and the run agree on the worst
+case before the run starts.
 
 ---
 

@@ -25,7 +25,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from config import Config
+from config import Config, now_ist
 from modes.dashboard.budget_history import average_budget
 from modes.dashboard.data_layer import (
     current_fy_window,
@@ -212,6 +212,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_data()
             elif url.path == "/api/swing/run_status":
                 self._serve_swing_run_status()
+            elif url.path == "/api/live_prices":
+                self._serve_live_prices(parse_qs(url.query))
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -354,6 +356,48 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_live_prices(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/live_prices?symbols=A,B,C — returns
+        `{symbol: {price, change_pct, as_of}}` for the requested
+        NSE symbols. Backed by `modes/dashboard/live_quotes.py`
+        which is already rate-limited (5 s minimum between Zerodha
+        polls) and falls back to cached values when the broker is
+        unreachable. Origin: 2026-05-14 user feedback "I don't see
+        the live prices being refreshed on /portfolio and /swing".
+        The shared JS poller on both pages calls this endpoint
+        every 5 s and updates only the price-bearing cells.
+        """
+        from modes.dashboard.live_quotes import get_live_quotes
+        raw = (qs.get("symbols") or [""])[0]
+        # Comma-separated; strip + de-dup; cap at 100 to keep the
+        # broker call sane on a wide /portfolio page.
+        symbols = []
+        seen: set[str] = set()
+        for s in raw.split(","):
+            sym = s.strip().upper()
+            if sym and sym not in seen:
+                seen.add(sym)
+                symbols.append(sym)
+            if len(symbols) >= 100:
+                break
+
+        quotes = get_live_quotes(symbols) if symbols else {}
+        # Ensure every requested symbol has a key, even when the
+        # broker returned nothing — the JS poller can then keep its
+        # DOM cells unchanged for missing symbols rather than
+        # erasing them.
+        out = {sym: quotes.get(sym, {}) for sym in symbols}
+        body = json.dumps({
+            "quotes": out,
+            "ts": now_ist().isoformat(),
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_swing_run(self, qs: dict[str, list[str]]) -> None:
         mode = (qs.get("mode") or ["NOAI"])[0].upper()
         if mode not in ("NOAI", "AI"):
@@ -384,13 +428,48 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         data = json.loads(raw)
+
+        # Validate inputs hard. The dashboard JS prompts string-typed
+        # values that can come back as NaN / 0 / negative if the user
+        # fat-fingers. Without this guard a confirmed entry would
+        # write `entry_price=0` or `executed_qty=0` into
+        # `swing_positions`, breaking every downstream P&L / live-MTM
+        # calc. Origin: 2026-05-14 SDE review of the confirm/exit
+        # data flow.
+        try:
+            qty = int(data.get("qty", 0))
+            price = float(data.get("price", 0))
+            stop = float(data.get("stop", 0))
+        except (TypeError, ValueError):
+            err = json.dumps({"ok": False,
+                              "error": "qty/price/stop must be numeric"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        # math.isnan-safe check: NaN comparisons are always False so
+        # `not (qty > 0)` catches NaN, 0, and negative qty in one go.
+        if not (qty > 0) or not (price > 0):
+            err = json.dumps({
+                "ok": False,
+                "error": "qty and price must be positive numbers",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
         from modes.swing.persistence import confirm_action
         result = confirm_action(
             action_id=action_id,
-            executed_qty=int(data.get("qty", 0)),
-            executed_price=float(data.get("price", 0)),
+            executed_qty=qty,
+            executed_price=price,
             source="DASHBOARD",
-            confirmed_stop=float(data.get("stop", 0)),
+            confirmed_stop=stop,
         )
         body = json.dumps({"ok": result is not None}).encode("utf-8")
         self.send_response(200)
@@ -446,6 +525,50 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        # Validate exit qty + price hard. Origin: 2026-05-14 SDE
+        # review found that the JS prompt for "Exit price (Rs.)"
+        # sent `parseFloat("")` → NaN or `parseFloat("0")` → 0
+        # straight to confirm_action(), which then wrote a CLOSED
+        # position with `exit_price=0` and a catastrophic synthetic
+        # P&L of `-entry_price * qty`. Cap qty at managed_qty so a
+        # fat-fingered "10000" on a 50-share position can't mark
+        # CLOSED with absurd P&L either.
+        try:
+            qty = int(data.get("qty", pos.managed_qty))
+            price = float(data.get("price", 0))
+        except (TypeError, ValueError):
+            err = json.dumps({"ok": False,
+                              "error": "qty/price must be numeric"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        if not (qty > 0) or not (price > 0):
+            err = json.dumps({
+                "ok": False,
+                "error": "qty and price must be positive numbers",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        if qty > pos.managed_qty:
+            err = json.dumps({
+                "ok": False,
+                "error": (f"qty {qty} exceeds managed_qty "
+                          f"{pos.managed_qty} for position {pos_id}"),
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
         # Create an exit action and immediately confirm it
         ts = _now().isoformat()
         from modes.swing.persistence import DB_PATH
@@ -456,15 +579,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     position_id, symbol, exchange, action_type, status,
                     suggested_qty, suggested_price, created_at
                 ) VALUES (?, ?, ?, 'FULL_EXIT', 'PENDING', ?, ?, ?)
-            """, (pos_id, pos.symbol, pos.exchange,
-                  int(data.get("qty", pos.managed_qty)),
-                  float(data.get("price", 0)), ts))
+            """, (pos_id, pos.symbol, pos.exchange, qty, price, ts))
             exit_action_id = int(cur.lastrowid or 0)
 
         result = confirm_action(
             action_id=exit_action_id,
-            executed_qty=int(data.get("qty", pos.managed_qty)),
-            executed_price=float(data.get("price", 0)),
+            executed_qty=qty,
+            executed_price=price,
             source="DASHBOARD",
         )
         body = json.dumps({"ok": result is not None}).encode("utf-8")

@@ -61,6 +61,18 @@ def compute_swing_indicators(daily_candles: list[dict],
     low_52w  = min(lows[-252:])  if n >= 252 else min(lows)
     high_52w = max(highs[-252:]) if n >= 252 else max(highs)
 
+    # NR7 — Narrow Range 7 (S26). True when today's daily range
+    # (high − low) is the smallest of the last 7 daily candles.
+    # Used as a volume-contraction proxy on BREAKOUT setups: a
+    # breakout fired AFTER a multi-day range contraction is the
+    # higher-EV variant (Mark Minervini's VCP logic). Simple
+    # boolean so the BREAKOUT scorer can fold it in cleanly.
+    nr7 = False
+    if n >= 7:
+        ranges7 = [highs[-i] - lows[-i] for i in range(1, 8)]
+        if ranges7 and ranges7[0] > 0:
+            nr7 = ranges7[0] == min(ranges7)
+
     # Weekly trend (simple: is the 10-week SMA rising?)
     weekly_trend_up = True
     if n >= 55:
@@ -89,6 +101,7 @@ def compute_swing_indicators(daily_candles: list[dict],
         "high_50d":       high_50d,
         "low_52w":        low_52w,
         "high_52w":       high_52w,
+        "nr7":            nr7,
         "weekly_trend_up": weekly_trend_up,
         "rel_strength":   rel_strength,
         "closes":         closes,
@@ -124,6 +137,16 @@ def score_breakout(ind: dict) -> tuple[float, list[str]]:
     elif ind["vol_ratio"] >= 1.2:
         score += 0.5
         reasons.append(f"Volume {ind['vol_ratio']:.1f}x avg (moderate)")
+
+    # NR7 contraction → expansion (S26).
+    # A breakout that fires AFTER a multi-day range contraction is
+    # the higher-EV variant — quiet base, then volume + price step
+    # out together. Only count when both conditions are present
+    # (NR7 alone is not enough; we still need today's volume to
+    # confirm the breakout).
+    if ind.get("nr7") and ind["vol_ratio"] >= 1.2:
+        score += 1.0
+        reasons.append("NR7 contraction → expansion (volume confirms)")
 
     # Above key MAs
     if c > ind["sma_50"] and c > ind["sma_200"]:
@@ -243,9 +266,21 @@ def score_trend_continuation(ind: dict) -> tuple[float, list[str]]:
 
 
 def score_support_reversal(ind: dict) -> tuple[float, list[str]]:
-    """Support reversal: bounce from SMA-200 / 52w support."""
+    """Support reversal: bounce from SMA-200 / 52w support.
+
+    Hard gate (S27, 2026-05-14): the weekly trend MUST already be
+    turning up (10-week SMA rising) before this setup admits a
+    candidate. Earlier the soft "score -= 0.5; reasons += 'lower
+    conviction'" path admitted reversals on a still-falling weekly
+    tape — the textbook "catching a falling knife". A real trend
+    turn (10-week SMA rising again) is the only valid reversal
+    trigger; without it, RSI lifting from oversold is just an
+    oscillator twitch on an active downtrend.
+    """
     if not ind.get("valid"):
         return 0.0, []
+    if not ind.get("weekly_trend_up"):
+        return 0.0, []   # hard gate
 
     score = 0.0
     reasons: list[str] = []
@@ -269,28 +304,118 @@ def score_support_reversal(ind: dict) -> tuple[float, list[str]]:
         score += 1.5
         reasons.append(f"RSI {rsi:.0f} recovering from oversold")
 
-    # Weekly trend doesn't need to be up for reversals, but check
-    if not ind["weekly_trend_up"]:
-        score -= 0.5
-        reasons.append("Weekly trend still down (lower conviction)")
+    # Weekly-trend-up confirmation reason (the gate already passed
+    # above; this surfaces it in the explanation so the user can
+    # see why the reversal is no-longer-falling-knife).
+    reasons.append("Weekly trend turned up (10-week SMA rising)")
 
     return score, reasons
 
 
+# ── 52-week-high proximity (additive scoring component) ────────
+#
+# Added 2026-05-14. Returns a (bonus, penalty, reasons) tuple that
+# the four core detectors can fold in. Continuation-friendly setups
+# (BREAKOUT, TREND_CONTINUATION) treat closeness to the 52w high as
+# a *bonus*; mean-reversion setups (PULLBACK, SUPPORT_REVERSAL) use
+# the same number as a *penalty* — a stock perched at its 52w high
+# has by definition not pulled back, and reversal setups should not
+# trigger up there.
+#
+# The user explicitly asked for 52w-high proximity to be a scored
+# input ("having 52week high data point also is good can we rate
+# that in scoring also?"). Per the financial-analyst lens this is a
+# canonical large-cap signal — most institutional momentum buyers
+# add at the 52w break, so positions stalling within ~3% of the 52w
+# high get continuation-priced before the actual breakout candle.
+
+def score_52w_high_proximity(ind: dict) -> tuple[float, list[str]]:
+    """Bonus when current close is near the 52w high.
+
+    Returns (bonus_score, reasons). The same magnitude is used as
+    a *penalty* for mean-reversion setups via the negative of the
+    return value — see classify_setup() for the wiring.
+    """
+    if not ind.get("valid"):
+        return 0.0, []
+
+    h52 = ind.get("high_52w") or 0
+    c = ind.get("current") or 0
+    if h52 <= 0 or c <= 0:
+        return 0.0, []
+
+    # `dist_pct` is positive when current is below the 52w high
+    # (the common case), zero when at the high, negative when above
+    # (a fresh 52w-high close).
+    dist_pct = (h52 - c) / h52 * 100.0
+
+    # Stronger bonus the closer we are. Ladder picked to keep the
+    # contribution comparable to the existing volume / RS bumps
+    # (~+0.5 to +2.0) so adding it doesn't dominate any single
+    # setup's score.
+    if dist_pct <= 0:
+        # Closing AT or ABOVE the prior 52w high — fresh-high day,
+        # the strongest continuation tape there is.
+        return 2.0, [f"Closed at fresh 52w high (Rs.{h52:,.2f})"]
+    if dist_pct <= 1.5:
+        return 1.5, [f"Within 1.5% of 52w high (Rs.{h52:,.2f}; -{dist_pct:.1f}%)"]
+    if dist_pct <= 3.0:
+        return 1.0, [f"Within 3% of 52w high (Rs.{h52:,.2f}; -{dist_pct:.1f}%)"]
+    if dist_pct <= 5.0:
+        return 0.5, [f"Within 5% of 52w high (Rs.{h52:,.2f}; -{dist_pct:.1f}%)"]
+    return 0.0, []
+
+
 # ── Best setup selector ────────────────────────────────────────
+
+# Setups that BENEFIT from being close to the 52w high (continuation
+# side): a stock perched near its 52w high is exactly what these
+# setups are looking to buy.
+_HIGH_PROXIMITY_BONUS_SETUPS = {"BREAKOUT", "TREND_CONTINUATION"}
+
+# Setups that should be PENALISED when too close to the 52w high
+# (mean-reversion side): a "pullback" or "reversal" trigger that
+# fires within 3% of the 52w high is by definition not a real
+# pullback, it's a continuation in disguise — ranking it here
+# would let a fully-extended name slip through under the wrong
+# label. We zero out the penalty when dist_pct > 5%.
+_HIGH_PROXIMITY_PENALTY_SETUPS = {"PULLBACK_UPTREND", "SUPPORT_REVERSAL"}
+
 
 def classify_setup(ind: dict) -> tuple[str, float, list[str]]:
     """Run all four setup detectors and return the best one.
 
     Returns (setup_type, score, reasons). If no setup qualifies
     (all scores < 2.0), returns ("NONE", 0.0, []).
+
+    52w-high proximity bonus / penalty (2026-05-14):
+      - Continuation setups (BREAKOUT, TREND_CONTINUATION) get the
+        positive bonus from `score_52w_high_proximity()`.
+      - Mean-reversion setups (PULLBACK_UPTREND, SUPPORT_REVERSAL)
+        get the same magnitude as a *penalty* — a "pullback" near
+        the 52w high is not a pullback, it's an extended continuation.
     """
-    setups = [
+    base_setups = [
         ("BREAKOUT",           *score_breakout(ind)),
         ("PULLBACK_UPTREND",   *score_pullback(ind)),
         ("TREND_CONTINUATION", *score_trend_continuation(ind)),
         ("SUPPORT_REVERSAL",   *score_support_reversal(ind)),
     ]
+
+    h52_bonus, h52_reasons = score_52w_high_proximity(ind)
+
+    setups = []
+    for name, score, reasons in base_setups:
+        if h52_bonus > 0:
+            if name in _HIGH_PROXIMITY_BONUS_SETUPS:
+                score += h52_bonus
+                reasons = list(reasons) + h52_reasons
+            elif name in _HIGH_PROXIMITY_PENALTY_SETUPS:
+                score -= h52_bonus
+                reasons = list(reasons) + [
+                    f"Penalty: too close to 52w high ({h52_reasons[0]})"
+                ]
+        setups.append((name, score, reasons))
 
     # Sort by score descending
     setups.sort(key=lambda x: x[1], reverse=True)
@@ -300,6 +425,60 @@ def classify_setup(ind: dict) -> tuple[str, float, list[str]]:
         return "NONE", 0.0, ["No qualifying swing setup"]
 
     return best_type, best_score, best_reasons
+
+
+# ── Sector rotation bonus (S28) ────────────────────────────────
+#
+# The candidate's `sector` field is captured by both scanners but
+# was previously unused in scoring. This helper is called from
+# SwingManager once per scan, AFTER both scanners produce their
+# candidate lists, to add a +0.5 bonus to accepted candidates
+# sitting in the top-ranked sectors by today's mean relative
+# strength. Manager-level so we have access to the full universe's
+# RS map without any per-symbol lookup.
+
+# Configuration — number of leading sectors to bonus, and the size
+# of the bonus. Picked to match the existing volume / RS bumps so
+# the modifier never single-handedly flips a candidate's verdict.
+SECTOR_LEADER_TOP_N        = 3
+SECTOR_LEADER_BONUS        = 0.5
+# Minimum candidates per sector before its mean RS is considered
+# meaningful — a sector with one outlier shouldn't drag the rest
+# of the book up. Picked low enough that a thin sector still gets
+# a vote.
+SECTOR_LEADER_MIN_SAMPLES  = 2
+
+
+def compute_sector_rs(candidates: list) -> dict[str, float]:
+    """Return `{SECTOR: mean_relative_strength}` from a candidate
+    list (any status). Sectors with fewer than
+    `SECTOR_LEADER_MIN_SAMPLES` candidates are excluded so a single
+    outlier can't flip the ranking.
+
+    Pure helper — no dependency on Config. Keeps SwingManager
+    free of arithmetic so a future swap to a real sector-index
+    feed (S33-style) drops in cleanly here.
+    """
+    by_sector: dict[str, list[float]] = {}
+    for c in candidates:
+        sector = getattr(c, "sector", "") or "OTHER"
+        rs = float(getattr(c, "relative_strength", 0.0))
+        if sector == "OTHER":
+            continue
+        by_sector.setdefault(sector, []).append(rs)
+    return {
+        sec: sum(rs_list) / len(rs_list)
+        for sec, rs_list in by_sector.items()
+        if len(rs_list) >= SECTOR_LEADER_MIN_SAMPLES
+    }
+
+
+def top_n_sectors_by_rs(sector_rs: dict[str, float],
+                        n: int = SECTOR_LEADER_TOP_N) -> list[str]:
+    """Return the top-N sector names by mean RS, descending."""
+    return [sec for sec, _ in sorted(sector_rs.items(),
+                                     key=lambda kv: kv[1],
+                                     reverse=True)[:n]]
 
 
 # ── ATR helper ─────────────────────────────────────────────────

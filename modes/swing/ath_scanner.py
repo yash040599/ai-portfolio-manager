@@ -1,13 +1,20 @@
 # ================================================================
 # modes/swing/ath_scanner.py
 # ================================================================
-# All-Time-High dip-buy scanner (ATH strategy).
+# Dip-buy scanner — entry rule: close X% below the rolling
+# 52-week high; exit rule: close Y% above buy price.
 #
-# Strategy: buy Rs.10,000 worth of a stock when it falls X% from
-# its all-time high. Sell when it rises Y% from buy price.
+# Originally shipped 2026-05-14 against ALL-TIME HIGH (`max(highs)`
+# over a 10-year lookback) and named ATHScanner. Switched the same
+# day to the rolling 52-week high (`max(highs[-N:])` where N defaults
+# to `Config.SWING_DIP_LOOKBACK_DAYS = 252`). The class name and
+# file name are retained for git-history continuity; `DipBuyScanner`
+# is the canonical alias.
 #
 # This runs alongside the existing technical swing scanner and
-# produces SwingCandidate records with setup_type = "ATH_DIP".
+# produces SwingCandidate records with setup_type = "52W_DIP"
+# (legacy ATH_DIP rows already in `data/swing.db` are still
+# readable but are no longer produced).
 # Tracked in the same open swing book.
 # ================================================================
 
@@ -25,16 +32,34 @@ from modes.trade.stock_scanner import (
 )
 from modes.swing.types import (
     SwingCandidate, SwingAction, ACTION_ENTRY, STATUS_PENDING,
+    SETUP_52W_DIP,
 )
-from modes.swing.risk import generate_broker_instruction
+from modes.swing.risk import generate_broker_instruction, earnings_blackout_symbols
 from modes.swing.signals import compute_swing_indicators
 
 
 # ── Default parameters ──────────────────────────────────────────
+#
+# These module-level defaults are kept ONLY as the safety net when
+# Config does not expose the corresponding knobs (e.g. an old install
+# upgraded mid-session). Live runs should always read from Config so
+# the user can tune from one place — the values below mirror the
+# Config defaults set after the 2026-05-14 backtest calibration:
+#
+#   X (dip)    = 18%   sweet-spot lower edge from the X/Y heatmap
+#   Y (target) = 12%   inside the 10-13 band that maximised XIRR
+#                      while keeping turnover (and charges) sane
+#   ticket     = Rs.10,000 per dip-buy (matches the backtest unit)
+#   lookback   = 252 trading bars ≈ 52 weeks
+#
+# Source: market-research repo, results/xirr_matrix.csv (the X/Y
+# heatmap was originally produced against ATH; the 52w-high variant
+# tracks within ~150 bps XIRR on the post-COVID slice).
 
-DEFAULT_DIP_PCT = 15.0        # Buy when stock falls 15% from ATH
-DEFAULT_TARGET_PCT = 15.0     # Sell when stock rises 15% from buy
-DEFAULT_BUY_AMOUNT = 10_000.0 # Rs.10,000 per position
+DEFAULT_DIP_PCT = 18.0          # Buy when close is X% below the 52w high
+DEFAULT_TARGET_PCT = 12.0       # Sell when close is Y% above buy
+DEFAULT_BUY_AMOUNT = 10_000.0   # Rs. per dip-buy ticket
+DEFAULT_LOOKBACK_DAYS = 252     # ~52 weeks of trading bars
 
 
 def _build_universe(scan_universe: str) -> list[str]:
@@ -44,11 +69,24 @@ def _build_universe(scan_universe: str) -> list[str]:
     return symbols
 
 
-LOOKBACK_CALENDAR_DAYS = 3650  # ~10 years for ATH computation
+# Daily-candle fetch lookback (calendar days). Kept large so the cache
+# stores enough history to satisfy any reasonable
+# Config.SWING_DIP_LOOKBACK_DAYS without a re-fetch — the scanner only
+# *uses* `Config.SWING_DIP_LOOKBACK_DAYS` worth of bars when computing
+# the reference high.
+LOOKBACK_CALENDAR_DAYS = 3650
 
 
-class ATHScanner:
-    """Scans for stocks that have dipped X% from their all-time high."""
+class DipBuyScanner:
+    """Scans for stocks currently X% below their rolling 52-week high.
+
+    Despite the previous class name (`ATHScanner`, kept as an alias
+    below for any external import), this scanner now uses
+    `Config.SWING_DIP_LOOKBACK_DAYS` (default 252 trading bars ≈ 52
+    weeks) as the lookback window for the reference high. This makes
+    the trigger responsive to the current market regime rather than
+    silently sitting on a 5-year-old all-time peak.
+    """
 
     def __init__(
         self,
@@ -64,25 +102,61 @@ class ATHScanner:
     def scan(
         self,
         *,
-        dip_pct: float = DEFAULT_DIP_PCT,
-        target_pct: float = DEFAULT_TARGET_PCT,
-        buy_amount: float = DEFAULT_BUY_AMOUNT,
+        dip_pct: float | None = None,
+        target_pct: float | None = None,
+        buy_amount: float | None = None,
+        lookback_days: int | None = None,
         existing_symbols: set[str] | None = None,
         candle_to_date: datetime.date | None = None,
     ) -> tuple[list[SwingCandidate], list[SwingAction]]:
-        """Find stocks currently X% below their all-time high.
+        """Find stocks currently X% below their rolling 52-week high.
 
         Returns (candidates, actions) — same shape as SwingScanner.scan()
         so they integrate into the same pipeline.
+
+        When dip_pct / target_pct / buy_amount / lookback_days are not
+        provided they fall through to Config
+        (SWING_DIP_PCT / SWING_DIP_TARGET_PCT / SWING_DIP_BUY_AMOUNT /
+        SWING_DIP_LOOKBACK_DAYS), so a single edit to config.py
+        retunes both the scanner and the dashboard preview.
         """
         if existing_symbols is None:
             existing_symbols = set()
 
+        # Resolve effective parameters (caller > Config > module fallback).
+        if dip_pct is None:
+            dip_pct = float(getattr(self.cfg, "SWING_DIP_PCT", DEFAULT_DIP_PCT))
+        if target_pct is None:
+            target_pct = float(getattr(self.cfg, "SWING_DIP_TARGET_PCT", DEFAULT_TARGET_PCT))
+        if buy_amount is None:
+            buy_amount = float(getattr(self.cfg, "SWING_DIP_BUY_AMOUNT", DEFAULT_BUY_AMOUNT))
+        if lookback_days is None:
+            lookback_days = int(getattr(self.cfg, "SWING_DIP_LOOKBACK_DAYS", DEFAULT_LOOKBACK_DAYS))
+        # Hard floors so a stale/zero Config can't silently degrade the rule.
+        lookback_days = max(20, lookback_days)
+
         universe = _build_universe(
             getattr(self.cfg, "SCAN_UNIVERSE", "NIFTY100"))
 
-        self.log.info(f"ATH scan: {len(universe)} symbols, "
-                      f"dip={dip_pct}%, target={target_pct}%")
+        self.log.info(
+            f"Dip scan: {len(universe)} symbols, "
+            f"dip={dip_pct}%, target={target_pct}%, "
+            f"reference={lookback_days}d high"
+        )
+
+        # Earnings-blackout symbols (S25). Same lookup the technical
+        # scanner uses; reused so a name announcing tomorrow can't be
+        # entered as a "dip-buy" today either. The 10% hard stop on
+        # dip-buys is a flat percentage, not ATR-aware, so a result-
+        # day gap on a freshly-bought dip is the textbook way to lose
+        # twice the planned risk overnight.
+        scan_date = candle_to_date or now_ist().date()
+        blackout = earnings_blackout_symbols(today=scan_date, cfg=self.cfg)
+        if blackout:
+            self.log.info(
+                f"Dip-scan earnings blackout: {len(blackout)} symbol(s) "
+                f"in next 3 days"
+            )
 
         candidates: list[SwingCandidate] = []
         accepted: list[SwingCandidate] = []
@@ -94,32 +168,57 @@ class ATHScanner:
                 if len(candles) < 50:
                     continue
 
+                # Earnings blackout — pre-computation skip.
+                if symbol in blackout:
+                    candidates.append(SwingCandidate(
+                        symbol=symbol,
+                        setup_type=SETUP_52W_DIP,
+                        score=0,
+                        status="REJECTED",
+                        rejected_reason=f"Earnings on {blackout[symbol]} (T+0..2)",
+                        close_price=candles[-1].get("close", 0) or 0,
+                        sector=SECTOR_MAP.get(symbol, "OTHER"),
+                    ))
+                    continue
+
                 closes = [c["close"] for c in candles]
                 highs = [c["high"] for c in candles]
                 current = closes[-1]
 
-                # All-time high from the full history
-                ath = max(highs)
-                if ath <= 0:
+                # Reference high = rolling max-CLOSE over the last
+                # `lookback_days` trading bars. Was previously
+                # `max(highs)` (full-history all-time high) before the
+                # 2026-05-14 switch to a 52-week-high reference.
+                # Note we use `closes` (not intraday `highs`) because:
+                #   * the strategy fires on close-based dip-buys, so
+                #     comparing close-vs-close removes the intraday-spike
+                #     bias that an `high` reference would introduce, and
+                #   * the standalone backtest in `market-research/`
+                #     used `max(closes)` for the same reason.
+                ref_window = closes[-lookback_days:] if len(closes) >= lookback_days else closes
+                ref_high = max(ref_window) if ref_window else 0.0
+                if ref_high <= 0:
                     continue
 
-                # How far below ATH?
-                dip_from_ath = ((ath - current) / ath) * 100
+                # How far below the rolling 52w high?
+                dip_from_ref = ((ref_high - current) / ref_high) * 100
 
                 sector = SECTOR_MAP.get(symbol, "OTHER")
 
                 # Not enough dip — skip
-                if dip_from_ath < dip_pct:
+                if dip_from_ref < dip_pct:
                     candidates.append(SwingCandidate(
                         symbol=symbol,
-                        setup_type="ATH_DIP",
+                        setup_type=SETUP_52W_DIP,
                         score=0,
                         status="REJECTED",
                         rejected_reason=(
-                            f"Only {dip_from_ath:.1f}% below ATH "
+                            f"Only {dip_from_ref:.1f}% below 52w high "
                             f"(need {dip_pct:.0f}%+)"),
                         close_price=current,
                         sector=sector,
+                        ath_price=round(ref_high, 2),  # legacy field name; holds 52w high
+                        dip_from_ath_pct=round(dip_from_ref, 2),
                     ))
                     continue
 
@@ -127,12 +226,14 @@ class ATHScanner:
                 if symbol in existing_symbols:
                     candidates.append(SwingCandidate(
                         symbol=symbol,
-                        setup_type="ATH_DIP",
-                        score=round(dip_from_ath, 1),
+                        setup_type=SETUP_52W_DIP,
+                        score=round(dip_from_ref, 1),
                         status="REJECTED",
                         rejected_reason="Already in open swing book",
                         close_price=current,
                         sector=sector,
+                        ath_price=round(ref_high, 2),
+                        dip_from_ath_pct=round(dip_from_ref, 2),
                     ))
                     continue
 
@@ -147,9 +248,11 @@ class ATHScanner:
                       if risk_per_share > 0 else 0)
 
                 reasons = [
-                    f"Stock is {dip_from_ath:.1f}% below its all-time high of Rs.{ath:,.2f}",
-                    f"ATH dip-buy strategy: buy when {dip_pct:.0f}%+ below ATH",
-                    f"Target: sell when price rises {target_pct:.0f}% from buy price",
+                    f"Stock is {dip_from_ref:.1f}% below its 52-week high of Rs.{ref_high:,.2f}",
+                    f"Dip-buy strategy: buy when {dip_pct:.0f}%+ below 52w high "
+                    f"(backtest sweet spot: 18-20% dip)",
+                    f"Target: sell when price rises {target_pct:.0f}% from buy "
+                    f"(backtest sweet spot: 10-13% gain)",
                     f"Buy Rs.{buy_amount:,.0f} worth = {qty} shares at Rs.{current:,.2f}",
                 ]
 
@@ -167,8 +270,8 @@ class ATHScanner:
                 c = SwingCandidate(
                     symbol=symbol,
                     exchange="NSE",
-                    setup_type="ATH_DIP",
-                    score=round(dip_from_ath, 1),  # higher dip = higher score
+                    setup_type=SETUP_52W_DIP,
+                    score=round(dip_from_ref, 1),  # higher dip = higher score
                     close_price=current,
                     entry_price=entry_price,
                     stop_price=stop_price,
@@ -187,9 +290,11 @@ class ATHScanner:
                     volume_ratio=_vol_ratio,
                     high_20d=ind.get("high_20d", 0) if ind.get("valid") else 0,
                     high_50d=ind.get("high_50d", 0) if ind.get("valid") else 0,
-                    high_52w=max(highs[-252:]) if len(highs) >= 252 else ath,
+                    high_52w=ref_high,
                     low_52w=min([c["low"] for c in candles[-252:]]) if len(candles) >= 252 else min([c["low"] for c in candles]),
                     weekly_trend_up=_weekly_up,
+                    ath_price=round(ref_high, 2),
+                    dip_from_ath_pct=round(dip_from_ref, 2),
                     reasons=reasons,
                     status="ACCEPTED",
                     broker_instruction_json=json.dumps(
@@ -204,10 +309,10 @@ class ATHScanner:
                 accepted.append(c)
 
             except Exception as exc:
-                self.log.warning(f"ATH scan {symbol}: {exc}")
+                self.log.warning(f"Dip scan {symbol}: {exc}")
                 continue
 
-        # Priority: sort by biggest dip from ATH
+        # Priority: sort by biggest dip from 52w high
         accepted.sort(key=lambda c: c.score, reverse=True)
         for rank, c in enumerate(accepted, 1):
             c.priority_rank = rank
@@ -230,18 +335,23 @@ class ATHScanner:
                 live_price=c.close_price,
                 broker_instruction_json=c.broker_instruction_json,
                 created_at=ts,
-                notes=f"ATH dip: {c.score:.1f}% below ATH",
+                notes=f"52w dip: {c.score:.1f}% below 52w high",
             ))
 
-        self.log.info(f"ATH scan complete: {len(candidates)} seen, "
-                      f"{len(accepted)} at {dip_pct}%+ below ATH")
+        self.log.info(
+            f"Dip scan complete: {len(candidates)} seen, "
+            f"{len(accepted)} at {dip_pct}%+ below 52w high"
+        )
 
         return candidates, actions
 
     def _fetch_daily_candles(self, symbol: str, exchange: str,
                              to_date: datetime.date | None = None,
                              ) -> list[dict]:
-        """Fetch daily candles — long lookback for ATH computation."""
+        """Fetch daily candles — long lookback so the cache stores
+        enough history for any reasonable
+        `Config.SWING_DIP_LOOKBACK_DAYS` without re-fetching.
+        """
         end_date = to_date or now_ist().date()
         from_date = end_date - datetime.timedelta(days=LOOKBACK_CALENDAR_DAYS)
 
@@ -260,5 +370,13 @@ class ATHScanner:
                 self._cache.store_candles(symbol, exchange, "day", candles)
             return candles or cached
         except Exception as exc:
-            self.log.warning(f"ATH fetch {symbol}: {exc}")
+            self.log.warning(f"Dip fetch {symbol}: {exc}")
             return cached
+
+
+# ── Legacy alias ────────────────────────────────────────────────
+# `ATHScanner` was the pre-2026-05-14 class name. Kept as an alias
+# so external imports (other scripts, copilot skills, the user's own
+# scratch code) continue to work after the rename to `DipBuyScanner`.
+# Both names point at the same class — there is no "ATH mode" left.
+ATHScanner = DipBuyScanner

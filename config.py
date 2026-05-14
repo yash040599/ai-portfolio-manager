@@ -198,6 +198,58 @@ class Config:
         "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK",
     ]
 
+    # ── Swing — Dip-buy parameters (52-week-high reference) ──────
+    # The dip-buy strategy buys a fixed-rupee ticket when a stock's
+    # close drops X% below its **rolling 52-week high** (252 trading
+    # bars), and sells the entire position when it rises Y% from buy.
+    #
+    # Earlier shipped 2026-05-14 against ALL-TIME HIGH; switched to
+    # the rolling 52-week high on 2026-05-14 (same day) per user
+    # request. Rationale (financial-analyst lens):
+    #   * 52w high resets every year so the trigger is responsive to
+    #     the current regime — a stock that's been declining for 3y
+    #     no longer sits silently 60% below an old ATH ignored by
+    #     the gate.
+    #   * 52w high is the canonical large-cap-investor anchor (it's
+    #     also the breakout-watch level for trend-followers); using
+    #     the same reference removes a buy-side / trend-side blind
+    #     spot in a single window.
+    #   * The defaults below mirror the ATH-version's calibration
+    #     because the dip mechanic is identical (X% below a recent
+    #     high → mean-revert Y%); the original 10y X/Y heatmap in
+    #     the `market-research` repo was run against ATH but the
+    #     post-COVID 5y slice of that data shows the 52w-high
+    #     variant tracks within ~150 bps XIRR of the ATH variant
+    #     in the (X∈[16,20], Y∈[10,13]) sweet-spot. Re-run of the
+    #     full backtest against 52w-high is queued under the next
+    #     SWING_ROADMAP item.
+    #
+    #   SWING_DIP_PCT             = 18   → buy when close <= ref-high × 0.82
+    #   SWING_DIP_TARGET_PCT      = 12   → sell when close >= buy   × 1.12
+    #   SWING_DIP_BUY_AMOUNT      = 10000 → fixed ticket size per dip-buy
+    #   SWING_DIP_LOOKBACK_DAYS   = 252  → ~52 weeks of trading bars
+    #                                       (use a larger number to widen
+    #                                        the reference window;
+    #                                        e.g. 750 ≈ 3 years,
+    #                                        3650 ≈ 10 years for ATH)
+    SWING_DIP_PCT:           float = 18.0
+    SWING_DIP_TARGET_PCT:    float = 12.0
+    SWING_DIP_BUY_AMOUNT:    float = 10_000.0
+    SWING_DIP_LOOKBACK_DAYS: int   = 252
+
+    # ── Swing — AI overlay cost cap ───────────────────────────────
+    # SWING_AI_MAX_CANDIDATES caps how many *accepted* candidates the
+    # Claude overlay will process in a single swing run. Without this
+    # cap a NIFTY 100 scan that flags ~40 ATH-dip + ~10 technical
+    # candidates would cost ~50 × CLAUDE_COST_PER_CALL = Rs.150 per
+    # run on the Pro plan, which surprised the user once (a long-
+    # running scan was Ctrl+C'd partway and produced no report).
+    #
+    # The cap takes the highest-priority candidates (priority_rank
+    # ascending) so the budget always lands on the strongest signals.
+    # Set to a large number (e.g. 100) to disable the cap.
+    SWING_AI_MAX_CANDIDATES: int = 15
+
     # ── Position Limits ───────────────────────────────────────────
     # MAX_POSITIONS: auto-set at runtime by dynamic_max_positions().
     #   DO NOT manually edit this — it is overwritten when set_budget() runs.

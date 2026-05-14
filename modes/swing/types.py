@@ -24,13 +24,25 @@ SETUP_BREAKOUT            = "BREAKOUT"
 SETUP_PULLBACK_UPTREND    = "PULLBACK_UPTREND"
 SETUP_TREND_CONTINUATION  = "TREND_CONTINUATION"
 SETUP_SUPPORT_REVERSAL    = "SUPPORT_REVERSAL"
-SETUP_ATH_DIP             = "ATH_DIP"
+SETUP_NEAR_52W_HIGH       = "NEAR_52W_HIGH"
+# Dip-buy strategy (rolling 52-week-high reference). The legacy
+# SETUP_ATH_DIP token is retained ONLY so existing rows in
+# `data/swing.db` (entered before the 2026-05-14 ATH→52w switch)
+# load without migration. New candidates are tagged SETUP_52W_DIP.
+SETUP_52W_DIP             = "52W_DIP"
+SETUP_ATH_DIP             = "ATH_DIP"   # legacy alias — DO NOT use for new candidates
+
+# Persistence helpers consume this set when they need to "find any
+# dip-buy candidate" (legacy or current).
+DIP_SETUP_TYPES = {SETUP_52W_DIP, SETUP_ATH_DIP}
 
 VALID_SETUPS = {
     SETUP_BREAKOUT,
     SETUP_PULLBACK_UPTREND,
     SETUP_TREND_CONTINUATION,
     SETUP_SUPPORT_REVERSAL,
+    SETUP_NEAR_52W_HIGH,
+    SETUP_52W_DIP,
     SETUP_ATH_DIP,
 }
 
@@ -111,6 +123,17 @@ class SwingCandidate:
     low_52w: float = 0.0
     high_52w: float = 0.0
     weekly_trend_up: bool = False
+
+    # All-time / reference high (running max of close prices over
+    # the full available history) and the current close's drawdown
+    # from it. Despite the legacy "ath_*" field names (kept so old
+    # `data/swing.db` rows load without migration), the value
+    # populated by both scanners since 2026-05-14 is the
+    # *rolling 52-week high* (`Config.SWING_DIP_LOOKBACK_DAYS`
+    # trading bars, default 252). The displayed column on the
+    # dashboard reads "% Below 52w High".
+    ath_price: float = 0.0          # rolling 52w-high reference (legacy field name)
+    dip_from_ath_pct: float = 0.0   # 0 = at 52w high; +25 = 25% below 52w high
 
     # Signal reasons (human-readable)
     reasons: list[str] = field(default_factory=list)
