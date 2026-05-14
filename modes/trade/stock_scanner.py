@@ -38,96 +38,25 @@ from core.claude_client import ClaudeClient
 # ================================================================
 # NIFTY INDEX CONSTITUENTS
 # ================================================================
-# These lists are used when SCAN_UNIVERSE is set to NIFTY50/100/150/200.
-# Update periodically — NSE rebalances indices every 6 months.
-# Last updated: April 2026.
+# Sourced from `shared/nifty_universe.py` since 2026-05-14 (S54).
+# This module re-exports the four tier constants for back-compat
+# with callers that historically imported them from
+# `modes.trade.stock_scanner`. **Do not edit the lists here** —
+# update the canonical source in `shared/nifty_universe.py` and
+# every importer (trade scanner, swing scanner, dip-buy scanner,
+# backtest, dashboard, compare) will pick up the new constituents
+# automatically.
 #
-# Layout is incremental — each tier adds exactly 50 more symbols
-# on top of the previous tier:
-#   NIFTY50  = NIFTY50
-#   NIFTY100 = NIFTY50 + NIFTY100_EXTRA   (next 50 large caps)
-#   NIFTY150 = NIFTY100 + NIFTY150_EXTRA  (next 50 mid caps)
-#   NIFTY200 = NIFTY150 + NIFTY200_EXTRA  (next 50 mid caps)
+# The four-tier layout is incremental — each tier adds exactly 50
+# more symbols on top of the previous tier, so SCAN_UNIVERSE
+# settings of NIFTY50/100/150/200 map to a contiguous prefix of
+# the same canonical list.
 # ================================================================
 
-NIFTY50 = [
-    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",
-    "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BEL", "BHARTIARTL",
-    "CIPLA", "COALINDIA", "DRREDDY", "EICHERMOT", "ETERNAL",
-    "GRASIM", "HCLTECH", "HDFCBANK", "HDFCLIFE", "HINDALCO",
-    "HINDUNILVR", "ICICIBANK", "INDIGO", "INFY", "ITC",
-    "JIOFIN", "JSWSTEEL", "KOTAKBANK", "LT", "M&M",
-    "MARUTI", "MAXHEALTH", "NESTLEIND", "NTPC", "ONGC",
-    "POWERGRID", "RELIANCE", "SBILIFE", "SBIN", "SHRIRAMFIN",
-    "SUNPHARMA", "TATACONSUM", "TATASTEEL", "TCS", "TECHM",
-    "TITAN", "TMPV", "TRENT", "ULTRACEMCO", "WIPRO",
-]
+from shared.nifty_universe import (
+    NIFTY50, NIFTY100_EXTRA, NIFTY150_EXTRA, NIFTY200_EXTRA,
+)
 
-# Nifty 100 = Nifty 50 + Next 50 large caps (50 symbols)
-NIFTY100_EXTRA = [
-    "ABB", "ADANIENSOL", "ADANIGREEN", "ADANIPOWER", "AMBUJACEM",
-    "BAJAJHLDNG", "BANKBARODA", "BOSCHLTD", "BPCL", "BRITANNIA",
-    "CANBK", "CGPOWER", "CHOLAFIN", "CUMMINSIND", "DLF",
-    "DIVISLAB", "DMART", "ENRIN", "GAIL", "GODREJCP",
-    "HAL", "HDFCAMC", "HINDZINC", "HYUNDAI", "INDHOTEL",
-    "IOC", "IRFC", "JINDALSTEL", "LODHA", "LTM",
-    "MAZDOCK", "MOTHERSON", "MUTHOOTFIN", "PFC", "PIDILITIND",
-    "PNB", "RECLTD", "SHREECEM", "SIEMENS", "SOLARINDS",
-    "TATACAP", "TATAPOWER", "TMCV", "TORNTPHARM", "TVSMOTOR",
-    "UNIONBANK", "UNITDSPR", "VBL", "VEDL", "ZYDUSLIFE",
-    # ----------------------------------------------------------------
-    # HEADS-UP — VEDL demerger (record date 2026-05-01, ex-date
-    # 2026-04-30). Vedanta board approved a 1:1 split into 4 newly
-    # carved-out listed entities (Vedanta Aluminium Metal, Talwandi
-    # Sabo Power, Malco Energy, Vedanta Iron and Steel) plus the
-    # residual VEDL. Listings of the new tickers are expected to
-    # roll out from early-to-mid-May 2026 (NSE/BSE circular pending).
-    #
-    # Action items when demerger goes live:
-    #   1. On the ex-date, expect a large overnight price gap on VEDL
-    #      (the carve-out value drops out). The scanner's GAP_DOWN_*
-    #      detection will fire — DO NOT treat that gap as a tradable
-    #      signal; it's a corporate-action artifact, not flow.
-    #   2. Once the new tickers list, decide whether each one belongs
-    #      in NIFTY100_EXTRA (NSE will rejig NIFTY 100 constituents
-    #      at the next semi-annual reshuffle; until then the new
-    #      symbols are NOT in NIFTY 100). Default: leave them OUT
-    #      until the official NSE reconstitution circular.
-    #   3. Verify VEDL stays in NIFTY 100 post-demerger (likely yes,
-    #      free-float just shrinks). If NSE replaces it, drop it
-    #      from this list and add the replacement.
-    # Tracking: see daily-review note for 2026-04-29.
-    # ----------------------------------------------------------------
-]
-
-# Nifty 150 = Nifty 100 + Next 50 mid caps (50 symbols)
-# These are the top mid-cap names beyond the Nifty 100.
-NIFTY150_EXTRA = [
-    "ABCAPITAL", "ACC", "ALKEM", "APLAPOLLO", "ASHOKLEY",
-    "ASTRAL", "AUBANK", "AUROPHARMA", "BALKRISIND", "BANDHANBNK",
-    "BANKINDIA", "BATAINDIA", "BDL", "BHARATFORG", "BHEL",
-    "BIOCON", "BSE", "CAMS", "COFORGE", "COLPAL",
-    "CONCOR", "COROMANDEL", "CRISIL", "DABUR", "DALBHARAT",
-    "DELHIVERY", "DIXON", "ESCORTS", "EXIDEIND", "FEDERALBNK",
-    "FORTIS", "GLENMARK", "GMRAIRPORT", "GODREJPROP", "HINDPETRO",
-    "IDEA", "IDFCFIRSTB", "IGL", "INDIANB", "INDUSTOWER",
-    "IPCALAB", "IRCTC", "KPITTECH", "LICHSGFIN", "LUPIN",
-    "MANKIND", "MARICO", "MFSL", "MPHASIS", "MRF",
-]
-
-# Nifty 200 = Nifty 150 + Next 50 mid caps (50 symbols)
-NIFTY200_EXTRA = [
-    "NAUKRI", "NHPC", "NMDC", "NYKAA", "OBEROIRLTY",
-    "OFSS", "OIL", "PAGEIND", "PATANJALI", "PAYTM",
-    "PERSISTENT", "PETRONET", "PHOENIXLTD", "PIIND", "POLICYBZR",
-    "POLYCAB", "POONAWALLA", "PRESTIGE", "RAMCOCEM", "RVNL",
-    "SAIL", "SBICARD", "SCHAEFFLER", "SJVN", "SONACOMS",
-    "SRF", "SUNDARMFIN", "SUNTV", "SUPREMEIND", "SUZLON",
-    "SYNGENE", "TATACHEM", "TATACOMM", "TATAELXSI", "TATATECH",
-    "TIINDIA", "TORNTPOWER", "TRIDENT", "UBL", "UPL",
-    "VOLTAS", "WHIRLPOOL", "YESBANK", "ZEEL", "ABFRL",
-    "APOLLOTYRE", "BERGEPAINT", "CYIENT", "JKCEMENT", "JUBLFOOD",
-]
 
 
 # ================================================================
