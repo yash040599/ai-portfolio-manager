@@ -581,6 +581,15 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
          both exist for the same name.
       3. Any candidate including dip-buy rows.
 
+    AI overlay carry-forward (S48, 2026-05-14): if the picked
+    candidate's `ai_overlay_json` is empty (e.g. a fresh SEARCH_BOX
+    run that didn't request AI but the symbol has a successful
+    overlay from yesterday's full-scan AI run), graft the cached
+    overlay onto the returned candidate. Without this graft the
+    detail page silently dropped the AI section every time the
+    user re-searched a symbol. The actual stored row is unchanged
+    — this is a read-time enrichment.
+
     Treats both legacy `ATH_DIP` and current `52W_DIP` as dip-buy
     rows.
     """
@@ -588,6 +597,7 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
+        cand: SwingCandidate | None = None
         # Pass 1: any ACCEPTED row, newest first. Catches the live
         # dip-buy candidate so the detail page shows real numbers.
         row = conn.execute(
@@ -598,27 +608,46 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
             (symbol.upper(),),
         ).fetchone()
         if row:
-            return _row_to_candidate(row)
-        # Pass 2: most recent technical (non-dip-buy) candidate.
-        row = conn.execute(
-            """SELECT * FROM swing_candidates
-               WHERE symbol = ?
-                 AND setup_type NOT IN ('ATH_DIP', '52W_DIP')
-               ORDER BY run_id DESC, id DESC
-               LIMIT 1""",
-            (symbol.upper(),),
-        ).fetchone()
-        if row:
-            return _row_to_candidate(row)
-        # Pass 3: anything else (dip-buy rows, etc.).
-        row = conn.execute(
-            """SELECT * FROM swing_candidates
-               WHERE symbol = ?
-               ORDER BY run_id DESC, id DESC
-               LIMIT 1""",
-            (symbol.upper(),),
-        ).fetchone()
-        return _row_to_candidate(row) if row else None
+            cand = _row_to_candidate(row)
+        if cand is None:
+            # Pass 2: most recent technical (non-dip-buy) candidate.
+            row = conn.execute(
+                """SELECT * FROM swing_candidates
+                   WHERE symbol = ?
+                     AND setup_type NOT IN ('ATH_DIP', '52W_DIP')
+                   ORDER BY run_id DESC, id DESC
+                   LIMIT 1""",
+                (symbol.upper(),),
+            ).fetchone()
+            if row:
+                cand = _row_to_candidate(row)
+        if cand is None:
+            # Pass 3: anything else (dip-buy rows, etc.).
+            row = conn.execute(
+                """SELECT * FROM swing_candidates
+                   WHERE symbol = ?
+                   ORDER BY run_id DESC, id DESC
+                   LIMIT 1""",
+                (symbol.upper(),),
+            ).fetchone()
+            cand = _row_to_candidate(row) if row else None
+        if cand is None:
+            return None
+        # AI overlay carry-forward (S48). Reads the most recent good
+        # overlay from any prior run when the picked candidate's
+        # `ai_overlay_json` is empty. `latest_ai_overlay_for_symbol`
+        # already filters out error-only payloads (S43 fix), so we
+        # never carry forward a stale `{"error":"..."}`.
+        if not (cand.ai_overlay_json or "").strip():
+            try:
+                # Inline the lookup so we don't have to forward-declare;
+                # it shares the same connection-open helper.
+                cached = latest_ai_overlay_for_symbol(symbol, path=path)
+                if cached:
+                    cand.ai_overlay_json = cached[0]
+            except Exception:
+                pass
+        return cand
 
 
 def dip_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:

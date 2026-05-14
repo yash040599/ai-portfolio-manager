@@ -952,6 +952,32 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 record_external_error("claude", exc, log=log)
                 ai_overlay_payload = {"error": str(exc)[:200]}
 
+        # AI overlay carry-forward (S48, 2026-05-14): when the user
+        # didn't request AI for THIS analyse, copy any cached good
+        # overlay from a prior run onto the freshly-saved candidate
+        # row so the detail page surfaces the existing analysis. The
+        # pre-S48 search-box flow created a fresh candidate row with
+        # `ai_overlay_json=""` for every search; the detail page's
+        # `candidate_by_symbol()` then picked the new row (newest
+        # ACCEPTED) and showed "no AI" even though the symbol had a
+        # 2161-byte overlay from yesterday's full-scan AI run. Same
+        # carry-forward logic that `SwingManager.run()` uses for the
+        # universe scan path.
+        if ai_overlay_payload is None and cand.status == "ACCEPTED":
+            try:
+                from modes.swing.persistence import (
+                    latest_ai_overlay_for_symbol,
+                )
+                cached = latest_ai_overlay_for_symbol(cand.symbol)
+                if cached:
+                    cand.ai_overlay_json = cached[0]
+                    log.info(
+                        f"AI overlay carry-forward: {cand.symbol} "
+                        f"inherits cached overlay from {cached[1][:16]}"
+                    )
+            except Exception as exc:
+                log.warning(f"AI carry-forward failed: {exc}")
+
         # Persist as a one-stock run so Done/Skip work and the
         # detail page picks up the candidate via candidate_by_symbol().
         ts = now_ist().isoformat()
