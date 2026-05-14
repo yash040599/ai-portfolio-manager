@@ -206,16 +206,22 @@ def render_swing_page() -> str:
                 continue
             # If both have the same status, prefer the technical setup
             # (more diagnostic detail in `reasons`) but copy ath_price
-            # / dip_from_ath_pct from the dip-buy record if missing.
+            # / dip_from_ath_pct from the dip-buy record. Always copy
+            # (S42 hardening, 2026-05-14): the prior `if not getattr(c,
+            # "ath_price", 0)` guard meant the technical row's
+            # ath_price (computed from a different lookback) silently
+            # won, which surfaced as a wrong "% Below 52w High" cell
+            # for any symbol with both row types in the same run.
+            # The dip-buy scanner's reference is the canonical one
+            # because it was the value used to qualify the dip rule.
             # Both legacy 'ATH_DIP' and current '52W_DIP' are treated
             # as dip-buy rows here.
             if existing.status == c.status:
                 _DIP_TYPES = {"ATH_DIP", "52W_DIP"}
                 if c.setup_type not in _DIP_TYPES and existing.setup_type in _DIP_TYPES:
                     # Keep dip-buy context, swap to technical row.
-                    if not getattr(c, "ath_price", 0):
-                        c.ath_price = existing.ath_price
-                        c.dip_from_ath_pct = existing.dip_from_ath_pct
+                    c.ath_price = existing.ath_price
+                    c.dip_from_ath_pct = existing.dip_from_ath_pct
                     candidates_by_symbol[c.symbol] = c
 
     # Live quotes

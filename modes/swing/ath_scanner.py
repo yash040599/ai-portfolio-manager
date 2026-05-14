@@ -158,6 +158,18 @@ class DipBuyScanner:
                 f"in next 3 days"
             )
 
+        # Fetch NIFTY 50 candles ONCE for the whole dip scan so every
+        # candidate's `relative_strength` can be computed against the
+        # benchmark. Pre-S42 (2026-05-14) the dip scanner called
+        # `compute_swing_indicators(candles)` with no nifty argument,
+        # which silently set `rel_strength=0.0` on every dip-buy
+        # candidate — and the detail page's "Beating the market?"
+        # row always showed +0.0% vs NIFTY for any 52W_DIP. The
+        # technical scanner already does this once-per-scan; the dip
+        # scanner now matches.
+        nifty_candles = self._fetch_daily_candles(
+            "NIFTY 50", "NSE", to_date=candle_to_date)
+
         candidates: list[SwingCandidate] = []
         accepted: list[SwingCandidate] = []
 
@@ -256,8 +268,10 @@ class DipBuyScanner:
                     f"Buy Rs.{buy_amount:,.0f} worth = {qty} shares at Rs.{current:,.2f}",
                 ]
 
-                # Compute indicators for the detail page
-                ind = compute_swing_indicators(candles)
+                # Compute indicators for the detail page (pass NIFTY
+                # candles so `rel_strength` is populated — see the
+                # `nifty_candles` block above for the pre-S42 bug).
+                ind = compute_swing_indicators(candles, nifty_candles)
                 _sma_50 = ind.get("sma_50", 0) if ind.get("valid") else 0
                 _sma_200 = ind.get("sma_200", 0) if ind.get("valid") else 0
                 _ema_20 = ind.get("ema_20", 0) if ind.get("valid") else 0

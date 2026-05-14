@@ -324,6 +324,23 @@ def confirm_action(
               source, notes, action_id))
 
         if action.action_type == "ENTRY":
+            # Re-entrancy guard (S42 hardening, 2026-05-14): two
+            # concurrent Done clicks both saw `status='PENDING'` (the
+            # check above is racey on default-isolation SQLite) and
+            # both INSERTed a fresh position, producing duplicate
+            # entries for the same action. Single-user dashboard so
+            # the race is rare, but a slow network + impatient
+            # double-click reproduces it. Guard: if any position
+            # already references this action_id, skip the INSERT and
+            # return the existing one — Done is now safe to spam-click.
+            existing = conn.execute(
+                "SELECT position_id FROM swing_positions "
+                "WHERE linked_action_id = ?",
+                (action_id,),
+            ).fetchone()
+            if existing:
+                return _load_position(conn, int(existing["position_id"]))
+
             cur = conn.execute("""
                 INSERT INTO swing_positions (
                     symbol, exchange, side, managed_qty, entry_price,
@@ -419,7 +436,15 @@ def confirm_action(
 
 def skip_action(action_id: int, reason: str = "",
                 path: str = DB_PATH) -> bool:
-    """Mark a PENDING action as SKIPPED."""
+    """Mark a PENDING action as SKIPPED.
+
+    Idempotent: returns True when the action is now in the SKIPPED
+    state, regardless of whether this call was the one that flipped
+    it. Pre-S42 (2026-05-14) a double-click on Skip surfaced a JS
+    error toast because the second update found `status != 'PENDING'`
+    and returned False; the action was already skipped, so the
+    "error" was confusing UX cruft.
+    """
     with _connect(path) as conn:
         _ensure_schema(conn)
         cur = conn.execute("""
@@ -427,7 +452,15 @@ def skip_action(action_id: int, reason: str = "",
             SET status = 'SKIPPED', notes = ?
             WHERE action_id = ? AND status = 'PENDING'
         """, (reason, action_id))
-        return (cur.rowcount or 0) > 0
+        if (cur.rowcount or 0) > 0:
+            return True
+        # Already skipped (or never existed) — idempotent success
+        # iff the row exists and is now in SKIPPED state.
+        row = conn.execute(
+            "SELECT status FROM swing_actions WHERE action_id = ?",
+            (action_id,),
+        ).fetchone()
+        return bool(row) and row["status"] == "SKIPPED"
 
 
 # ── Read: runs ──────────────────────────────────────────────────
@@ -600,23 +633,44 @@ ath_candidate_by_symbol = dip_candidate_by_symbol
 
 def latest_candidate_row_id_by_symbol(symbol: str,
                                       path: str = DB_PATH) -> int | None:
-    """Return the `swing_candidates.id` of the latest row for a symbol
-    (any setup, any status). Used by the per-stock AI analyse
-    endpoint (S37) so the Claude response can be persisted back to
-    the exact row the detail page is showing.
+    """Return the `swing_candidates.id` of the latest ACCEPTED row
+    for a symbol (any setup type). Used by the per-stock AI analyse
+    endpoint (S37) and the search-box analyse_one endpoint (S38) so
+    the Claude response can be persisted back to the live row the
+    detail page is showing.
+
+    Resolution order (S42 hardening, 2026-05-14):
+      1. Most recent ACCEPTED row, regardless of setup type.
+      2. Most recent SCORED / PLANNED row.
+      3. Most recent row of any status as a final fallback.
+
+    Pre-S42 the function did `WHERE symbol = ? ORDER BY run_id DESC
+    LIMIT 1` with no status filter, so a fresh AI analyse on a
+    symbol that ALSO had an older REJECTED row in the same scan
+    pool wrote the AI overlay to the rejected row — and the detail
+    page (which prefers ACCEPTED rows after S41) never displayed
+    the analysis. Same bug class as S41: stale REJECTED rows
+    shadowing live ACCEPTED ones in lookups.
     """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        row = conn.execute(
-            """SELECT id FROM swing_candidates
-               WHERE symbol = ?
-               ORDER BY run_id DESC, id DESC
-               LIMIT 1""",
-            (symbol.upper(),),
-        ).fetchone()
-        return int(row["id"]) if row else None
+        for status_clause in (
+            "AND status = 'ACCEPTED'",
+            "AND status IN ('SCORED', 'PLANNED')",
+            "",  # final fallback: any status
+        ):
+            row = conn.execute(
+                f"""SELECT id FROM swing_candidates
+                    WHERE symbol = ? {status_clause}
+                    ORDER BY run_id DESC, id DESC
+                    LIMIT 1""",
+                (symbol.upper(),),
+            ).fetchone()
+            if row:
+                return int(row["id"])
+        return None
 
 
 def update_candidate_ai_overlay(candidate_id: int, overlay_json: str,
@@ -659,7 +713,14 @@ def latest_ai_overlay_for_symbol(
     if not os.path.exists(path):
         return None
     import datetime as _dt
-    cutoff = (_dt.datetime.utcnow()
+    # Cutoff is IST-naive to match the timestamp shape stored in
+    # `swing_runs.finished_at` (which is `now_ist().isoformat()` —
+    # IST-naive). Comparing UTC-naive to IST-naive lets in runs
+    # ~5h30m older than `max_age_days` because IST > UTC by 5h30m,
+    # so the IST timestamp string sorts as "later" than a UTC
+    # cutoff string. Trivial drift on a 7-day window but semantically
+    # wrong; fix is one line. (S42 hardening pass, 2026-05-14.)
+    cutoff = (now_ist().replace(tzinfo=None)
               - _dt.timedelta(days=max(0, max_age_days))).isoformat()
     with _connect(path) as conn:
         _ensure_schema(conn)
