@@ -85,6 +85,38 @@ Deliverables:
 | T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | PF/expectancy are reported after costs. |
 | T1.4 | Add live-vs-replay comparison report. | Recent sessions show comparable candidate count, entry count, and exit split. |
 
+T1.1 next-session plan:
+
+| Step | Work | Boundary / Done When |
+|---|---|---|
+| T1.1a | Map wall-clock dependencies in the replay scoring path. | Audit `modes/trade/stock_scanner.py`, `shared/technical_indicators.py`, and `scripts/trade/backtest.py` for `now_ist()`/time reads that affect scanner score. Manager/order-engine event loops stay out of scope for this pass. |
+| T1.1b | Add an explicit replay time parameter. | Scanner analysis helpers accept an optional `as_of`/clock value and default to live `now_ist()` only when no replay time is provided. Live behavior remains unchanged. |
+| T1.1c | Make indicator helpers replay-safe. | VWAP, ORB, gap, hourly/short-cutoff, pre-open tagging, and intraday-volume pro-rating use the injected replay time instead of today's wall-clock date/hour. |
+| T1.1d | Let backtest call the real NoAI scoring path. | `scripts/trade/backtest.py` can run scanner-style scoring from local `../ai-portfolio-backtest-data` candles without Zerodha network calls. Keep the old simplified score available until parity is proven. |
+| T1.1e | Add a small parity/guard test. | A fixed historical timestamp produces stable scanner features regardless of the actual current date, and the old high-threshold smoke replay still passes. |
+
+Tomorrow's first commands:
+
+```powershell
+git status --short --branch
+git -C ../ai-portfolio-backtest-data status --short --branch
+.\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
+.\.venv\Scripts\python.exe -m py_compile scripts\trade\backtest.py modes\trade\stock_scanner.py shared\technical_indicators.py
+```
+
+Target files for T1.1:
+
+- `modes/trade/stock_scanner.py`: `_analyse_stock`, `_filter_today_candles`, `_prefilter_universe`, `scan_noai`, pre-open tag, scan timestamp, short cutoff, volume-baseline hour.
+- `shared/technical_indicators.py`: `compute_technical_score`, `opening_range_score`, `gap_analysis_score`, and any helper that filters to today's candles or decays ORB by current hour.
+- `scripts/trade/backtest.py`: bridge from candle rows to scanner-style feature/scoring call, with a fallback/simple mode until the live-score path is validated.
+
+Do not do these during T1.1:
+
+- Do not add `MEAN_REVERSION_V1` yet.
+- Do not tune score weights or entry thresholds.
+- Do not touch broker order placement or require Zerodha paid/dev APIs.
+- Do not remove the simplified replay score until the real-score path is producing stable, inspectable output.
+
 Exit criteria:
 
 - 30-60 sessions can be replayed under a named config hash.
