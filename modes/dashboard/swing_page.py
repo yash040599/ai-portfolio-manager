@@ -33,6 +33,91 @@ from modes.dashboard.swing_actions import latest_swing_status
 
 # ── Shared nav + style (matches portfolio_page.py) ──────────────
 
+def _render_ai_md(text: str) -> str:
+    """Tiny markdown -> HTML renderer for Claude AI-overlay output.
+
+    Pre-S43 the dashboard wrote `<div white-space:pre-wrap>{escape}</div>`
+    which printed raw markdown (`**bold**`, `---`, `## headings`, etc.)
+    as literal source on the page. The user reported "it printed as
+    raw md on the dashboard - maybe some formatting issue".
+
+    Why a custom renderer instead of `markdown` package: zero deps,
+    < 30 lines, only handles the structures Claude actually emits in
+    the swing-overlay prompt (`**bold**`, `---` HR, `## H2`, `- bullets`,
+    blank-line paragraphs). Everything is HTML-escaped first so a
+    Claude response containing literal `<` or `&` cannot inject HTML.
+    """
+    import re as _re
+    if not text:
+        return ""
+    # Normalise line endings.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    out_lines: list[str] = []
+    in_list = False
+    for raw_ln in text.split("\n"):
+        ln = raw_ln.rstrip()
+        # Horizontal rule (--- or ***).
+        if ln.strip() in ("---", "***", "___"):
+            if in_list:
+                out_lines.append("</ul>")
+                in_list = False
+            out_lines.append("<hr style='border:none;border-top:1px solid #e5e7eb;margin:10px 0'>")
+            continue
+        # H1 / H2 / H3.
+        m = _re.match(r"^(#{1,3})\s+(.+)$", ln)
+        if m:
+            if in_list:
+                out_lines.append("</ul>")
+                in_list = False
+            level = len(m.group(1))
+            inner = _md_inline(m.group(2).strip())
+            tag = {1: "h3", 2: "h4", 3: "h5"}[level]
+            out_lines.append(
+                f"<{tag} style='margin:14px 0 6px;font-size:14px'>"
+                f"{inner}</{tag}>"
+            )
+            continue
+        # Bullet line.
+        m = _re.match(r"^[\-\*]\s+(.+)$", ln)
+        if m:
+            if not in_list:
+                out_lines.append(
+                    "<ul style='margin:4px 0 4px 20px;padding:0;font-size:13px;line-height:1.7'>"
+                )
+                in_list = True
+            out_lines.append(f"<li>{_md_inline(m.group(1))}</li>")
+            continue
+        # Blank line -> paragraph break.
+        if not ln.strip():
+            if in_list:
+                out_lines.append("</ul>")
+                in_list = False
+            out_lines.append("")
+            continue
+        # Plain prose line.
+        if in_list:
+            out_lines.append("</ul>")
+            in_list = False
+        out_lines.append(
+            f"<p style='margin:6px 0;font-size:13px;line-height:1.7'>"
+            f"{_md_inline(ln)}</p>"
+        )
+    if in_list:
+        out_lines.append("</ul>")
+    return "\n".join(out_lines)
+
+
+def _md_inline(text: str) -> str:
+    """Inline markdown: **bold**, *italic*, `code`. HTML-escapes
+    the input first so Claude can't inject HTML."""
+    import re as _re
+    s = html.escape(text)
+    # Bold (handle before italic so ** doesn't get caught as **).
+    s = _re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    s = _re.sub(r"`([^`]+?)`", r"<code>\1</code>", s)
+    return s
+
+
 def _auth_pill() -> str:
     token_path = os.path.join("data", "access_token.json")
     valid = False
@@ -856,8 +941,14 @@ def render_swing_detail(symbol: str) -> str:
             ai = _j.loads(cand.ai_overlay_json)
             raw = ai.get("raw_response", "")
             if raw:
-                body.append(f'<div style="font-size:13px;line-height:1.7;'
-                            f'white-space:pre-wrap">{html.escape(raw)}</div>')
+                # Render markdown structures (** bold, --- HR, ## headings,
+                # - bullets, blank-line paragraphs) properly. Pre-S43
+                # this used `html.escape(raw)` inside a pre-wrap div so
+                # the user saw literal **bold** and --- in the page.
+                body.append(
+                    f'<div style="font-size:13px;line-height:1.7">'
+                    f'{_render_ai_md(raw)}</div>'
+                )
             err = ai.get("error", "")
             if err:
                 body.append(f'<div class="banner warn">AI error: '
@@ -917,12 +1008,14 @@ def render_swing_detail(symbol: str) -> str:
                 var raw = (res.body.overlay && res.body.overlay.raw_response)
                           || '';
                 if (raw) {
-                    var pre = document.createElement('div');
-                    pre.style.cssText =
-                        'font-size:13px;line-height:1.7;white-space:pre-wrap';
-                    pre.textContent = raw;
-                    host.innerHTML = '';
-                    host.appendChild(pre);
+                    // Render markdown via the shared _aiMdToHtml
+                    // helper instead of textContent so **bold** /
+                    // --- HR / ## headings / - bullets surface
+                    // formatted. _aiMdToHtml escapes input first.
+                    host.innerHTML =
+                        '<div style="font-size:13px;line-height:1.7">'
+                        + (window._aiMdToHtml ? _aiMdToHtml(raw) : raw)
+                        + '</div>';
                 } else {
                     host.innerHTML =
                         '<p class="muted">AI returned an empty response.</p>';
@@ -1201,6 +1294,75 @@ def _is_market_open() -> bool:
     return market_open <= n < market_close
 
 
+def _ai_md_js() -> str:
+    """Standalone <script> block: defines `window._aiMdToHtml`.
+
+    Injected by `_wrap()` so BOTH the home page (`render_swing_page`)
+    and the per-stock detail page (`render_swing_detail`) have the
+    helper available — both call it from their own onclick / fetch
+    handlers. Pre-S43 the helper lived only in the home page's
+    `_js()` block, which broke markdown rendering of the per-stock
+    AI button on the detail page.
+    """
+    return r"""<script>
+window._aiMdToHtml = function (text) {
+    if (!text) return '';
+    function esc(s) {
+        return String(s).replace(/[&<>"]/g, function (c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+        });
+    }
+    function inline(s) {
+        return esc(s)
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`([^`]+?)`/g, '<code>$1</code>');
+    }
+    var lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    var out = [];
+    var inList = false;
+    function closeList() {
+        if (inList) { out.push('</ul>'); inList = false; }
+    }
+    for (var i = 0; i < lines.length; i++) {
+        var ln = lines[i].replace(/\s+$/, '');
+        if (/^(---|\*\*\*|___)\s*$/.test(ln.trim())) {
+            closeList();
+            out.push('<hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0">');
+            continue;
+        }
+        var m = ln.match(/^(#{1,3})\s+(.+)$/);
+        if (m) {
+            closeList();
+            var level = m[1].length;
+            var tag = level === 1 ? 'h3' : level === 2 ? 'h4' : 'h5';
+            out.push('<' + tag + ' style="margin:14px 0 6px;font-size:14px">' +
+                     inline(m[2].trim()) + '</' + tag + '>');
+            continue;
+        }
+        m = ln.match(/^[-*]\s+(.+)$/);
+        if (m) {
+            if (!inList) {
+                out.push('<ul style="margin:4px 0 4px 20px;padding:0">');
+                inList = true;
+            }
+            out.push('<li>' + inline(m[1]) + '</li>');
+            continue;
+        }
+        if (!ln.trim()) {
+            closeList();
+            continue;
+        }
+        closeList();
+        out.push('<p style="margin:6px 0">' + inline(ln) + '</p>');
+    }
+    closeList();
+    return out.join('\n');
+};
+// Local alias so existing call sites (`_aiMdToHtml(text)`) work.
+var _aiMdToHtml = window._aiMdToHtml;
+</script>"""
+
+
 def _wrap(title: str, body_parts: list[str]) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
     return f"""<!DOCTYPE html>
@@ -1210,6 +1372,7 @@ def _wrap(title: str, body_parts: list[str]) -> str:
 <style>{_STYLE}</style>
 </head><body>
 {error_toast_html()}
+{_ai_md_js()}
 {"".join(body_parts)}
 {error_toast_script()}
 </body></html>"""
@@ -1588,10 +1751,8 @@ function _renderSingleResult(host, data) {
             html += '<div class="banner warn" style="margin-top:6px">AI error: ' +
                     ai.error + '</div>';
         } else if (ai.raw_response) {
-            var pre = document.createElement('pre');
-            // Render via DOM textContent to avoid HTML injection.
-            html += '<div id="single-ai-pre" style="font-size:12.5px;' +
-                    'line-height:1.7;white-space:pre-wrap;margin-top:6px"></div>';
+            html += '<div id="single-ai-md" style="font-size:12.5px;' +
+                    'line-height:1.7;margin-top:6px"></div>';
         }
         html += '</div>';
     }
@@ -1599,13 +1760,21 @@ function _renderSingleResult(host, data) {
     html += '</div>';
     host.innerHTML = html;
 
-    // Inject AI text via textContent so newlines render and HTML
-    // can't be injected from the Claude response.
+    // Render markdown structures (** bold, --- HR, ## headings,
+    // - bullets) via _aiMdToHtml so a long AI response surfaces
+    // formatted instead of as a wall of pre-wrap source text.
+    // Pre-S43 the dashboard used textContent which printed the
+    // raw markdown. _aiMdToHtml escapes input first so Claude
+    // can't inject HTML.
     if (ai && ai.raw_response) {
-        var pre = host.querySelector('#single-ai-pre');
-        if (pre) pre.textContent = ai.raw_response;
+        var host2 = host.querySelector('#single-ai-md');
+        if (host2) host2.innerHTML = _aiMdToHtml(ai.raw_response);
     }
 }
+
+// Note: `_aiMdToHtml` lives in `_ai_md_js()` injected by `_wrap()`
+// so both the home page (this _js block) and the per-stock detail
+// page can call it.
 
 function analyseOne() {
     var symEl = document.getElementById('single-symbol');

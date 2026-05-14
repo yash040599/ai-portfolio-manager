@@ -468,9 +468,19 @@ def skip_action(action_id: int, reason: str = "",
 def latest_run(path: str = DB_PATH) -> dict | None:
     """Most recent swing run regardless of date.
 
-    Filters out pre-AI snapshot rows (S29) so the dashboard always
-    shows the post-AI run when one exists. Snapshots are still
-    queryable explicitly via `latest_snapshot_run()` for audit.
+    Filters out:
+      * pre-AI snapshot rows (S29 — they're recoverable checkpoints,
+        not user-visible runs).
+      * SEARCH_BOX trigger_source rows (S43 hardening, 2026-05-14 —
+        single-stock analyse-one runs are by design a 1-candidate
+        slice and should NOT hijack the dashboard's main
+        recommendations list when the user happens to navigate
+        back after using the search box).
+
+    Snapshots are still queryable explicitly via
+    `latest_snapshot_run()` for audit; SEARCH_BOX runs are still
+    queryable via `candidate_by_symbol()` so the per-stock detail
+    page still finds them.
     """
     if not os.path.exists(path):
         return None
@@ -479,6 +489,7 @@ def latest_run(path: str = DB_PATH) -> dict | None:
         row = conn.execute(
             """SELECT * FROM swing_runs
                WHERE COALESCE(is_snapshot, 0) = 0
+                 AND COALESCE(trigger_source, '') != 'SEARCH_BOX'
                ORDER BY run_id DESC LIMIT 1"""
         ).fetchone()
         return dict(row) if row else None
@@ -486,7 +497,7 @@ def latest_run(path: str = DB_PATH) -> dict | None:
 
 def latest_run_for_date(trade_date: str,
                         path: str = DB_PATH) -> dict | None:
-    """Latest non-snapshot run row for a given trading date."""
+    """Latest non-snapshot full-scan run row for a given trading date."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
@@ -495,6 +506,7 @@ def latest_run_for_date(trade_date: str,
             """SELECT * FROM swing_runs
                WHERE run_for_date = ?
                  AND COALESCE(is_snapshot, 0) = 0
+                 AND COALESCE(trigger_source, '') != 'SEARCH_BOX'
                ORDER BY run_id DESC LIMIT 1""",
             (trade_date,),
         ).fetchone()
@@ -503,7 +515,8 @@ def latest_run_for_date(trade_date: str,
 
 def latest_run_for_date_and_mode(trade_date: str, mode: str,
                                  path: str = DB_PATH) -> dict | None:
-    """Latest non-snapshot run row for a given date + mode (NOAI / AI)."""
+    """Latest non-snapshot full-scan run row for a given date + mode
+    (NOAI / AI). SEARCH_BOX rows are filtered out per S43."""
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
@@ -512,6 +525,7 @@ def latest_run_for_date_and_mode(trade_date: str, mode: str,
             """SELECT * FROM swing_runs
                WHERE run_for_date = ? AND mode = ?
                  AND COALESCE(is_snapshot, 0) = 0
+                 AND COALESCE(trigger_source, '') != 'SEARCH_BOX'
                ORDER BY run_id DESC LIMIT 1""",
             (trade_date, mode),
         ).fetchone()
@@ -726,7 +740,13 @@ def latest_ai_overlay_for_symbol(
         _ensure_schema(conn)
         # JOIN to runs so we can apply the freshness gate. ORDER by
         # run_id DESC so we always take the most recent valid overlay.
-        row = conn.execute(
+        # Skip rows whose overlay is JUST an error payload — pre-S43
+        # the carry-forward path (manager.py) and the detail page both
+        # could pick a 57-byte `{"error":"..."}` payload (from a prior
+        # failed Claude call) over a 2161-byte successful response on
+        # an older run. Heuristic: if the JSON parses and has BOTH no
+        # "raw_response" AND an "error" key, skip it.
+        rows = conn.execute(
             """SELECT c.ai_overlay_json AS overlay,
                       COALESCE(r.finished_at, r.started_at) AS ts
                  FROM swing_candidates c
@@ -736,16 +756,24 @@ def latest_ai_overlay_for_symbol(
                   AND c.ai_overlay_json != ''
                   AND COALESCE(r.finished_at, r.started_at) >= ?
                 ORDER BY r.run_id DESC, c.id DESC
-                LIMIT 1""",
+                LIMIT 8""",
             (symbol.upper(), cutoff),
-        ).fetchone()
-        if not row:
-            return None
-        overlay = row["overlay"] or ""
-        ts = row["ts"] or ""
-        if not overlay:
-            return None
-        return overlay, ts
+        ).fetchall()
+        for row in rows:
+            overlay = row["overlay"] or ""
+            if not overlay:
+                continue
+            try:
+                payload = json.loads(overlay)
+            except (json.JSONDecodeError, TypeError):
+                # Not JSON — treat as opaque text and accept it.
+                return overlay, row["ts"] or ""
+            # Skip error-only payloads.
+            if isinstance(payload, dict):
+                if payload.get("error") and not payload.get("raw_response"):
+                    continue
+            return overlay, row["ts"] or ""
+        return None
 
 
 def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:
@@ -822,12 +850,29 @@ def _row_to_action(row: sqlite3.Row) -> SwingAction:
 
 def _row_to_candidate(row: sqlite3.Row) -> SwingCandidate:
     d = dict(row)
-    # Reconstruct from snapshot_json if present (has the full data)
+    # Reconstruct from snapshot_json if present (has the full data
+    # captured at scan time — including all indicator fields). But
+    # `snapshot_json` is FROZEN at scan time and never updated.
+    # Columns that mutate post-scan (specifically `ai_overlay_json`,
+    # patched by S37/S38 + the manager carry-forward pass) live in
+    # the column proper. We must overlay the live column over the
+    # snapshot value otherwise a candidate that received an AI
+    # analyse via the detail-page button would still surface as
+    # "no AI" because the snapshot was empty when the row was first
+    # written. Same for `priority_rank` if it was rebanked after the
+    # initial save. Origin: 2026-05-14 user reported "AI review is
+    # not coming up when I go back and enter again the details page"
+    # — root cause was this stale-snapshot bug.
     snap = d.get("snapshot_json")
     if snap:
         try:
             full = json.loads(snap)
-            return SwingCandidate.from_dict(full)
+            cand = SwingCandidate.from_dict(full)
+            # Overlay live mutable columns on top of the snapshot.
+            live_ai = d.get("ai_overlay_json") or ""
+            if live_ai:
+                cand.ai_overlay_json = live_ai
+            return cand
         except (json.JSONDecodeError, TypeError):
             pass
     return SwingCandidate.from_dict(d)
