@@ -17,6 +17,9 @@ reports/
 # ── Database (contains personal trading data) ────────────
 data/
 
+# ── Backtest datasets (synced from separate private data repo) ───
+backtest_data/
+
 # ── Copilot operational skills (synced via backup_data.py to data repo) ──
 copilot/
 

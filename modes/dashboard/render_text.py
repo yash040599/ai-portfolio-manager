@@ -12,6 +12,7 @@ D4 introduces the HTML renderer; this text path stays for `--text`.
 
 from __future__ import annotations
 
+from config import Config
 from modes.dashboard.metrics import HeadlinePnL, net_pnl_pct
 from modes.dashboard.verdict import VerdictResult
 
@@ -61,9 +62,18 @@ def _header(
         f"pending {len(pending_dates)}"
     )
     src = "sheet-verified + provisional" if include_provisional else "sheet-verified ONLY"
+    stage = str(getattr(Config, "TRADE_RESEARCH_STAGE", "") or "")
+    label = str(getattr(Config, "TRADE_RESEARCH_PHASE_LABEL", "") or "")
+    paused = bool(getattr(Config, "TRADE_LIVE_TRADING_PAUSED", False))
+    research_line = ""
+    if label:
+        phase = f"{stage} - {label}" if stage else label
+        pause = "live trading paused" if paused else "live trading enabled"
+        research_line = f"  Research: {phase}  |  {pause}\n"
     return (
         f"\n{_BAR}\n"
         f"  AI Portfolio Manager — Profitability Dashboard\n"
+        f"{research_line}"
         f"  Window: {date_from} → {date_to}  ({trading_day_count} trading days)\n"
         f"  Data:   {qual}  |  source: {src}\n"
         f"{_BAR}\n"

@@ -90,6 +90,9 @@ class PortfolioManager:
         """
         self._setup_signal_handler()
         self._print_banner()
+        self._log_research_reset_status()
+        if self._should_abort_live_trading_for_reset():
+            return
 
         # ── Step 1: Validate config ───────────────────────────────
         missing = self.cfg.validate(require_claude=not getattr(self, '_noai', False))
@@ -2467,6 +2470,54 @@ class PortfolioManager:
     # OVERRIDE: BANNER
     # ================================================================
 
+    def _research_phase_status(self) -> tuple[str, str, str, bool]:
+        """Return Stage 0 status fields without affecting strategy config hash."""
+        stage = getattr(self.cfg, "TRADE_RESEARCH_STAGE", "").strip()
+        label = getattr(self.cfg, "TRADE_RESEARCH_PHASE_LABEL", "").strip()
+        note = getattr(self.cfg, "TRADE_RESEARCH_PHASE_NOTE", "").strip()
+        paused = bool(getattr(self.cfg, "TRADE_LIVE_TRADING_PAUSED", False))
+        return stage, label, note, paused
+
+    def _should_abort_live_trading_for_reset(self) -> bool:
+        _stage, label, _note, paused = self._research_phase_status()
+        return bool(label and paused and not self.cfg.DRY_RUN)
+
+    def _log_research_reset_status(self):
+        stage, label, note, paused = self._research_phase_status()
+        if not label:
+            return
+
+        title = f"{stage} - {label}" if stage else label
+        self.log.section(title.upper())
+        if note:
+            self.log.info(note)
+        if paused:
+            self.log.warning(
+                "Live order placement is paused by reset policy. "
+                "Use local evidence, replay, or --dryrun until promotion gates pass."
+            )
+        else:
+            self.log.info("Live order placement is enabled by config.")
+
+        tele = getattr(getattr(self, "scanner", None), "telemetry", None)
+        if tele is None:
+            self.log.warning(
+                "Candidate telemetry: UNHEALTHY - scanner telemetry object is missing."
+            )
+        elif getattr(tele, "healthy", False):
+            self.log.success("Candidate telemetry: healthy (intraday_candidates ready).")
+        else:
+            self.log.warning(
+                "Candidate telemetry: UNHEALTHY - reset evidence rows may be missing."
+            )
+
+        if self._should_abort_live_trading_for_reset():
+            self.log.warning(
+                "Stopping before Zerodha login because this is a live run and "
+                "TRADE_LIVE_TRADING_PAUSED=True. Re-run with --dryrun for a "
+                "read-only simulation."
+            )
+
     def _print_banner(self):
         """Shows V2 configuration."""
         plan = self.cfg.claude()
@@ -2489,6 +2540,12 @@ class PortfolioManager:
         else:
             print(f"  Claude model   : NONE (pure technical signals)")
         print(f"  Price source   : {zrd['price_source'].upper()}")
+        stage, label, _note, paused = self._research_phase_status()
+        if label:
+            phase = f"{stage} - {label}" if stage else label
+            print(f"  Research phase : {phase}")
+            if paused:
+                print(f"  Live trading   : PAUSED by reset policy")
         print()
         print(f"  \033[96m★ Trade Strategy\033[0m : Candle patterns + Technical indicators")
         print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(7,2.0)")

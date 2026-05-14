@@ -17,6 +17,7 @@ import json
 import webbrowser
 from pathlib import Path
 
+from config import Config
 from modes.dashboard.metrics import HeadlinePnL
 from modes.dashboard.verdict import VerdictResult
 
@@ -90,6 +91,12 @@ def build_payload(
         "strategy_overlay": {
             "enabled":    bool(strategy_overlay_enabled),
             "boundaries": list(strategy_boundaries or []),
+        },
+        "research_phase": {
+          "stage": str(getattr(Config, "TRADE_RESEARCH_STAGE", "") or ""),
+          "label": str(getattr(Config, "TRADE_RESEARCH_PHASE_LABEL", "") or ""),
+          "note": str(getattr(Config, "TRADE_RESEARCH_PHASE_NOTE", "") or ""),
+          "live_trading_paused": bool(getattr(Config, "TRADE_LIVE_TRADING_PAUSED", False)),
         },
         "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M IST"),
     }
@@ -217,6 +224,8 @@ _SHELL_TEMPLATE = r"""<!doctype html>
   code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
   .static-banner { background: #fff4e0; border: 1px solid #f0d28a; padding: 8px 14px;
                    border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
+  .static-banner.reset { background: #eef4ff; border-color: #cfd9eb; color: #1c1f23; }
+  .static-banner.reset strong { color: #1c4ed8; }
   nav.topnav { display: flex; gap: 14px; align-items: center;
                padding: 10px 16px; background: var(--card);
                border: 1px solid var(--line); border-radius: 8px;
@@ -325,6 +334,18 @@ function escapeHTML(s) { return String(s).replace(/[&<>"']/g, c =>
 
 function render(payload) {
   const w = payload.window, v = payload.verdict, h = payload.headline;
+
+  const resetHost = document.getElementById("static-banner-host");
+  const rp = payload.research_phase || {};
+  if (rp.label) {
+    const phase = (rp.stage ? rp.stage + " - " : "") + rp.label;
+    const pause = rp.live_trading_paused ? "Live trading paused" : "Live trading enabled";
+    resetHost.innerHTML = '<div class="static-banner reset"><strong>'
+      + escapeHTML(phase) + '</strong> · ' + escapeHTML(pause)
+      + (rp.note ? ' · ' + escapeHTML(rp.note) : '') + '</div>';
+  } else {
+    resetHost.innerHTML = "";
+  }
 
   document.getElementById("window-sub").innerHTML =
     "Window <strong>" + escapeHTML(w.from) + " → " + escapeHTML(w.to) + "</strong>"

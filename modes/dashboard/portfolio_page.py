@@ -81,6 +81,22 @@ def _auth_pill() -> str:
             'Auth: <strong>Re-login</strong></a>')
 
 
+def _research_pill() -> str:
+    label = str(getattr(Config, "TRADE_RESEARCH_PHASE_LABEL", "") or "")
+    if not label:
+        return ""
+    stage = str(getattr(Config, "TRADE_RESEARCH_STAGE", "") or "")
+    note = str(getattr(Config, "TRADE_RESEARCH_PHASE_NOTE", "") or "")
+    paused = bool(getattr(Config, "TRADE_LIVE_TRADING_PAUSED", False))
+    phase = f"{stage}: {label}" if stage else label
+    state = "Trading paused" if paused else "Trading enabled"
+    title = f"{state}. {note}" if note else state
+    return (
+        f'<span class="research" title="{html.escape(title)}">'
+        f'{html.escape(phase)}</span>'
+    )
+
+
 def _topnav(here: str) -> str:
     """Render the four-link nav with `here` highlighted as <span>."""
     items = [
@@ -101,6 +117,7 @@ def _topnav(here: str) -> str:
     return ('<nav class="topnav">'
             + "".join(parts)
             + '<span class="spacer"></span>'
+          + _research_pill()
             + _auth_pill()
             + '</nav>')
 
@@ -137,6 +154,9 @@ nav.topnav .auth { font-size: 12px; padding: 4px 10px; border-radius: 999px;
 nav.topnav .auth.ok  { background: #e6f4ea; color: var(--pos); }
 nav.topnav .auth.bad { background: var(--risk-bg); color: var(--risk-fg);
                        border: 1px solid var(--risk-line); }
+nav.topnav .research { font-size: 12px; padding: 4px 10px; border-radius: 999px;
+                       background: #eef4ff; color: #1c4ed8;
+                       border: 1px solid #cfd9eb; }
 table.holdings { width: 100%; border-collapse: collapse; font-size: 13px;
                  font-variant-numeric: tabular-nums; }
 table.holdings th { text-align: left; padding: 6px 10px;

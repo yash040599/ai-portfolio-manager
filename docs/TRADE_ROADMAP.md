@@ -9,11 +9,12 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 
 | Area | Status |
 |---|---|
-| Supported live mode | NoAI only, equal sizing, capped capital, evidence collection. |
+| Supported live mode | Paused. No new live trades until the staged Chan-method process allows them. |
+| Runtime reset status | `Stage 0 - Chan Research Reset` is surfaced in startup logs, reports, and dashboard status; live order placement is guarded by `TRADE_LIVE_TRADING_PAUSED = True`. |
 | Capital scaling | Blocked until `scripts/trade/promotion_check.py` returns PASS on a fresh forward window. |
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
-| Strategy version in config | `v1.0-2026-05-11` until the first reset code change ships. |
+| Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
 | Roadmap operating mode | Chan Research Reset: prove one strategy family at a time. |
 
 ## Ground Rules
@@ -24,7 +25,8 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 4. Every new strategy must have a strategy id, config hash, backtest result, and forward result.
 5. Strategy families must be tested separately before they are blended.
 6. If an exit gate changes, run `scripts/trade/exit_coverage_check.py`.
-7. If a roadmap count or archive is needed, use `TRADE_EVOLUTION.md` and git history, not this file.
+7. Backtest data must be versioned outside this main tool repo, then read locally through a gitignored cache path.
+8. If a roadmap count or archive is needed, use `TRADE_EVOLUTION.md` and git history, not this file.
 
 ## Paused Or Deferred
 
@@ -46,9 +48,9 @@ Deliverables:
 
 | ID | Work | Done When |
 |---|---|---|
-| T0.1 | Add a visible reset label such as `Chan Research Reset` to runtime/report/dashboard status. | A daily report clearly shows the active research phase and config version. |
-| T0.2 | Warn if candidate telemetry is unhealthy during reset mode. | Startup logs make telemetry failure impossible to miss. |
-| T0.3 | Document the supported live posture in strategy/statistics docs. | Docs agree: NoAI, equal sizing, no scale-up, no blind tuning. |
+| T0.1 | Add a visible reset label such as `Chan Research Reset` to runtime/report/dashboard status. | Shipped 2026-05-15: startup banner, trading report payload/text, and dashboard status surface the active reset phase. |
+| T0.2 | Warn if candidate telemetry is unhealthy during reset mode. | Shipped 2026-05-15: startup logs print candidate telemetry health before any broker login. |
+| T0.3 | Document the supported live posture in strategy/statistics docs. | Shipped 2026-05-15: docs agree that live trading is paused and evidence/replay comes first. |
 | T0.4 | Keep promotion gate as the scale-up blocker. | `promotion_check.py` result is referenced before any capital/risk relaxation. |
 
 Exit criteria:
@@ -61,10 +63,19 @@ Exit criteria:
 
 Purpose: make live decisions replayable before strategy tuning.
 
+Data architecture decision for Stage 1:
+
+- Keep `ai-portfolio-manager` as the trading/replay tool, not the raw data store.
+- Keep the existing private `data` repo for current ignored operational data/reports.
+- Create a separate private backtest-data repo when the normalized dataset shape is agreed.
+- Sync that repo into a local gitignored cache path such as `backtest_data/`; replay reads the local copy at runtime.
+- Do not let backtest datasets flow into the existing operational data repo unless an explicit sync script says so.
+
 Deliverables:
 
 | ID | Work | Done When |
 |---|---|---|
+| T1.0 | Decide the normalized backtest data contract and sync model. | Private backtest-data repo, local cache path, manifest/version hash, and push/pull scripts are documented before replay consumes the data. |
 | T1.1 | Parameterise the scanner/replay clock so backtest can use live scoring logic instead of simplified scoring. | Replay can run the real score path for historical candles without `now_ist()` leakage. |
 | T1.2 | Replay accepted and rejected candidates by config hash. | Backtest output can explain why each candidate entered or failed. |
 | T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | PF/expectancy are reported after costs. |

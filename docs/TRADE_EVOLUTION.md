@@ -4,7 +4,7 @@ A plain-English, newest-first log of how the trading strategy changed over time.
 
 ## Current Direction
 
-As of 2026-05-15, the trading program is in a Chan Research Reset. This planning reset is not a live strategy change by itself, so it is not a numbered timeline row. It means future rows should only appear when a staged strategy, risk, execution, market-intel, or evidence change actually ships.
+As of 2026-05-15, the trading program is in a Chan Research Reset. The planning reset alone was not a live strategy change, but Stage 0 runtime visibility and pause enforcement have now shipped. Future rows should only appear when a staged strategy, risk, execution, market-intel, or evidence change actually ships.
 
 ## What Goes Here
 
@@ -31,12 +31,13 @@ As of 2026-05-15, the trading program is in a Chan Research Reset. This planning
 
 The table is intentionally upside down from the old version: latest changes are on top, earliest changes are at the bottom. The roadmap no longer keeps the completed archive; use git history for low-level bug-fix archaeology and this file for strategy history.
 
-Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strategy rows. Bug-fix rows remain intentionally excluded.
+Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strategy rows; staged reset rows appear above that preserved history. Bug-fix rows remain intentionally excluded.
 
 ## Timeline
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T0 | Infra | The trade runtime now labels runs as Stage 0 Chan Research Reset, warns when candidate telemetry is unhealthy, and blocks live order placement while the reset pause is active. |
 | 258 | Risk | Live NoAI stopped sizing bigger trades by score because recent results showed higher scores were losing more; equal sizing is now the default. |
 | 255 | Risk | If live quote or order-book data is still missing after retries, the bot now refuses the entry instead of assuming the spread is safe. |
 | 253 | Risk | A rolling profit-factor cold-streak pause was tested, then disabled the same day because it blocked good SELL trades and added negative value. |

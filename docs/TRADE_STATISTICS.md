@@ -7,8 +7,9 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 | Area | Current Read |
 |---|---|
 | Runtime strategy version | `v1.0-2026-05-11` |
-| Planning posture | Chan Research Reset, docs/process only until the first code change ships. |
-| Supported live path | NoAI, equal sizing, capped capital, evidence collection. |
+| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status. |
+| Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
+| Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -105,6 +106,7 @@ Current config states that match the reset posture:
 
 | Feature | Current State | Decision |
 |---|---|---|
+| Live trading | `TRADE_LIVE_TRADING_PAUSED = True` | Keep paused until a staged strategy earns promotion. |
 | Score-weighted sizing | `SCORE_WEIGHTED_SIZING_ENABLED = False` | Keep disabled. |
 | Rolling-PF full-day pause | `ROLLING_PF_PAUSE_ENABLED = False` | Keep disabled unless new evidence proves incremental value. |
 | Late no-rescue floor | `LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False` | Keep disabled; prior EV audit contradicted it. |
@@ -118,6 +120,15 @@ Policy pauses during reset:
 | AI selection | Optional tool path only; not accepted as proof of strategy edge. |
 | HFT/WebSocket work | Deferred until expectancy is positive. |
 | Strategy blending | Do not blend mean reversion, momentum, and microstructure until each passes alone. |
+
+Stage 1 data policy:
+
+| Area | Policy |
+|---|---|
+| `market-research` repo | Treat as the old research/data source with about 10 years of NIFTY 50 data; inspect before rebuilding anything. |
+| Backtest data storage | Prefer a separate private backtest-data repo for normalized replay-ready datasets. |
+| Main repo runtime access | Read from a local gitignored cache path, not GitHub on every replay run. |
+| Existing operational data repo | Keep separate from the future backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
 
 ## 5. Metrics To Track From Here
 

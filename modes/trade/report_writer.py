@@ -72,6 +72,15 @@ class ReportWriter:
         self.cfg = config
         self.log = log
 
+    def _research_phase_payload(self) -> dict:
+        """Status metadata only; not part of strategy-config hash."""
+        return {
+            "stage": str(getattr(self.cfg, "TRADE_RESEARCH_STAGE", "") or ""),
+            "label": str(getattr(self.cfg, "TRADE_RESEARCH_PHASE_LABEL", "") or ""),
+            "note": str(getattr(self.cfg, "TRADE_RESEARCH_PHASE_NOTE", "") or ""),
+            "live_trading_paused": bool(getattr(self.cfg, "TRADE_LIVE_TRADING_PAUSED", False)),
+        }
+
     # ================================================================
     # PATH HELPERS
     # ================================================================
@@ -627,12 +636,20 @@ class ReportWriter:
 
         mode_label = "DRY RUN (simulated)" if dry_run else "LIVE TRADING"
         charges    = pnl["charges"]
+        research_phase = self._research_phase_payload()
 
         with open(txt_path, "w", encoding="utf-8") as f:
             # ── Header ────────────────────────────────────────────
             f.write(f"{self.SEP_MAJOR}\n")
             f.write(f"  INTRADAY TRADING REPORT — {today}\n")
             f.write(f"  Mode: {mode_label}\n")
+            if research_phase["label"]:
+                phase = research_phase["label"]
+                if research_phase["stage"]:
+                    phase = f"{research_phase['stage']} - {phase}"
+                f.write(f"  Research phase: {phase}\n")
+                paused = "YES" if research_phase["live_trading_paused"] else "NO"
+                f.write(f"  Live trading paused: {paused}\n")
             f.write(f"  Sessions: {session_count} (Run {session_count})\n")
             f.write(f"{self.SEP_MAJOR}\n\n")
 
@@ -648,6 +665,10 @@ class ReportWriter:
             f.write(f"Stop-loss       : {self.cfg.DEFAULT_STOP_LOSS_PCT}%\n")
             f.write(f"Target          : {self.cfg.DEFAULT_TARGET_PCT}%\n")
             f.write(f"Circuit breaker : {self.cfg.MAX_LOSS_PER_DAY_PCT}%\n\n")
+            if research_phase["note"]:
+                f.write("RESET NOTE\n")
+                f.write(f"{self.SEP_MINOR}\n")
+                f.write(f"{research_phase['note']}\n\n")
 
             # ── Trade Summary ─────────────────────────────────────
             closed = [p for p in positions if p.get("status") == "CLOSED"]
@@ -775,6 +796,7 @@ class ReportWriter:
             "mode":             "dry_run" if dry_run else "live",
             "sessions":         session_count,
             "market_condition": market_condition,
+            "research_phase": research_phase,
             "config": {
                 "claude_plan":  self.cfg.CLAUDE_PLAN,
                 "zerodha_plan": self.cfg.ZERODHA_PLAN,

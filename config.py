@@ -101,6 +101,20 @@ class Config:
     # Do NOT edit this here — use: python main.py --mode trade --dryrun
     DRY_RUN: bool = False
 
+    # ── Chan Research Reset (Stage 0) ────────────────────────────
+    # Operational status only. These fields label runtime/report/
+    # dashboard output and pause accidental live trading while the
+    # Chan-method replay process is being built. They are deliberately
+    # excluded from STRATEGY_CONFIG_KEYS because they do not change
+    # entry, exit, sizing, or risk rules.
+    TRADE_RESEARCH_STAGE: str = "Stage 0"
+    TRADE_RESEARCH_PHASE_LABEL: str = "Chan Research Reset"
+    TRADE_RESEARCH_PHASE_NOTE: str = (
+        "Live trading paused; use local evidence, replay, and dry-run only "
+        "until a staged Chan-method strategy passes promotion gates."
+    )
+    TRADE_LIVE_TRADING_PAUSED: bool = True
+
     # ── Market Timing (IST) ──────────────────────────────────────
     # The bot waits until MARKET_OPEN_HOUR:MARKET_OPEN_MINUTE to
     # start entering trades. It squares off all positions at
@@ -2018,6 +2032,26 @@ class Config:
             errors.append(
                 f"SCORE_WEIGHTED_SIZING_ENABLED must be bool "
                 f"(got {cls.SCORE_WEIGHTED_SIZING_ENABLED!r})"
+            )
+        if not isinstance(cls.TRADE_RESEARCH_STAGE, str) or not cls.TRADE_RESEARCH_STAGE:
+            errors.append(
+                f"TRADE_RESEARCH_STAGE must be a non-empty str "
+                f"(got {cls.TRADE_RESEARCH_STAGE!r})"
+            )
+        if not isinstance(cls.TRADE_RESEARCH_PHASE_LABEL, str) or not cls.TRADE_RESEARCH_PHASE_LABEL:
+            errors.append(
+                f"TRADE_RESEARCH_PHASE_LABEL must be a non-empty str "
+                f"(got {cls.TRADE_RESEARCH_PHASE_LABEL!r})"
+            )
+        if not isinstance(cls.TRADE_RESEARCH_PHASE_NOTE, str):
+            errors.append(
+                f"TRADE_RESEARCH_PHASE_NOTE must be str "
+                f"(got {cls.TRADE_RESEARCH_PHASE_NOTE!r})"
+            )
+        if not isinstance(cls.TRADE_LIVE_TRADING_PAUSED, bool):
+            errors.append(
+                f"TRADE_LIVE_TRADING_PAUSED must be bool "
+                f"(got {cls.TRADE_LIVE_TRADING_PAUSED!r})"
             )
 
         # SL / target / R:R

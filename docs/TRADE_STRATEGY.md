@@ -3,6 +3,8 @@
 <!-- Maintenance: keep in sync with code changes.  Per-pass history
      lives in commit messages and `docs/TRADE_ROADMAP.md`. -->
 
+> **Current operating status (2026-05-15):** intraday live trading is paused under `Stage 0 - Chan Research Reset`. This document describes the existing mechanics for audit, replay, and future staged research; it is not approval to place new live trades. New live trades resume only after the Chan-method staged process produces replay/forward evidence and promotion gates pass.
+
 
 ---
 
