@@ -1744,9 +1744,58 @@ function _renderSingleResult(host, data) {
     html += '</div>';
 
     if (rejected) {
+        // S47: enrich the rejected card with the same 52w-high
+        // context shown for ACCEPTED candidates plus a clear
+        // "what would qualify" hint, so the user understands the
+        // search ran successfully and the stock just doesn't
+        // qualify TODAY (vs reading the bare "REJECTED" pill as
+        // "the tool won't let me search this name"). Origin:
+        // 2026-05-14 user reported "Analyze a single stock doesn't
+        // allow me to search for ICICIBANK why?" — ICICIBANK was
+        // at -16.7% from 52w high, just shy of the 18% dip-buy
+        // threshold; rendering the dip% and the threshold makes
+        // the near-miss obvious.
+        var rejReason = c.rejected_reason || 'Rejected for unknown reason';
+        var fmtRs = function (n) {
+            return 'Rs.' + Number(n || 0).toLocaleString('en-IN', {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+            });
+        };
         html += '<p style="margin:4px 0;font-size:13px">' +
-                (c.rejected_reason || 'Rejected for unknown reason') +
-                '</p>';
+                rejReason + '</p>';
+        // Context block — show the snapshot of where the stock
+        // actually sits even though it was rejected.
+        if (c.close_price && c.ath_price) {
+            html += '<table class="kvtable" style="margin-top:8px;' +
+                    'font-size:12.5px"><tbody>';
+            html += '<tr><td>Current price</td><td>' + fmtRs(c.close_price) +
+                    '</td></tr>';
+            html += '<tr><td>52-week high (rolling)</td><td>' +
+                    fmtRs(c.ath_price) + '</td></tr>';
+            html += '<tr><td>% below 52w high</td><td>' +
+                    Number(c.dip_from_ath_pct || 0).toFixed(2) +
+                    '%</td></tr>';
+            if (c.rsi_daily) {
+                html += '<tr><td>RSI(14)</td><td>' +
+                        Number(c.rsi_daily).toFixed(1) + '</td></tr>';
+            }
+            if (c.relative_strength !== undefined && c.relative_strength !== null) {
+                var rsSign = c.relative_strength >= 0 ? '+' : '';
+                html += '<tr><td>RS vs NIFTY (60d)</td><td>' + rsSign +
+                        Number(c.relative_strength).toFixed(2) + '%</td></tr>';
+            }
+            html += '</tbody></table>';
+        }
+        // Always offer the detail-page link so the user can drill
+        // in to see the full health-check + AI analyse button even
+        // when the stock didn't qualify for entry today.
+        html += '<div style="margin-top:8px">';
+        html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
+                '" style="padding:5px 10px;font-size:12px;' +
+                'border:1px solid #cfd9eb;border-radius:5px;' +
+                'text-decoration:none;display:inline-block">' +
+                'Open detail page</a>';
+        html += '</div>';
     } else {
         html += '<table class="kvtable" style="margin-top:4px">';
         var rr = (c.rr_ratio || 0).toFixed(2);
