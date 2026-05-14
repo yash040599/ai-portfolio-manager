@@ -85,5 +85,13 @@ def get_live_quotes(symbols: list[str],
         _last_poll_time = time.monotonic()
         return result
 
-    except Exception:
+    except Exception as exc:
+        # Record so the dashboard surfaces a top-right toast instead
+        # of the previous silent fall-through to cached values. Auth-
+        # shaped Zerodha errors ("Incorrect `api_key` or `access_token`")
+        # ALSO invalidate the saved token file inside `record_external_error`,
+        # which flips the auth pill to "Re-login" on the next render —
+        # the user no longer has to guess why prices stopped updating.
+        from core.error_sink import record_external_error
+        record_external_error("zerodha", exc, log=Logger("LiveQuotes"))
         return {s: _cached_quotes.get(s, {}) for s in symbols}

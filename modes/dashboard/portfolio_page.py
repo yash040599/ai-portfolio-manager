@@ -47,7 +47,16 @@ _TOKEN_PATH = os.path.join("data", "access_token.json")
 
 def _auth_pill() -> str:
     """Returns a small pill showing whether today's Zerodha token is
-    valid. Click → /login."""
+    valid. Click → /login.
+
+    Pill flips to "Re-login" in two cases:
+      1. The saved token file is missing or stamped with a non-today
+         date (the original behaviour — daily expiry).
+      2. A recent external-API call recorded an auth-shaped failure
+         in `core.error_sink` (token rejected by the broker even
+         though the date stamp is today — IP-bound session killed,
+         API key mismatch, manual revocation, etc.).
+    """
     today = datetime.date.today().isoformat()
     valid = False
     try:
@@ -58,10 +67,17 @@ def _auth_pill() -> str:
     except Exception:
         valid = False
     if valid:
+        try:
+            from core.error_sink import has_auth_invalid
+            if has_auth_invalid():
+                valid = False
+        except Exception:
+            pass
+    if valid:
         return ('<a class="auth ok" href="/login" title="Token valid for today">'
                 'Auth: <strong>OK</strong></a>')
     return ('<a class="auth bad" href="/login" '
-            'title="Re-login required (token expired or missing)">'
+            'title="Re-login required (token expired, missing, or rejected)">'
             'Auth: <strong>Re-login</strong></a>')
 
 
@@ -1457,6 +1473,7 @@ def _ai_cost_card(holdings_count: int) -> str:
 
 def _wrap(title: str, here: str, body: str,
           *, holdings_count: int = 0) -> str:
+    from modes.dashboard.error_toast import error_toast_html, error_toast_script
     per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
     return f"""<!doctype html>
 <html lang="en">
@@ -1467,6 +1484,7 @@ def _wrap(title: str, here: str, body: str,
 <style>{_STYLE}</style>
 </head>
 <body data-holdings="{holdings_count}" data-ai-per-call="{per_call:.2f}">
+{error_toast_html()}
 <div class="wrap">
   {_topnav(here)}
   {body}
@@ -1475,6 +1493,7 @@ def _wrap(title: str, here: str, body: str,
     <code>data/portfolio_analyses.db</code>
   </footer>
 </div>
+{error_toast_script()}
 </body>
 </html>"""
 

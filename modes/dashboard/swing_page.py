@@ -44,11 +44,24 @@ def _auth_pill() -> str:
             valid = saved.get("date") == str(now_ist().date())
         except Exception:
             pass
+    # Even when the token file looks fresh, a recent auth-shaped
+    # external error (recorded via `core.error_sink`) means the
+    # broker rejected the token — flip the pill so the user has a
+    # clear next step. Origin: 2026-05-14 user reported "Funds
+    # fetch failed (Incorrect api_key or access_token); using
+    # default Rs.1,00,000" while pill still showed Auth: OK.
+    if valid:
+        try:
+            from core.error_sink import has_auth_invalid
+            if has_auth_invalid():
+                valid = False
+        except Exception:
+            pass
     if valid:
         return ('<a class="auth ok" href="/login" title="Token valid for today">'
                 'Auth: <strong>OK</strong></a>')
     return ('<a class="auth bad" href="/login" '
-            'title="Re-login required">'
+            'title="Re-login required (token rejected by Zerodha)">'
             'Auth: <strong>Re-login</strong></a>')
 
 
@@ -134,6 +147,9 @@ def render_swing_page() -> str:
                         f"Zerodha client init failed ({login_exc}); "
                         f"using default Rs.1,00,000."
                     )
+                    # Surface the failure as a top-right toast too.
+                    from core.error_sink import record_external_error
+                    record_external_error("zerodha", login_exc)
                 else:
                     try:
                         default_capital = _z.get_available_funds()
@@ -146,10 +162,20 @@ def render_swing_page() -> str:
                             f"Funds fetch failed ({funds_exc}); "
                             f"using default Rs.1,00,000."
                         )
+                        # Auth-shaped errors here ("Incorrect `api_key`
+                        # or `access_token`") will additionally invalidate
+                        # the saved token file inside `record_external_error`,
+                        # so the auth pill flips to "Re-login" on the
+                        # next render and the user knows exactly what
+                        # to do.
+                        from core.error_sink import record_external_error
+                        record_external_error("zerodha", funds_exc)
     except Exception as outer_exc:
         capital_source_note = (
             f"Capital lookup failed ({outer_exc}); using default Rs.1,00,000."
         )
+        from core.error_sink import record_external_error
+        record_external_error("zerodha", outer_exc)
 
     # Get pending entry actions (priority sorted) + candidates for reasons
     entry_actions: list[SwingAction] = []
@@ -996,13 +1022,16 @@ def _is_market_open() -> bool:
 
 
 def _wrap(title: str, body_parts: list[str]) -> str:
+    from modes.dashboard.error_toast import error_toast_html, error_toast_script
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — AI Portfolio Manager</title>
 <style>{_STYLE}</style>
 </head><body>
+{error_toast_html()}
 {"".join(body_parts)}
+{error_toast_script()}
 </body></html>"""
 
 

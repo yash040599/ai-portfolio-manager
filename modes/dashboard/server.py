@@ -214,6 +214,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_run_status()
             elif url.path == "/api/live_prices":
                 self._serve_live_prices(parse_qs(url.query))
+            elif url.path == "/api/errors":
+                self._serve_errors(parse_qs(url.query))
             elif url.path == "/api/data":
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
@@ -389,6 +391,33 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         out = {sym: quotes.get(sym, {}) for sym in symbols}
         body = json.dumps({
             "quotes": out,
+            "ts": now_ist().isoformat(),
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_errors(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/errors?since=<id> — returns external-API errors
+        recorded in `core.error_sink` with id > since.
+
+        Used by the top-right toast widget on every page; polled
+        every 5 s. The widget tracks its own `lastSeenId` in a
+        module-level JS variable so reloading the page doesn't
+        replay every prior toast.
+        """
+        from core.error_sink import get_errors_since
+        since = 0
+        try:
+            since = int((qs.get("since") or ["0"])[0])
+        except (TypeError, ValueError):
+            since = 0
+        errors = get_errors_since(since)
+        body = json.dumps({
+            "errors": errors,
             "ts": now_ist().isoformat(),
         }).encode("utf-8")
         self.send_response(200)
@@ -627,6 +656,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 client._kite = KiteConnect(api_key=Config.ZERODHA_API_KEY)
                 client._exchange_and_save(request_token)
                 ok = True
+                # Re-auth succeeded — wipe any prior auth-shaped
+                # toasts so they don't keep showing on the next
+                # render. New errors (post-clear) still get monotonic
+                # ids higher than the JS poller's last-seen, so a
+                # subsequent failure will still toast.
+                from core.error_sink import clear as _clear_errors
+                _clear_errors()
             except Exception as exc:
                 err = str(exc)[:200]
 
@@ -654,6 +690,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 client = ZerodhaClient(Config, Logger("DashboardAssistedLogin"))
                 client.login_assisted_with_otp(otp)
                 ok = True
+                # Wipe stale auth toasts after a successful re-auth.
+                from core.error_sink import clear as _clear_errors
+                _clear_errors()
             except Exception as exc:
                 err = str(exc)[:200]
         else:
