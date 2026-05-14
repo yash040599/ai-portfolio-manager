@@ -716,14 +716,24 @@ def latest_full_scan_rank_by_symbol(
             (run_id,),
         ).fetchone()
         total = int(total_row["n"] or 0)
+        # When a symbol has multiple ACCEPTED rows in the same run
+        # (e.g. accepted by BOTH technical and dip-buy scanners),
+        # take the BEST (lowest, hence numerically smallest) rank.
+        # Pre-fix this query had no ORDER BY / LIMIT so SQLite
+        # returned whichever row it picked first — non-deterministic
+        # and produced bugs like "two stocks both showing rank #1"
+        # in the compare table (DRREDDY + APOLLOHOSP, 2026-05-14).
         row = conn.execute(
-            "SELECT priority_rank FROM swing_candidates "
-            "WHERE run_id = ? AND symbol = ? AND status = 'ACCEPTED'",
+            """SELECT MIN(priority_rank) AS r
+                 FROM swing_candidates
+                WHERE run_id = ? AND symbol = ?
+                  AND status = 'ACCEPTED'
+                  AND priority_rank > 0""",
             (run_id, symbol.upper()),
         ).fetchone()
-        if not row:
+        if not row or row["r"] is None:
             return None
-        rank = int(row["priority_rank"] or 0)
+        rank = int(row["r"])
         if rank <= 0:
             return None
         return (rank, total)
