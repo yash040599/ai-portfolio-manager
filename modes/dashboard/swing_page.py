@@ -25,8 +25,9 @@ from modes.swing.persistence import (
     init_db, open_positions, pending_actions, realised_pnl_summary,
     latest_run_for_date, latest_run, actions_for_run,
     candidate_by_symbol, dip_candidate_by_symbol, candidates_for_run,
+    latest_full_scan_rank_by_symbol,
 )
-from modes.swing.types import SwingAction, SwingPosition
+from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import get_live_quotes
 from modes.dashboard.swing_actions import latest_swing_status
 
@@ -857,8 +858,40 @@ def render_swing_detail(symbol: str) -> str:
                      f'<span class="muted">(you risk Rs.{cand.risk_rupees:,.0f} '
                      f'to potentially make Rs.{cand.reward_rupees:,.0f})</span>'))
     body.append(_kv("How many to buy", f'{cand.suggested_qty} shares'))
-    body.append(_kv("Confidence Score",
-                     f'{cand.score:.1f} / 10 (rank #{cand.priority_rank} today)'))
+    # Composite score + today's rank.
+    # Naming unified 2026-05-14: home page table calls it "Composite
+    # score"; detail page used to call it "Confidence Score". Same
+    # number — single name avoids confusion.
+    # Rank lookup goes against the latest FULL-SCAN run only (skips
+    # SEARCH_BOX + snapshot rows) — pre-fix, the detail page printed
+    # "(rank #1 today)" for literally every stock because a single-
+    # stock SEARCH_BOX scan always assigns priority_rank=1 to the
+    # only candidate in its run, and `candidate_by_symbol` (which
+    # spans all runs) picked that row for the rank value.
+    # The dip-buy and technical scoring scales differ (dip-buy score
+    # is the dip%, technical scores are 0-10ish), so we also show
+    # the family note so a user comparing 25.9 vs 7.5 understands
+    # WHY the lower-numbered technical setup ranks higher overall.
+    is_dip = cand.setup_type in DIP_SETUP_TYPES
+    score_unit = "% dip" if is_dip else "/ 10"
+    family_note = (
+        '<span class="muted"> · 52W dip-buy family — ranks after '
+        'all technical setups by design</span>'
+        if is_dip else
+        '<span class="muted"> · technical-setup family — ranks '
+        'above all 52W dip-buy candidates</span>'
+    )
+    rank_info = latest_full_scan_rank_by_symbol(sym)
+    if rank_info is not None:
+        rank_n, rank_total = rank_info
+        rank_html = (f' <span class="muted">(rank #{rank_n} of '
+                     f'{rank_total} in latest full scan)</span>')
+    else:
+        rank_html = (' <span class="muted">(not present in the '
+                     'latest full scan)</span>')
+    body.append(_kv("Composite Score",
+                     f'{cand.score:.1f} {score_unit}{rank_html}'
+                     f'{family_note}'))
     # 52-week high context — useful regardless of setup type so the
     # detail page mirrors the unified table column. Despite the
     # legacy "ath_*" field name the value held since S22 is the

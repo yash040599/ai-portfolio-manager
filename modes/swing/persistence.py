@@ -674,6 +674,61 @@ def dip_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate 
 ath_candidate_by_symbol = dip_candidate_by_symbol
 
 
+def latest_full_scan_rank_by_symbol(
+    symbol: str, path: str = DB_PATH,
+) -> tuple[int, int] | None:
+    """Return `(rank, total_accepted)` for `symbol` in the latest
+    full-scan run — i.e. the most recent run that is NOT a snapshot
+    AND NOT a SEARCH_BOX trigger.
+
+    Origin: 2026-05-14 user reported "(rank #1 today)" was printed
+    on every detail page. Root cause: `candidate_by_symbol` (and the
+    detail page that depends on it) reads the most recent ACCEPTED
+    row regardless of run, so a single-stock SEARCH_BOX scan (which
+    always assigns priority_rank=1 to the only candidate) shadowed
+    the rank from the latest full universe scan. The detail page
+    must look up the rank against the full-scan run only — that's
+    the rank operators actually compare against.
+
+    Returns:
+      * `(rank, total)` — `rank` is 1-based; `total` is the count
+        of ACCEPTED candidates in that run (so the detail page can
+        render "rank #N of M today").
+      * `None` — symbol not present in the latest full scan, or no
+        full scan exists in the DB.
+    """
+    if not os.path.exists(path):
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        run = conn.execute(
+            """SELECT run_id FROM swing_runs
+               WHERE COALESCE(is_snapshot, 0) = 0
+                 AND COALESCE(trigger_source, '') != 'SEARCH_BOX'
+               ORDER BY run_id DESC LIMIT 1"""
+        ).fetchone()
+        if not run:
+            return None
+        run_id = int(run["run_id"])
+        total_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM swing_candidates "
+            "WHERE run_id = ? AND status = 'ACCEPTED'",
+            (run_id,),
+        ).fetchone()
+        total = int(total_row["n"] or 0)
+        row = conn.execute(
+            "SELECT priority_rank FROM swing_candidates "
+            "WHERE run_id = ? AND symbol = ? AND status = 'ACCEPTED'",
+            (run_id, symbol.upper()),
+        ).fetchone()
+        if not row:
+            return None
+        rank = int(row["priority_rank"] or 0)
+        if rank <= 0:
+            return None
+        return (rank, total)
+
+
 def latest_candidate_row_id_by_symbol(symbol: str,
                                       path: str = DB_PATH) -> int | None:
     """Return the `swing_candidates.id` of the latest ACCEPTED row

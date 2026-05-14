@@ -31,7 +31,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from modes.swing.types import SwingCandidate, SETUP_52W_DIP
+from modes.swing.types import (
+    SwingCandidate, SETUP_52W_DIP, DIP_SETUP_TYPES,
+)
 
 
 # Cap on how many stocks one comparison can pull in. Picked at 4 so
@@ -46,8 +48,14 @@ MAX_COMPARE_STOCKS = 4
 # Each row in the comparison table is one metric. `direction` tells
 # the renderer which value is "best":
 #   "high"  -> larger value wins (composite score, RS, R:R, volume).
-#   "low"   -> smaller value wins (% below 52w high — closer to high
-#              is bullish for momentum setups).
+#   "low"   -> smaller value wins (today's overall rank — lower is
+#              better; suggested-buy / target if you want a cheap
+#              entry, etc.).
+#   "dip_aware" -> setup-family-aware (e.g. "% Below 52w high"):
+#              if all candidates are dip-buy → higher wins (deeper
+#              dip = better entry); if all are momentum-side →
+#              lower wins (closer to the 52w high = stronger);
+#              mixed → no winner highlight.
 #   "high_dip" -> larger value wins, but ONLY meaningful for dip-buy
 #              candidates (so a name in dip territory doesn't win
 #              against an at-52w-high name on this row).
@@ -282,7 +290,8 @@ def _winner_rsi(raw: list) -> int | None:
     return min(nums, key=lambda kv: abs(kv[1] - 50.0))[0]
 
 
-def _pick_winner(direction: str, raw: list) -> int | None:
+def _pick_winner(direction: str, raw: list,
+                 cands: list[SwingCandidate] | None = None) -> int | None:
     if direction == "high":
         return _winner_high(raw)
     if direction == "low":
@@ -294,6 +303,28 @@ def _pick_winner(direction: str, raw: list) -> int | None:
     if direction == "high_dip":
         # Only count rows whose candidate is a dip-buy setup.
         return _winner_high(raw)
+    if direction == "dip_aware":
+        # "% Below 52w high" means OPPOSITE things depending on setup
+        # family:
+        #   * Continuation / momentum setups (BREAKOUT, TREND_CONT,
+        #     PULLBACK, SUPPORT_REV) — LOWER % (closer to high) is
+        #     stronger; those names have momentum.
+        #   * Dip-buy setups (52W_DIP / ATH_DIP) — HIGHER % (deeper
+        #     dip) is the better entry by definition.
+        # Mixed comparison → no winner highlight (it would be
+        # misleading to crown either side).
+        # Origin: 2026-05-14 user reported "lower % marked green even
+        # when HDFC had a bigger drop". Pre-fix this row was hard-
+        # coded `direction="low"` so HDFC@25.91% (dip) would lose
+        # to SBIN@20.62% (also a dip) — wrong winner for the dip-buy
+        # interpretation.
+        if not cands:
+            return None
+        sides = {(c.setup_type in DIP_SETUP_TYPES) for c in cands}
+        if len(sides) != 1:
+            return None  # mixed — no clear winner
+        is_dip_side = next(iter(sides))
+        return _winner_high(raw) if is_dip_side else _winner_low(raw)
     return None  # neutral
 
 
@@ -306,20 +337,57 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
              explain: str = "") -> None:
         raw = [getter(c) for c in cands]
         values = [fmt(v) for v in raw]
-        winner = _pick_winner(direction, raw)
+        winner = _pick_winner(direction, raw, cands)
         rows.append(CompareRow(
             label=label, values=values, raw=raw,
             direction=direction, winner_idx=winner, explain=explain,
         ))
+
+    # Today's overall rank (lower wins). The home page sorts by this
+    # — it's THE answer to "which stock does the bot pick first?".
+    # Pulled from the latest full-scan run (skipping SEARCH_BOX +
+    # snapshot rows). When a candidate is missing from that run we
+    # fall back to its in-memory `priority_rank` (set by scan_one),
+    # which the picker treats as a number so the row still renders.
+    # Origin: 2026-05-14 user asked "Can we have an overall score so
+    # we know which is better" — composite scores aren't directly
+    # comparable across setup families (technical 0-10 vs dip-buy
+    # 18-30%) so the unified rank is the only honest answer.
+    from modes.swing.persistence import latest_full_scan_rank_by_symbol
+
+    def _rank_for(c: SwingCandidate) -> float | None:
+        info = latest_full_scan_rank_by_symbol(c.symbol)
+        if info is not None:
+            return float(info[0])
+        # Fall back to the in-memory rank from the just-ran scan_one,
+        # but only if it's > 0 (0 = "never ranked").
+        r = int(getattr(c, "priority_rank", 0) or 0)
+        return float(r) if r > 0 else None
+
+    def _rank_fmt(v: float | None) -> str:
+        if v is None:
+            return "—"
+        return f"#{int(v)}"
+
+    _row("Today's overall rank (lower wins)", _rank_for, _rank_fmt,
+         "low",
+         "Single bot-wide ranking across BOTH technical and dip-buy "
+         "candidates — lower number = bot picks this stock first. "
+         "Composite scores below are NOT directly comparable across "
+         "setup families; this row is.")
 
     # Status / setup
     _row("Status", lambda c: c.status,
          lambda v: str(v) if v else "—", "neutral")
     _row("Setup", lambda c: c.setup_type,
          lambda v: (v or "—").replace("_", " ").title(), "neutral")
-    _row("Composite score", lambda c: float(c.score) if c.score else None,
+    _row("Composite score (per-setup scale)",
+         lambda c: float(c.score) if c.score else None,
          lambda v: _fmt_num(v, 1), "high",
-         "Higher = stronger composite signal across the four setups.")
+         "Within a single setup family, higher = stronger signal. "
+         "Across families the scales differ (technical 0-10 vs "
+         "dip-buy 18-30+ %) — use the rank row above for the "
+         "cross-family comparison.")
     _row("Sector", lambda c: c.sector,
          lambda v: str(v) if v else "—", "neutral")
 
@@ -329,9 +397,11 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
     _row("52w high (rolling)", lambda c: c.ath_price or None,
          _fmt_rs, "neutral")
     _row("% Below 52w high", lambda c: c.dip_from_ath_pct,
-         _fmt_pct_unsigned, "low",
-         "Lower (closer to 52w high) = stronger continuation; for "
-         "dip-buy candidates, higher means a deeper dip.")
+         _fmt_pct_unsigned, "dip_aware",
+         "Setup-aware winner: for momentum setups (BREAKOUT, "
+         "PULLBACK, TREND_CONT, SUPPORT_REV), CLOSER to the high "
+         "(lower %) wins. For 52W dip-buy setups, DEEPER dip "
+         "(higher %) wins. Mixed setups → no winner.")
 
     # Trend stack
     _row("Above SMA-200 (long-term up)",

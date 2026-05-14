@@ -318,20 +318,36 @@ readability.
 Side-by-side metric matrix. Cap of 4 by design (matches typical
 1280-wide laptop screen and avoids accidental fan-out on typo).
 
-**19 metric rows:** status, setup, composite score, sector, current
-price, 52w high (rolling), % below 52w high, above SMA-200, above
-SMA-50, above EMA-20, weekly trend up, RSI(14), RS vs NIFTY (60d),
-volume ratio, suggested entry, stop loss, target, suggested qty, R:R.
+**20 metric rows** (top to bottom): **today's overall rank** (the
+bot's single cross-family ranking — lower wins; this is THE answer
+to "which one does the bot pick first?"), status, setup, composite
+score (per-setup scale), sector, current price, 52w high (rolling),
+% below 52w high (setup-aware winner), above SMA-200, above SMA-50,
+above EMA-20, weekly trend up, RSI(14), RS vs NIFTY (60d), volume
+ratio, suggested entry, stop loss, target, suggested qty, R:R.
 
 Each row carries a **direction** (`high` / `low` / `true` / `rsi` /
-`neutral`) and the renderer picks a winner per row:
+`dip_aware` / `neutral`) and the renderer picks a winner per row:
 - `high`: max wins (composite score, RS, R:R, volume ratio).
-- `low`: min wins (% below 52w high — closer to high is bullish).
+- `low`: min wins (today's overall rank — #1 beats #5; suggested
+  entry / target if you want a cheap entry).
+- `dip_aware`: setup-family-aware (% Below 52w high). For dip-buy
+  candidates higher % wins (deeper dip = better entry); for
+  momentum setups lower % wins (closer to high = stronger). Mixed
+  comparisons get NO winner highlight — neither interpretation is
+  honest.
 - `true`: True wins (above SMA-200, weekly trend up, etc.).
 - `rsi`: closest to 50 wins (oversold AND overbought are bad).
 - `neutral`: no winner highlight (display-only).
 
-The "winner overall" headline (`HDFC wins 7 of 19 metrics`) sums up
+> **Why two scoring rows?** "Today's overall rank" is the unified
+> bot ranking — directly comparable across setup families.
+> "Composite score" is the within-family signal strength (0-10ish
+> for technical setups; 18-30+ % for dip-buy). A composite of 25.9%
+> on a 52W_DIP candidate is NOT "better" than 7.5 on a BREAKOUT —
+> they're different scales. The rank row resolves the comparison.
+
+The "winner overall" headline (`HDFC wins 7 of 20 metrics`) sums up
 which name dominates the matrix.
 
 **Sector aliases** for `--compare-sector`:
