@@ -520,17 +520,39 @@ def candidates_for_run(run_id: int, path: str = DB_PATH) -> list[SwingCandidate]
 
 def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
     """Most recent candidate record for a symbol (any status).
-    Prefers technical (non-dip-buy) candidates when multiple exist for
-    the same run, since they carry richer indicator detail. Treats
-    both legacy 'ATH_DIP' and current '52W_DIP' as dip-buy rows.
+
+    Resolution order (most-preferred first):
+      1. Most recent **ACCEPTED** candidate of any setup type
+         (a fresh ACCEPTED dip-buy beats a stale REJECTED technical
+         row — the prior dashboard bug, fixed 2026-05-14, was
+         showing zeros for SBIN because the technical scanner
+         emits NONE rows with empty indicator fields and those
+         won the lookup).
+      2. Most recent technical (non-dip-buy) candidate, regardless
+         of status, since technical rows carry richer indicator
+         detail than legacy ATH_DIP / current 52W_DIP rows when
+         both exist for the same name.
+      3. Any candidate including dip-buy rows.
+
+    Treats both legacy `ATH_DIP` and current `52W_DIP` as dip-buy
+    rows.
     """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        # First try: most recent technical (non-dip-buy) candidate.
-        # Both legacy 'ATH_DIP' and current '52W_DIP' rows are
-        # excluded so the technical candidate wins by default.
+        # Pass 1: any ACCEPTED row, newest first. Catches the live
+        # dip-buy candidate so the detail page shows real numbers.
+        row = conn.execute(
+            """SELECT * FROM swing_candidates
+               WHERE symbol = ? AND status = 'ACCEPTED'
+               ORDER BY run_id DESC, id DESC
+               LIMIT 1""",
+            (symbol.upper(),),
+        ).fetchone()
+        if row:
+            return _row_to_candidate(row)
+        # Pass 2: most recent technical (non-dip-buy) candidate.
         row = conn.execute(
             """SELECT * FROM swing_candidates
                WHERE symbol = ?
@@ -541,7 +563,7 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
         ).fetchone()
         if row:
             return _row_to_candidate(row)
-        # Fallback: any candidate including dip-buy rows.
+        # Pass 3: anything else (dip-buy rows, etc.).
         row = conn.execute(
             """SELECT * FROM swing_candidates
                WHERE symbol = ?
