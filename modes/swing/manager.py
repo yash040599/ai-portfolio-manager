@@ -294,6 +294,36 @@ class SwingManager:
                     "snapshot and continuing to write the report.")
                 # fall through; downstream save_run + save_report run
 
+        # 8b. AI overlay carry-forward (sticky across runs).
+        # If a candidate didn't get an AI overlay this run (either AI
+        # mode wasn't requested, OR the candidate fell outside the
+        # cost-cap of `overlay_ai_on_candidates`), copy a recent
+        # cached overlay from any prior run into the freshly-built
+        # candidate so the user doesn't lose qualitative context they
+        # already paid Claude for. Freshness gate is 7 days by default.
+        # Origin: 2026-05-14 user request — "as SBIN is also in
+        # NIFTY 100 the AI response must also reflect in our tool
+        # recommended list where SBIN must also be there".
+        try:
+            from modes.swing.persistence import latest_ai_overlay_for_symbol
+            carried = 0
+            for c in candidates:
+                if c.status != "ACCEPTED":
+                    continue
+                if c.ai_overlay_json:
+                    continue
+                cached = latest_ai_overlay_for_symbol(c.symbol)
+                if cached:
+                    c.ai_overlay_json = cached[0]
+                    carried += 1
+            if carried:
+                self.log.info(
+                    f"AI overlay carry-forward: {carried} candidate(s) "
+                    f"inherited a cached overlay (<= 7 days old)"
+                )
+        except Exception as exc:
+            self.log.warning(f"AI overlay carry-forward failed: {exc}")
+
         # 9. Assemble result
         all_actions = review_actions + entry_actions
         result.candidates = candidates

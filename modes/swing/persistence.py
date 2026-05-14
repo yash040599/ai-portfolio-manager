@@ -612,6 +612,59 @@ def update_candidate_ai_overlay(candidate_id: int, overlay_json: str,
         return (cur.rowcount or 0) > 0
 
 
+def latest_ai_overlay_for_symbol(
+    symbol: str,
+    *,
+    max_age_days: int = 7,
+    path: str = DB_PATH,
+) -> tuple[str, str] | None:
+    """Return `(ai_overlay_json, finished_at_iso)` for the most recent
+    swing_candidates row that has a non-empty ai_overlay_json AND is
+    NOT older than `max_age_days`. Used by:
+
+    * `SwingManager.run()` — carry an existing AI overlay forward to a
+      fresh scan's candidate row, so a stock the user paid Claude for
+      yesterday still shows the AI analysis on today's recommendation
+      table without being charged again.
+    * The dashboard detail page — render the analysis-date badge
+      ("Analysed 3 days ago") so the user can tell stale vs fresh.
+
+    Returns None when no row qualifies. The freshness gate is keyed on
+    the parent `swing_runs.finished_at` so a "good" overlay from a
+    one-stock S38 search-box run carries forward identically to one
+    from a full universe scan.
+    """
+    if not os.path.exists(path):
+        return None
+    import datetime as _dt
+    cutoff = (_dt.datetime.utcnow()
+              - _dt.timedelta(days=max(0, max_age_days))).isoformat()
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        # JOIN to runs so we can apply the freshness gate. ORDER by
+        # run_id DESC so we always take the most recent valid overlay.
+        row = conn.execute(
+            """SELECT c.ai_overlay_json AS overlay,
+                      COALESCE(r.finished_at, r.started_at) AS ts
+                 FROM swing_candidates c
+                 JOIN swing_runs r ON c.run_id = r.run_id
+                WHERE c.symbol = ?
+                  AND c.ai_overlay_json IS NOT NULL
+                  AND c.ai_overlay_json != ''
+                  AND COALESCE(r.finished_at, r.started_at) >= ?
+                ORDER BY r.run_id DESC, c.id DESC
+                LIMIT 1""",
+            (symbol.upper(), cutoff),
+        ).fetchone()
+        if not row:
+            return None
+        overlay = row["overlay"] or ""
+        ts = row["ts"] or ""
+        if not overlay:
+            return None
+        return overlay, ts
+
+
 def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:
     """All actions for a given run."""
     if not os.path.exists(path):

@@ -708,6 +708,26 @@ def render_swing_detail(symbol: str) -> str:
     body.append(_kv("How many to buy", f'{cand.suggested_qty} shares'))
     body.append(_kv("Confidence Score",
                      f'{cand.score:.1f} / 10 (rank #{cand.priority_rank} today)'))
+    # 52-week high context — useful regardless of setup type so the
+    # detail page mirrors the unified table column. Despite the
+    # legacy "ath_*" field name the value held since S22 is the
+    # rolling 52-week-high reference.
+    _ath_p = float(getattr(cand, "ath_price", 0.0) or 0.0)
+    _dip_p = float(getattr(cand, "dip_from_ath_pct", 0.0) or 0.0)
+    if _ath_p > 0:
+        if _dip_p >= 18:
+            dip_html = (f'<strong>{_dip_p:.1f}% below</strong> 52w high '
+                        f'(Rs.{_ath_p:,.2f}) — qualifies as a 52w-dip buy')
+        elif _dip_p >= 10:
+            dip_html = (f'{_dip_p:.1f}% below 52w high '
+                        f'(Rs.{_ath_p:,.2f})')
+        elif _dip_p >= 0:
+            dip_html = (f'<span class="muted">{_dip_p:.1f}% below '
+                        f'52w high (Rs.{_ath_p:,.2f})</span>')
+        else:
+            dip_html = (f'<span class="muted">at fresh 52w high '
+                        f'(Rs.{_ath_p:,.2f})</span>')
+        body.append(_kv("% Below 52w High", dip_html))
     body.append('</table></div>')
 
     # ── Signal Reasons (why we recommend entry) ─────────────────
@@ -793,6 +813,38 @@ def render_swing_detail(symbol: str) -> str:
     )
     body.append('<div id="ai-overlay-host">')
     if cand.ai_overlay_json:
+        # Render the saved AI text + a freshness badge so the user
+        # knows whether they're looking at fresh analysis or a
+        # carry-forward from an earlier scan / detail-page click.
+        # The badge ts comes from the parent run's finished_at via
+        # the same persistence helper the manager uses for carry-
+        # forward, so the values agree across surfaces.
+        ai_ts = ""
+        try:
+            from modes.swing.persistence import latest_ai_overlay_for_symbol
+            cached = latest_ai_overlay_for_symbol(sym, max_age_days=365)
+            if cached:
+                ai_ts = cached[1]
+        except Exception:
+            ai_ts = ""
+        if ai_ts:
+            # Pretty age string ("Analysed 3 days ago" / "today" / "1 day ago")
+            try:
+                import datetime as _dt
+                _t = _dt.datetime.fromisoformat(ai_ts.split(".")[0])
+                _age = (_dt.datetime.utcnow() - _t).days
+                age_str = ("today" if _age <= 0
+                           else "yesterday" if _age == 1
+                           else f"{_age} days ago")
+            except Exception:
+                age_str = ai_ts[:10]
+            body.append(
+                f'<div class="muted" style="font-size:11px;margin-bottom:6px">'
+                f'Analysed <strong>{html.escape(age_str)}</strong> '
+                f'<span style="opacity:0.7">({html.escape(ai_ts[:16])} UTC)</span>. '
+                f'Click <em>Analyse with AI</em> above to refresh.'
+                f'</div>'
+            )
         try:
             import json as _j
             ai = _j.loads(cand.ai_overlay_json)

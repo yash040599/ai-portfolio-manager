@@ -26,7 +26,10 @@ from modes.swing.risk import (
     compute_entry_risk, check_portfolio_limits, generate_broker_instruction,
     earnings_blackout_symbols,
 )
-from modes.swing.types import SwingCandidate, SwingAction, ACTION_ENTRY, STATUS_PENDING
+from modes.swing.types import (
+    SwingCandidate, SwingAction, ACTION_ENTRY, STATUS_PENDING,
+    SETUP_52W_DIP,
+)
 
 
 # ── Universe builder ────────────────────────────────────────────
@@ -383,9 +386,124 @@ class SwingScanner:
 
         setup_type, score, reasons = classify_setup(ind)
         if setup_type == "NONE":
+            # Fall through to the dip-buy strategy (the universe scan
+            # runs both technical AND dip-buy in series; scan_one
+            # previously ran ONLY the technical scanner, which meant
+            # a name like SBIN at -21% from the 52w high was rejected
+            # as "No qualifying setup" instead of being surfaced as
+            # a 52W_DIP candidate. Origin: 2026-05-14 user search
+            # for SBIN. Threshold + lookback come from the same
+            # Config knobs the universe DipBuyScanner uses.
+            from modes.swing.signals import (
+                score_breakout, score_pullback,
+                score_trend_continuation, score_support_reversal,
+            )
+            from modes.swing.risk import generate_broker_instruction
+            dip_pct_cfg = float(getattr(self.cfg, "SWING_DIP_PCT", 18.0))
+            target_pct_cfg = float(getattr(self.cfg, "SWING_DIP_TARGET_PCT", 12.0))
+            buy_amount_cfg = float(getattr(self.cfg, "SWING_DIP_BUY_AMOUNT", 10000.0))
+            lookback_cfg = max(20, int(getattr(self.cfg, "SWING_DIP_LOOKBACK_DAYS", 252)))
+            ref_window = (ind["closes"][-lookback_cfg:]
+                          if len(ind["closes"]) >= lookback_cfg
+                          else ind["closes"])
+            ref_high = max(ref_window) if ref_window else 0.0
+            dip_from_ref = (
+                ((ref_high - ind["current"]) / ref_high) * 100.0
+                if ref_high > 0 else 0.0
+            )
+            if dip_from_ref >= dip_pct_cfg:
+                # Build a 52W_DIP candidate. Mirror the DipBuyScanner
+                # math (10% hard stop, +Y% target, fixed-rupee qty)
+                # so the result is identical to what the universe
+                # scan would have produced.
+                stop = round(ind["current"] * 0.90, 2)
+                target = round(ind["current"] * (1 + target_pct_cfg / 100.0), 2)
+                qty = max(1, int(buy_amount_cfg / ind["current"]))
+                risk_per = ind["current"] - stop
+                reward_per = target - ind["current"]
+                rr = (reward_per / risk_per) if risk_per > 0 else 0
+                dip_reasons = [
+                    f"Stock is {dip_from_ref:.1f}% below its "
+                    f"{lookback_cfg}-day high of Rs.{ref_high:,.2f}",
+                    f"Dip-buy strategy: buy when {dip_pct_cfg:.0f}%+ "
+                    f"below 52w high (backtest sweet spot 18-20%)",
+                    f"Target: sell when price rises {target_pct_cfg:.0f}% "
+                    f"from buy (backtest sweet spot 10-13%)",
+                    f"Buy Rs.{buy_amount_cfg:,.0f} = {qty} shares at "
+                    f"Rs.{ind['current']:,.2f}",
+                ]
+                cand = SwingCandidate(
+                    symbol=symbol, exchange="NSE",
+                    setup_type=SETUP_52W_DIP,
+                    score=round(dip_from_ref, 1),
+                    close_price=ind["current"],
+                    entry_price=ind["current"],
+                    stop_price=stop, target_price=target,
+                    risk_rupees=round(risk_per * qty, 2),
+                    reward_rupees=round(reward_per * qty, 2),
+                    rr_ratio=round(rr, 2),
+                    suggested_qty=qty, sector=sector,
+                    sma_50=ind["sma_50"], sma_200=ind["sma_200"],
+                    ema_20=ind["ema_20"], rsi_daily=ind["rsi"],
+                    atr_14=ind["atr_14"],
+                    relative_strength=ind["rel_strength"],
+                    volume_ratio=ind["vol_ratio"],
+                    high_20d=ind["high_20d"], high_50d=ind["high_50d"],
+                    low_52w=ind["low_52w"], high_52w=ind["high_52w"],
+                    weekly_trend_up=ind["weekly_trend_up"],
+                    ath_price=round(ref_high, 2),
+                    dip_from_ath_pct=round(dip_from_ref, 2),
+                    reasons=dip_reasons,
+                    status="ACCEPTED",
+                    broker_instruction_json=json.dumps(
+                        generate_broker_instruction(
+                            symbol=symbol, exchange="NSE",
+                            qty=qty, entry_price=ind["current"],
+                            stop_price=stop, target_price=target,
+                        ), default=str),
+                )
+                cand.priority_rank = 1
+                cand.priority_score = cand.score
+                action = SwingAction(
+                    symbol=cand.symbol, exchange=cand.exchange,
+                    action_type=ACTION_ENTRY, status=STATUS_PENDING,
+                    suggested_qty=cand.suggested_qty,
+                    suggested_price=cand.entry_price,
+                    suggested_stop=cand.stop_price,
+                    suggested_target=cand.target_price,
+                    priority_rank=1,
+                    live_price=cand.close_price,
+                    broker_instruction_json=cand.broker_instruction_json,
+                    created_at=now_ist().isoformat(),
+                    notes=f"52w-dip single-stock analyse for {symbol}",
+                )
+                return cand, action
+
+            # Neither technical nor dip-buy — return an enriched
+            # rejection with per-setup score breakdown so the user
+            # sees WHAT was close to qualifying instead of a bare
+            # "No qualifying setup".
+            sb = score_breakout(ind)
+            sp = score_pullback(ind)
+            stc = score_trend_continuation(ind)
+            ssr = score_support_reversal(ind)
+            score_breakdown = (
+                f"BREAKOUT={sb[0]:.1f}, "
+                f"PULLBACK={sp[0]:.1f}, "
+                f"TREND_CONT={stc[0]:.1f}, "
+                f"SUPPORT_REV={ssr[0]:.1f}"
+            )
+            dip_short = (
+                f"; below 52w-dip threshold ({dip_from_ref:.1f}% < "
+                f"{dip_pct_cfg:.0f}%)" if ref_high > 0 else ""
+            )
             cand = SwingCandidate(
                 symbol=symbol, setup_type="NONE", score=0,
-                status="REJECTED", rejected_reason="No qualifying setup",
+                status="REJECTED",
+                rejected_reason=(
+                    f"No qualifying setup (need any score >= 2.0): "
+                    f"{score_breakdown}{dip_short}"
+                ),
                 close_price=ind["current"], sector=sector,
                 ath_price=round(_ath_price, 2),
                 dip_from_ath_pct=round(_dip_pct, 2),
