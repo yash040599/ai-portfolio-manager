@@ -243,6 +243,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_action_skip(url.path)
             elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/exit"):
                 self._serve_swing_position_exit(url.path)
+            elif url.path.startswith("/api/swing/ai_analyse/"):
+                self._serve_swing_ai_analyse_single(url.path)
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001
@@ -621,6 +623,109 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_ai_analyse_single(self, path: str) -> None:
+        """POST /api/swing/ai_analyse/<SYMBOL>
+
+        Runs the swing AI overlay against ONE candidate and persists
+        the response to that row's `ai_overlay_json`. Returns the
+        full overlay payload so the dashboard can render the result
+        without a second round-trip. Costs exactly one Claude call
+        (~Rs.{CLAUDE_COST_PER_CALL} on Pro). Roadmap S37.
+
+        Failure modes (all surfaced as 4xx + JSON error):
+          * Symbol unknown        -> 404
+          * No prior swing scan   -> 404 (run the scan first)
+          * Claude raises (auth,
+            rate-limit, etc.)     -> 502 + error toast via the
+                                     usual `core.error_sink` path
+        """
+        from urllib.parse import unquote
+        sym = unquote(path[len("/api/swing/ai_analyse/"):]).strip("/").upper()
+        if not sym:
+            err = json.dumps({"ok": False, "error": "missing symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        # Lazy imports — keep the GET hot-path lean.
+        from modes.swing.persistence import (
+            candidate_by_symbol, latest_candidate_row_id_by_symbol,
+            update_candidate_ai_overlay,
+        )
+        from modes.swing.ai_overlay import analyse_single_candidate
+        from core.claude_client import ClaudeClient
+        from core.logger import Logger
+
+        cand = candidate_by_symbol(sym)
+        if cand is None:
+            err = json.dumps({
+                "ok": False,
+                "error": f"No swing candidate found for {sym} — run a scan first.",
+            }).encode("utf-8")
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        row_id = latest_candidate_row_id_by_symbol(sym)
+        log = Logger(f"SwingAI[{sym}]")
+        try:
+            claude = ClaudeClient(Config, log)
+        except Exception as exc:
+            from core.error_sink import record_external_error
+            record_external_error("claude", exc, log=log)
+            err = json.dumps({
+                "ok": False,
+                "error": f"Claude client init failed: {exc}",
+            }).encode("utf-8")
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        overlay_json = analyse_single_candidate(cand, claude, log)
+        # Persist back to the row so a page reload shows the same
+        # text that was just rendered.
+        if row_id is not None:
+            try:
+                update_candidate_ai_overlay(row_id, overlay_json)
+            except Exception as exc:
+                # Persistence failure shouldn't block the response —
+                # the overlay text is already in `overlay_json` and
+                # we're returning it inline. Log + toast quietly.
+                from core.error_sink import record_external_error
+                record_external_error("dashboard", exc, log=log)
+
+        # Surface Claude failures as a top-right toast too. The
+        # `analyse_single_candidate` helper writes
+        # `{"error": "..."}` into `overlay_json` on failure.
+        try:
+            payload = json.loads(overlay_json or "{}")
+        except Exception:
+            payload = {}
+        if payload.get("error"):
+            from core.error_sink import record_external_error
+            record_external_error("claude", payload["error"], log=log)
+
+        body = json.dumps({
+            "ok": not payload.get("error"),
+            "symbol": sym,
+            "overlay": payload,
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 

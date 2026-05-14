@@ -101,6 +101,49 @@ def overlay_ai_on_candidates(
     return candidates
 
 
+# ── Single-candidate AI analyse (per-stock detail-page button) ──
+#
+# Used by the dashboard `/api/swing/ai_analyse/<symbol>` endpoint
+# (Roadmap S37). Costs exactly one Claude call (~Rs.3 on Pro) so
+# the user can selectively get qualitative thesis on a name they're
+# considering, without having to re-run the full AI scan and pay
+# for the entire top-K cap.
+
+def analyse_single_candidate(
+    candidate: SwingCandidate,
+    claude: ClaudeClient,
+    log: Logger,
+) -> str:
+    """Send `candidate` to Claude and return the JSON-encoded
+    overlay payload. Mutates the candidate's `ai_overlay_json`
+    in place too so a caller that just wants the side-effect
+    can ignore the return value.
+
+    On Claude failure the overlay payload carries an `"error"`
+    key; the caller is responsible for surfacing it (e.g. via the
+    error toast). Never raises.
+    """
+    try:
+        prompt = _build_prompt(candidate)
+        response = claude.call(prompt)
+        if response:
+            candidate.ai_overlay_json = json.dumps({
+                "raw_response": response[:2000],
+                "source": "claude_swing_overlay_single",
+            })
+        else:
+            candidate.ai_overlay_json = json.dumps({
+                "error": "Claude returned empty response",
+            })
+    except Exception as exc:
+        log.warning(f"Single-candidate AI analyse failed for "
+                    f"{candidate.symbol}: {exc}")
+        candidate.ai_overlay_json = json.dumps({
+            "error": str(exc)[:200],
+        })
+    return candidate.ai_overlay_json
+
+
 def _build_prompt(c: SwingCandidate) -> str:
     """Build the Claude prompt for one swing candidate."""
 

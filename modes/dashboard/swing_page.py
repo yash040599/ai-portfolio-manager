@@ -733,9 +733,27 @@ def render_swing_detail(symbol: str) -> str:
         body.append('</table></div>')
 
     # ── AI Overlay (if available) ───────────────────────────────
+    # Per-stock AI analyse button (S37) — costs one Claude call
+    # (~Rs.{CLAUDE_COST_PER_CALL}). Sits ABOVE the AI section so the
+    # user can populate or refresh just this one symbol without
+    # paying for the full top-K cap.
+    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    body.append('<div class="card">')
+    body.append('<h2>AI Analysis</h2>')
+    body.append(
+        '<div style="display:flex;gap:8px;align-items:center;'
+        'margin-bottom:10px;flex-wrap:wrap">'
+        f'<button class="action" id="ai-analyse-btn" '
+        f'onclick="aiAnalyseSingle(\'{html.escape(sym)}\')" '
+        f'style="padding:6px 12px;font-size:13px">'
+        f'Analyse with AI (~Rs.{per_call:.0f})</button>'
+        f'<span class="muted" style="font-size:12px">'
+        f'One Claude call for this stock only. Replaces the existing '
+        f'AI analysis below if any.</span>'
+        '</div>'
+    )
+    body.append('<div id="ai-overlay-host">')
     if cand.ai_overlay_json:
-        body.append('<div class="card">')
-        body.append('<h2>AI Analysis</h2>')
         try:
             import json as _j
             ai = _j.loads(cand.ai_overlay_json)
@@ -749,14 +767,79 @@ def render_swing_detail(symbol: str) -> str:
                             f'{html.escape(err)}</div>')
         except Exception:
             body.append('<p class="muted">Could not parse AI overlay.</p>')
-        body.append('</div>')
     else:
-        body.append('<div class="card">')
-        body.append('<h2>AI Analysis</h2>')
-        body.append('<p class="muted">No AI analysis for this stock. '
-                    'Run an AI swing scan from the dashboard to add '
-                    'qualitative thesis, risks, and news context.</p>')
-        body.append('</div>')
+        body.append('<p class="muted">No AI analysis for this stock yet. '
+                    'Click <em>Analyse with AI</em> above to add '
+                    'qualitative thesis, risks, and news context — '
+                    'or run a full AI swing scan from /swing.</p>')
+    body.append('</div>')   # /ai-overlay-host
+    body.append('</div>')   # /card
+
+    # JS for the per-stock AI button. Idempotent (guarded by
+    # `_aiAnalyseInstalled`) so multiple swing detail pages in one
+    # session don't double-bind the handler.
+    body.append('''<script>
+(function () {
+    if (window._aiAnalyseInstalled) return;
+    window._aiAnalyseInstalled = true;
+    window.aiAnalyseSingle = function (sym) {
+        var btn = document.getElementById('ai-analyse-btn');
+        var host = document.getElementById('ai-overlay-host');
+        if (!btn || !host) return;
+        var perCall = ''' + f'{per_call:.0f}' + ''';
+        if (!confirm('Spend ~Rs.' + perCall + ' on a Claude call for ' +
+                     sym + '?\\nThis runs the swing AI overlay on ' +
+                     'this one stock and replaces any existing AI ' +
+                     'analysis below.')) {
+            return;
+        }
+        btn.disabled = true;
+        var origText = btn.textContent;
+        btn.textContent = 'Analysing...';
+        host.innerHTML =
+            '<p class="muted"><span class="spinner"></span> ' +
+            'Calling Claude (typically 5-15 s)...</p>';
+        fetch('/api/swing/ai_analyse/' + encodeURIComponent(sym),
+              {method: 'POST'})
+            .then(function (r) {
+                return r.json().then(function (j) {
+                    return {ok: r.ok, body: j};
+                });
+            })
+            .then(function (res) {
+                btn.disabled = false;
+                btn.textContent = origText;
+                if (!res.ok || !res.body.ok) {
+                    var msg = (res.body && res.body.error) ||
+                              'unknown error';
+                    host.innerHTML =
+                        '<div class="banner warn">AI analyse failed: '
+                        + msg + '</div>';
+                    return;
+                }
+                var raw = (res.body.overlay && res.body.overlay.raw_response)
+                          || '';
+                if (raw) {
+                    var pre = document.createElement('div');
+                    pre.style.cssText =
+                        'font-size:13px;line-height:1.7;white-space:pre-wrap';
+                    pre.textContent = raw;
+                    host.innerHTML = '';
+                    host.appendChild(pre);
+                } else {
+                    host.innerHTML =
+                        '<p class="muted">AI returned an empty response.</p>';
+                }
+            })
+            .catch(function (e) {
+                btn.disabled = false;
+                btn.textContent = origText;
+                host.innerHTML =
+                    '<div class="banner warn">Network error: ' + e + '</div>';
+            });
+    };
+})();
+</script>''')
 
     # ── Rejected reason (if not accepted) ───────────────────────
     if cand.rejected_reason:

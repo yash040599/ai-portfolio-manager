@@ -576,6 +576,42 @@ def dip_candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate 
 ath_candidate_by_symbol = dip_candidate_by_symbol
 
 
+def latest_candidate_row_id_by_symbol(symbol: str,
+                                      path: str = DB_PATH) -> int | None:
+    """Return the `swing_candidates.id` of the latest row for a symbol
+    (any setup, any status). Used by the per-stock AI analyse
+    endpoint (S37) so the Claude response can be persisted back to
+    the exact row the detail page is showing.
+    """
+    if not os.path.exists(path):
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            """SELECT id FROM swing_candidates
+               WHERE symbol = ?
+               ORDER BY run_id DESC, id DESC
+               LIMIT 1""",
+            (symbol.upper(),),
+        ).fetchone()
+        return int(row["id"]) if row else None
+
+
+def update_candidate_ai_overlay(candidate_id: int, overlay_json: str,
+                                path: str = DB_PATH) -> bool:
+    """Patch `ai_overlay_json` on a single candidate row. Used by the
+    per-stock AI analyse endpoint (S37). Returns True when the row
+    existed and the update wrote one row.
+    """
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        cur = conn.execute(
+            "UPDATE swing_candidates SET ai_overlay_json = ? WHERE id = ?",
+            (overlay_json, candidate_id),
+        )
+        return (cur.rowcount or 0) > 0
+
+
 def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:
     """All actions for a given run."""
     if not os.path.exists(path):
