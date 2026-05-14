@@ -297,6 +297,196 @@ class SwingScanner:
 
         return candidates, actions
 
+    # ── Single-symbol scan (S38 search-box flow) ───────────────
+
+    def scan_one(
+        self,
+        symbol: str,
+        *,
+        swing_capital: float = 100_000.0,
+        existing_positions: list[dict] | None = None,
+        candle_to_date: datetime.date | None = None,
+    ) -> tuple[SwingCandidate, SwingAction | None]:
+        """Run the full per-stock pipeline against ONE ticker.
+
+        Returns `(candidate, action)`:
+          * candidate is always present (status carries the verdict —
+            ACCEPTED / REJECTED / NONE).
+          * action is the ENTRY action for ACCEPTED, otherwise None.
+
+        This is the workhorse behind the dashboard's single-stock
+        search box (S38). Re-uses every helper the universe scan
+        uses so the result is identical to what the universe scan
+        would produce for the same name on the same day. Even
+        rejected results are still returned so the user can see
+        why their pick didn't qualify.
+
+        Symbol does NOT need to be in `Config.SCAN_UNIVERSE` — the
+        pipeline only needs daily candles from Zerodha + a sector
+        lookup (defaulted to "OTHER" when the symbol isn't in
+        `SECTOR_MAP`).
+        """
+        if existing_positions is None:
+            existing_positions = []
+
+        symbol = (symbol or "").strip().upper()
+        sector = SECTOR_MAP.get(symbol, "OTHER")
+
+        # Pre-flight: earnings blackout (one symbol only — cheap).
+        from datetime import date as _date
+        scan_date = candle_to_date or now_ist().date()
+        from modes.swing.risk import earnings_blackout_symbols
+        blackout = earnings_blackout_symbols(today=scan_date, cfg=self.cfg)
+        if symbol in blackout:
+            cand = SwingCandidate(
+                symbol=symbol, setup_type="NONE", score=0,
+                status="REJECTED",
+                rejected_reason=f"Earnings on {blackout[symbol]} (T+0..2)",
+                close_price=0, sector=sector,
+            )
+            return cand, None
+
+        candles = self._fetch_daily_candles(symbol, "NSE", to_date=candle_to_date)
+        if len(candles) < 50:
+            cand = SwingCandidate(
+                symbol=symbol, setup_type="NONE", score=0,
+                status="REJECTED",
+                rejected_reason=(
+                    f"Not enough daily history ({len(candles)} bars; need >=50). "
+                    "Symbol may be unlisted or recently IPO'd."
+                ),
+                close_price=0, sector=sector,
+            )
+            return cand, None
+
+        nifty_candles = self._fetch_daily_candles("NIFTY 50", "NSE",
+                                                  to_date=candle_to_date)
+        ind = compute_swing_indicators(candles, nifty_candles)
+        if not ind.get("valid"):
+            cand = SwingCandidate(
+                symbol=symbol, setup_type="NONE", score=0,
+                status="REJECTED",
+                rejected_reason=ind.get("reason", "Indicators not computable"),
+                close_price=candles[-1].get("close", 0) or 0,
+                sector=sector,
+            )
+            return cand, None
+
+        # Reference high (full-history close max — same as the
+        # technical-scanner path computes for the unified table).
+        _closes_all = [c["close"] for c in candles if c.get("close")]
+        _ath_price = max(_closes_all) if _closes_all else 0.0
+        _dip_pct = (
+            ((_ath_price - ind["current"]) / _ath_price) * 100.0
+            if _ath_price > 0 else 0.0
+        )
+
+        setup_type, score, reasons = classify_setup(ind)
+        if setup_type == "NONE":
+            cand = SwingCandidate(
+                symbol=symbol, setup_type="NONE", score=0,
+                status="REJECTED", rejected_reason="No qualifying setup",
+                close_price=ind["current"], sector=sector,
+                ath_price=round(_ath_price, 2),
+                dip_from_ath_pct=round(_dip_pct, 2),
+                sma_50=ind["sma_50"], sma_200=ind["sma_200"],
+                ema_20=ind["ema_20"], rsi_daily=ind["rsi"],
+                atr_14=ind["atr_14"], relative_strength=ind["rel_strength"],
+                volume_ratio=ind["vol_ratio"],
+                high_20d=ind["high_20d"], high_50d=ind["high_50d"],
+                low_52w=ind["low_52w"], high_52w=ind["high_52w"],
+                weekly_trend_up=ind["weekly_trend_up"],
+            )
+            return cand, None
+
+        # Risk sizing
+        risk = compute_entry_risk(
+            current_price=ind["current"],
+            atr_14=ind["atr_14"],
+            sma_50=ind["sma_50"],
+            sma_200=ind["sma_200"],
+            low_52w=ind["low_52w"],
+            high_52w=ind["high_52w"],
+            setup_type=setup_type,
+            swing_capital=swing_capital,
+        )
+
+        cand = SwingCandidate(
+            symbol=symbol, exchange="NSE",
+            setup_type=setup_type,
+            score=round(score, 2),
+            close_price=ind["current"],
+            entry_price=risk.entry_price,
+            stop_price=risk.stop_price,
+            target_price=risk.target_price,
+            risk_rupees=risk.risk_rupees,
+            reward_rupees=risk.reward_rupees,
+            rr_ratio=risk.rr_ratio,
+            suggested_qty=risk.suggested_qty,
+            sector=sector,
+            sma_50=ind["sma_50"], sma_200=ind["sma_200"],
+            ema_20=ind["ema_20"], rsi_daily=ind["rsi"],
+            atr_14=ind["atr_14"], relative_strength=ind["rel_strength"],
+            volume_ratio=ind["vol_ratio"],
+            high_20d=ind["high_20d"], high_50d=ind["high_50d"],
+            low_52w=ind["low_52w"], high_52w=ind["high_52w"],
+            weekly_trend_up=ind["weekly_trend_up"],
+            ath_price=round(_ath_price, 2),
+            dip_from_ath_pct=round(_dip_pct, 2),
+            reasons=reasons,
+        )
+
+        # Already-in-book / risk-rejected / portfolio-cap checks.
+        # We DO surface these so the user sees why a name they
+        # searched for was rejected.
+        open_symbols = {p.get("symbol", "") for p in existing_positions}
+        if symbol in open_symbols:
+            cand.status = "REJECTED"
+            cand.rejected_reason = "Already in open swing book"
+            return cand, None
+        if risk.rejected:
+            cand.status = "REJECTED"
+            cand.rejected_reason = risk.rejected_reason
+            return cand, None
+        ok, reason = check_portfolio_limits(
+            new_risk_rupees=risk.risk_rupees,
+            new_position_value=risk.position_value,
+            new_sector=sector,
+            existing_positions=existing_positions,
+            swing_capital=swing_capital,
+        )
+        if not ok:
+            cand.status = "REJECTED"
+            cand.rejected_reason = reason
+            return cand, None
+
+        cand.status = "ACCEPTED"
+        cand.broker_instruction_json = json.dumps(
+            generate_broker_instruction(
+                symbol=symbol, exchange="NSE",
+                qty=risk.suggested_qty,
+                entry_price=risk.entry_price,
+                stop_price=risk.stop_price,
+                target_price=risk.target_price,
+            ), default=str)
+        cand.priority_rank = 1
+        cand.priority_score = cand.score
+
+        action = SwingAction(
+            symbol=cand.symbol, exchange=cand.exchange,
+            action_type=ACTION_ENTRY, status=STATUS_PENDING,
+            suggested_qty=cand.suggested_qty,
+            suggested_price=cand.entry_price,
+            suggested_stop=cand.stop_price,
+            suggested_target=cand.target_price,
+            priority_rank=1,
+            live_price=cand.close_price,
+            broker_instruction_json=cand.broker_instruction_json,
+            created_at=now_ist().isoformat(),
+            notes=f"Single-stock analyse for {symbol}",
+        )
+        return cand, action
+
     # ── Candle fetching ─────────────────────────────────────────
 
     def _fetch_daily_candles(self, symbol: str,

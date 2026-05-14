@@ -245,6 +245,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_position_exit(url.path)
             elif url.path.startswith("/api/swing/ai_analyse/"):
                 self._serve_swing_ai_analyse_single(url.path)
+            elif url.path == "/api/swing/analyse_one":
+                self._serve_swing_analyse_one(parse_qs(url.query))
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001
@@ -722,6 +724,180 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             "symbol": sym,
             "overlay": payload,
         }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_analyse_one(self, qs: dict[str, list[str]]) -> None:
+        """POST /api/swing/analyse_one?symbol=SBIN&ai=1&capital=100000
+
+        Single-stock search-box flow (S38). Runs the full per-stock
+        pipeline against ONE ticker, optionally chains the per-stock
+        AI overlay (~Rs.{CLAUDE_COST_PER_CALL}), persists the result
+        as a one-row swing_runs entry + a PENDING ENTRY action so
+        the page's Done/Skip buttons work just like a recommendation
+        from a full scan.
+
+        Returns the candidate JSON + an `action_id` (when accepted)
+        + the AI overlay payload if `ai=1`. Errors land in the
+        usual `core.error_sink` toast surface.
+        """
+        symbol = (qs.get("symbol") or [""])[0].strip().upper()
+        ai_flag = (qs.get("ai") or ["0"])[0] in ("1", "true", "True", "yes")
+        try:
+            capital = float((qs.get("capital") or ["0"])[0])
+        except (TypeError, ValueError):
+            capital = 0.0
+        if capital <= 0:
+            capital = float(getattr(Config, "SWING_CAPITAL", 100_000.0))
+
+        if not symbol:
+            err = json.dumps({"ok": False, "error": "missing symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        # Lazy imports.
+        from core.logger import Logger
+        from core.zerodha_client import ZerodhaClient
+        from modes.swing.scanner import SwingScanner
+        from modes.swing.persistence import (
+            init_db, save_run, open_positions, latest_candidate_row_id_by_symbol,
+            update_candidate_ai_overlay,
+        )
+        from modes.swing.types import SwingRunResult
+        from modes.swing.ai_overlay import analyse_single_candidate
+        from core.claude_client import ClaudeClient
+        from core.error_sink import record_external_error
+
+        log = Logger(f"SwingAnalyseOne[{symbol}]")
+
+        try:
+            zerodha = ZerodhaClient(Config, log)
+            zerodha.login(interactive=False)
+        except Exception as exc:
+            record_external_error("zerodha", exc, log=log)
+            err = json.dumps({
+                "ok": False,
+                "error": f"Zerodha login failed: {exc}",
+            }).encode("utf-8")
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        scanner = SwingScanner(Config, zerodha, log)
+        positions = open_positions()
+        existing = [{
+            "symbol": p.symbol,
+            "risk_rupees": (p.entry_price - p.stop_price) * p.managed_qty,
+            "position_value": p.entry_price * p.managed_qty,
+            "sector": "",
+        } for p in positions]
+
+        try:
+            cand, action = scanner.scan_one(
+                symbol,
+                swing_capital=capital,
+                existing_positions=existing,
+            )
+        except Exception as exc:
+            record_external_error("zerodha", exc, log=log)
+            err = json.dumps({
+                "ok": False,
+                "error": f"scan_one failed for {symbol}: {exc}",
+            }).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        # Optional AI overlay — runs only when explicitly requested
+        # AND the candidate was scoreable (no point burning a Claude
+        # call on a "Not enough daily history" reject).
+        ai_overlay_payload: dict | None = None
+        if ai_flag and cand.setup_type != "NONE":
+            try:
+                claude = ClaudeClient(Config, log)
+                overlay_json = analyse_single_candidate(cand, claude, log)
+                try:
+                    ai_overlay_payload = json.loads(overlay_json or "{}")
+                except Exception:
+                    ai_overlay_payload = {"error": "invalid AI overlay JSON"}
+                if ai_overlay_payload.get("error"):
+                    record_external_error("claude", ai_overlay_payload["error"], log=log)
+            except Exception as exc:
+                record_external_error("claude", exc, log=log)
+                ai_overlay_payload = {"error": str(exc)[:200]}
+
+        # Persist as a one-stock run so Done/Skip work and the
+        # detail page picks up the candidate via candidate_by_symbol().
+        ts = now_ist().isoformat()
+        result = SwingRunResult(
+            started_at=ts,
+            finished_at=ts,
+            mode="AI" if ai_flag else "NOAI",
+            universe="SINGLE",
+            run_for_date=now_ist().date().isoformat(),
+            trigger_source="SEARCH_BOX",
+            candidates=[cand],
+            actions=[action] if action else [],
+            positions=positions,
+            notes=f"single-stock analyse: {symbol}",
+        )
+        try:
+            run_id = save_run(result)
+        except Exception as exc:
+            log.warning(f"Persist single-stock run failed: {exc}")
+            run_id = 0
+
+        # Persist the AI overlay onto the freshly-saved candidate row
+        # (if AI was requested) so the detail page renders the same
+        # text without a re-fetch.
+        action_id = None
+        if run_id and ai_overlay_payload:
+            row_id = latest_candidate_row_id_by_symbol(cand.symbol)
+            if row_id is not None:
+                try:
+                    update_candidate_ai_overlay(
+                        row_id, json.dumps(ai_overlay_payload))
+                except Exception:
+                    pass
+        # Pull the action_id (now persisted) for the Done button.
+        if run_id and action is not None:
+            from modes.swing.persistence import _connect, _ensure_schema, DB_PATH
+            try:
+                with _connect(DB_PATH) as conn:
+                    _ensure_schema(conn)
+                    row = conn.execute(
+                        "SELECT action_id FROM swing_actions "
+                        "WHERE run_id=? AND symbol=? "
+                        "ORDER BY action_id DESC LIMIT 1",
+                        (run_id, cand.symbol),
+                    ).fetchone()
+                    if row:
+                        action_id = int(row["action_id"])
+            except Exception:
+                action_id = None
+
+        body = json.dumps({
+            "ok": True,
+            "symbol": cand.symbol,
+            "candidate": cand.to_dict(),
+            "action_id": action_id,
+            "ai_overlay": ai_overlay_payload,
+            "run_id": run_id,
+        }, default=str).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

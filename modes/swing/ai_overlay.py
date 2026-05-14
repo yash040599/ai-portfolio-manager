@@ -170,7 +170,7 @@ Examples of false dips:
 - Bonus issue 1:1 → price halves, not a real decline
 """
 
-    return f"""You are a swing trading analyst. Review this candidate and provide a brief qualitative assessment.
+    return f"""You are a senior India equities buy-side analyst evaluating a swing-trade candidate (delivery / CNC, 2-day to 8-week holding period). The numeric / technical setup is already locked by deterministic NoAI math below — your job is the qualitative overlay only.
 
 FIXED DATA (do NOT change these numbers):
 - Symbol: {c.symbol} ({c.exchange})
@@ -180,18 +180,39 @@ FIXED DATA (do NOT change these numbers):
 - Stop: Rs.{c.stop_price:,.2f}
 - Target: Rs.{c.target_price:,.2f}
 - R:R: {c.rr_ratio:.1f}
-- RSI: {c.rsi_daily:.1f}
-- Relative Strength vs NIFTY: {c.relative_strength:+.1f}%
-- Volume ratio: {c.volume_ratio:.1f}x
+- RSI(14): {c.rsi_daily:.1f}
+- Relative Strength vs NIFTY (60d): {c.relative_strength:+.1f}%
+- Volume ratio (today vs 20d avg): {c.volume_ratio:.1f}x
 - Above SMA-200: {'Yes' if c.close_price > c.sma_200 and c.sma_200 > 0 else 'No' if c.sma_200 > 0 else 'N/A'}
 - Weekly trend: {'Up' if c.weekly_trend_up else 'Down'}
+- 52w high: Rs.{c.high_52w:,.2f}    52w low: Rs.{c.low_52w:,.2f}
 - Sector: {c.sector}
 {dip_section}
-Provide ONLY:
-1. THESIS (2-3 bullets on why this setup works)
-2. RISKS (2-3 specific risks for this name)
-3. NEWS/CATALYST (any recent material events — say "None known" if unsure)
-4. PEER COMPARISON (vs 1-2 sector peers)
-5. WHY IT MIGHT FAIL (1-2 sentences)
+Provide a structured response with EXACTLY these sections, in this order:
 
-Keep it concise. Do NOT suggest different entry/stop/target prices."""
+1. **THESIS** (2–3 bullets) — why a swing buyer would take this setup right now. Tie to specific catalysts (orderbook, capex cycle, margin trajectory, regulatory tailwind) where you have concrete public-domain knowledge.
+
+2. **RECENT NEWS / CATALYSTS** (last 60 days, bulleted) — earnings beat/miss, guidance changes, rating actions, M&A, regulatory hits, promoter pledge changes, large block deals. If you have NO concrete recent news for this name, say exactly "None known in last 60 days" — do not speculate.
+
+3. **FUNDAMENTAL CONTEXT** (bulleted, only what you actually know):
+   - Trailing P/E and how it compares to the sector median (rough numbers OK; never invent precise multiples).
+   - ROE / ROCE band (high / mid / low for the sector).
+   - Debt-to-equity sense (net cash, low, moderate, levered).
+   - Promoter holding stability and pledge status if you know it.
+   If a number is unknown, say "Unknown" rather than guessing.
+
+4. **PEER COMPARISON** (1–2 closest listed sector peers, one sentence each) — better/worse on growth + valuation + technicals than this candidate.
+
+5. **RISKS** (2–3 specific risks for THIS name, not generic) — sector cyclicality, key-customer concentration, regulatory exposure, currency, raw-material costs, governance flags, etc.
+
+6. **CORPORATE-ACTION SANITY CHECK** — has this stock had a split / bonus / demerger / consolidation in the last 24 months that would distort the price-history-based signals above? If yes, name it and the date range. If unsure, say "Unsure — verify on Tickertape / NSE corp actions".
+
+7. **WHY IT MIGHT FAIL** (1–2 sentences) — the cleanest invalidation path; what would make a senior PM cut the trade.
+
+8. **VERDICT FOR A SWING BUYER**: BUY / WATCH / SKIP — one word, then one sentence justification. Be willing to say SKIP even when the technical setup is strong if the news / fundamentals / corporate action picture argues against it.
+
+Hard rules:
+- Do NOT suggest different entry/stop/target/qty — those are NoAI-owned.
+- Be honest about what you don't know. "Unknown" / "None known" / "Unsure" are valid answers and far better than fabricated numbers.
+- Keep the whole response under 400 words. A senior PM should be able to read it in 60 seconds."""
+

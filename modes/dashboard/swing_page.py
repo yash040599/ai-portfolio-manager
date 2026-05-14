@@ -377,6 +377,45 @@ def render_swing_page() -> str:
                 f'window._swingLastMode="{last_mode}";</script>')
     body.append('</div>')
 
+    # ── Single-stock search box (S38) ───────────────────────────
+    # Origin: 2026-05-14 user request — "we should have a text field
+    # which takes the ticker name of the indian stock and then
+    # analyse just that and give details about it below". Lets the
+    # user evaluate any NSE name on demand without re-running the
+    # full universe scan; result card supports the same Done / Skip
+    # controls and (optionally) the per-stock AI overlay.
+    per_call_one = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    body.append('<div class="card">')
+    body.append('<h2>Analyse a Single Stock</h2>')
+    body.append(
+        '<p class="muted" style="margin-bottom:10px">'
+        'Type any NSE symbol (e.g. SBIN, RELIANCE, TCS) and click '
+        '<em>Analyse</em>. The full per-stock pipeline runs on '
+        f'just that name, then surfaces the result below with the '
+        f'same Done / Skip controls. Tick the AI box to add Claude '
+        f'colour (~Rs.{per_call_one:.0f} per call).'
+        '</p>'
+    )
+    body.append(
+        '<div style="display:flex;gap:8px;align-items:center;'
+        'flex-wrap:wrap;margin-bottom:10px">'
+        '<input type="text" id="single-symbol" '
+        'placeholder="e.g. SBIN" '
+        'style="width:180px;padding:6px 10px;font:inherit;'
+        'border:1px solid #cfd9eb;border-radius:5px;text-transform:uppercase" '
+        'onkeydown="if(event.key===\'Enter\'){analyseOne();}" />'
+        '<button class="action" onclick="analyseOne()">Analyse</button>'
+        '<label class="ai-toggle" '
+        'title="Add Claude qualitative overlay (~Rs.' + f'{per_call_one:.0f}'
+        ') for this single stock">'
+        '<input type="checkbox" id="single-ai-toggle">'
+        '<span class="lbl">Use Claude AI overlay</span>'
+        '</label>'
+        '</div>'
+    )
+    body.append('<div id="single-result-host"></div>')
+    body.append('</div>')
+
     # ── Broker instructions ────────────────────────────────────
     if entry_actions:
         body.append('<div class="card">')
@@ -1394,6 +1433,165 @@ window.addEventListener('DOMContentLoaded', function () {
     setTimeout(_swingPollLivePrices, 800);
     setInterval(_swingPollLivePrices, 5000);
 });
+
+// ── Single-stock analyse (S38 search box) ──────────────────────
+//
+// Reads the symbol + AI checkbox + capital input, POSTs to
+// /api/swing/analyse_one, renders the result card below the
+// search box. Result card carries Done / Skip buttons that re-use
+// the existing /api/swing/actions/<id>/{confirm,skip} endpoints
+// (so the user's input flow is identical to a recommendation
+// from the full scan — same prompts, same persistence).
+function _renderSingleResult(host, data) {
+    var c = data.candidate || {};
+    var status = c.status || 'UNKNOWN';
+    var actionId = data.action_id;
+    var ai = data.ai_overlay || null;
+    var rejected = (status !== 'ACCEPTED');
+    var border = rejected ? '#c62828' : '#1b8e3a';
+
+    var html = '';
+    html += '<div style="border-left:4px solid ' + border + ';' +
+            'padding:10px 12px;background:#fafbfc;border-radius:4px;' +
+            'margin-top:6px">';
+    html += '<div style="display:flex;justify-content:space-between;' +
+            'align-items:center;margin-bottom:6px">';
+    html += '<strong style="font-size:15px">' + (c.symbol || '?') +
+            '</strong>';
+    html += '<span style="font-size:12px;color:' + border +
+            ';font-weight:600">' + status + '</span>';
+    html += '</div>';
+
+    if (rejected) {
+        html += '<p style="margin:4px 0;font-size:13px">' +
+                (c.rejected_reason || 'Rejected for unknown reason') +
+                '</p>';
+    } else {
+        html += '<table class="kvtable" style="margin-top:4px">';
+        var rr = (c.rr_ratio || 0).toFixed(2);
+        var dip = (c.dip_from_ath_pct || 0).toFixed(1);
+        var fmt = function (n, d) {
+            return 'Rs.' + Number(n || 0).toLocaleString('en-IN',
+                { minimumFractionDigits: d, maximumFractionDigits: d });
+        };
+        html += '<tr><td>Setup</td><td>' + (c.setup_type || '—') +
+                ' (score ' + (c.score || 0).toFixed(2) + ')</td></tr>';
+        html += '<tr><td>Sector</td><td>' + (c.sector || '—') + '</td></tr>';
+        html += '<tr><td>Current</td><td>' + fmt(c.close_price, 2) + '</td></tr>';
+        html += '<tr><td>Suggested entry</td><td>' + fmt(c.entry_price, 2) +
+                '</td></tr>';
+        html += '<tr><td>Stop</td><td>' + fmt(c.stop_price, 2) + '</td></tr>';
+        html += '<tr><td>Target</td><td>' + fmt(c.target_price, 2) + '</td></tr>';
+        html += '<tr><td>Suggested qty</td><td>' + (c.suggested_qty || 0) +
+                '</td></tr>';
+        html += '<tr><td>R:R</td><td>' + rr + 'x</td></tr>';
+        html += '<tr><td>% Below 52w high</td><td>' + dip + '% (Rs.' +
+                Number(c.ath_price || 0).toLocaleString('en-IN',
+                    { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ')</td></tr>';
+        html += '<tr><td>RSI</td><td>' + (c.rsi_daily || 0).toFixed(1) + '</td></tr>';
+        html += '<tr><td>RS vs NIFTY</td><td>' + (c.relative_strength >= 0 ? '+' : '') +
+                (c.relative_strength || 0).toFixed(1) + '%</td></tr>';
+        html += '<tr><td>Volume vs avg</td><td>' + (c.volume_ratio || 0).toFixed(1) +
+                'x</td></tr>';
+        html += '</table>';
+
+        var reasons = c.reasons || [];
+        if (reasons.length) {
+            html += '<p style="margin:8px 0 4px;font-size:12px;font-weight:600">' +
+                    'Why this score:</p>';
+            html += '<ul style="margin:0 0 8px 20px;font-size:12px;line-height:1.6">';
+            reasons.forEach(function (r) {
+                html += '<li>' + r + '</li>';
+            });
+            html += '</ul>';
+        }
+
+        if (actionId) {
+            html += '<div style="margin-top:8px;display:flex;gap:8px">';
+            html += '<button class="action" onclick="confirmAction(' +
+                    actionId + ')" style="padding:5px 10px;font-size:12px">' +
+                    'Done — add to swing book</button>';
+            html += '<button class="action alt" onclick="skipAction(' +
+                    actionId + ')" style="padding:5px 10px;font-size:12px">' +
+                    'Skip</button>';
+            html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
+                    '" style="padding:5px 10px;font-size:12px;' +
+                    'border:1px solid #cfd9eb;border-radius:5px;text-decoration:none">' +
+                    'Open detail page</a>';
+            html += '</div>';
+        }
+    }
+
+    if (ai) {
+        html += '<div style="margin-top:12px;padding-top:8px;' +
+                'border-top:1px solid #e5e7eb">';
+        html += '<strong style="font-size:13px">AI Analysis</strong>';
+        if (ai.error) {
+            html += '<div class="banner warn" style="margin-top:6px">AI error: ' +
+                    ai.error + '</div>';
+        } else if (ai.raw_response) {
+            var pre = document.createElement('pre');
+            // Render via DOM textContent to avoid HTML injection.
+            html += '<div id="single-ai-pre" style="font-size:12.5px;' +
+                    'line-height:1.7;white-space:pre-wrap;margin-top:6px"></div>';
+        }
+        html += '</div>';
+    }
+
+    html += '</div>';
+    host.innerHTML = html;
+
+    // Inject AI text via textContent so newlines render and HTML
+    // can't be injected from the Claude response.
+    if (ai && ai.raw_response) {
+        var pre = host.querySelector('#single-ai-pre');
+        if (pre) pre.textContent = ai.raw_response;
+    }
+}
+
+function analyseOne() {
+    var symEl = document.getElementById('single-symbol');
+    var aiEl = document.getElementById('single-ai-toggle');
+    var capEl = document.getElementById('swing-capital');
+    var host = document.getElementById('single-result-host');
+    if (!symEl || !host) return;
+    var sym = (symEl.value || '').trim().toUpperCase();
+    if (!sym) {
+        host.innerHTML = '<div class="banner warn">' +
+            'Type a ticker (e.g. SBIN) first.</div>';
+        return;
+    }
+    var ai = aiEl && aiEl.checked ? '1' : '0';
+    var capital = capEl ? parseFloat((capEl.value || '0').replace(/,/g, '')) : 0;
+    if (ai === '1') {
+        var perCall = window._swingAiPerCall || 3;
+        if (!confirm('Spend ~Rs.' + perCall.toFixed(0) +
+                     ' on a Claude AI overlay for ' + sym + '?')) {
+            return;
+        }
+    }
+    host.innerHTML = '<p class="muted"><span class="spinner"></span> ' +
+        'Fetching candles + computing indicators for ' + sym +
+        (ai === '1' ? ' (with AI overlay)' : '') + '...</p>';
+    fetch('/api/swing/analyse_one?symbol=' + encodeURIComponent(sym) +
+          '&ai=' + ai + '&capital=' + (capital || 0),
+          {method: 'POST'})
+        .then(function (r) { return r.json().then(function (j) {
+            return {ok: r.ok, body: j};
+        }); })
+        .then(function (res) {
+            if (!res.ok || !res.body.ok) {
+                host.innerHTML = '<div class="banner warn">' +
+                    'Analyse failed: ' + (res.body.error || 'unknown') + '</div>';
+                return;
+            }
+            _renderSingleResult(host, res.body);
+        })
+        .catch(function (e) {
+            host.innerHTML = '<div class="banner warn">Network error: ' +
+                e + '</div>';
+        });
+}
 </script>"""
 
 
