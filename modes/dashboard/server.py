@@ -517,23 +517,47 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_errors(self, qs: dict[str, list[str]]) -> None:
-        """GET /api/errors?since=<id> — returns external-API errors
-        recorded in `core.error_sink` with id > since.
+        """GET /api/errors?since=<id>[&max_age_secs=N][&init=1]
+        — returns external-API errors recorded in `core.error_sink`
+        with id > since (and optionally newer than `max_age_secs`).
 
         Used by the top-right toast widget on every page; polled
-        every 5 s. The widget tracks its own `lastSeenId` in a
-        module-level JS variable so reloading the page doesn't
-        replay every prior toast.
+        every 5 s. The widget tracks its own `lastSeenId` in
+        `localStorage` (added 2026-05-14) so reloading or navigating
+        between pages doesn't replay every prior toast.
+
+        `?init=1` (added 2026-05-14): returns just the current max
+        id with an empty errors list. The JS poller calls this on
+        first-ever load (no localStorage value) so it can bookmark
+        the high-water mark without surfacing pre-existing errors
+        as toasts. Origin: laptop-sleep-resume on 2026-05-14
+        produced ~20 stale Zerodha network errors that re-spawned
+        on every page navigation because the JS-only `window` var
+        died with each navigation.
         """
-        from core.error_sink import get_errors_since
+        from core.error_sink import get_errors_since, current_max_id
         since = 0
         try:
             since = int((qs.get("since") or ["0"])[0])
         except (TypeError, ValueError):
             since = 0
-        errors = get_errors_since(since)
+        is_init = (qs.get("init") or ["0"])[0] in ("1", "true", "yes")
+        max_age_secs: float | None = None
+        try:
+            raw_age = (qs.get("max_age_secs") or [""])[0]
+            if raw_age:
+                max_age_secs = float(raw_age)
+        except (TypeError, ValueError):
+            max_age_secs = None
+        if is_init:
+            errors: list = []
+            max_id = current_max_id()
+        else:
+            errors = get_errors_since(since, max_age_secs=max_age_secs)
+            max_id = current_max_id()
         body = json.dumps({
             "errors": errors,
+            "max_id": max_id,
             "ts": now_ist().isoformat(),
         }).encode("utf-8")
         self.send_response(200)

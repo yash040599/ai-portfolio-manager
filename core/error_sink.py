@@ -166,12 +166,35 @@ def record_external_error(source: str, exc_or_message,
     return entry
 
 
-def get_errors_since(after_id: int = 0) -> list[dict]:
+def get_errors_since(after_id: int = 0,
+                     max_age_secs: float | None = None) -> list[dict]:
     """Return all errors with id > after_id, oldest first. Used by
     the dashboard JS poller to fetch only new errors since its last
-    sighting (so reloading the page doesn't replay every prior toast)."""
+    sighting (so reloading the page doesn't replay every prior toast).
+
+    `max_age_secs` (added 2026-05-14): when set, also filters out
+    entries older than this many seconds. Belt-and-braces against
+    the case where the JS poller's localStorage was wiped (e.g.
+    user cleared site data, switched browsers, opened in incognito)
+    and a brand-new client would otherwise see ancient errors from
+    a laptop-resume-after-sleep network blip from yesterday.
+    """
+    cutoff_ts = (time.time() - max_age_secs) if max_age_secs else None
     with _lock:
-        return [e.to_dict() for e in _errors if e.id > after_id]
+        return [e.to_dict() for e in _errors
+                if e.id > after_id
+                and (cutoff_ts is None or e.ts >= cutoff_ts)]
+
+
+def current_max_id() -> int:
+    """Highest id currently in the sink (0 when empty). Used by the
+    JS poller's first-load init path: a brand-new browser fetches
+    this once and stores it as `lastSeenId` so it never surfaces
+    pre-existing errors as toasts. Origin: 2026-05-14 user reported
+    laptop-sleep-resume errors re-spawning on every page navigation.
+    """
+    with _lock:
+        return _errors[-1].id if _errors else 0
 
 
 def has_auth_invalid() -> bool:
