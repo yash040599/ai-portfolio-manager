@@ -14,7 +14,7 @@ Copilot/automation should follow this contract so updates are
 consistent across edits.
 
 Structure (do NOT reorder, do NOT merge):
-  1. What it does       — 3 modes (Phase 1, Phase 2, Phase 3 dashboard). One paragraph + bullets.
+  1. What it does       — 4 modes (Phase 1 analyse, Phase 2 trade, Phase 3 dashboard, Phase 4 swing). One paragraph + bullets each.
   2. Quick start        — install + first run, max 7 commands.
   3. Documentation map  — table of links to docs/* (single source of truth).
   4. Prerequisites      — bullets only.
@@ -177,6 +177,66 @@ Full plan: [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASH
 (D1 + D1.1 + D13 + theory/tax pages + D24-D29 + D30-D31 done;
 D2-D12, D14, D15, D18-D23 pending).
 
+### Phase 4 — Swing trading (delivery, report-only by design)
+
+A separate engine for **multi-day delivery (CNC) trades** held 2 trading
+days to 8 weeks. **Report-only by permanent design** — the bot never
+places broker orders; the operator trades manually on Zerodha Kite and
+clicks **Add+** on the dashboard with the actual fill numbers. See
+[docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) for the operator-facing
+walkthrough; [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) for the
+design spec; [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) for the
+change log (35 items shipped, 2 pending, 5 awaiting-data).
+
+What ships today:
+
+- **5 setup detectors** — BREAKOUT, PULLBACK_UPTREND, TREND_CONTINUATION,
+  SUPPORT_REVERSAL, plus the **52W_DIP** dip-buy strategy (buy when a
+  stock falls X% below its rolling 52-week high; sell on Y% gain).
+  Defaults X=18, Y=12 are calibrated against a 10-year, 121-combo
+  backtest in the standalone
+  [market-research](https://github.com/yash040599/market-research)
+  repo where every X/Y cell was profitable on XIRR.
+- **Cross-setup scoring modifiers** — 52w-high proximity (bonus for
+  continuation setups, penalty for mean-reversion), NR7 volume
+  contraction (BREAKOUT bonus), sector-rotation bonus (top-3 sectors
+  by RS get +0.5).
+- **Hard gates** — earnings-blackout filter (T+0..2 calendar days),
+  weekly-trend-up requirement on SUPPORT_REVERSAL ("no falling-knife
+  entries"), portfolio-level risk + sector caps.
+- **Three operator surfaces** — `/swing` dashboard with live 5-second
+  Zerodha price polling, per-stock detail page (`/swing/<symbol>`)
+  with full health-check + AI overlay panel + per-stock "Analyse with
+  AI" button (~Rs.3 per call), and a single-stock search box +
+  side-by-side compare-up-to-4 card with auto-populate by sector.
+- **Optional Claude AI overlay** — capped at 15 candidates per scan
+  (~Rs.45 max on Pro plan); responses sticky for 7 days via
+  carry-forward so a one-stock Rs.3 spend doesn't get lost when you
+  re-scan tomorrow. AI prompt asks for VERDICT / THESIS / RECENT
+  NEWS / FUNDAMENTAL CONTEXT / PEER COMPARISON / RISKS /
+  CORPORATE-ACTION SANITY CHECK / WHY IT MIGHT FAIL.
+- **Full CLI parity** — every dashboard action (scan, list pending,
+  list open positions, confirm, skip, compare, sector-compare,
+  backtest) has a `--mode swing --xxx` CLI sub-command with the
+  same persistence guarantees. Documented in
+  [docs/SWING_GUIDE.md §3](docs/SWING_GUIDE.md).
+- **Permanent report-only stance** — items that previously tracked
+  execution automation (broker order wrappers, GTT/OCO,
+  reconciliation, ledger isolation) are in the SWING_ROADMAP
+  Removed section. The bot can only ever recommend; the operator
+  always fills the trade.
+
+```
+python main.py --mode swing                       # daily NoAI scan
+python main.py --mode swing --ai                  # + Claude overlay (capped)
+python main.py --mode swing --compare A,B,C,D     # side-by-side
+python main.py --mode swing --compare-sector BANKING
+python main.py --mode swing --actions             # list pending
+python main.py --mode swing --positions           # list open book
+```
+
+Full operator walkthrough: [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md).
+
 ### Historical candle cache
 
 - `data/candle_cache.db` (SQLite) keeps prior days' candles to avoid
@@ -216,7 +276,8 @@ their content.
 | [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |
 | [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P9 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag, AMFI mcap-tier breakdown), "what's missing" engine |
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
-| [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | **S1-S4, S6-S10, S15-S16, S18 shipped 2026-05-13** — swing package, CLI, DB, scanner, risk, review, report, AI overlay, dashboard `/swing`, terminal parity. S5/S11-S14/S17 pending (holding isolation, backtest, live execution, tax) |
+| [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) | **Operator-facing walkthrough for Phase 4 swing** — dashboard surface, full CLI reference, 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence, AI overlay (cost / sticky cache / prompt), Compare-up-to-4, Add+ flow, HTTP API, persistence, tuning knobs, FAQ |
+| [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
 | [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages) shipped 2026-05-12** + **D30-D31 (live quotes + /swing page) shipped 2026-05-13** |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
 | [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
@@ -429,6 +490,12 @@ starts / token expiry automatically).
 Swing mode is **permanently report-only** — the CLI commands cover every
 state-changing dashboard action so you can run the entire workflow from
 the terminal too. (Same service layer powers both surfaces.)
+
+> **For the full operator walkthrough** — dashboard surface, the
+> 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence,
+> AI-overlay cost / sticky cache / prompt structure, Compare-up-to-4,
+> Add+ flow, HTTP API, persistence, tuning knobs, and FAQ —
+> see [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md).
 
 | Command | What it does |
 |---------|--------------|
