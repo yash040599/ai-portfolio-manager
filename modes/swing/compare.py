@@ -387,21 +387,37 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
     # Pre-compute "is this symbol in the latest full-scan universe?"
     # so the rank + status rows can both reflect it. Origin:
     # 2026-05-14 user reported APOLLOHOSP showing rank #1 alongside
-    # DRREDDY's rank #1 — APOLLOHOSP is a NIFTY100 borderline stock
-    # that wasn't in the user's `Config.SCAN_UNIVERSE` so the
-    # `latest_full_scan_rank_by_symbol` lookup returned None and the
-    # old fallback used the in-memory `priority_rank` from scan_one's
-    # 1-stock SEARCH_BOX run, which is always 1. Fix: drop the
-    # fake-rank fallback entirely and add an explicit "In latest
-    # scan universe?" row so the user sees WHY the rank is "—".
+    # DRREDDY's rank #1 — root cause was the rank-lookup fallback
+    # using `scan_one`'s 1-stock priority_rank=1 when the symbol
+    # was missing from the latest full-scan ACCEPTED set.
+    # Two distinct concepts surface here as separate rows:
+    #   1. "In Config.SCAN_UNIVERSE" — true membership check via
+    #      `_build_universe`. Stocks outside the configured universe
+    #      (e.g. NIFTY 200 stock when SCAN_UNIVERSE=NIFTY100) get ✗.
+    #   2. "Ranked in latest full scan" — stricter; only ACCEPTED
+    #      rows in the latest full-scan get a real rank. A stock IN
+    #      the universe but REJECTED in the latest scan shows ✓ in
+    #      row 1 and ✗ in row 2 (matching its REJECTED status).
     from modes.swing.persistence import latest_full_scan_rank_by_symbol
+    try:
+        from modes.swing.scanner import _build_universe
+        from config import Config as _Config
+        cur_universe_name = getattr(_Config, "SCAN_UNIVERSE", "NIFTY100")
+        cur_universe = set(_build_universe(cur_universe_name))
+    except Exception:
+        cur_universe_name = ""
+        cur_universe = set()
 
-    in_latest_scan = {
-        c.symbol: (latest_full_scan_rank_by_symbol(c.symbol) is not None)
-        for c in cands
-    }
     rank_lookup = {
         c.symbol: latest_full_scan_rank_by_symbol(c.symbol)
+        for c in cands
+    }
+    in_universe = {
+        c.symbol: (c.symbol in cur_universe) if cur_universe else None
+        for c in cands
+    }
+    in_latest_scan = {
+        c.symbol: (rank_lookup[c.symbol] is not None)
         for c in cands
     }
 
@@ -419,18 +435,25 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
          "Single bot-wide ranking across BOTH technical and dip-buy "
          "candidates — lower number = bot picks this stock first. "
          "Composite scores below are NOT directly comparable across "
-         "setup families; this row is. Stocks outside Config."
-         "SCAN_UNIVERSE show '—' because they were never ranked "
+         "setup families; this row is. Stocks not ACCEPTED in the "
+         "latest full scan show '—' because they were never ranked "
          "against the full pool.")
-    _row("In latest scan universe?",
+    _row(f"In Config.SCAN_UNIVERSE ({cur_universe_name or '?'})",
+         lambda c: in_universe.get(c.symbol),
+         _fmt_bool, "true",
+         "✓ = the symbol is in the configured scan universe and was "
+         "fed to the scanner. ✗ = the symbol is OUTSIDE the universe "
+         "(e.g. NIFTY 200 stock when SCAN_UNIVERSE=NIFTY100); its "
+         "metrics below are real one-stock numbers, but it never "
+         "competed against the ranked names. Switch universe in "
+         "config.py to widen the comparable pool.")
+    _row("Ranked in latest full scan",
          lambda c: in_latest_scan.get(c.symbol, False),
          _fmt_bool, "true",
-         "✓ = the symbol was in the latest full-scan universe and "
-         "ranked against every other candidate. ✗ = the symbol is "
-         "outside Config.SCAN_UNIVERSE (e.g. NIFTY 200 stock when "
-         "the universe is set to NIFTY 100); its metrics below are "
-         "real, but its score and rank are NOT directly comparable "
-         "to ranked stocks in this table.")
+         "✓ = ACCEPTED in the latest full-scan run and assigned a "
+         "rank. ✗ = either OUTSIDE the universe (see row above) OR "
+         "in the universe but REJECTED in the latest scan (see "
+         "Status row below for the rejection signal).")
 
     # Status / setup
     _row("Status", lambda c: c.status,

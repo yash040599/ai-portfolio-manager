@@ -916,14 +916,17 @@ def render_swing_detail(symbol: str) -> str:
     else:
         rank_html = (' <span class="muted">(not present in the '
                      'latest full scan)</span>')
-    # Out-of-universe banner (S53). When the symbol isn't in the
-    # latest full-scan run AT ALL (rank_info is None) AND the
-    # universe builder confirms it's outside `Config.SCAN_UNIVERSE`,
-    # surface a yellow warning. Pre-S53 the detail page silently
-    # let users compare e.g. APOLLOHOSP (NIFTY 200) against ranked
-    # NIFTY 100 names without ever flagging that its score wasn't
-    # ranked against the same pool. The check is symmetric with the
-    # compare table's new "In latest scan universe?" row.
+    # Out-of-universe / not-ranked banner (S53). When the symbol
+    # isn't in the latest full-scan ACCEPTED set, surface a yellow
+    # warning so the user knows the rank below isn't comparable.
+    # Two distinct sub-cases get distinct messaging:
+    #   (a) Symbol is OUTSIDE Config.SCAN_UNIVERSE — it never got
+    #       scanned. Rank is meaningless.
+    #   (b) Symbol IS in the universe but was REJECTED in the latest
+    #       full scan — it was scanned and rejected (not ranked).
+    # Pre-S53 the detail page silently displayed a fake rank=#1 from
+    # the SEARCH_BOX 1-stock fallback in both cases (e.g.
+    # APOLLOHOSP, 2026-05-14 user report).
     if rank_info is None:
         try:
             from modes.swing.scanner import _build_universe
@@ -931,6 +934,7 @@ def render_swing_detail(symbol: str) -> str:
             in_universe = sym in set(_build_universe(cur_universe))
         except Exception:
             in_universe = True   # fail open — never gate on this
+            cur_universe = ""
         if not in_universe:
             body.append(
                 '<div class="banner warn" style="margin:8px 0;'
@@ -945,6 +949,20 @@ def render_swing_detail(symbol: str) -> str:
                 f'on /swing. Add the symbol to <code>Config.'
                 'SCAN_UNIVERSE</code> or scan a wider universe '
                 '(NIFTY 150 / 200) to get a comparable rank.'
+                '</div>'
+            )
+        else:
+            body.append(
+                '<div class="banner warn" style="margin:8px 0;'
+                'background:#fff4cc;border-left:4px solid #d4a000;'
+                'padding:10px 12px;font-size:13px">'
+                '<strong>⚠ Not ranked in the latest full scan.</strong> '
+                f'This stock IS in the configured universe ({cur_universe}) '
+                'and was scanned, but was either REJECTED by the '
+                'gate filters (see Status / Stock Health Check '
+                'below) or this is a fresh single-stock analyse that '
+                'pre-dates the latest universe scan. Re-run the '
+                'full scan from /swing to get a comparable rank.'
                 '</div>'
             )
     body.append(_kv("Composite Score",
