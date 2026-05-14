@@ -58,28 +58,19 @@ from config import Config  # noqa: E402
 from modes.trade.volume_baseline import (  # noqa: E402
     SESSION_HOURS, ensure_db, upsert_baseline, get_baseline_summary,
 )
-from modes.trade.stock_scanner import StockScanner  # noqa: E402
+from shared.nifty_universe import get_universe  # noqa: E402
 
 CANDLE_DB = os.path.join(PROJECT_ROOT, "data", "candle_cache.db")
 
 
 def _resolve_universe(name: str | None) -> list[str]:
-    """Use the same universe loader the live scanner uses."""
-    cfg = Config()
-    if name:
-        cfg.SCAN_UNIVERSE = name.upper()
-    # StockScanner expects a config + claude + log; we only call
-    # `get_universe()` which doesn't touch network. Stub the deps.
-    class _NullClaude:  # noqa: D401
-        def __init__(self, *a, **k): pass
-    class _NullLog:
-        def info(self, *a, **k): pass
-        def warning(self, *a, **k): pass
-        def error(self, *a, **k): pass
-        def debug(self, *a, **k): pass
-        def success(self, *a, **k): pass
-    s = StockScanner(cfg, _NullClaude(), _NullLog())
-    return list(s.get_universe())
+    """Resolve the same named NIFTY tiers used by the live scanner."""
+    universe_name = (name or getattr(Config, "SCAN_UNIVERSE", "NIFTY100")).upper()
+    symbols = get_universe(universe_name)
+    if symbols:
+        return symbols
+    print(f"  ! Unknown universe {universe_name!r}; falling back to NIFTY100")
+    return get_universe("NIFTY100")
 
 
 def _fetch_candles(symbol: str, exchange: str, lookback_days: int) -> list[dict]:

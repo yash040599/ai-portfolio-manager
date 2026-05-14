@@ -17,6 +17,8 @@ As of 2026-05-15:
 - FY intraday ledger is net negative after charges, about Rs.-3,928.68.
 - Supported posture is paused live trading: no new live trades until the Chan-method staged process allows them.
 - Stage 0 runtime status is active: startup logs, reports, and dashboard surfaces show `Stage 0 - Chan Research Reset`, and live order placement is paused by config.
+- Stage 1 T1.0 is shipped: the backtest data contract, sync helper, exporter, seeded private data repo, and simplified backtest data-root bridge are in place.
+- Current active work item is Stage 1 T1.1: parameterise scanner/replay time so replay can use the real scoring path without `now_ist()` leakage.
 - Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
 - Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
 - Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
@@ -50,6 +52,7 @@ External research/data context:
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
 - Seed/export script: `scripts/trade/export_backtest_data.py` converts local `data/candle_cache.db` into `backtest_data/candles/intraday_15m.sqlite`, `backtest_data/candles/daily.sqlite`, symbol CSVs, and a stamped `manifest.json` without broker/network calls.
 - Backtest bridge: `scripts/trade/backtest.py` now reads `backtest_data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. This is still simplified scoring, not final full-fidelity replay.
+- Matching copilot runbook: `copilot/trade-chan-reset.md` follows the repo's existing flat copilot skill-file convention and is synced with the operational data repo.
 
 ## Chan-Framework Decision Rule
 
@@ -77,19 +80,17 @@ Follow the staged roadmap unless the user explicitly changes direction:
 6. Stage 5 - Seasonality/calendar effects.
 7. Stage 6 - Microstructure/HFT-style telemetry only after positive expectancy and replay support.
 
-## What To Do First
+## What To Do Next
 
-Stage 0 has shipped and should remain behaviorally narrow:
+Continue Stage 1, not Stage 2:
 
-- Keep the visible `Chan Research Reset` / research-phase label in startup logs, reports, and dashboard/status surfaces.
-- Warn loudly if candidate telemetry is unhealthy during reset mode.
-- Keep trade entry, exit, sizing, and risk behavior unchanged.
-- Keep `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"` unless a runtime config/status versioning change is intentionally shipped.
-- Treat live trading as paused. Do not place new trades or require Zerodha paid/dev trading APIs unless the user explicitly recharges/enables them for broker-side testing.
+- Keep live trading paused. Do not place new trades or require Zerodha paid/dev trading APIs unless the user explicitly recharges/enables them for broker-side testing.
+- Keep `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"` unless an actual strategy/runtime config change ships.
+- Before editing data code, check both repos: `git status --short --branch` and `git -C backtest_data status --short --branch`.
+- Run the data-safety smoke tests from `copilot/trade-chan-reset.md` when data scripts change.
+- Next engineering work is T1.1: isolate clock dependencies in `modes/trade/stock_scanner.py` and related scoring helpers so replay can inject historical time instead of reading wall-clock `now_ist()`.
 
-After Stage 0, the first real strategy-engineering work is Stage 1: decide the backtest data contract, then build full-fidelity replay. Do not build Mean-Reversion V1 until the replay can evaluate it against the current NoAI baseline after costs.
-
-The `market-research` repo should be used during Stage 1 data discovery, not as a reason to skip Stage 0. The immediate next decision is still to mark the live tool as being in research-reset mode, then wire replay against the best available 10-year data source.
+Do not build Mean-Reversion V1 until replay can evaluate it against the current NoAI baseline after costs.
 
 ## Required Commands For Evidence Checks
 

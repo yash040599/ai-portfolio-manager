@@ -15,7 +15,7 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
 | Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
-| Roadmap operating mode | Chan Research Reset: prove one strategy family at a time. |
+| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed is shipped; T1.1 replay-safe scanner time injection is next. |
 
 ## Ground Rules
 

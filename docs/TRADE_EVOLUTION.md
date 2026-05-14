@@ -37,6 +37,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T1 | Infra | Replay now has a private versioned data repo, a local SQLite/CSV seed dataset, and a backtest reader that uses that dataset before falling back to the old candle cache. |
 | T0 | Infra | The trade runtime now labels runs as Stage 0 Chan Research Reset, warns when candidate telemetry is unhealthy, and blocks live order placement while the reset pause is active. |
 | 258 | Risk | Live NoAI stopped sizing bigger trades by score because recent results showed higher scores were losing more; equal sizing is now the default. |
 | 255 | Risk | If live quote or order-book data is still missing after retries, the bot now refuses the entry instead of assuming the spread is safe. |
