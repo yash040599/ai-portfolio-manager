@@ -845,29 +845,24 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        # Get the suggested price from the action
+        # Always use live LTP as the watchlist entry price — this is
+        # what the stock costs RIGHT NOW, not the scan's suggested entry.
         price = 0.0
         setup_type = ""
+
+        # Get live price from Zerodha
+        from modes.dashboard.live_quotes import get_live_quotes
+        lq = get_live_quotes([symbol])
+        price = lq.get(symbol, {}).get("price", 0)
+
+        # Get setup type from candidate
         if action_id:
-            from modes.swing.persistence import actions_for_run, latest_run as _lr
-            lr = _lr()
-            if lr:
-                for a in actions_for_run(int(lr["run_id"])):
-                    if a.action_id == action_id:
-                        price = a.suggested_price or a.live_price or 0
-                        break
             from modes.swing.persistence import candidate_by_symbol as _cbs
             c = _cbs(symbol)
             if c:
                 setup_type = c.setup_type
                 if price <= 0:
                     price = c.close_price
-
-        # Fallback: get live price
-        if price <= 0:
-            from modes.dashboard.live_quotes import get_live_quotes
-            lq = get_live_quotes([symbol])
-            price = lq.get(symbol, {}).get("price", 0)
 
         from modes.swing.persistence import add_to_watchlist
         wid = add_to_watchlist(

@@ -618,7 +618,9 @@ def render_swing_page() -> str:
     )
 
     body.append('<div class="card">')
-    body.append(f'<h2>Entry Recommendations ({len(sorted_entries)})</h2>')
+    body.append(f'<details open><summary class="collapse-header">' 
+                f'<h2 style="display:inline">Entry Recommendations ({len(sorted_entries)})</h2>' 
+                f'<span class="collapse-hint">click to collapse</span></summary>')
 
     # Sweet-spot calibration banner — sourced from the standalone
     # NIFTY 50 dip-buy backtest in the `market-research` repo.
@@ -657,11 +659,13 @@ def render_swing_page() -> str:
         else:
             body.append('<div class="muted">No scan run yet. '
                         'Click "Run Scan" to start.</div>')
-    body.append('</div>')
+    body.append('</details></div>')
 
     # ── Watchlist ───────────────────────────────────────────────
     body.append('<div class="card">')
-    body.append(f'<h2>Watchlist ({len(watchlist)})</h2>')
+    body.append(f'<details open><summary class="collapse-header">' 
+                f'<h2 style="display:inline">Watchlist ({len(watchlist)})</h2>' 
+                f'<span class="collapse-hint">click to collapse</span></summary>')
     body.append('<p class="muted" style="margin-bottom:10px">'
                 'Stocks you are watching but have not bought yet. '
                 'Shows what your P&amp;L would be if you had entered at the '
@@ -717,7 +721,7 @@ def render_swing_page() -> str:
     else:
         body.append('<div class="muted">No stocks in watchlist. '
                     'Click Add+ on a recommendation to watch it.</div>')
-    body.append('</div>')
+    body.append('</details></div>')
 
     # ── Open swing book ────────────────────────────────────────
     body.append('<div class="card">')
@@ -2560,6 +2564,14 @@ button.action[disabled] { opacity: 0.55; cursor: not-allowed; }
            vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
+summary.collapse-header { cursor: pointer; list-style: none; display: flex;
+                          align-items: center; gap: 8px; }
+summary.collapse-header::-webkit-details-marker { display: none; }
+summary.collapse-header::before { content: '▾'; font-size: 14px; color: var(--muted);
+                                  transition: transform 0.2s; }
+details:not([open]) > summary.collapse-header::before { transform: rotate(-90deg); }
+.collapse-hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+details[open] > summary .collapse-hint { display: none; }
 .ai-toggle { display: inline-flex; align-items: center; gap: 8px;
              padding: 6px 12px; background: var(--card);
              border: 1px solid var(--line); border-radius: 999px;
