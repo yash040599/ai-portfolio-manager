@@ -1751,33 +1751,84 @@ function _parsePosNum(raw, label) {
 }
 
 function confirmAction(actionId) {
-    var qtyRaw = prompt('Executed quantity:');
-    var qty = _parsePosNum(qtyRaw, 'quantity');
-    if (qty === null) return;
-    var priceRaw = prompt('Executed price (Rs.):');
-    var price = _parsePosNum(priceRaw, 'price');
-    if (price === null) return;
-    var stopRaw = prompt('Stop-loss price (Rs.) — leave blank to use the suggested stop:', '');
-    var stop = 0;
-    if (stopRaw && stopRaw.trim()) {
-        var parsedStop = _parsePosNum(stopRaw, 'stop');
-        if (parsedStop === null) return;
-        stop = parsedStop;
-    }
-    fetch('/api/swing/actions/' + actionId + '/confirm', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
-    })
-        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
-        .then(function(res) {
-            if (!res.ok || !res.body.ok) {
-                alert('Confirm failed: ' + (res.body.error || 'unknown error'));
-                return;
-            }
-            location.reload();
+    // Show a modal dialog with qty + price fields together
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
+        'background:rgba(0,0,0,0.4);z-index:1000;display:flex;' +
+        'align-items:center;justify-content:center';
+    overlay.innerHTML =
+        '<div style="background:white;border-radius:10px;padding:24px 28px;' +
+        'min-width:320px;max-width:400px;box-shadow:0 8px 32px rgba(0,0,0,0.2)">' +
+        '<h3 style="margin:0 0 16px;font-size:16px">Confirm Purchase</h3>' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Quantity (shares)</label>' +
+        '<input id="buy-qty" type="number" min="1" step="1" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:12px;font-size:15px" autofocus />' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Price per share (Rs.)</label>' +
+        '<input id="buy-price" type="number" min="0.01" step="0.05" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:12px;font-size:15px" />' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Stop-loss price (Rs.) <span style="color:var(--muted);font-weight:400">' +
+        '— optional, leave blank for default</span></label>' +
+        '<input id="buy-stop" type="number" min="0" step="0.05" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:16px;font-size:15px" />' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button id="buy-cancel" class="action alt" style="padding:8px 16px">Cancel</button>' +
+        '<button id="buy-submit" class="action" style="padding:8px 16px">Confirm</button>' +
+        '</div></div>';
+    document.body.appendChild(overlay);
+
+    // Focus qty field
+    setTimeout(function() { document.getElementById('buy-qty').focus(); }, 50);
+
+    // Close on overlay click or Cancel
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) { document.body.removeChild(overlay); }
+    });
+    document.getElementById('buy-cancel').onclick = function() {
+        document.body.removeChild(overlay);
+    };
+
+    // Submit
+    document.getElementById('buy-submit').onclick = function() {
+        var qty = _parsePosNum(document.getElementById('buy-qty').value, 'quantity');
+        if (qty === null) return;
+        var price = _parsePosNum(document.getElementById('buy-price').value, 'price');
+        if (price === null) return;
+        var stopVal = document.getElementById('buy-stop').value.trim();
+        var stop = 0;
+        if (stopVal) {
+            var s = _parsePosNum(stopVal, 'stop');
+            if (s === null) return;
+            stop = s;
+        }
+        document.body.removeChild(overlay);
+        fetch('/api/swing/actions/' + actionId + '/confirm', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
         })
-        .catch(function(e) { alert('Network error: ' + e); });
+            .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
+            .then(function(res) {
+                if (!res.ok || !res.body.ok) {
+                    alert('Confirm failed: ' + (res.body.error || 'unknown error'));
+                    return;
+                }
+                location.reload();
+            })
+            .catch(function(e) { alert('Network error: ' + e); });
+    };
+
+    // Enter key submits
+    overlay.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { document.getElementById('buy-submit').click(); }
+        if (e.key === 'Escape') { document.body.removeChild(overlay); }
+    });
+}
 }
 
 function addAction(selectEl, actionId, symbol) {
