@@ -874,10 +874,15 @@ def _render_action_table(actions: list, live: dict,
             # qty / price / stop and adds the position to the
             # open swing book.
             f'<td>'
-            f'<button class="action" onclick="addAction({a.action_id}, \'{html.escape(a.symbol)}\')" '
-            f'style="padding:4px 10px;font-size:12px;font-weight:600" '
-            f'title="Add to watchlist or confirm purchase">'
-            f'Add+</button>'
+            f'<select class="add-dropdown" '
+            f'onchange="addAction(this, {a.action_id}, \'{html.escape(a.symbol)}\')" '
+            f'style="padding:4px 6px;font-size:12px;font-weight:600;'
+            f'border:1px solid var(--accent);border-radius:5px;'
+            f'background:var(--card);cursor:pointer">'
+            f'<option value="">Add+</option>'
+            f'<option value="watch">\U0001f440 Watch</option>'
+            f'<option value="buy">\u2705 I Bought It</option>'
+            f'</select>'
             f'</td>'
             f'</tr>'
         )
@@ -1775,16 +1780,13 @@ function confirmAction(actionId) {
         .catch(function(e) { alert('Network error: ' + e); });
 }
 
-function addAction(actionId, symbol) {
-    var choice = prompt(
-        symbol + '\\n\\nWhat would you like to do?\\n' +
-        '1 = Add to Watchlist (track virtual P&L)\\n' +
-        '2 = I Bought It (enter qty/price to track real position)\\n\\n' +
-        'Type 1 or 2:');
+function addAction(selectEl, actionId, symbol) {
+    var choice = selectEl.value;
     if (!choice) return;
-    choice = choice.trim();
-    if (choice === '1') {
-        // Add to watchlist at current suggested price
+    // Reset dropdown so it shows Add+ again
+    selectEl.selectedIndex = 0;
+
+    if (choice === 'watch') {
         fetch('/api/swing/watchlist/add', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -1796,7 +1798,7 @@ function addAction(actionId, symbol) {
                 else { alert('Failed: ' + (j.error || 'unknown')); }
             })
             .catch(function(e) { alert('Error: ' + e); });
-    } else if (choice === '2') {
+    } else if (choice === 'buy') {
         confirmAction(actionId);
     }
 }
