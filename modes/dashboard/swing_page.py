@@ -522,14 +522,13 @@ def render_swing_page() -> str:
     # a full HTML reload. Origin: 2026-05-14 user asked "how will
     # I know what all was changed by the latest run".
     body.append('<div class="card">')
-    body.append('<h2>What changed since last trading day</h2>')
+    body.append('<h2>What changed since last scan</h2>')
     body.append(
         '<p class="muted" style="margin-bottom:10px">'
-        'Compares the latest scan against the most recent scan from '
-        'a different trading date. New entries, drops, and rank '
-        'moves of 3+ positions are highlighted. If nothing changed '
-        'since the most recent prior scan, this card walks further '
-        "back to surface the last meaningful change instead.</p>"
+        'Compares the latest scan against the immediately previous scan. '
+        'New entries, drops, and rank '
+        'moves of 3+ positions are highlighted. If nothing changed, '
+        "shows when the last meaningful change occurred.</p>"
     )
     body.append('<div id="changes-since-host">'
                 '<span class="muted">Loading…</span></div>')
@@ -2264,8 +2263,22 @@ function _renderChangesSince(host, d) {
     var nOut = (d.dropped || []).length;
     var nMov = (d.rank_movers || []).length;
     if (nIn === 0 && nOut === 0 && nMov === 0) {
-        html += '<div class="muted">No table changes between these ' +
-                'two scans.</div>';
+        html += '<div class="muted">No changes from the previous scan.</div>';
+        // Check if there's a "last meaningful change" further back
+        if (d.last_meaningful_change) {
+            var lmc = d.last_meaningful_change;
+            html += '<div style="margin-top:12px;padding-top:12px;' +
+                    'border-top:1px dashed var(--line)">';
+            html += '<strong>Last meaningful change:</strong> ' +
+                    '<span class="muted">vs scan from ' +
+                    esc(lmc.prior_run_date || '?') +
+                    ' (' + lmc.skipped_runs + ' scan' +
+                    (lmc.skipped_runs === 1 ? '' : 's') +
+                    ' between)</span><br>';
+            html += '<span style="font-size:13px">' +
+                    esc(lmc.summary || 'changes found') + '</span>';
+            html += '</div>';
+        }
         host.innerHTML = html;
         return;
     }

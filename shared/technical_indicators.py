@@ -41,6 +41,22 @@ import datetime
 from config import now_ist
 
 
+def _as_of_dt(as_of: datetime.datetime | None = None) -> datetime.datetime:
+    return as_of if as_of is not None else now_ist()
+
+
+def _candle_date(candle: dict):
+    dt = candle.get("date")
+    if dt is None:
+        return None
+    return dt.date() if hasattr(dt, "date") else dt
+
+
+def _session_candles(candles: list[dict], as_of: datetime.datetime | None = None) -> list[dict]:
+    session_date = _as_of_dt(as_of).date()
+    return [c for c in candles if _candle_date(c) == session_date]
+
+
 # ================================================================
 # EMA — EXPONENTIAL MOVING AVERAGE
 # ================================================================
@@ -741,7 +757,11 @@ def macd_histogram(candles: list[dict], fast: int = 12, slow: int = 26, signal_p
     }
 
 
-def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
+def opening_range_score(
+    candles_15m: list[dict],
+    current_price: float,
+    as_of: datetime.datetime | None = None,
+) -> dict:
     """
     Opening Range Breakout (ORB): uses the first 15-min candle of
     the trading day as the opening range.
@@ -765,15 +785,7 @@ def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
     # The first candle (9:15-9:30) includes auction noise from NSE's
     # pre-open session. Professional ORB uses the range AFTER the
     # auction settles.
-    today = now_ist().date()
-    today_candles_for_orb = []
-    for c in candles_15m:
-        dt = c.get("date")
-        if dt is None:
-            continue
-        cdate = dt.date() if hasattr(dt, "date") else dt
-        if cdate == today:
-            today_candles_for_orb.append(c)
+    today_candles_for_orb = _session_candles(candles_15m, as_of)
 
     # Need at least 2 candles (first + second)
     if len(today_candles_for_orb) < 2:
@@ -804,7 +816,11 @@ def opening_range_score(candles_15m: list[dict], current_price: float) -> dict:
     }
 
 
-def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict:
+def gap_analysis_score(
+    candles_day: list[dict],
+    candles_15m: list[dict],
+    as_of: datetime.datetime | None = None,
+) -> dict:
     """
     Analyses the gap between yesterday's close and today's open.
 
@@ -831,18 +847,12 @@ def gap_analysis_score(candles_day: list[dict], candles_15m: list[dict]) -> dict
         return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
 
     # Find today's open from first intraday candle
-    today = now_ist().date()
     today_open = None
     today_first_vol = 0
-    for c in candles_15m:
-        dt = c.get("date")
-        if dt is None:
-            continue
-        cdate = dt.date() if hasattr(dt, "date") else dt
-        if cdate == today:
-            today_open = c["open"]
-            today_first_vol = c.get("volume", 0)
-            break
+    for c in _session_candles(candles_15m, as_of):
+        today_open = c["open"]
+        today_first_vol = c.get("volume", 0)
+        break
 
     if today_open is None:
         return {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
@@ -1118,6 +1128,7 @@ def compute_technical_score(
     candles_day: list[dict] | None = None,
     current_price: float | None = None,
     config=None,
+    as_of: datetime.datetime | None = None,
 ) -> dict:
     """
     Computes a composite technical score from multiple indicators
@@ -1168,15 +1179,8 @@ def compute_technical_score(
         score -= rsi_data["strength"]
 
     # VWAP — must use today's candles only (VWAP resets daily)
-    today = now_ist().date()
-    today_candles = []
-    for c in candles_15m:
-        dt = c.get("date")
-        if dt is None:
-            continue
-        cdate = dt.date() if hasattr(dt, "date") else dt
-        if cdate == today:
-            today_candles.append(c)
+    now = _as_of_dt(as_of)
+    today_candles = _session_candles(candles_15m, now)
     vwap_data = vwap_signal(today_candles) if today_candles else {"vwap": 0, "price": 0, "signal": "AT_VWAP", "deviation_pct": 0}
     if vwap_data["signal"] == "ABOVE_VWAP":
         score += 1
@@ -1263,9 +1267,9 @@ def compute_technical_score(
     # Suppress when < 3 today candles (too early for meaningful ORB)
     # ORB signal decays after 10:30 AM — near-zero value by afternoon
     if len(today_candles) >= 3:
-        orb_data = opening_range_score(candles_15m, price)
-        now_hour = now_ist().hour
-        now_min  = now_ist().minute
+        orb_data = opening_range_score(candles_15m, price, as_of=now)
+        now_hour = now.hour
+        now_min  = now.minute
         if now_hour >= 12:
             orb_data["score"] = 0  # No ORB value after noon
         elif now_hour >= 11:
@@ -1279,7 +1283,7 @@ def compute_technical_score(
     # Pre-market gap analysis (yesterday's close vs today's open)
     # Suppress when < 3 today candles (gap signal is stale once confirmed)
     if candles_day and len(today_candles) >= 3:
-        gap_data = gap_analysis_score(candles_day, candles_15m)
+        gap_data = gap_analysis_score(candles_day, candles_15m, as_of=now)
     else:
         gap_data = {"score": 0, "gap_pct": 0, "signal": "NO_GAP"}
     score += gap_data["score"]

@@ -61,13 +61,13 @@ The exporter writes:
 - refreshed `symbols/*.csv`
 - refreshed `manifest.json` with source hash, row counts, ranges, checksums, and the generating code commit
 
-The legacy simplified replay harness now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` by default when that repo is present, and falls back to `data/candle_cache.db` only when the Stage 1 data repo has not been cloned:
+The replay harness now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` by default when that repo is present, and falls back to `data/candle_cache.db` only when the Stage 1 data repo has not been cloned:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --symbol RELIANCE
+.\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --symbol RELIANCE --score-mode scanner
 ```
 
-This is a data-plumbing bridge, not the final Chan-grade replay. The script still uses simplified scoring until T1.1 replaces clock-sensitive live scanner calls with replay-safe time injection.
+Use `--score-mode scanner` to run replay-safe scanner-style candle scoring with an injected historical clock. Use `--score-mode simple` to compare against the old simplified replay score while parity is still being inspected. Run `scripts/trade/replay_clock_check.py` after scanner/replay clock changes.
 
 ## Environment
 

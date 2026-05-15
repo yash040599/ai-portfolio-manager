@@ -745,17 +745,22 @@ def diff_latest_vs_prior_day(
     rank_move_threshold: int = 3,
     history_limit: int = 30,
 ) -> dict | None:
-    """Compare the latest full-scan run with the most recent prior
-    full-scan run from a *different trade date*, and walk further
-    back through history if the latest run is identical so the user
-    always gets a meaningful "last big change" report.
+    """Compare the latest full-scan run with the immediately prior
+    full-scan run (by run_id, not by date), and walk further back
+    if the diff is empty so the user always gets a meaningful "last
+    big change" report.
+
+    This compares consecutive scans regardless of their `run_for_date`,
+    because a scan on day N might have `run_for_date = N-1` (pre-close
+    scans use yesterday's completed candle). The user's mental model
+    is "what changed from my last scan to this one", not "what changed
+    between two different calendar dates".
 
     Filtering — both ends of the diff are limited to runs that pass
     the same gates as `latest_run()`: `is_snapshot=0` AND
     `trigger_source != 'SEARCH_BOX'`.
 
-    Returns `None` when no full-scan history exists at all (fresh DB
-    or only SEARCH_BOX rows).
+    Returns `None` when no full-scan history exists at all.
 
     Returns a dict shaped like:
       {
@@ -774,27 +779,11 @@ def diff_latest_vs_prior_day(
                             "delta", "score_delta"}, ...],
         "summary": str (one-line plain-English headline),
       }
-
-    `rank_move_threshold` — minimum |Δrank| to count a position as a
-    notable mover. Default 3 keeps the noise low when the universe
-    has 70+ candidates and 1-2 swap places.
-
-    `history_limit` — safety cap on how far back to walk when every
-    intervening run is identical (so we don't scan the entire DB
-    for a fresh laptop with one stale yesterday-run).
-
-    Origin: 2026-05-14 user reported that two consecutive scans
-    looked nearly identical and asked for a "what changed since
-    yesterday" surface. Anchored on `run_for_date` (not finished_at)
-    so a same-day re-scan never counts as the "prior" run.
     """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        # Pull the most recent full-scan runs in date order. We need
-        # the chain because consecutive runs may be identical and we
-        # have to keep walking back.
         rows = conn.execute(
             """SELECT run_id, run_for_date, finished_at, started_at
                  FROM swing_runs
@@ -811,7 +800,6 @@ def diff_latest_vs_prior_day(
         latest_date = latest["run_for_date"] or ""
         latest_fin = latest["finished_at"] or latest["started_at"]
 
-        # Build the latest run's accepted-candidate map once.
         def _accepted_map(run_id: int) -> dict[str, dict]:
             crows = conn.execute(
                 """SELECT symbol, priority_rank, score, setup_type, status
@@ -839,16 +827,14 @@ def diff_latest_vs_prior_day(
         latest_map = _accepted_map(latest_id)
         latest_all = _all_status_map(latest_id)
 
-        # Walk back — first try a different trade date; if every
-        # prior run on a different date is empty-diff, keep walking.
+        # Walk back through prior runs by run_id order (not date).
+        # Always return the diff against the immediately prior run.
+        # If that diff is empty, also note the last meaningful change.
         skipped = 0
+        immediate_diff = None
         for prior in rows[1:]:
-            prior_date = prior["run_for_date"] or ""
-            if prior_date == latest_date:
-                # Same-day re-scan — skip but don't count as a
-                # walked-over identical run (it's a different concept).
-                continue
             prior_id = int(prior["run_id"])
+            prior_date = prior["run_for_date"] or ""
             prior_map = _accepted_map(prior_id)
             new_entries = sorted(
                 [
@@ -892,10 +878,8 @@ def diff_latest_vs_prior_day(
 
             no_change = (not new_entries
                          and not dropped and not rank_movers)
-            if no_change:
-                skipped += 1
-                continue
-            # First diff that has content — return it.
+
+            # Build the diff result
             n_in = len(new_entries); n_out = len(dropped)
             n_mov = len(rank_movers)
             bits = []
@@ -903,7 +887,8 @@ def diff_latest_vs_prior_day(
             if n_out: bits.append(f"{n_out} dropped")
             if n_mov: bits.append(f"{n_mov} rank mover" + ("s" if n_mov != 1 else ""))
             headline = " · ".join(bits) if bits else "no notable changes"
-            return {
+
+            this_diff = {
                 "current_run_id": latest_id,
                 "current_run_date": latest_date,
                 "current_run_finished_at": latest_fin,
@@ -918,6 +903,41 @@ def diff_latest_vs_prior_day(
                 "rank_movers": rank_movers,
                 "summary": headline,
             }
+
+            # Always capture the immediate prior diff (first iteration)
+            if immediate_diff is None:
+                immediate_diff = this_diff
+                if not no_change:
+                    # Immediate prior has changes — return it
+                    return this_diff
+                # Immediate prior has no changes — continue walking
+                # to find the last meaningful change, but we'll still
+                # return the immediate diff (with "no changes" note)
+                skipped += 1
+                continue
+
+            if no_change:
+                skipped += 1
+                continue
+
+            # Found a meaningful change further back — annotate the
+            # immediate diff with this info and return the immediate
+            immediate_diff["last_meaningful_change"] = {
+                "prior_run_id": prior_id,
+                "prior_run_date": prior_date,
+                "prior_run_finished_at": prior["finished_at"]
+                                        or prior["started_at"],
+                "skipped_runs": skipped,
+                "new_entries": new_entries,
+                "dropped": dropped,
+                "rank_movers": rank_movers,
+                "summary": headline,
+            }
+            return immediate_diff
+
+        # Walked through all history — return whatever we have
+        if immediate_diff:
+            return immediate_diff
 
         # No prior run on a different date — return an empty diff
         # struct so the dashboard can render "first scan ever, no

@@ -247,6 +247,134 @@ SECTOR_MAP = {
 }
 
 
+def _as_of_dt(as_of: datetime.datetime | None = None) -> datetime.datetime:
+    return as_of if as_of is not None else now_ist()
+
+
+def _candle_date(candle: dict):
+    dt = candle.get("date")
+    if dt is None:
+        return None
+    return dt.date() if hasattr(dt, "date") else dt
+
+
+def filter_session_candles(
+    candles: list[dict],
+    as_of: datetime.datetime | None = None,
+) -> list[dict]:
+    session_date = _as_of_dt(as_of).date()
+    return [c for c in candles if _candle_date(c) == session_date]
+
+
+def analyse_candle_snapshot(
+    *,
+    symbol: str,
+    exchange: str,
+    candles_15m: list[dict],
+    candles_day: list[dict] | None,
+    config: type[Config],
+    as_of: datetime.datetime | None = None,
+    log: Logger | None = None,
+) -> dict | None:
+    """Run the scanner's candle-pattern + technical score on supplied candles."""
+    if len(candles_15m) < 10:
+        return None
+
+    now = _as_of_dt(as_of)
+    candles_day = candles_day or []
+    patterns = detect_all_with_freshness(candles_15m)
+    pattern_summary = summarise_signals(patterns)
+    current_price = candles_15m[-1]["close"] if candles_15m else 0
+    tech = compute_technical_score(
+        candles_15m,
+        candles_day,
+        current_price,
+        config=config,
+        as_of=now,
+    )
+    combined_score = pattern_summary["score"] + tech["score"]
+
+    if (
+        getattr(config, "PATTERN_CONTRADICTION_PENALTY_ENABLED", False)
+        and combined_score != 0
+    ):
+        try:
+            pset = {str(p).upper() for p in pattern_summary.get("patterns", []) or []}
+        except Exception:
+            pset = set()
+        penalty_total = 0.0
+        penalty_reasons: list[str] = []
+        if pset & INDECISION_PATTERNS:
+            p_indecision = float(config.PATTERN_INDECISION_PENALTY)
+            if p_indecision > 0:
+                penalty_total += p_indecision
+                penalty_reasons.append(f"DOJI -{p_indecision:.1f}")
+        opposing = (
+            BEARISH_REVERSAL_PATTERNS if combined_score > 0
+            else BULLISH_REVERSAL_PATTERNS
+        )
+        conflicts = pset & opposing
+        if conflicts:
+            p_contra = float(config.PATTERN_CONTRADICTION_PENALTY)
+            if p_contra > 0:
+                penalty_total += p_contra
+                penalty_reasons.append(f"{sorted(conflicts)[0]} -{p_contra:.1f}")
+        if penalty_total > 0:
+            magnitude = max(0.0, abs(combined_score) - penalty_total)
+            new_score = magnitude if combined_score > 0 else -magnitude
+            if log:
+                log.debug(
+                    f"{symbol}: pattern penalty applied "
+                    f"({', '.join(penalty_reasons)}) - "
+                    f"score {combined_score:+.1f} -> {new_score:+.1f}"
+                )
+            combined_score = new_score
+
+    rvol = 0.0
+    today_candles = filter_session_candles(candles_15m, now)
+    if today_candles and candles_day and len(candles_day) >= 5:
+        n_today = len(today_candles)
+        if n_today >= 4:
+            today_vol = sum(c.get("volume", 0) for c in today_candles)
+            prorated_vol = today_vol * (25 / n_today)
+            if getattr(config, "INTRADAY_VOLUME_BASELINE_ENABLED", False):
+                try:
+                    share = get_baseline_share(
+                        symbol, exchange, now.hour,
+                        min_samples=config.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES,
+                    )
+                    if share and share > 0:
+                        prorated_vol = today_vol / share
+                except Exception as e:
+                    if log:
+                        log.warning(
+                            f"{symbol}: volume-baseline lookup failed, "
+                            f"falling back to linear pro-rating: {e}"
+                        )
+            recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
+            if recent_vols:
+                avg_daily_vol = sum(recent_vols) / len(recent_vols)
+                if avg_daily_vol > 0:
+                    rvol = prorated_vol / avg_daily_vol
+                    if rvol > 2.0:
+                        combined_score += 1
+                    elif rvol < 0.3:
+                        combined_score -= 1
+
+    current_vwap = vwap(today_candles) if today_candles else 0
+    return {
+        "symbol":          symbol,
+        "exchange":        exchange,
+        "current_price":   current_price,
+        "combined_score":  round(combined_score, 1),
+        "pattern_summary": pattern_summary,
+        "technical":       tech,
+        "vwap":            current_vwap,
+        "candle_count":    len(candles_15m),
+        "rvol":            round(rvol, 2),
+    }
+
+
 
 
 class StockScanner:
@@ -1126,6 +1254,9 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         self,
         symbol: str,
         exchange: str = "NSE",
+        candles_15m: list[dict] | None = None,
+        candles_day: list[dict] | None = None,
+        as_of: datetime.datetime | None = None,
     ) -> dict | None:
         """
         Runs full technical analysis on one stock:
@@ -1136,161 +1267,40 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
         Returns a scored dict or None if insufficient data.
         """
-        candles_15m = self._fetch_intraday_candles(symbol, exchange, "15minute", days_back=3)
-        candles_day = self._fetch_daily_candles(symbol, exchange, days_back=30)
+        if candles_15m is None:
+            candles_15m = self._fetch_intraday_candles(symbol, exchange, "15minute", days_back=3)
+        if candles_day is None:
+            candles_day = self._fetch_daily_candles(symbol, exchange, days_back=30)
 
-        if len(candles_15m) < 10:
-            return None
+        return analyse_candle_snapshot(
+            symbol=symbol,
+            exchange=exchange,
+            candles_15m=candles_15m,
+            candles_day=candles_day,
+            config=self.cfg,
+            as_of=as_of,
+            log=self.log,
+        )
 
-        # Candle patterns with freshness decay and volume confirmation
-        patterns = detect_all_with_freshness(candles_15m)
-        pattern_summary = summarise_signals(patterns)
-
-        # Current price
-        current_price = candles_15m[-1]["close"] if candles_15m else 0
-
-        # Technical indicators (now includes prev-day S&R)
-        tech = compute_technical_score(candles_15m, candles_day, current_price, config=self.cfg)
-
-        # Combine scores: candle patterns + technical indicators
-        combined_score = pattern_summary["score"] + tech["score"]
-
-        # ── Pattern↔tech contradiction penalty (Roadmap #200) ──
-        # Apply BEFORE the RVol bonus/penalty so RVol scaling sees the
-        # de-risked score. Two stacked penalties:
-        #   (a) Indecision (DOJI present) — reduce |score| by
-        #       PATTERN_INDECISION_PENALTY (default 0.5).
-        #   (b) Direct contradiction (BUY-leaning + bearish pattern OR
-        #       SELL-leaning + bullish pattern) — reduce |score| by
-        #       PATTERN_CONTRADICTION_PENALTY (default 2.0).
-        # Both penalties shrink magnitude only; never flip sign (the
-        # hard #190 PATTERN_VETO handles the "kill it" case at
-        # entry-time when |score| is borderline).
-        # Kill-switch: PATTERN_CONTRADICTION_PENALTY_ENABLED.
-        if (
-            getattr(self.cfg, "PATTERN_CONTRADICTION_PENALTY_ENABLED", False)
-            and combined_score != 0
-        ):
-            try:
-                pset = {str(p).upper() for p in pattern_summary.get("patterns", []) or []}
-            except Exception:
-                pset = set()
-            penalty_total = 0.0
-            penalty_reasons: list[str] = []
-            if pset & INDECISION_PATTERNS:
-                p_indecision = float(self.cfg.PATTERN_INDECISION_PENALTY)
-                if p_indecision > 0:
-                    penalty_total += p_indecision
-                    penalty_reasons.append(f"DOJI -{p_indecision:.1f}")
-            opposing = (
-                BEARISH_REVERSAL_PATTERNS if combined_score > 0
-                else BULLISH_REVERSAL_PATTERNS
-            )
-            conflicts = pset & opposing
-            if conflicts:
-                p_contra = float(self.cfg.PATTERN_CONTRADICTION_PENALTY)
-                if p_contra > 0:
-                    penalty_total += p_contra
-                    penalty_reasons.append(
-                        f"{sorted(conflicts)[0]} -{p_contra:.1f}"
-                    )
-            if penalty_total > 0:
-                # Shrink magnitude, never flip sign
-                magnitude = max(0.0, abs(combined_score) - penalty_total)
-                new_score = magnitude if combined_score > 0 else -magnitude
-                self.log.debug(
-                    f"{symbol}: pattern penalty applied "
-                    f"({', '.join(penalty_reasons)}) — "
-                    f"score {combined_score:+.1f} → {new_score:+.1f}"
-                )
-                combined_score = new_score
-
-        # ── Relative Volume (RVol) bonus/penalty ──────────────
-        # Compare today's volume so far to the average from recent
-        # daily candles, pro-rated to full day. Without pro-rating,
-        # early-morning scans (1-2 candles) would show tiny RVol.
-        # NSE session: 9:15 AM – 3:30 PM = 375 min = 25 × 15-min candles.
-        rvol = 0.0
-        today_candles = self._filter_today_candles(candles_15m)
-        if today_candles and candles_day and len(candles_day) >= 5:
-            n_today = len(today_candles)
-            # Need at least 4 candles (~1 hour) for reliable pro-rating.
-            # The first 1-2 candles carry disproportionate volume from
-            # the NSE opening auction, making early pro-rating unreliable.
-            if n_today >= 4:
-                today_vol = sum(c.get("volume", 0) for c in today_candles)
-                # Pro-rate to full-day estimate (25 fifteen-min candles per session)
-                prorated_vol = today_vol * (25 / n_today)
-                # Roadmap #260: when the baseline DB is built and enabled,
-                # replace the linear pro-rating with a per-symbol per-hour
-                # historical share. The baseline gives the historical
-                # cumulative-volume fraction by end-of-current-hour for
-                # this symbol, so today's cumulative volume can be
-                # compared like-for-like against the multi-day average.
-                # Falls back silently to linear pro-rating when the
-                # baseline is missing / disabled / under-sampled.
-                if getattr(self.cfg, "INTRADAY_VOLUME_BASELINE_ENABLED", False):
-                    try:
-                        cur_hour = now_ist().hour
-                        share = get_baseline_share(
-                            symbol, exchange, cur_hour,
-                            min_samples=self.cfg.INTRADAY_VOLUME_BASELINE_MIN_SAMPLES,
-                        )
-                        if share and share > 0:
-                            # Use today_vol / share as the symbol's
-                            # baseline-aware projected full-day volume.
-                            prorated_vol = today_vol / share
-                    except Exception as e:
-                        self.log.warning(
-                            f"{symbol}: volume-baseline lookup failed, "
-                            f"falling back to linear pro-rating: {e}"
-                        )
-                recent_vols = [d.get("volume", 0) for d in candles_day[-5:] if d.get("volume", 0) > 0]
-                if recent_vols:
-                    avg_daily_vol = sum(recent_vols) / len(recent_vols)
-                    if avg_daily_vol > 0:
-                        rvol = prorated_vol / avg_daily_vol
-                        if rvol > 2.0:
-                            combined_score += 1   # unusual volume = bonus
-                        elif rvol < 0.3:
-                            combined_score -= 1   # dead volume = penalty
-
-        # VWAP for the trading day
-        current_vwap = vwap(today_candles) if today_candles else 0
-
-        return {
-            "symbol":          symbol,
-            "exchange":        exchange,
-            "current_price":   current_price,
-            "combined_score":  round(combined_score, 1),
-            "pattern_summary": pattern_summary,
-            "technical":       tech,
-            "vwap":            current_vwap,
-            "candle_count":    len(candles_15m),
-            "rvol":            round(rvol, 2),
-        }
-
-    def _filter_today_candles(self, candles: list[dict]) -> list[dict]:
+    def _filter_today_candles(
+        self,
+        candles: list[dict],
+        as_of: datetime.datetime | None = None,
+    ) -> list[dict]:
         """Filters candles to only today's intraday data (for VWAP)."""
-        today = now_ist().date()
-        result = []
-        for c in candles:
-            dt = c.get("date")
-            if dt is None:
-                continue
-            if hasattr(dt, "date"):
-                cdate = dt.date()
-            else:
-                cdate = dt
-            if cdate == today:
-                result.append(c)
-        return result
+        return filter_session_candles(candles, as_of)
 
     # ================================================================
     # PRE-FILTER SCAN (MATH-BASED, FREE)
     # ================================================================
 
-    def _prefilter_universe(self, quotes: dict, nifty_trend: str = "", min_score_override: float | None = None) -> list[dict]:
+    def _prefilter_universe(
+        self,
+        quotes: dict,
+        nifty_trend: str = "",
+        min_score_override: float | None = None,
+        as_of: datetime.datetime | None = None,
+    ) -> list[dict]:
         """
         Analyses all stocks in the universe using candle patterns
         and technical indicators. Returns the top candidates ranked
@@ -1383,7 +1393,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         # EARNINGS_BLACKOUT_ENABLED.
         if getattr(self.cfg, "EARNINGS_BLACKOUT_ENABLED", True):
             try:
-                today_str = now_ist().strftime("%Y-%m-%d")
+                today_str = _as_of_dt(as_of).strftime("%Y-%m-%d")
                 year = today_str[:4]
                 cal = getattr(self.cfg, f"EARNINGS_BLACKOUT_SYMBOLS_{year}", {}) or {}
                 blackout_today = set(cal.get(today_str, []))
@@ -1409,7 +1419,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
             if (i + 1) % quarter == 0 or i + 1 == len(price_filtered):
                 self.log.info(f"  Analysing... {i + 1}/{len(price_filtered)}")
 
-            result = self._analyse_stock(symbol)
+            result = self._analyse_stock(symbol, as_of=as_of)
             if result:
                 scored.append(result)
 
@@ -1723,7 +1733,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 f"(dropped: {dropped_price} price, {dropped_score} score, "
                 f"{dropped_trend} trend, {dropped_sector} sector)"
             )
-            pre_open_tag = " [pre-open]" if _is_pre_open_score_time() else ""
+            pre_open_tag = " [pre-open]" if _is_pre_open_score_time(as_of) else ""
             for r in top:
                 ps = r["pattern_summary"]
                 patterns_str = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
@@ -1741,7 +1751,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         # can locate the row when the trade attempt resolves, then
         # write a SCORED row per candidate. Best-effort: any DB error
         # is logged and swallowed by `CandidateTelemetry`.
-        scan_ts = now_ist().strftime("%Y-%m-%d %H:%M:%S")
+        scan_ts = _as_of_dt(as_of).strftime("%Y-%m-%d %H:%M:%S")
         self.last_scan_time = scan_ts
         tape_label = ""
         if isinstance(self.last_tape_breadth, dict):
@@ -1769,6 +1779,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         max_trades: int = 0, session_context: str = "",
         day_pnl: float = 0.0,
         open_buys: int = 0, open_sells: int = 0,
+        as_of: datetime.datetime | None = None,
     ) -> list[dict]:
         """
         Selects trades purely from technical scores — no Claude call.
@@ -1825,7 +1836,9 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                     )
 
         # Step 1: Math-based pre-filter
-        candidates = self._prefilter_universe(quotes, nifty_trend, min_score_override)
+        candidates = self._prefilter_universe(
+            quotes, nifty_trend, min_score_override, as_of=as_of,
+        )
         if not candidates:
             self.log.warning("NoAI scan: no candidates passed pre-filter")
             return []
@@ -1879,7 +1892,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         # Rather than waste those slots, give them to BUY side —
         # but only if decent BUY candidates exist (score ≥ 4.0).
         short_cutoff = self.cfg.SHORT_ENTRY_CUTOFF_HOUR
-        if now_ist().hour >= short_cutoff and sell_slots > 0:
+        if _as_of_dt(as_of).hour >= short_cutoff and sell_slots > 0:
             strong_buys = [c for c in buy_candidates if c["combined_score"] >= 4.0]
             if strong_buys:
                 reallocated = sell_slots

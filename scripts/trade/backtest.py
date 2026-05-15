@@ -8,9 +8,9 @@ What it does
 For each (symbol × date × 15-min bar) in the requested window, this
 script:
   1. Pulls cached 15-min and daily candles from `data/candle_cache.db`
-  2. Computes a *simplified* score (EMA-cross + RSI + momentum + ATR)
-     mirroring the directional intent of the live scanner — see the
-     "Scoring fidelity" note below
+  2. Computes either the legacy simplified replay score or the scanner-style
+      candle score via `--score-mode scanner` — see the "Scoring fidelity"
+      note below
   3. If |score| ≥ MIN_SCORE and time is in [10:00, 14:30] IST,
      opens a synthetic position with:
         SL     = entry ± ATR × Config.ATR_MULTIPLIER
@@ -27,22 +27,19 @@ summary table (WR, PF, expectancy, max-DD) printed to stdout.
 
 Scoring fidelity (read this!)
 -----------------------------
-The live scanner score uses 12+ indicators and consults
-`now_ist().date()` for VWAP, ORB, gap, hourly-EMA, etc. — many of
-those use clock-relative state that would mis-fire in replay. This
-backtest deliberately uses a **simplified, replay-safe scoring**
-(EMA-cross + RSI + 1h momentum) — the *direction-of-effect* should
-match the live system but absolute P&L will differ. Use this for:
-  - Comparing two configs (gate-on vs gate-off)
-  - Sanity-checking the magnitude of a tuning move
-  - Spotting regressions in scoring stability
-DO NOT use the absolute numbers as a forecast of live P&L.
+`--score-mode scanner` runs the scanner-style candle scoring path with an
+injected historical timestamp, so VWAP, ORB, gap, hourly/short-cutoff, and
+intraday-volume features bind to the replay session instead of wall-clock
+today. `--score-mode simple` keeps the old simplified replay score
+(EMA-cross + RSI + 1h momentum) for comparison until scanner parity is fully
+inspected. This is still not the final Chan-grade replay because accepted vs
+rejected candidates and after-cost P&L arrive in later Stage 1 items.
 
 Usage
 -----
     python scripts/trade/backtest.py --from 2026-04-01 --to 2026-05-09
     python scripts/trade/backtest.py --from 2026-04-01 --to 2026-05-09 \
-        --symbol RELIANCE --min-score 6
+        --symbol RELIANCE --min-score 6 --score-mode scanner
     # Default symbol set = every symbol present in Stage 1 `backtest_data/`
     # when available, otherwise `data/candle_cache.db`. Use `--symbol` to
     # restrict to one name; multi-name filtering will arrive with the
@@ -76,6 +73,7 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 from config import Config  # noqa: E402
+from modes.trade.stock_scanner import analyse_candle_snapshot  # noqa: E402
 
 CANDLE_DB = os.path.join(PROJECT_ROOT, "data", "candle_cache.db")
 DEFAULT_BACKTEST_DATA_ROOT = os.path.join(os.path.dirname(PROJECT_ROOT), "ai-portfolio-backtest-data")
@@ -197,6 +195,13 @@ def _load_15m(
     return _load_15m_legacy_cache(symbol, exchange, start, end, db_path)
 
 
+def _resolve_daily_source(intraday_db_path: str, source_kind: str) -> str:
+    if source_kind == "backtest_data":
+        data_root = os.path.dirname(os.path.dirname(intraday_db_path))
+        return os.path.join(data_root, "candles", "daily.sqlite")
+    return intraday_db_path
+
+
 def _load_15m_backtest_data(
     symbol: str,
     exchange: str,
@@ -265,6 +270,108 @@ def _load_15m_legacy_cache(
             "volume": int(r["volume"] or 0),
         })
     return out
+
+
+def _load_day(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+    source_kind: str,
+) -> list[dict]:
+    if source_kind == "backtest_data":
+        return _load_day_backtest_data(symbol, exchange, start, end, db_path)
+    return _load_day_legacy_cache(symbol, exchange, start, end, db_path)
+
+
+def _load_day_backtest_data(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+) -> list[dict]:
+    if not os.path.isfile(db_path):
+        return []
+    start_ts = f"{start.isoformat()}T00:00:00+05:30"
+    end_ts = f"{end.isoformat()}T23:59:59+05:30"
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT ts_ist, open, high, low, close, volume
+                 FROM candles
+                WHERE symbol = ? AND exchange = ? AND interval = 'day'
+                  AND ts_ist BETWEEN ? AND ?
+                ORDER BY ts_ist ASC""",
+            (symbol, exchange, start_ts, end_ts),
+        ).fetchall()
+    return [_row_to_candle(r, "ts_ist") for r in rows]
+
+
+def _load_day_legacy_cache(
+    symbol: str,
+    exchange: str,
+    start: datetime.date,
+    end: datetime.date,
+    db_path: str,
+) -> list[dict]:
+    if not os.path.isfile(db_path):
+        return []
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT candle_date, open, high, low, close, volume
+                 FROM candle_cache
+                WHERE symbol = ? AND exchange = ? AND interval = 'day'
+                  AND candle_date BETWEEN ? AND ?
+                ORDER BY candle_date ASC""",
+            (symbol, exchange, str(start), str(end) + " 23:59:59"),
+        ).fetchall()
+    return [_row_to_candle(r, "candle_date") for r in rows]
+
+
+def _row_to_candle(row: sqlite3.Row, ts_field: str) -> dict:
+    try:
+        ts = datetime.datetime.fromisoformat(row[ts_field])
+    except ValueError:
+        ts = datetime.datetime.fromisoformat(str(row[ts_field]).replace("Z", "+00:00"))
+    return {
+        "ts": ts,
+        "open": float(row["open"]), "high": float(row["high"]),
+        "low": float(row["low"]),   "close": float(row["close"]),
+        "volume": int(row["volume"] or 0),
+    }
+
+
+def _scanner_candles(candles: list[dict]) -> list[dict]:
+    return [
+        {
+            "date": c["ts"],
+            "open": c["open"], "high": c["high"],
+            "low": c["low"],   "close": c["close"],
+            "volume": c.get("volume", 0),
+        }
+        for c in candles
+    ]
+
+
+def _daily_window_for_as_of(daily: list[dict], as_of: datetime.datetime) -> list[dict]:
+    as_of_date = as_of.date()
+    return [d for d in daily if d["ts"].date() < as_of_date][-60:]
+
+
+def score_bar_scanner(symbol: str, candles_15m: list[dict], candles_day: list[dict], as_of: datetime.datetime) -> dict | None:
+    daily_window = _daily_window_for_as_of(candles_day, as_of)
+    return analyse_candle_snapshot(
+        symbol=symbol,
+        exchange="NSE",
+        candles_15m=_scanner_candles(candles_15m),
+        candles_day=_scanner_candles(daily_window),
+        config=Config,
+        as_of=as_of,
+        log=None,
+    )
 
 
 def _list_symbols(db_path: str, source_kind: str) -> list[str]:
@@ -386,6 +493,8 @@ def main():
                         help="Cap trades per session (mirrors live cap).")
     parser.add_argument("--data-root", default=None,
                         help="Stage 1 backtest-data root (default: BACKTEST_DATA_PATH or ../ai-portfolio-backtest-data).")
+    parser.add_argument("--score-mode", choices=("simple", "scanner"), default="simple",
+                        help="simple keeps the legacy replay score; scanner uses the live scanner-style candle score.")
     parser.add_argument("--out", default=None,
                         help="Output JSON path override.")
     args = parser.parse_args()
@@ -395,6 +504,7 @@ def main():
     if end < start:
         print("  ! --to must be >= --from"); sys.exit(2)
     source_kind, candle_db = _resolve_candle_source(args.data_root)
+    daily_db = _resolve_daily_source(candle_db, source_kind)
     if not os.path.isfile(candle_db):
         print(f"  ! Candle source not found at {candle_db}."); sys.exit(1)
 
@@ -403,7 +513,10 @@ def main():
     print(f"  Config: {version} / {cfg_hash}")
     print(f"  Window: {start} .. {end}")
     print(f"  Min score: {args.min_score}")
+    print(f"  Score mode: {args.score_mode}")
     print(f"  Candle source: {source_kind} ({os.path.relpath(candle_db, PROJECT_ROOT)})")
+    if args.score_mode == "scanner":
+        print(f"  Daily source : {os.path.relpath(daily_db, PROJECT_ROOT)}")
 
     if args.symbol:
         symbols = [args.symbol.upper()]
@@ -418,6 +531,12 @@ def main():
         candles = _load_15m(sym, "NSE", start, end, candle_db, source_kind)
         if len(candles) < 30:
             continue
+        daily_candles = []
+        if args.score_mode == "scanner":
+            daily_candles = _load_day(
+                sym, "NSE", start - datetime.timedelta(days=90), end,
+                daily_db, source_kind,
+            )
         for i in range(20, len(candles) - 1):
             bar = candles[i]
             # Restrict entries to 10:00 .. 14:30 IST (mirrors live).
@@ -426,8 +545,16 @@ def main():
             day_key = f"{sym}_{bar['ts'].date().isoformat()}"
             if per_day_count.get(day_key, 0) >= args.max_trades_per_day:
                 continue
-            window = candles[max(0, i - 30): i + 1]
-            score = score_bar(window)
+            lookback = 80 if args.score_mode == "scanner" else 30
+            window = candles[max(0, i - lookback): i + 1]
+            scanner_snapshot = None
+            if args.score_mode == "scanner":
+                scanner_snapshot = score_bar_scanner(sym, window, daily_candles, bar["ts"])
+                if not scanner_snapshot:
+                    continue
+                score = scanner_snapshot["combined_score"]
+            else:
+                score = score_bar(window)
             if abs(score) < args.min_score:
                 continue
             side = "BUY" if score > 0 else "SELL"
@@ -435,6 +562,10 @@ def main():
             tr = simulate_trade(i, candles, side, atr_val, cfg)
             tr["symbol"] = sym
             tr["score"]  = score
+            tr["score_mode"] = args.score_mode
+            if scanner_snapshot:
+                tr["technical_signal"] = scanner_snapshot["technical"].get("signal")
+                tr["patterns"] = scanner_snapshot["pattern_summary"].get("patterns", [])[:5]
             tr["config_version"] = version
             tr["config_hash"]    = cfg_hash
             trades.append(tr)
@@ -486,6 +617,8 @@ def main():
             "from":           str(start),
             "to":             str(end),
             "min_score":      args.min_score,
+            "score_mode":     args.score_mode,
+            "candle_source":  source_kind,
             "summary": {
                 "trades": len(trades),
                 "wins":   len(wins),

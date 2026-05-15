@@ -502,17 +502,23 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             import datetime as _dt
             cur_d = diff.get("current_run_date") or ""
             prior_d = diff.get("prior_run_date") or ""
+            prior_fin = diff.get("prior_run_finished_at") or ""
             if cur_d and prior_d:
                 cur = _dt.date.fromisoformat(cur_d)
                 prior = _dt.date.fromisoformat(prior_d)
                 delta_days = (cur - prior).days
-                if delta_days == 1:
-                    age_label = f"yesterday ({prior_d})"
+                # Include the scan time for clarity
+                scan_time = prior_fin[11:16] if len(prior_fin) > 15 else ""
+                time_suffix = f" at {scan_time}" if scan_time else ""
+                if delta_days == 0:
+                    age_label = f"earlier today ({prior_d}{time_suffix})"
+                elif delta_days == 1:
+                    age_label = f"yesterday ({prior_d}{time_suffix})"
                 elif 1 < delta_days <= 4:
                     age_label = (f"{prior.strftime('%A').lower()}'s "
-                                 f"scan ({prior_d})")
+                                 f"scan ({prior_d}{time_suffix})")
                 else:
-                    age_label = f"scan from {prior_d}"
+                    age_label = f"scan from {prior_d}{time_suffix}"
         except Exception:
             age_label = ""
         diff["prior_run_age_label"] = age_label
