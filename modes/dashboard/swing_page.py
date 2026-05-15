@@ -620,7 +620,7 @@ def render_swing_page() -> str:
     body.append('<div class="card">')
     body.append(f'<details open><summary class="collapse-header">' 
                 f'<h2 style="display:inline">Entry Recommendations ({len(sorted_entries)})</h2>' 
-                f'<span class="collapse-hint">click to collapse</span></summary>')
+                f'<span class="collapse-hint">click to expand</span></summary>')
 
     # Sweet-spot calibration banner — sourced from the standalone
     # NIFTY 50 dip-buy backtest in the `market-research` repo.
@@ -665,7 +665,7 @@ def render_swing_page() -> str:
     body.append('<div class="card">')
     body.append(f'<details open><summary class="collapse-header">' 
                 f'<h2 style="display:inline">Watchlist ({len(watchlist)})</h2>' 
-                f'<span class="collapse-hint">click to collapse</span></summary>')
+                f'<span class="collapse-hint">click to expand</span></summary>')
     body.append('<p class="muted" style="margin-bottom:10px">'
                 'Stocks you are watching but have not bought yet. '
                 'Shows what your P&amp;L would be if you had entered at the '
@@ -2622,8 +2622,8 @@ summary.collapse-header::-webkit-details-marker { display: none; }
 summary.collapse-header::before { content: '▾'; font-size: 14px; color: var(--muted);
                                   transition: transform 0.2s; }
 details:not([open]) > summary.collapse-header::before { transform: rotate(-90deg); }
-.collapse-hint { font-size: 11px; color: var(--muted); font-weight: 400; }
-details[open] > summary .collapse-hint { display: none; }
+.collapse-hint { font-size: 11px; color: var(--muted); font-weight: 400; display: none; }
+details:not([open]) > summary .collapse-hint { display: inline; }
 .ai-toggle { display: inline-flex; align-items: center; gap: 8px;
              padding: 6px 12px; background: var(--card);
              border: 1px solid var(--line); border-radius: 999px;
