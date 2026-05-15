@@ -2129,12 +2129,16 @@ function _renderSingleResult(host, data) {
         }
 
         if (actionId) {
-            // S46: collapsed Done|Skip pair to a single Add+ button
-            // (skip was a no-op in report-only mode).
-            html += '<div style="margin-top:8px;display:flex;gap:8px">';
-            html += '<button class="action" onclick="confirmAction(' +
-                    actionId + ')" style="padding:5px 12px;font-size:12px;' +
-                    'font-weight:600">Add+ to swing book</button>';
+            html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">';
+            html += '<select class="add-dropdown" ' +
+                    'onchange="addAction(this, ' + actionId + ', \'' + c.symbol + '\')" ' +
+                    'style="padding:4px 6px;font-size:12px;font-weight:600;' +
+                    'border:1px solid var(--accent);border-radius:5px;' +
+                    'background:var(--card);cursor:pointer">' +
+                    '<option value="">Add+</option>' +
+                    '<option value="watch">\uD83D\uDC40 Watch</option>' +
+                    '<option value="buy">\u2705 I Bought It</option>' +
+                    '</select>';
             html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
                     '" style="padding:5px 10px;font-size:12px;' +
                     'border:1px solid #cfd9eb;border-radius:5px;text-decoration:none">' +
