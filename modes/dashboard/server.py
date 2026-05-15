@@ -249,6 +249,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_action_skip(url.path)
             elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/exit"):
                 self._serve_swing_position_exit(url.path)
+            elif url.path == "/api/swing/watchlist/add":
+                self._serve_swing_watchlist_add()
+            elif url.path.startswith("/api/swing/watchlist/") and url.path.endswith("/promote"):
+                self._serve_swing_watchlist_promote(url.path)
+            elif url.path.startswith("/api/swing/watchlist/") and url.path.endswith("/remove"):
+                self._serve_swing_watchlist_remove(url.path)
             elif url.path.startswith("/api/swing/ai_analyse/"):
                 self._serve_swing_ai_analyse_single(url.path)
             elif url.path == "/api/swing/analyse_one":
@@ -814,6 +820,103 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             source="DASHBOARD",
         )
         body = json.dumps({"ok": result is not None}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # ── Watchlist endpoints ─────────────────────────────────────
+
+    def _serve_swing_watchlist_add(self) -> None:
+        """POST /api/swing/watchlist/add — add a stock to watchlist."""
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        action_id = int(data.get("action_id", 0))
+        symbol = (data.get("symbol") or "").strip().upper()
+
+        if not symbol:
+            body = json.dumps({"ok": False, "error": "No symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Get the suggested price from the action
+        price = 0.0
+        setup_type = ""
+        if action_id:
+            from modes.swing.persistence import actions_for_run, latest_run as _lr
+            lr = _lr()
+            if lr:
+                for a in actions_for_run(int(lr["run_id"])):
+                    if a.action_id == action_id:
+                        price = a.suggested_price or a.live_price or 0
+                        break
+            from modes.swing.persistence import candidate_by_symbol as _cbs
+            c = _cbs(symbol)
+            if c:
+                setup_type = c.setup_type
+                if price <= 0:
+                    price = c.close_price
+
+        # Fallback: get live price
+        if price <= 0:
+            from modes.dashboard.live_quotes import get_live_quotes
+            lq = get_live_quotes([symbol])
+            price = lq.get(symbol, {}).get("price", 0)
+
+        from modes.swing.persistence import add_to_watchlist
+        wid = add_to_watchlist(
+            symbol=symbol, price=price,
+            setup_type=setup_type, action_id=action_id,
+        )
+        body = json.dumps({"ok": True, "watchlist_id": wid}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_watchlist_promote(self, path: str) -> None:
+        """POST /api/swing/watchlist/<id>/promote — move to open book."""
+        parts = path.strip("/").split("/")
+        try:
+            wid = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid watchlist ID")
+            return
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        from modes.swing.persistence import promote_watchlist_to_position
+        result = promote_watchlist_to_position(
+            watchlist_id=wid,
+            executed_qty=int(data.get("qty", 0)),
+            executed_price=float(data.get("price", 0)),
+            stop_price=float(data.get("stop", 0)),
+        )
+        body = json.dumps({"ok": result is not None}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_watchlist_remove(self, path: str) -> None:
+        """POST /api/swing/watchlist/<id>/remove — remove from watchlist."""
+        parts = path.strip("/").split("/")
+        try:
+            wid = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid watchlist ID")
+            return
+        from modes.swing.persistence import remove_from_watchlist
+        ok = remove_from_watchlist(wid)
+        body = json.dumps({"ok": ok}).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

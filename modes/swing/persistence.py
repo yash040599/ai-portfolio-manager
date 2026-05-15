@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Iterator
 
 from config import now_ist
@@ -156,6 +157,19 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             new_value       TEXT,
             reason          TEXT,
             event_json      TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS swing_watchlist (
+            watchlist_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol          TEXT NOT NULL,
+            exchange        TEXT NOT NULL DEFAULT 'NSE',
+            added_at        TEXT NOT NULL,
+            added_price     REAL NOT NULL,
+            setup_type      TEXT,
+            action_id       INTEGER,
+            notes           TEXT,
+            status          TEXT NOT NULL DEFAULT 'WATCHING',
+            removed_at      TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_swing_candidates_run
@@ -1231,3 +1245,148 @@ def _estimate_delivery_charges(entry_price: float, exit_price: float,
     stamp = buy_value * 0.00015     # 0.015% on buy side
 
     return round(stt + exchange_txn + gst + sebi + stamp, 2)
+
+
+# ── Watchlist ───────────────────────────────────────────────────
+
+@dataclass
+class WatchlistItem:
+    watchlist_id: int = 0
+    symbol: str = ""
+    exchange: str = "NSE"
+    added_at: str = ""
+    added_price: float = 0.0
+    setup_type: str = ""
+    action_id: int = 0
+    notes: str = ""
+    status: str = "WATCHING"
+    removed_at: str = ""
+    # Live overlay (not persisted)
+    live_price: float = 0.0
+    pnl: float = 0.0
+    pnl_pct: float = 0.0
+
+
+def add_to_watchlist(
+    symbol: str,
+    price: float,
+    setup_type: str = "",
+    action_id: int = 0,
+    notes: str = "",
+    exchange: str = "NSE",
+    path: str = DB_PATH,
+) -> int:
+    """Add a stock to the watchlist. Returns the watchlist_id."""
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        ts = now_ist().isoformat()
+        cur = conn.execute("""
+            INSERT INTO swing_watchlist
+                (symbol, exchange, added_at, added_price, setup_type,
+                 action_id, notes, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'WATCHING')
+        """, (symbol.upper(), exchange, ts, price, setup_type,
+              action_id or None, notes))
+        return int(cur.lastrowid or 0)
+
+
+def remove_from_watchlist(watchlist_id: int, path: str = DB_PATH) -> bool:
+    """Remove a stock from the watchlist (marks it removed)."""
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        ts = now_ist().isoformat()
+        cur = conn.execute("""
+            UPDATE swing_watchlist
+            SET status = 'REMOVED', removed_at = ?
+            WHERE watchlist_id = ? AND status = 'WATCHING'
+        """, (ts, watchlist_id))
+        return (cur.rowcount or 0) > 0
+
+
+def promote_watchlist_to_position(
+    watchlist_id: int,
+    executed_qty: int,
+    executed_price: float,
+    stop_price: float = 0.0,
+    path: str = DB_PATH,
+) -> SwingPosition | None:
+    """Move a watchlist item to the open swing book (I bought it)."""
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            "SELECT * FROM swing_watchlist WHERE watchlist_id = ? AND status = 'WATCHING'",
+            (watchlist_id,),
+        ).fetchone()
+        if not row:
+            return None
+
+        symbol = row["symbol"]
+        exchange = row["exchange"]
+        ts = now_ist().isoformat()
+
+        # Mark watchlist item as promoted
+        conn.execute("""
+            UPDATE swing_watchlist
+            SET status = 'PROMOTED', removed_at = ?
+            WHERE watchlist_id = ?
+        """, (ts, watchlist_id))
+
+        # Create the position
+        if stop_price <= 0:
+            stop_price = round(executed_price * 0.90, 2)
+
+        target_price = round(executed_price * 1.15, 2)
+
+        cur = conn.execute("""
+            INSERT INTO swing_positions (
+                symbol, exchange, side, managed_qty, entry_price,
+                entry_date, stop_price, target_price, status,
+                source, notes
+            ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN',
+                      'WATCHLIST_PROMOTE', ?)
+        """, (symbol, exchange, executed_qty, executed_price,
+              ts[:10], stop_price, target_price,
+              f"Promoted from watchlist #{watchlist_id}"))
+
+        pos_id = int(cur.lastrowid or 0)
+
+        conn.execute("""
+            INSERT INTO swing_events (position_id, event_time,
+                event_type, new_value, reason)
+            VALUES (?, ?, 'ENTRY', ?, 'Promoted from watchlist')
+        """, (pos_id, ts, json.dumps({
+            "qty": executed_qty, "price": executed_price,
+            "watchlist_id": watchlist_id,
+        })))
+
+        return _load_position(conn, pos_id)
+
+
+def get_watchlist(path: str = DB_PATH) -> list[WatchlistItem]:
+    """All active watchlist items (WATCHING status)."""
+    if not os.path.exists(path):
+        return []
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT * FROM swing_watchlist
+               WHERE status = 'WATCHING'
+               ORDER BY added_at DESC"""
+        ).fetchall()
+        items = []
+        for r in rows:
+            items.append(WatchlistItem(
+                watchlist_id=int(r["watchlist_id"]),
+                symbol=r["symbol"],
+                exchange=r["exchange"] or "NSE",
+                added_at=r["added_at"] or "",
+                added_price=float(r["added_price"] or 0),
+                setup_type=r["setup_type"] or "",
+                action_id=int(r["action_id"] or 0),
+                notes=r["notes"] or "",
+                status=r["status"] or "WATCHING",
+            ))
+        return items
+
+
+# (end of watchlist helpers)

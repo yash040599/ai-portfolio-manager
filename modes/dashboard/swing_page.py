@@ -26,6 +26,7 @@ from modes.swing.persistence import (
     latest_run_for_date, latest_run, actions_for_run,
     candidate_by_symbol, dip_candidate_by_symbol, candidates_for_run,
     latest_full_scan_rank_by_symbol,
+    get_watchlist, WatchlistItem,
 )
 from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import get_live_quotes
@@ -185,6 +186,7 @@ def render_swing_page() -> str:
     # the scan ran before market close.
     latest_run_row = latest_run()
     positions = open_positions()
+    watchlist = get_watchlist()
     pnl = realised_pnl_summary()
 
     # Fetch Zerodha available funds for the capital default.
@@ -312,7 +314,8 @@ def render_swing_page() -> str:
 
     # Live quotes
     all_symbols = list({a.symbol for a in entry_actions} |
-                       {p.symbol for p in positions})
+                       {p.symbol for p in positions} |
+                       {w.symbol for w in watchlist})
     live = get_live_quotes(all_symbols) if all_symbols else {}
 
     # Job status
@@ -656,6 +659,66 @@ def render_swing_page() -> str:
                         'Click "Run Scan" to start.</div>')
     body.append('</div>')
 
+    # ── Watchlist ───────────────────────────────────────────────
+    body.append('<div class="card">')
+    body.append(f'<h2>Watchlist ({len(watchlist)})</h2>')
+    body.append('<p class="muted" style="margin-bottom:10px">'
+                'Stocks you are watching but have not bought yet. '
+                'Shows what your P&amp;L would be if you had entered at the '
+                'watchlist price. You can promote to a real position '
+                'or remove back to recommendations.</p>')
+
+    if watchlist:
+        body.append('<table class="holdings">')
+        body.append('<tr>'
+                    '<th>Symbol</th>'
+                    '<th>Setup</th>'
+                    '<th class="right">Watchlist Price</th>'
+                    '<th class="right">Live Price</th>'
+                    '<th class="right">Virtual P&amp;L</th>'
+                    '<th>Added</th>'
+                    '<th>Actions</th>'
+                    '</tr>')
+        for w in watchlist:
+            lq = live.get(w.symbol, {})
+            lprice = lq.get("price", 0)
+            if lprice > 0 and w.added_price > 0:
+                vpnl = lprice - w.added_price
+                vpnl_pct = ((lprice / w.added_price) - 1) * 100
+            else:
+                vpnl = 0
+                vpnl_pct = 0
+            pcls = "pos" if vpnl >= 0 else "neg"
+            added_short = w.added_at[:10] if w.added_at else ""
+
+            body.append(
+                f'<tr>'
+                f'<td><a href="/swing/{html.escape(w.symbol)}" '
+                f'style="color:var(--fg);font-weight:600">'
+                f'{html.escape(w.symbol)}</a></td>'
+                f'<td style="font-size:11px">'
+                f'{html.escape((w.setup_type or "").replace("_"," ").title())}</td>'
+                f'<td class="right">Rs.{w.added_price:,.2f}</td>'
+                f'<td class="right">Rs.{lprice:,.2f}</td>'
+                f'<td class="right"><span class="{pcls}">'
+                f'Rs.{vpnl:+,.2f} ({vpnl_pct:+.1f}%)</span></td>'
+                f'<td class="muted" style="font-size:11px">{added_short}</td>'
+                f'<td>'
+                f'<button class="action" '
+                f'onclick="promoteWatchlist({w.watchlist_id}, \'{html.escape(w.symbol)}\')" '
+                f'style="padding:4px 8px;font-size:12px">I Bought It</button> '
+                f'<button class="action alt" '
+                f'onclick="removeWatchlist({w.watchlist_id})" '
+                f'style="padding:4px 8px;font-size:12px">Remove</button>'
+                f'</td>'
+                f'</tr>'
+            )
+        body.append('</table>')
+    else:
+        body.append('<div class="muted">No stocks in watchlist. '
+                    'Click Add+ on a recommendation to watch it.</div>')
+    body.append('</div>')
+
     # ── Open swing book ────────────────────────────────────────
     body.append('<div class="card">')
     body.append(f'<h2>Open Swing Book ({len(positions)})</h2>')
@@ -807,10 +870,9 @@ def _render_action_table(actions: list, live: dict,
             # qty / price / stop and adds the position to the
             # open swing book.
             f'<td>'
-            f'<button class="action" onclick="confirmAction({a.action_id})" '
+            f'<button class="action" onclick="addAction({a.action_id}, \'{html.escape(a.symbol)}\')" '
             f'style="padding:4px 10px;font-size:12px;font-weight:600" '
-            f'title="Add this stock to your open swing book — '
-            f'enters qty / price / stop after you fill them on Kite">'
+            f'title="Add to watchlist or confirm purchase">'
             f'Add+</button>'
             f'</td>'
             f'</tr>'
@@ -1707,6 +1769,72 @@ function confirmAction(actionId) {
             location.reload();
         })
         .catch(function(e) { alert('Network error: ' + e); });
+}
+
+function addAction(actionId, symbol) {
+    var choice = prompt(
+        symbol + '\\n\\nWhat would you like to do?\\n' +
+        '1 = Add to Watchlist (track virtual P&L)\\n' +
+        '2 = I Bought It (enter qty/price to track real position)\\n\\n' +
+        'Type 1 or 2:');
+    if (!choice) return;
+    choice = choice.trim();
+    if (choice === '1') {
+        // Add to watchlist at current suggested price
+        fetch('/api/swing/watchlist/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action_id: actionId, symbol: symbol})
+        })
+            .then(function(r) { return r.json(); })
+            .then(function(j) {
+                if (j.ok) { location.reload(); }
+                else { alert('Failed: ' + (j.error || 'unknown')); }
+            })
+            .catch(function(e) { alert('Error: ' + e); });
+    } else if (choice === '2') {
+        confirmAction(actionId);
+    }
+}
+
+function promoteWatchlist(watchlistId, symbol) {
+    var qtyRaw = prompt(symbol + ' — How many shares did you buy?');
+    var qty = _parsePosNum(qtyRaw, 'quantity');
+    if (qty === null) return;
+    var priceRaw = prompt('At what price (Rs.)?');
+    var price = _parsePosNum(priceRaw, 'price');
+    if (price === null) return;
+    var stopRaw = prompt('Stop-loss price (Rs.) — leave blank for 10% below buy:', '');
+    var stop = 0;
+    if (stopRaw && stopRaw.trim()) {
+        var s = _parsePosNum(stopRaw, 'stop');
+        if (s === null) return;
+        stop = s;
+    }
+    fetch('/api/swing/watchlist/' + watchlistId + '/promote', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (j.ok) { location.reload(); }
+            else { alert('Failed: ' + (j.error || 'unknown')); }
+        })
+        .catch(function(e) { alert('Error: ' + e); });
+}
+
+function removeWatchlist(watchlistId) {
+    if (!confirm('Remove from watchlist? It will go back to recommendations.')) return;
+    fetch('/api/swing/watchlist/' + watchlistId + '/remove', {
+        method: 'POST'
+    })
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (j.ok) { location.reload(); }
+            else { alert('Failed: ' + (j.error || 'unknown')); }
+        })
+        .catch(function(e) { alert('Error: ' + e); });
 }
 
 // `skipAction` removed in S46 (2026-05-14): the Skip button was a
