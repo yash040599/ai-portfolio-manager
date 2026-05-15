@@ -880,8 +880,8 @@ def _render_action_table(actions: list, live: dict,
             f'border:1px solid var(--accent);border-radius:5px;'
             f'background:var(--card);cursor:pointer">'
             f'<option value="">Add+</option>'
-            f'<option value="watch">\U0001f440 Watch</option>'
-            f'<option value="buy">\u2705 I Bought It</option>'
+            f'<option value="watch">Watch</option>'
+            f'<option value="buy">I Bought It</option>'
             f'</select>'
             f'</td>'
             f'</tr>'
@@ -2136,8 +2136,8 @@ function _renderSingleResult(host, data) {
                     'border:1px solid var(--accent);border-radius:5px;' +
                     'background:var(--card);cursor:pointer">' +
                     '<option value="">Add+</option>' +
-                    '<option value="watch">&#128064; Watch</option>' +
-                    '<option value="buy">&#9989; I Bought It</option>' +
+                    '<option value="watch">Watch</option>' +
+                    '<option value="buy">I Bought It</option>' +
                     '</select>';
             html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
                     '" style="padding:5px 10px;font-size:12px;' +
