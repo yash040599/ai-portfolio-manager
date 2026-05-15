@@ -2136,8 +2136,8 @@ function _renderSingleResult(host, data) {
                     'border:1px solid var(--accent);border-radius:5px;' +
                     'background:var(--card);cursor:pointer">' +
                     '<option value="">Add+</option>' +
-                    '<option value="watch">\uD83D\uDC40 Watch</option>' +
-                    '<option value="buy">\u2705 I Bought It</option>' +
+                    '<option value="watch">&#128064; Watch</option>' +
+                    '<option value="buy">&#9989; I Bought It</option>' +
                     '</select>';
             html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
                     '" style="padding:5px 10px;font-size:12px;' +
