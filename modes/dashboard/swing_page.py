@@ -1548,7 +1548,7 @@ window._aiMdToHtml = function (text) {
     if (!text) return '';
     function esc(s) {
         return String(s).replace(/[&<>"]/g, function (c) {
-            return {'&':'&amp;','\x3c':'&lt;','\x3e':'&gt;','"':'&quot;'}[c];
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
         });
     }
     function inline(s) {
@@ -2131,7 +2131,7 @@ function _renderSingleResult(host, data) {
         if (actionId) {
             html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">';
             html += '<select class="add-dropdown" ' +
-                    'onchange="addAction(this, ' + actionId + ', \'' + c.symbol + '\')" ' +
+                    'onchange="addAction(this, ' + actionId + ', \\'' + c.symbol + '\\')" ' +
                     'style="padding:4px 6px;font-size:12px;font-weight:600;' +
                     'border:1px solid var(--accent);border-radius:5px;' +
                     'background:var(--card);cursor:pointer">' +
