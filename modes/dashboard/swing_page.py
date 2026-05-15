@@ -1829,7 +1829,6 @@ function confirmAction(actionId) {
         if (e.key === 'Escape') { document.body.removeChild(overlay); }
     });
 }
-}
 
 function addAction(selectEl, actionId, symbol) {
     var choice = selectEl.value;
