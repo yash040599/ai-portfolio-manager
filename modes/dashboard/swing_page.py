@@ -1548,7 +1548,7 @@ window._aiMdToHtml = function (text) {
     if (!text) return '';
     function esc(s) {
         return String(s).replace(/[&<>"]/g, function (c) {
-            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+            return {'&':'&amp;','\x3c':'&lt;','\x3e':'&gt;','"':'&quot;'}[c];
         });
     }
     function inline(s) {
@@ -1619,8 +1619,6 @@ def _wrap(title: str, body_parts: list[str]) -> str:
 
 def _js() -> str:
     return """<script>
-console.log('[SWING-JS] Block start');
-try {
 function _swingBanner(msg, kind) {
     var host = document.getElementById('swing-job-banner');
     if (!host) return;
@@ -2558,8 +2556,6 @@ function _renderChangesSince(host, d) {
 window.addEventListener('DOMContentLoaded', function () {
     if (window._loadChangesSince) window._loadChangesSince();
 });
-console.log('[SWING-JS] Block loaded OK');
-} catch(e) { console.error('[SWING-JS] FATAL:', e.message, e.stack); document.title='JS ERROR: '+e.message; }
 </script>"""
 
 
