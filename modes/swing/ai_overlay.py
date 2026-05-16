@@ -157,18 +157,33 @@ def _build_prompt(c: SwingCandidate) -> str:
         dip_section = f"""
 IMPORTANT — DIP-BUY CANDIDATE ({ref_label} reference):
 This stock was flagged because it is {c.score:.1f}% below its {ref_label}.
-CRITICAL CHECK: Has this stock undergone a stock split, bonus issue, demerger,
-or any corporate action in the last 2 years that would have artificially reduced
-the share price? If YES, the apparent dip is NOT a real dip — the pre-action
-reference price is not comparable to the current post-action price. Flag this
-clearly in your RISKS section and recommend SKIPPING if the dip is entirely
-due to a corporate action.
 
-Examples of false dips:
-- Stock split 1:5 → price drops 80% mechanically, not a dip
-- Demerger → value carved out to new entity, price drops
-- Bonus issue 1:1 → price halves, not a real decline
+EVALUATION FRAMEWORK FOR DIP-BUY (different from technical swing):
+A dip-buy candidate will typically be below SMA-200 with weak trends — that
+is expected and DOES NOT automatically mean WATCH/SKIP. For dip-buys, evaluate:
+- Is the business fundamentally sound? (market leader, earnings growth, moat)
+- Is the dip due to sector rotation / market pullback (recoverable) or
+  structural deterioration (permanent value destruction)?
+- Has the stock historically recovered from similar dips?
+- Is there a catalyst that could trigger the recovery?
+
+VERDICT CALIBRATION for dip-buys:
+- BUY: Fundamentally strong company, dip is cyclical/sentiment-driven, no
+  structural damage. Most NIFTY 50 blue-chips that dip 20%+ on market
+  rotation should get BUY if the business is intact.
+- WATCH: Genuine uncertainty — earnings deterioration unclear, regulatory
+  overhang with unknown timeline, or needs one more confirming signal.
+- SKIP: Structural problems (fraud, market-share collapse, debt crisis),
+  or the dip is from a corporate action (split/demerger/bonus) not a
+  real decline.
+
+CRITICAL CORPORATE-ACTION CHECK: Has this stock undergone a stock split,
+bonus issue, demerger, or any corporate action in the last 2 years that
+would have artificially reduced the share price? If YES, the apparent dip
+is NOT a real dip. Flag this and recommend SKIPPING.
 """
+    else:
+        dip_section = ""
 
     return f"""You are a senior India equities buy-side analyst evaluating a swing-trade candidate (delivery / CNC, 2-day to 8-week holding period). The numeric / technical setup is already locked by deterministic NoAI math below — your job is the qualitative overlay only.
 
@@ -190,7 +205,11 @@ FIXED DATA (do NOT change these numbers):
 {dip_section}
 Provide a structured response with EXACTLY these 8 sections, in this order. **Lead with the VERDICT (section 1) so the user sees the conclusion at the top — Claude has historically truncated responses at section 6 when the verdict was at the bottom.** Every section is mandatory; if you have nothing concrete say "None known" / "Unknown" rather than skipping the section.
 
-1. **VERDICT FOR A SWING BUYER**: BUY / WATCH / SKIP — one word, then one sentence justification. Be willing to say SKIP even when the technical setup is strong if the news / fundamentals / corporate action picture argues against it.
+1. **VERDICT FOR A SWING BUYER**: BUY / WATCH / SKIP — one word, then one sentence justification.
+   - BUY: The setup is actionable. For technical setups (breakout/pullback/trend), strong trend + catalyst. For dip-buys, fundamentally sound company with recoverable dip.
+   - WATCH: Genuine uncertainty that needs resolution before committing capital. Specify what signal you're waiting for.
+   - SKIP: Clear disqualifier — structural damage, corporate-action distortion, or governance red flag.
+   Default to BUY for NIFTY 50 blue-chips with intact businesses unless there is a SPECIFIC negative catalyst. Being below SMA-200 alone is NOT a reason to say WATCH for a dip-buy setup — that's expected.
 
 2. **THESIS** (2–3 bullets) — why a swing buyer would take this setup right now. Tie to specific catalysts (orderbook, capex cycle, margin trajectory, regulatory tailwind) where you have concrete public-domain knowledge.
 
