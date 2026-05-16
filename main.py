@@ -346,6 +346,7 @@ def main():
             for key in missing:
                 print(f"Missing in .env: {key}")
             sys.exit(1)
+        from core.zerodha_client import ZerodhaClient
         client = ZerodhaClient(Config, Logger("ZerodhaLogin"))
         client.login()
         client.print_account_snapshot()

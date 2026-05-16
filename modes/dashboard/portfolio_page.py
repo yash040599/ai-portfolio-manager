@@ -194,6 +194,8 @@ button.action[disabled] { opacity: 0.55; cursor: not-allowed; }
 .banner.info { background: #eef4ff; border: 1px solid #cfd9eb; }
 .banner.warn { background: var(--warn-bg); border: 1px solid var(--warn-line);
                color: var(--warn-fg); }
+.banner.error { background: #fff0f0; border: 1px solid #e8b4b4;
+                color: #b91c1c; }
 .sectorbar { display: inline-block; height: 8px; background: #1c1f23;
              vertical-align: middle; margin-left: 6px; border-radius: 2px; }
 .history-strip { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -1100,7 +1102,7 @@ def _render_drilldown_chart(sym: str, s: StockAnalysis | None) -> str:
 
 # ── /login (D28 — Zerodha auth on the dashboard) ────────────────
 
-def render_login_page() -> str:
+def render_login_page(*, ok: bool = False, err: str = "") -> str:
     today = datetime.date.today().isoformat()
     valid_until_today = False
     cached_at = None
@@ -1113,6 +1115,20 @@ def render_login_page() -> str:
                 cached_at = saved.get("date")
     except Exception:
         pass
+
+    # Flash banner for login result (redirect from /api/login_submit
+    # or /api/login_assisted).
+    flash_html = ""
+    if ok:
+        flash_html = (
+            '<div class="banner info">'
+            'Login successful — access token saved for today.</div>'
+        )
+    elif err:
+        flash_html = (
+            '<div class="banner error">'
+            f'Login failed: {html.escape(err)}</div>'
+        )
 
     api_key = getattr(Config, "ZERODHA_API_KEY", "") or ""
     login_url = (
@@ -1174,6 +1190,7 @@ def render_login_page() -> str:
   Kite access tokens expire at midnight every day; the bot re-uses
   today's token until then.
 </div>
+{flash_html}
 {status_html}
 {assisted_html}
 <h2>Manual login (paste redirect URL)</h2>
