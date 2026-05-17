@@ -23,7 +23,7 @@ from shared.candle_cache import CandleCache
 from modes.trade.stock_scanner import NIFTY50
 
 
-BUY_AMOUNT = 10_000.0  # Rs.10,000 per position
+BUY_AMOUNT = 20_000.0  # Rs.20,000 per position (matches V2 research lot)
 LOOKBACK_DAYS = 3650    # ~10 years
 
 

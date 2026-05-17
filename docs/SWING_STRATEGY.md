@@ -462,39 +462,37 @@ Mechanical rule (the entire strategy):
    `SWING_DIP_LOOKBACK_DAYS = 252` trading bars (~52 weeks).
    Setting N to a larger number widens the reference window
    (`750` ≈ 3 years, `3650` ≈ 10 years for the legacy ATH behaviour).
-2. Enter Rs.`SWING_DIP_BUY_AMOUNT` (default Rs.10,000) on the first
-   close that is at least `SWING_DIP_PCT` (default 18 %) below
+2. Enter Rs.`SWING_DIP_BUY_AMOUNT` (default Rs.20,000) on the first
+  close that is at least `SWING_DIP_PCT` (default 10 %) below
    that 52w high.
 3. Exit the entire position on the first close that is at least
-   `SWING_DIP_TARGET_PCT` (default 12 %) above the buy price.
+  `SWING_DIP_TARGET_PCT` (default 20 %) above the buy price.
 4. After the exit, the name is immediately re-eligible for a fresh
    buy if the rule fires again from a new (or unchanged) 52w high.
 
-Calibration. The defaults were picked from a 10-year, 121-combo X/Y
-backtest over the current NIFTY 50, run in the standalone
+Calibration. The current defaults were picked from the 2026-05-16 V2
+run in the standalone
 [market-research](https://github.com/yash040599/market-research)
-repo. The original heatmap was computed against the **ATH** reference;
-the post-COVID 5-year slice of the same data shows the **52w-high**
-variant of the rule tracks the ATH variant within ~150 bps XIRR in
-the (X∈[16,20], Y∈[10,13]) sweet-spot — which is why the (18, 12)
-default carries over. **Every cell of the X∈[10,20] × Y∈[10,20] grid
-was profitable** on XIRR; the sweet-spot corner is X=18–20 %,
-Y=10–13 %:
+repo. That run uses finite capital (Rs.1L start), Rs.20k lots, sale
+proceeds recycled into later buys, the current NIFTY 50 universe, and
+an equal-weight NIFTY 50 benchmark. It is still an **ATH**-reference
+study, but it models the live book's cash constraint better than the
+older infinite-capital heatmap.
 
-| | Best XIRR (ATH backtest) | NIFTY-50 reference |
-|---|---|---|
-| (X=20, Y=10) | 29.5 % | 13-14 % CAGR |
-| (X=18, Y=12) **(default)** | 25.6 % | |
-| (X=10, Y=10) (worst) | 20.0 % | |
+| | CAGR | Alpha vs benchmark | Trade count |
+|---|---:|---:|---:|
+| **(X=10, Y=20) current default** | 21.52 % | +1.29 % | 153 |
+| (X=12, Y=12) | 21.49 % | +1.26 % | 250 |
+| (X=18, Y=12) old default | 18.47 % | -1.75 % | 180 |
 
-Default (18, 12) was chosen over (20, 10) because dip frequency at
-X=18 is roughly twice that at X=20 (more shots over a multi-year
-horizon) and Y=12 retains comfortable headroom over real-world
-charges + execution noise on a Rs.10,000 ticket. See `config.py`'s
-"Swing — Dip-buy parameters" block for the verbatim rationale, and
-the `swing-review.md` skill (Step 7) for the procedure that re-runs
-the backtest against the 52w-high variant before the next live
-parameter shift.
+The old infinite-capital conclusion was "deeper dips dominate"; the
+finite-capital run says a Rs.1L book should not sit idle waiting for
+18-20 % dips. A 10 % trigger plus a 20 % target produced the best
+capital-compounded result and also restores a 2R mechanical plan
+against the 10 % hard stop. For a fixed X, the live 52w-high trigger is
+stricter than or equal to the ATH trigger because the 52w high cannot
+exceed the ATH, so this is a conservative provisional retune until S11
+lands a full in-repo 52w finite-cap replay.
 
 Two non-obvious things this setup deliberately does *not* do:
 
@@ -503,12 +501,13 @@ Two non-obvious things this setup deliberately does *not* do:
   (NIFTY 50 / 100). The reviewer (and the AI overlay when enabled)
   is responsible for catching dip-from-corp-action false positives —
   splits, bonuses, demergers — before confirming.
-- **No simultaneous-position cap.** Multiple dip-buy positions can
-  be open at once. The 10y ATH backtest's peak simultaneous capital
-  was ~₹4 lakh on a 48-stock universe at ₹10k a clip — that's
-  the cash buffer the user must keep available. The 52w-high variant
-  fires *less often* than the ATH variant (yearly reference resets
-  retire stale dips), so realised peak capital should be lower.
+- **No automatic cash cap in the scanner.** Multiple dip-buy
+  candidates can be shown at once. The 2026-05-16 V2 research proves
+  finite cash matters, but the live dashboard is report-only and
+  advisory: it surfaces the ranked opportunities and the operator
+  decides which Rs.20k lots to actually add. S11 should turn this into
+  a full 52w finite-cap replay before adding any automatic candidate
+  cap.
 
 Candidate signs (live):
 

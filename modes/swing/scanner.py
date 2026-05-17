@@ -422,9 +422,9 @@ class SwingScanner:
             # function as local for the entire function. That broke
             # the successful-technical path (which is below this
             # branch) with `UnboundLocalError`. Don't re-import.
-            dip_pct_cfg = float(getattr(self.cfg, "SWING_DIP_PCT", 18.0))
-            target_pct_cfg = float(getattr(self.cfg, "SWING_DIP_TARGET_PCT", 12.0))
-            buy_amount_cfg = float(getattr(self.cfg, "SWING_DIP_BUY_AMOUNT", 10000.0))
+            dip_pct_cfg = float(getattr(self.cfg, "SWING_DIP_PCT", 10.0))
+            target_pct_cfg = float(getattr(self.cfg, "SWING_DIP_TARGET_PCT", 20.0))
+            buy_amount_cfg = float(getattr(self.cfg, "SWING_DIP_BUY_AMOUNT", 20000.0))
             lookback_cfg = max(20, int(getattr(self.cfg, "SWING_DIP_LOOKBACK_DAYS", 252)))
             ref_window = (ind["closes"][-lookback_cfg:]
                           if len(ind["closes"]) >= lookback_cfg
@@ -449,9 +449,9 @@ class SwingScanner:
                     f"Stock is {dip_from_ref:.1f}% below its "
                     f"{lookback_cfg}-day high of Rs.{ref_high:,.2f}",
                     f"Dip-buy strategy: buy when {dip_pct_cfg:.0f}%+ "
-                    f"below 52w high (backtest sweet spot 18-20%)",
+                    f"below 52w high (finite-cap V2 default 10%)",
                     f"Target: sell when price rises {target_pct_cfg:.0f}% "
-                    f"from buy (backtest sweet spot 10-13%)",
+                    f"from buy (finite-cap V2 default 20%)",
                     f"Buy Rs.{buy_amount_cfg:,.0f} = {qty} shares at "
                     f"Rs.{ind['current']:,.2f}",
                 ]

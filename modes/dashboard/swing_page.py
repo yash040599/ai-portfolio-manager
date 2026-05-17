@@ -624,9 +624,9 @@ def render_swing_page() -> str:
 
     # Sweet-spot calibration banner — sourced from the standalone
     # NIFTY 50 dip-buy backtest in the `market-research` repo.
-    dip_pct = float(getattr(Config, "SWING_DIP_PCT", 18.0))
-    dip_target = float(getattr(Config, "SWING_DIP_TARGET_PCT", 12.0))
-    dip_amount = float(getattr(Config, "SWING_DIP_BUY_AMOUNT", 10000.0))
+    dip_pct = float(getattr(Config, "SWING_DIP_PCT", 10.0))
+    dip_target = float(getattr(Config, "SWING_DIP_TARGET_PCT", 20.0))
+    dip_amount = float(getattr(Config, "SWING_DIP_BUY_AMOUNT", 20000.0))
     dip_lookback = int(getattr(Config, "SWING_DIP_LOOKBACK_DAYS", 252))
     body.append(
         '<p class="muted" style="margin-bottom:10px">'
@@ -634,8 +634,8 @@ def render_swing_page() -> str:
         'trend continuations / support reversals) <strong>and</strong> '
         f'dip-buys (currently {dip_pct:.0f}%+ below the rolling '
         f'{dip_lookback}-day high ≈ 52 weeks, target +{dip_target:.0f}%, '
-        f'Rs.{dip_amount:,.0f} ticket — calibrated from the 10y 121-combo '
-        f'backtest sweet-spot at X=18-20% / Y=10-13%). The "% Below 52w '
+        f'Rs.{dip_amount:,.0f} ticket — retuned from the 10y finite-capital '
+        f'V2 backtest winner at X=10% / Y=20%). The "% Below 52w '
         f'High" column is computed for every candidate so the strongest '
         f'dips surface even when the row comes from a technical setup. '
         f'Setups also receive a bonus / penalty based on 52w-high '

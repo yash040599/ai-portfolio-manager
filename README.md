@@ -186,17 +186,19 @@ clicks **Add+** on the dashboard with the actual fill numbers. See
 [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) for the operator-facing
 walkthrough; [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) for the
 design spec; [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) for the
-change log (35 items shipped, 2 pending, 5 awaiting-data).
+change log (37 items shipped, 2 pending, 5 awaiting-data).
 
 What ships today:
 
 - **5 setup detectors** — BREAKOUT, PULLBACK_UPTREND, TREND_CONTINUATION,
   SUPPORT_REVERSAL, plus the **52W_DIP** dip-buy strategy (buy when a
   stock falls X% below its rolling 52-week high; sell on Y% gain).
-  Defaults X=18, Y=12 are calibrated against a 10-year, 121-combo
-  backtest in the standalone
+  Defaults X=10, Y=20, Rs.20k ticket are retuned from the 2026-05-16
+  finite-capital V2 backtest in the standalone
   [market-research](https://github.com/yash040599/market-research)
-  repo where every X/Y cell was profitable on XIRR.
+  repo: Rs.1L start, Rs.20k lots, recycled proceeds, and +1.29% CAGR
+  alpha over the equal-weight NIFTY 50 benchmark. The live scanner uses
+  the rolling 52-week high as a stricter reference than that ATH study.
 - **Cross-setup scoring modifiers** — 52w-high proximity (bonus for
   continuation setups, penalty for mean-reversion), NR7 volume
   contraction (BREAKOUT bonus), sector-rotation bonus (top-3 sectors

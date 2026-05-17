@@ -44,21 +44,20 @@ from modes.swing.signals import compute_swing_indicators
 # Config does not expose the corresponding knobs (e.g. an old install
 # upgraded mid-session). Live runs should always read from Config so
 # the user can tune from one place — the values below mirror the
-# Config defaults set after the 2026-05-14 backtest calibration:
+# Config defaults set after the 2026-05-16 finite-capital V2 backtest:
 #
-#   X (dip)    = 18%   sweet-spot lower edge from the X/Y heatmap
-#   Y (target) = 12%   inside the 10-13 band that maximised XIRR
-#                      while keeping turnover (and charges) sane
-#   ticket     = Rs.10,000 per dip-buy (matches the backtest unit)
+#   X (dip)    = 10%   best CAGR/alpha cell in the finite-capital run
+#   Y (target) = 20%   paired target in that top-ranked cell
+#   ticket     = Rs.20,000 per dip-buy (matches the V2 lot size)
 #   lookback   = 252 trading bars ≈ 52 weeks
 #
-# Source: market-research repo, results/xirr_matrix.csv (the X/Y
-# heatmap was originally produced against ATH; the 52w-high variant
-# tracks within ~150 bps XIRR on the post-COVID slice).
+# Source: ../market-research/results_v2/grid_metrics_v2.csv. The V2
+# run is still ATH-referenced; live 52w use is a provisional retune
+# until the S11 52w finite-cap replay lands.
 
-DEFAULT_DIP_PCT = 18.0          # Buy when close is X% below the 52w high
-DEFAULT_TARGET_PCT = 12.0       # Sell when close is Y% above buy
-DEFAULT_BUY_AMOUNT = 10_000.0   # Rs. per dip-buy ticket
+DEFAULT_DIP_PCT = 10.0          # Buy when close is X% below the 52w high
+DEFAULT_TARGET_PCT = 20.0       # Sell when close is Y% above buy
+DEFAULT_BUY_AMOUNT = 20_000.0   # Rs. per dip-buy ticket
 DEFAULT_LOOKBACK_DAYS = 252     # ~52 weeks of trading bars
 
 
@@ -262,9 +261,9 @@ class DipBuyScanner:
                 reasons = [
                     f"Stock is {dip_from_ref:.1f}% below its 52-week high of Rs.{ref_high:,.2f}",
                     f"Dip-buy strategy: buy when {dip_pct:.0f}%+ below 52w high "
-                    f"(backtest sweet spot: 18-20% dip)",
+                    f"(finite-cap V2 default: 10% dip)",
                     f"Target: sell when price rises {target_pct:.0f}% from buy "
-                    f"(backtest sweet spot: 10-13% gain)",
+                    f"(finite-cap V2 default: 20% gain)",
                     f"Buy Rs.{buy_amount:,.0f} worth = {qty} shares at Rs.{current:,.2f}",
                 ]
 

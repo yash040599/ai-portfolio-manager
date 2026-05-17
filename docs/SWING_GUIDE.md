@@ -184,7 +184,7 @@ persistence helpers so they can never disagree.
 | **PULLBACK_UPTREND** | Trend-up gate (close > SMA-200 AND SMA-50 > SMA-200); pullback to EMA-20 (within 3%) or SMA-50 (within 2%); RSI 40-60. |
 | **TREND_CONTINUATION** | SMAs stacked (EMA-20 > SMA-50 > SMA-200); not extended (close ≤5% above EMA-20); volume OK; weekly trend up. |
 | **SUPPORT_REVERSAL** | **Hard gate: weekly trend must be turning up** (10-week SMA rising). Within 3% of SMA-200, within 10% of 52w low, RSI recovering 25-40. The hard gate prevents "catching a falling knife". |
-| **52W_DIP** | Close ≥`SWING_DIP_PCT` (default 18%) below the rolling 252-day max-close. Score = the dip% itself, so deeper dips rank higher. |
+| **52W_DIP** | Close ≥`SWING_DIP_PCT` (default 10%) below the rolling 252-day max-close. Score = the dip% itself, so deeper dips rank higher. |
 
 ### Cross-setup modifiers
 | Modifier | Applies to | Effect |
@@ -208,41 +208,44 @@ The score numbers are arbitrary units — what matters is the
 
 ## 5. The 52-week dip-buy strategy + backtest evidence
 
-The dip-buy mechanic (calibrated against the standalone
+The dip-buy mechanic (retuned against the standalone
 [market-research](https://github.com/yash040599/market-research)
-repo's 10-year, 121-combo X/Y backtest):
+repo's 10-year, 121-combo finite-capital V2 backtest):
 
 1. Track the **rolling 252-day max-close** (≈ 52 weeks) for each
    stock — `Config.SWING_DIP_LOOKBACK_DAYS = 252` by default.
-2. Buy `SWING_DIP_BUY_AMOUNT` (default Rs.10,000) when the close
-   is ≥`SWING_DIP_PCT` (default 18%) below that high.
-3. Sell on first close ≥`SWING_DIP_TARGET_PCT` (default 12%) above
+2. Buy `SWING_DIP_BUY_AMOUNT` (default Rs.20,000) when the close
+  is ≥`SWING_DIP_PCT` (default 10%) below that high.
+3. Sell on first close ≥`SWING_DIP_TARGET_PCT` (default 20%) above
    the buy price.
 4. Re-arm immediately after a sell.
 
-**Backtest results** (every cell of X∈[10,20] × Y∈[10,20] was profitable):
+**Backtest results** from the 2026-05-16 finite-capital V2 run:
+Rs.1L starting capital, Rs.20k lots, sale proceeds recycled, current
+NIFTY 50 universe, and an equal-weight NIFTY 50 benchmark. CAGR/alpha
+are the reliable tuning metrics here; tax/report integration remains
+tracked separately under S17.
 
-| | XIRR | Trade count |
-|---|---|---|
-| (X=20, Y=10) | 29.5% | 328 |
-| **(X=18, Y=12) — current default** | 25.6% | 264 |
-| (X=10, Y=10) — worst | 20.0% | 487 |
+| | CAGR | Alpha vs benchmark | Trade count |
+|---|---:|---:|---:|
+| **(X=10, Y=20) — current default** | 21.52% | +1.29% | 153 |
+| (X=12, Y=12) | 21.49% | +1.26% | 250 |
+| (X=18, Y=12) — old default | 18.47% | -1.75% | 180 |
 
-NIFTY-50 reference: 13–14% CAGR over the same 10-year window.
+The old infinite-capital heatmap said deeper dips dominated; the
+cash-constrained V2 run flips that lesson. Waiting for 18-20% dips
+leaves too much cash idle in a Rs.1L swing book, while 10% dips with a
+20% take-profit produced the best capital-compounded result.
 
-Default (18, 12) was chosen over (20, 10) because dip frequency at
-X=18 is roughly 2× higher than at X=20 (more shots over a multi-year
-horizon) and Y=12 retains comfortable headroom over real-world
-charges + execution noise on a Rs.10,000 ticket.
-
-The standalone backtest used the all-time-high reference (`max(closes)`
-over 10y); the live scanner uses the 252-day rolling reference because
+The standalone V2 backtest still used the all-time-high reference
+(`max(closes)` over 10y); the live scanner uses the 252-day rolling
+reference because
 (a) the 52w high resets every year so the trigger is responsive to the
 current regime, (b) it's the canonical large-cap-investor anchor (and
-the standard breakout-watch level for trend followers). The post-COVID
-5-year slice of the data shows the 52w-high variant tracks within
-~150 bps XIRR of the ATH variant in the (X∈[16,20], Y∈[10,13]) sweet
-spot.
+the standard breakout-watch level for trend followers). For a fixed X,
+the 52w trigger is stricter than or equal to the ATH trigger because a
+52w high cannot exceed the ATH, so X=10/Y=20 is a provisional live
+retune until S11 lands a full in-repo 52w finite-cap replay.
 
 To re-tune for your risk tolerance, edit the four knobs in `config.py`:
 `SWING_DIP_PCT`, `SWING_DIP_TARGET_PCT`, `SWING_DIP_BUY_AMOUNT`,
@@ -482,9 +485,9 @@ In `config.py`:
 | Knob | Default | What it does |
 |---|---|---|
 | `SCAN_UNIVERSE` | `"NIFTY100"` | `NIFTY50` / `NIFTY100` / `NIFTY150` / `NIFTY200` / `CUSTOM`. Override per-run with `--nifty 200`. |
-| `SWING_DIP_PCT` | `18.0` | % below 52w high required to qualify as a `52W_DIP` candidate. |
-| `SWING_DIP_TARGET_PCT` | `12.0` | Take-profit % above buy for dip-buy positions. |
-| `SWING_DIP_BUY_AMOUNT` | `10_000.0` | Fixed Rs. ticket size per dip-buy. |
+| `SWING_DIP_PCT` | `10.0` | % below 52w high required to qualify as a `52W_DIP` candidate. |
+| `SWING_DIP_TARGET_PCT` | `20.0` | Take-profit % above buy for dip-buy positions. |
+| `SWING_DIP_BUY_AMOUNT` | `20_000.0` | Fixed Rs. ticket size per dip-buy. |
 | `SWING_DIP_LOOKBACK_DAYS` | `252` | Rolling-window length for "52w high". 252 ≈ 1 year of trading bars. |
 | `SWING_AI_MAX_CANDIDATES` | `15` | Cap on AI overlay calls per scan. |
 | `CLAUDE_COST_PER_CALL` | `3.0` | Estimated Rs. per Claude call (used for the cost preview banner only — actual cost is metered by Anthropic). |
@@ -495,10 +498,11 @@ In `config.py`:
 
 The four `SWING_DIP_*` knobs are user-tunable; everything else is set
 based on the calibration evidence in
-[market-research/results/xirr_matrix.csv](https://github.com/yash040599/market-research/blob/main/results/xirr_matrix.csv).
+[market-research/results_v2/grid_metrics_v2.csv](https://github.com/yash040599/market-research/blob/main/results_v2/grid_metrics_v2.csv).
 The [copilot/swing-review.md](../copilot/swing-review.md) skill has a
 mandatory backtest sanity-check step that fires whenever any swing
-knob moves outside the X∈{16-20}, Y∈{10-13} sweet spot.
+knob moves away from the finite-capital V2 default or when S11 promotes
+a full 52w finite-cap replay.
 
 ---
 

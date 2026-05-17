@@ -465,7 +465,7 @@ def _build_rows(cands: list[SwingCandidate]) -> list[CompareRow]:
          lambda v: _fmt_num(v, 1), "high",
          "Within a single setup family, higher = stronger signal. "
          "Across families the scales differ (technical 0-10 vs "
-         "dip-buy 18-30+ %) — use the rank row above for the "
+         "dip-buy 10-30+ %) — use the rank row above for the "
          "cross-family comparison.")
     # Why this score — uses the candidate's own `reasons` list. Lets
     # the user see WHY one setup ranks higher than another even when
