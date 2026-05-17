@@ -116,6 +116,27 @@ class Config:
     TRADE_LIVE_TRADING_PAUSED: bool = True
     TRADE_ANALYSIS_DB_PATH: str = os.path.join("data", "trade_analysis.db")
 
+    # ── Strategy Isolation Profile (Chan reset) ──────────────────
+    # This is the alpha-selection profile for NoAI trade mode. Safety,
+    # execution, cost, and risk gates remain active either way.
+    #
+    # NOAI_SIMPLE_MR_BASELINE: tomorrow's supported dry-run profile.
+    #   Uses only a VWAP-stretch + RSI-exhaustion mean-reversion idea
+    #   for stock selection. Pattern/momentum/ORB/sector/breadth score
+    #   blending is not used as alpha.
+    # NOAI_LEGACY_FULL: old all-in-one blended score, kept for replay
+    #   comparison/control only.
+    TRADE_STRATEGY_PROFILE_ALLOWED: tuple[str, ...] = (
+        "NOAI_SIMPLE_MR_BASELINE",
+        "NOAI_LEGACY_FULL",
+    )
+    TRADE_STRATEGY_PROFILE: str = "NOAI_SIMPLE_MR_BASELINE"
+    SIMPLE_MR_MIN_SCORE: float = 3.0
+    SIMPLE_MR_MIN_VWAP_DEV_PCT: float = 0.35
+    SIMPLE_MR_RSI_BUY_MAX: float = 40.0
+    SIMPLE_MR_RSI_SELL_MIN: float = 60.0
+    SIMPLE_MR_REQUIRE_VWAP_BAND: bool = True
+
     # ── Market Timing (IST) ──────────────────────────────────────
     # The bot waits until MARKET_OPEN_HOUR:MARKET_OPEN_MINUTE to
     # start entering trades. It squares off all positions at
@@ -2048,6 +2069,23 @@ class Config:
                 f"TRADE_LIVE_TRADING_PAUSED must be bool "
                 f"(got {cls.TRADE_LIVE_TRADING_PAUSED!r})"
             )
+        if cls.TRADE_STRATEGY_PROFILE not in cls.TRADE_STRATEGY_PROFILE_ALLOWED:
+            errors.append(
+                f"TRADE_STRATEGY_PROFILE must be one of "
+                f"{cls.TRADE_STRATEGY_PROFILE_ALLOWED!r} "
+                f"(got {cls.TRADE_STRATEGY_PROFILE!r})"
+            )
+        _pos("SIMPLE_MR_MIN_SCORE", cls.SIMPLE_MR_MIN_SCORE)
+        _pct("SIMPLE_MR_MIN_VWAP_DEV_PCT", cls.SIMPLE_MR_MIN_VWAP_DEV_PCT, 10)
+        _pct("SIMPLE_MR_RSI_BUY_MAX", cls.SIMPLE_MR_RSI_BUY_MAX)
+        _pct("SIMPLE_MR_RSI_SELL_MIN", cls.SIMPLE_MR_RSI_SELL_MIN)
+        if cls.SIMPLE_MR_RSI_BUY_MAX >= cls.SIMPLE_MR_RSI_SELL_MIN:
+            errors.append("SIMPLE_MR_RSI_BUY_MAX must be < SIMPLE_MR_RSI_SELL_MIN")
+        if not isinstance(cls.SIMPLE_MR_REQUIRE_VWAP_BAND, bool):
+            errors.append(
+                f"SIMPLE_MR_REQUIRE_VWAP_BAND must be bool "
+                f"(got {cls.SIMPLE_MR_REQUIRE_VWAP_BAND!r})"
+            )
 
         # SL / target / R:R
         _pos("ATR_MULTIPLIER",         cls.ATR_MULTIPLIER)
@@ -2479,7 +2517,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v1.0-2026-05-11"
+    STRATEGY_CONFIG_VERSION: str = "v1.1-2026-05-18"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Sizing / budget
@@ -2503,6 +2541,9 @@ class Config:
         "TARGET_DECAY_AFTER_HOUR", "TARGET_DECAY_PCT",
         "MIN_MINUTES_FOR_ENTRY",
         # Scanner / score floors
+        "TRADE_STRATEGY_PROFILE", "SIMPLE_MR_MIN_SCORE",
+        "SIMPLE_MR_MIN_VWAP_DEV_PCT", "SIMPLE_MR_RSI_BUY_MAX",
+        "SIMPLE_MR_RSI_SELL_MIN", "SIMPLE_MR_REQUIRE_VWAP_BAND",
         "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",

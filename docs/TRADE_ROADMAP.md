@@ -14,8 +14,8 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Capital scaling | Blocked until `scripts/trade/promotion_check.py` returns PASS on a fresh forward window. |
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
-| Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
-| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison tooling, T1.5 dry-run analysis separation, and T1.6 daily evidence automation are shipped; next is NoAI dry-run forward evidence. |
+| Strategy version in config | `v1.1-2026-05-18`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
+| Roadmap operating mode | Stage 1.7 Full-Fidelity Replay + Strategy Isolation: T1.0-T1.6 evidence plumbing is shipped, T1.7 simple MR baseline is active, and next is dry-run forward evidence under the new config hash. |
 
 ## Ground Rules
 
@@ -46,21 +46,34 @@ This is the financial-analyst decision for the current strategy set under the Ch
 
 | Strategy / family | Role now | Decision |
 |---|---|---|
-| `NOAI_BASELINE` / current blended score | Measurement benchmark only | Keep running in dry-run to prove telemetry, costs, and replay comparison plumbing. Do not scale or tune it as the production edge. |
-| `MEAN_REVERSION_V1` | First real candidate base strategy | Build next after the baseline has telemetry-bearing dry-run evidence. Rationale: VWAP stretch plus exhaustion is a clean, replayable hypothesis with a cost cushion. |
+| `NOAI_SIMPLE_MR_BASELINE` | Current forward dry-run base | Active NoAI profile from 2026-05-18. It disables the blended alpha soup and selects only VWAP-stretch plus RSI-exhaustion mean reversion. Live trading remains paused. |
+| `NOAI_LEGACY_FULL` / old blended score | Replay/control only | Keep available for historical comparison, but do not use as the default dry-run or live strategy. Pattern, momentum, ORB, sector, breadth, and NIFTY components are not accepted as blended production alpha. |
+| `MEAN_REVERSION_V1` | First promotable candidate strategy | Promote only after the simple baseline proves clean evidence plumbing and after replay/dry-run show after-cost edge. Pattern confirmation may be added as a separate level, not hidden inside the baseline. |
 | `MOMENTUM_ORB_V1` | Second candidate strategy | Defer until replay identifies trend regimes where continuation beats false-breakout damage after costs. |
 | Pairs / statistical arbitrage | Later research | Defer until one single-leg strategy passes the evidence process; pair replay needs hedge-ratio and two-leg cost modeling. |
 | Seasonality/calendar | Later research | Defer until the replay pipeline can measure the effect separately from one-off market windows. |
 | Microstructure/HFT | Telemetry only | Do not use as an entry strategy until expectancy is positive and tick/order-book replay exists. |
 | AI trade selection | Optional overlay only | Do not treat AI picks as proof of edge; any AI-assisted route must still pass strategy-family evidence gates. |
 
-Production base strategy today: none. The current all-in-one NoAI score is the benchmark to beat. The first candidate production base, if it earns promotion, is `MEAN_REVERSION_V1`.
+Production base strategy today: none. The forward dry-run base is `NOAI_SIMPLE_MR_BASELINE`; it is a measurement baseline, not a promoted live edge. The first candidate production base, if it earns promotion, is `MEAN_REVERSION_V1`.
+
+## Strategy Enablement Timeline
+
+The operating rule is to start with one clean hypothesis and add exactly one strategy family at a time. If a level fails its gate, do not add features to mask the failure; freeze the level, inspect the evidence, and either tune within that single hypothesis or retire it.
+
+| Level | Profile / feature set | Minimum sample before next level | Gate to move forward |
+|---|---|---:|---|
+| L0 | `NOAI_SIMPLE_MR_BASELINE`: VWAP stretch + RSI exhaustion only. No pattern, ORB, MACD, SuperTrend, sector, breadth, or AI alpha in selection. | 5 dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions. | Dry-run reports, candidate telemetry, analysis DB, daily evidence, and replay comparison all work cleanly; after-cost PF is not catastrophically below 1.0 and rejection reasons are explainable. |
+| L1 | Add one reversal-pattern confirmation layer to the same MR idea. | 20 additional dry-run sessions or at least 30 new closed trades, plus a matching replay sample. | Incremental evidence must improve net PF/expectancy versus L0 under the same costs; if it only reduces trades without improving expectancy, remove it. |
+| L2 | Add one regime filter: broad-market/breadth/sector context, measured separately. | 20 more dry-run sessions or at least 60 total strategy trades, plus >= 60 historical sessions. | After-cost PF >= 1.15, expectancy >= Rs.10/trade, profitable-day rate >= 55%, and max drawdown <= 3% of average daily capital. |
+| L3 | Separate `MOMENTUM_ORB_V1` track. Do not blend with MR. | >= 60 historical sessions before any forward dry-run. | Trend-day replay must pass after costs on its own; no MR evidence can be used to justify it. |
+| L4 | Strategy blending / allocation. | Both MR and momentum have separately passed replay, forward dry-run, and live pilot gates. | Blended allocation must beat the best standalone strategy after costs and with drawdown control. |
 
 ## Evidence Promotion Ladder
 
 | Step | Minimum sample | Must pass before moving on |
 |---|---:|---|
-| Baseline plumbing sanity | At least 5 NoAI dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions before deciding it is too sparse. | Candidate rows, dry-run outcomes, charge math, report files, daily evidence snapshots, and dryrun-vs-replay comparison commands work without contaminating live/tax data. |
+| Baseline plumbing sanity | At least 5 `NOAI_SIMPLE_MR_BASELINE` dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions before deciding it is too sparse. | Candidate rows, dry-run outcomes, charge math, report files, daily evidence snapshots, and dryrun-vs-replay comparison commands work without contaminating live/tax data. |
 | Strategy historical replay | At least 60 historical sessions after costs, split into in-sample and out-of-sample or walk-forward segments. | Net PF >= 1.15, expectancy >= Rs.10/trade, trade win rate >= 40%, profitable-day rate >= 55%, max drawdown <= 3% of average daily capital, and no single-day outlier explains the edge. |
 | Strategy forward dry-run | At least 20 dry-run sessions and at least 30 simulated closed trades. | Same promotion metrics pass after costs, with stable telemetry and no material config drift. |
 | Live pilot | Only after replay plus dry-run pass; at least 10 live sessions and at least 20 closed trades at smallest practical capital, with no scale-up. | Live evidence does not break the dry-run/replay thesis and no dashboard/tax reconciliation gaps appear. |
@@ -114,6 +127,7 @@ Deliverables:
 | T1.4 | Add live-vs-replay comparison report. | Shipped 2026-05-17: `scripts/trade/live_vs_replay.py` writes config-hash-aware JSON comparison reports and red-flags missing telemetry, config drift, missing outcomes, zero overlap, live-vs-replay trade-count mismatch, and logical-vs-tax ledger count gaps. First all-symbol report is `DATA_GAP` because historical live candidate telemetry is empty. |
 | T1.5 | Separate dry-run analysis from actual live/tax data. | Shipped 2026-05-18: dry-run candidate rows use `data/trade_analysis.db`, dry-run reports auto-fill a simulated after-cost ledger via `scripts/trade/fill_dryrun_analysis.py`, and dashboard/tax data remains isolated to live rows in `data/trades.db`. |
 | T1.6 | Automate daily Chan evidence and harden dry-run report artifacts. | Shipped 2026-05-18: dry-run report files no longer share live filenames, and both dry-run and live report saves write daily evidence JSON/Markdown snapshots after the correct DB fill step. |
+| T1.7 | Isolate the first forward dry-run strategy. | Shipped 2026-05-18: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, which selects only VWAP-stretch plus RSI-exhaustion mean reversion; the order engine keeps safety/execution gates but skips old momentum-style alpha gates that would invalidate the MR test. |
 
 T1.1 implementation record:
 
@@ -194,9 +208,9 @@ T1.1 target files changed:
 - `scripts/trade/backtest.py`: bridge from candle rows to scanner-style feature/scoring call, with a fallback/simple mode until the live-score path is validated.
 - `scripts/trade/replay_clock_check.py`: fixed historical timestamp guard for replay-safe session features.
 
-Do not do these before baseline NoAI has telemetry-bearing dry-run/live evidence:
+Do not do these before `NOAI_SIMPLE_MR_BASELINE` has telemetry-bearing dry-run/replay evidence:
 
-- Do not add `MEAN_REVERSION_V1` yet.
+- Do not promote `MEAN_REVERSION_V1` yet.
 - Do not tune score weights or entry thresholds.
 - Do not touch broker order placement or require Zerodha paid/dev APIs.
 - Do not remove the simplified replay score until the real-score path is producing stable, inspectable output.
@@ -222,7 +236,7 @@ Deliverables:
 |---|---|---|
 | T2.1 | Add strategy id `MEAN_REVERSION_V1`. | Every candidate/trade/report row can be filtered by strategy id. |
 | T2.2 | Define mean-reversion entry rules from VWAP band stretch, RSI/exhaustion, and cost cushion. | Momentum/ORB components are not part of the entry reason. |
-| T2.3 | Backtest against current NoAI baseline. | Report shows whether MR beats the all-in-one baseline after costs. |
+| T2.3 | Backtest against L0 and legacy controls. | Report shows whether MR beats `NOAI_SIMPLE_MR_BASELINE` and the old `NOAI_LEGACY_FULL` comparison after costs. |
 | T2.4 | Dry-run forward sample. | At least 20 sessions and 30 simulated closed trades collected before live pilot. |
 | T2.5 | Live pilot only after dry-run passes. | At least 10 live sessions and 20 closed trades at smallest practical capital, with no capital scale-up yet. |
 

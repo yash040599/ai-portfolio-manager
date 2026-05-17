@@ -17,6 +17,7 @@ from __future__ import annotations
 import html
 import json
 
+from modes.dashboard.nav import render_topnav, topnav_css
 from modes.dashboard.tax import (
     CESS_RATE,
     REBATE_CEILING_BY_FY,
@@ -86,14 +87,18 @@ def render_tax_page(*, other_income: float = 0.0,
     )
     intraday_tax = round(proj_with.total_tax - proj_without.total_tax, 2)
 
-    return _PAGE.replace("__BODY__", _body(
+    return (
+      _PAGE
+      .replace("__TOPNAV_CSS__", topnav_css())
+      .replace("__BODY__", _body(
         summary=summary,
         proj_with=proj_with,
         proj_without=proj_without,
         intraday_tax=intraday_tax,
         other_income=other_income,
         is_salaried=is_salaried,
-    ))
+      ))
+    )
 
 
 def render_tax_api(*, other_income: float, fy_start: int | None,
@@ -376,18 +381,12 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
           proj_without: TaxComputation, intraday_tax: float,
           other_income: float, is_salaried: bool) -> str:
     salaried_checked = "checked" if is_salaried else ""
+    topnav = render_topnav(
+        '/tax',
+        after_links='<span class="muted small">Pure projection � does not file or pay anything.</span>',
+    )
     return f"""
-<nav class="topnav">
-  <a href="/portfolio">Portfolio</a>
-  <span class="sep">·</span>
-  <a href="/trading">Trading (Live P&amp;L)</a>
-  <span class="sep">·</span>
-  <span style="color:var(--muted)">Tax</span>
-  <span class="sep">·</span>
-  <a href="/theory/statistics">Theory</a>
-  <span class="spacer"></span>
-  <span class="muted small">Pure projection — does not file or pay anything.</span>
-</nav>
+{topnav}
 
 <h1 class="page-title">Tax — {html.escape(summary.fy_label)}</h1>
 <div class="sub">
@@ -454,14 +453,7 @@ _PAGE = r"""<!doctype html>
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
-  nav.topnav { display: flex; gap: 14px; align-items: center;
-               padding: 10px 16px; background: var(--card);
-               border: 1px solid var(--line); border-radius: 8px;
-               margin-bottom: 18px; font-size: 14px; flex-wrap: wrap; }
-  nav.topnav a { color: var(--accent); text-decoration: none; font-weight: 500; }
-  nav.topnav a:hover { text-decoration: underline; }
-  nav.topnav .sep { color: var(--muted); }
-  nav.topnav .spacer { flex: 1; }
+  __TOPNAV_CSS__
   nav.topnav .small { font-size: 12px; }
 
   h1.page-title { font-size: 24px; margin: 4px 0 4px; }
@@ -668,7 +660,7 @@ document.getElementById("fy-select").addEventListener("change", function () {
 def render_tax_page_v2(*, other_income: float = 0.0,  # noqa: D401
                        fy_start: int | None = None,
                        is_salaried: bool = True) -> str:
-    """Public entry — substitutes the SLABS_JSON island too."""
+    """Public entry - substitutes the SLABS_JSON island too."""
     html_out = render_tax_page(
         other_income=other_income, fy_start=fy_start, is_salaried=is_salaried
     )

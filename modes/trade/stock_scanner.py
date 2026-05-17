@@ -1774,6 +1774,272 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
     # NO-AI SCAN — AUTO-SELECT FROM TECHNICAL SCORES
     # ================================================================
 
+    def _simple_mr_score(self, candidate: dict) -> tuple[float, str] | None:
+        tech = candidate.get("technical", {}) or {}
+        rsi_data = tech.get("rsi", {}) or {}
+        vwap_data = tech.get("vwap", {}) or {}
+        band_data = tech.get("vwap_bands", {}) or {}
+        try:
+            rsi_val = float(rsi_data.get("rsi", 0) or 0)
+            vwap_dev = float(vwap_data.get("deviation_pct", 0) or 0)
+        except (TypeError, ValueError):
+            return None
+        if rsi_val <= 0:
+            return None
+
+        band = str(band_data.get("signal", "INSIDE") or "INSIDE").upper()
+        buy_band = band in {"AT_LOWER_1SD", "AT_LOWER_2SD"}
+        sell_band = band in {"AT_UPPER_1SD", "AT_UPPER_2SD"}
+        min_dev = float(getattr(self.cfg, "SIMPLE_MR_MIN_VWAP_DEV_PCT", 0.35))
+        require_band = bool(getattr(self.cfg, "SIMPLE_MR_REQUIRE_VWAP_BAND", True))
+
+        is_buy = (
+            vwap_dev <= -min_dev
+            and rsi_val <= float(getattr(self.cfg, "SIMPLE_MR_RSI_BUY_MAX", 40.0))
+            and (buy_band or not require_band)
+        )
+        is_sell = (
+            vwap_dev >= min_dev
+            and rsi_val >= float(getattr(self.cfg, "SIMPLE_MR_RSI_SELL_MIN", 60.0))
+            and (sell_band or not require_band)
+        )
+        if not (is_buy or is_sell):
+            return None
+
+        score_abs = 2.0 + min(abs(vwap_dev), 1.5)
+        if band in {"AT_LOWER_2SD", "AT_UPPER_2SD"}:
+            score_abs += 1.0
+        elif band in {"AT_LOWER_1SD", "AT_UPPER_1SD"}:
+            score_abs += 0.5
+        if (is_buy and rsi_val <= 30) or (is_sell and rsi_val >= 70):
+            score_abs += 0.5
+
+        min_score = float(getattr(self.cfg, "SIMPLE_MR_MIN_SCORE", 3.0))
+        if score_abs < min_score:
+            return None
+        score_abs = round(min(score_abs, 6.0), 1)
+        side = "BUY" if is_buy else "SELL"
+        signed = score_abs if side == "BUY" else -score_abs
+        reason = (
+            f"{side} VWAP mean-reversion: dev {vwap_dev:+.2f}% "
+            f"band {band}, RSI {rsi_val:.0f}"
+        )
+        return signed, reason
+
+    def _scan_noai_simple_mr(
+        self, quotes: dict, max_trades: int,
+        session_context: str = "", open_buys: int = 0,
+        open_sells: int = 0, as_of: datetime.datetime | None = None,
+    ) -> list[dict]:
+        profile = "NOAI_SIMPLE_MR_BASELINE"
+        universe = self.get_universe()
+        self.last_tape_breadth = None
+        self.log.info(
+            f"NoAI strategy profile: {profile} — VWAP/RSI mean-reversion only"
+        )
+        self.log.info(f"Simple MR scan: analysing {len(universe)} stocks")
+
+        min_price = self.cfg.SCAN_MIN_PRICE
+        max_price = self.cfg.SCAN_MAX_PRICE
+        if max_price <= 0:
+            max_price = self._budget * self.cfg.MAX_POSITION_PCT / 100
+
+        missing_quote_symbols = []
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+            if ltp <= 0:
+                missing_quote_symbols.append(symbol)
+        if missing_quote_symbols:
+            retry_quotes = self.zerodha.get_quotes_safe(
+                [{"symbol": s, "exchange": "NSE"} for s in missing_quote_symbols],
+                max_retries=3,
+            ) or {}
+            for symbol in missing_quote_symbols:
+                key = f"NSE:{symbol}"
+                q = retry_quotes.get(key, {})
+                ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+                if ltp > 0:
+                    quotes[key] = q
+
+        price_filtered = []
+        dropped_no_quote = 0
+        dropped_price = 0
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+            if ltp <= 0:
+                dropped_no_quote += 1
+                continue
+            if ltp < min_price or ltp > max_price:
+                dropped_price += 1
+                continue
+            price_filtered.append(symbol)
+        if dropped_no_quote:
+            self.log.warning(
+                f"  Simple MR: skipped {dropped_no_quote} stocks with missing quotes"
+            )
+        if dropped_price:
+            self.log.info(
+                f"  Simple MR: dropped {dropped_price} stocks outside "
+                f"Rs.{min_price:.0f}-{max_price:.0f} range"
+            )
+
+        if getattr(self.cfg, "EARNINGS_BLACKOUT_ENABLED", True):
+            try:
+                today_str = _as_of_dt(as_of).strftime("%Y-%m-%d")
+                year = today_str[:4]
+                cal = getattr(self.cfg, f"EARNINGS_BLACKOUT_SYMBOLS_{year}", {}) or {}
+                blackout_today = set(cal.get(today_str, []))
+                if blackout_today:
+                    before = len(price_filtered)
+                    price_filtered = [s for s in price_filtered if s not in blackout_today]
+                    dropped_earn = before - len(price_filtered)
+                    if dropped_earn:
+                        self.log.info(
+                            f"  Simple MR earnings blackout: skipped {dropped_earn} symbol(s)"
+                        )
+            except Exception as e:
+                self.log.debug(f"Simple MR earnings blackout check failed: {e}")
+
+        candidates: list[dict] = []
+        for i, symbol in enumerate(price_filtered):
+            quarter = max(1, len(price_filtered) // 4)
+            if (i + 1) % quarter == 0 or i + 1 == len(price_filtered):
+                self.log.info(f"  Simple MR analysing... {i + 1}/{len(price_filtered)}")
+            result = self._analyse_stock(symbol, as_of=as_of)
+            if not result:
+                continue
+            scored = self._simple_mr_score(result)
+            if not scored:
+                continue
+            score, reason = scored
+            result["combined_score"] = score
+            result["strategy_id"] = profile
+            result["strategy_reason"] = reason
+            candidates.append(result)
+
+        if not candidates:
+            self.log.warning("Simple MR scan: no candidates passed baseline rules")
+            return []
+        candidates.sort(key=lambda x: abs(x["combined_score"]), reverse=True)
+        top = candidates[:MAX_CANDIDATES]
+
+        scan_ts = _as_of_dt(as_of).strftime("%Y-%m-%d %H:%M:%S")
+        self.last_scan_time = scan_ts
+        for r in top:
+            r["_scan_time"] = scan_ts
+            sector = SECTOR_MAP.get(r["symbol"], "OTHER")
+            self.telemetry.record_scored(
+                r,
+                scan_time=scan_ts,
+                nifty_trend=self.last_nifty_trend,
+                vix=self.last_vix,
+                tape="SIMPLE_MR",
+                sector=sector,
+            )
+
+        max_same_dir = max(1, self.cfg.MAX_POSITIONS - 1)
+        buy_slots = max(0, max_same_dir - open_buys)
+        sell_slots = max(0, max_same_dir - open_sells)
+        budget = self._budget
+        max_pct = self.cfg.MAX_POSITION_PCT / 100
+        max_per = budget * max_pct
+        budget_per_slot = min(budget / max_trades, max_per)
+
+        skip_symbols: set[str] = set()
+        if session_context:
+            m = re.search(r"Already traded today:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols = {s.strip() for s in m.group(1).split(",")}
+            m = re.search(r"Currently holding:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols |= {s.strip() for s in m.group(1).split(",")}
+
+        trades = []
+        used_buy = 0
+        used_sell = 0
+        noai_sector_counts: dict[str, int] = {}
+        for c in top:
+            symbol = c["symbol"]
+            if symbol in skip_symbols:
+                continue
+            score = c["combined_score"]
+            side = "BUY" if score > 0 else "SELL"
+            if side == "BUY":
+                if used_buy >= buy_slots:
+                    continue
+            else:
+                if used_sell >= sell_slots:
+                    continue
+
+            sector = SECTOR_MAP.get(symbol, "OTHER")
+            sec_count = noai_sector_counts.get(sector, 0)
+            if sec_count >= MAX_PER_SECTOR:
+                continue
+
+            price = c["current_price"]
+            if price <= 0:
+                continue
+            noai_sector_counts[sector] = sec_count + 1
+            if side == "BUY":
+                used_buy += 1
+            else:
+                used_sell += 1
+            sl_pct = self.cfg.DEFAULT_STOP_LOSS_PCT / 100
+            tgt_pct = self.cfg.DEFAULT_TARGET_PCT / 100
+            if side == "BUY":
+                sl = round(price * (1 - sl_pct), 2)
+                target = round(price * (1 + tgt_pct), 2)
+            else:
+                sl = round(price * (1 + sl_pct), 2)
+                target = round(price * (1 - tgt_pct), 2)
+            qty = max(1, int(budget_per_slot / price))
+            tech = c["technical"]
+            trades.append({
+                "symbol": symbol,
+                "exchange": "NSE",
+                "side": side,
+                "entry_price": round(price, 2),
+                "stop_loss": sl,
+                "target_price": target,
+                "qty": qty,
+                "rationale": c.get("strategy_reason", profile),
+                "status": "PENDING",
+                "strategy_id": profile,
+                "_entry_score": score,
+                "_entry_rsi": tech.get("rsi", {}).get("rsi", 0),
+                "_entry_adx": tech.get("adx", {}).get("adx", 0),
+                "_entry_plus_di": tech.get("adx", {}).get("plus_di", 0),
+                "_entry_minus_di": tech.get("adx", {}).get("minus_di", 0),
+                "_entry_patterns": [],
+                "_indicator_snapshot": self._build_indicator_snapshot(tech, c),
+                "_scan_time": c.get("_scan_time"),
+            })
+
+        if not trades:
+            self.log.warning(
+                f"Simple MR scan: {len(top)} candidates found but none fit slots/sector/budget"
+            )
+            return []
+
+        primary = self._validate_budget(trades[:max_trades])
+        fallback = trades[max_trades:]
+        while len(primary) < max_trades and fallback:
+            promoted = fallback.pop(0)
+            candidate = self._validate_budget([promoted])
+            if candidate:
+                primary.extend(candidate)
+        primary = self._score_weight_sizing(primary)
+        all_trades = primary + fallback
+        self.log.success(
+            f"Simple MR scan: {len(primary)} primary + {len(fallback)} fallback "
+            f"= {len(all_trades)} candidates for entry loop"
+        )
+        return all_trades
+
     def scan_noai(
         self, quotes: dict, nifty_context: str = "",
         max_trades: int = 0, session_context: str = "",
@@ -1800,6 +2066,16 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         if max_trades <= 0:
             self.log.warning("NoAI scan: MAX_POSITIONS is 0 — cannot select trades")
             return []
+
+        profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+        if profile == "NOAI_SIMPLE_MR_BASELINE":
+            return self._scan_noai_simple_mr(
+                quotes, max_trades,
+                session_context=session_context,
+                open_buys=open_buys,
+                open_sells=open_sells,
+                as_of=as_of,
+            )
 
         # Extract Nifty trend for hard filter
         nifty_trend = ""

@@ -1778,6 +1778,11 @@ class OrderEngine:
         rationale = trade.get("rationale", "")
 
         now = now_ist()
+        strategy_id = str(
+            trade.get("strategy_id")
+            or getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+        )
+        simple_mr_entry = strategy_id == "NOAI_SIMPLE_MR_BASELINE"
 
         # ── Rolling-PF circuit breaker (Roadmap #253) ─────────────
         # Multi-day analogue of the intra-day soft-stop. Armed once at
@@ -2516,7 +2521,7 @@ class OrderEngine:
         if entry_rsi > 0:
             rsi_sell_max = self.cfg.RSI_SELL_BLOCK_THRESHOLD
             rsi_buy_max  = self.cfg.RSI_BUY_BLOCK_THRESHOLD
-            if side == "SELL" and entry_rsi > rsi_sell_max:
+            if side == "SELL" and entry_rsi > rsi_sell_max and not simple_mr_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} > {rsi_sell_max:.0f} — too overbought to "
                     f"short (strong buying pressure). Skipping."
@@ -2528,7 +2533,7 @@ class OrderEngine:
                     f"extended overbought move. Skipping."
                 )
                 return False
-            if side == "BUY" and entry_rsi < 30:
+            if side == "BUY" and entry_rsi < 30 and not simple_mr_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} < 30 — too oversold to "
                     f"buy (strong selling pressure). Skipping."
@@ -2550,7 +2555,7 @@ class OrderEngine:
         # main gate even when the chart is printing a flip pattern.
         # Empirical: PNB BUY @ +6.1 / TRENT BUY @ +6.4 both with
         # BEARISH_ENGULFING on 2026-04-22 \u2014 both stagnant losers.
-        if self.cfg.PATTERN_VETO_ENABLED:
+        if self.cfg.PATTERN_VETO_ENABLED and not simple_mr_entry:
             entry_patterns = trade.get("_entry_patterns") or []
             if entry_patterns:
                 pset = {str(p).upper() for p in entry_patterns}
@@ -2576,7 +2581,7 @@ class OrderEngine:
         # Also reject when DI direction disagrees with the trade side —
         # e.g. trying to BUY while -DI > +DI means sellers are dominant.
         # Fails open when ADX is missing (treat as pass).
-        if self.cfg.ADX_ENTRY_GATE_ENABLED:
+        if self.cfg.ADX_ENTRY_GATE_ENABLED and not simple_mr_entry:
             entry_adx = trade.get("_entry_adx", 0) or 0
             plus_di   = trade.get("_entry_plus_di", 0) or 0
             minus_di  = trade.get("_entry_minus_di", 0) or 0
@@ -2625,7 +2630,7 @@ class OrderEngine:
         # gaps (low-volume) and NO_GAP are not gated here. Fails open
         # when the snapshot is missing/malformed (other gates remain
         # active).
-        if getattr(self.cfg, "GAP_COHERENCE_GATE_ENABLED", False):
+        if getattr(self.cfg, "GAP_COHERENCE_GATE_ENABLED", False) and not simple_mr_entry:
             snap_str = trade.get("_indicator_snapshot", "")
             if snap_str:
                 try:
@@ -2762,7 +2767,7 @@ class OrderEngine:
         # Skip before 10:15 — VWAP needs at least a full hour of candles
         # to be stable; early readings swing wildly on low volume.
         entry_score_abs = abs(trade.get("_entry_score") or 0)
-        if now.hour > 10 or (now.hour == 10 and now.minute >= 15):
+        if (not simple_mr_entry) and (now.hour > 10 or (now.hour == 10 and now.minute >= 15)):
             snap_str = trade.get("_indicator_snapshot", "")
             if snap_str:
                 try:
@@ -3041,6 +3046,7 @@ class OrderEngine:
             "entry_time":   now.strftime("%H:%M:%S"),
             "exit_time":    None,
             "rationale":    rationale,
+            "strategy_id":  strategy_id,
             "order_id":     order_id,
             # Indicator snapshot for learning database
             "_entry_score": trade.get("_entry_score"),

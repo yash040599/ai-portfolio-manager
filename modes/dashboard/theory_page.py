@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 
 from modes.dashboard.live_stats import LiveStats, compute_live_stats
+from modes.dashboard.nav import render_topnav, topnav_css
 
 
 # `__file__` lives at modes/dashboard/theory_page.py — three .parent
@@ -375,14 +376,7 @@ _TEMPLATE = r"""<!doctype html>
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
 
-  nav.topnav { display: flex; gap: 14px; align-items: center;
-               padding: 10px 16px; background: var(--card);
-               border: 1px solid var(--line); border-radius: 8px;
-               margin-bottom: 18px; font-size: 14px; flex-wrap: wrap; }
-  nav.topnav a { color: var(--accent); text-decoration: none; font-weight: 500; }
-  nav.topnav a:hover { text-decoration: underline; }
-  nav.topnav .sep { color: var(--muted); }
-  nav.topnav .spacer { flex: 1; }
+    __TOPNAV_CSS__
   nav.topnav .docs-pick label { font-size: 11px; color: var(--muted);
                                 text-transform: uppercase; letter-spacing: 0.05em;
                                 margin-right: 8px; }
@@ -476,22 +470,7 @@ _TEMPLATE = r"""<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <nav class="topnav">
-    <a href="/portfolio">Portfolio</a>
-    <span class="sep">·</span>
-    <a href="/trading">Trading (Live P&amp;L)</a>
-    <span class="sep">·</span>
-    <a href="/tax">Tax</a>
-    <span class="sep">·</span>
-    <span style="color:var(--muted)">Theory</span>
-    <span class="spacer"></span>
-    <div class="docs-pick">
-      <label for="docs-select">Docs</label>
-      <select id="docs-select" onchange="window.location.href=this.value">
-        __OPTIONS__
-      </select>
-    </div>
-  </nav>
+    __TOPNAV__
 
   <h1 class="page-title">__TITLE__</h1>
   <div class="sub">
@@ -578,10 +557,19 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
                 '</section>'
             )
 
+    docs_picker = (
+        '<div class="docs-pick">'
+        '<label for="docs-select">Docs</label>'
+        '<select id="docs-select" onchange="window.location.href=this.value">'
+        + _options_html(slug)
+        + '</select></div>'
+    )
+
     return (_TEMPLATE
             .replace("__TITLE__", html.escape(label))
             .replace("__FILENAME__", html.escape(filename))
-            .replace("__OPTIONS__", _options_html(slug))
+            .replace("__TOPNAV_CSS__", topnav_css())
+            .replace("__TOPNAV__", render_topnav(f"/theory/{slug}", after_links=docs_picker))
             .replace("__SUMMARY__", summary_html)
             .replace("__BODY__", body))
 

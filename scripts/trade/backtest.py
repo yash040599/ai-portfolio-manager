@@ -36,10 +36,10 @@ Scoring fidelity (read this!)
 `--score-mode scanner` runs the scanner-style candle scoring path with an
 injected historical timestamp, so VWAP, ORB, gap, hourly/short-cutoff, and
 intraday-volume features bind to the replay session instead of wall-clock
-today. `--score-mode simple` keeps the old simplified replay score
-(EMA-cross + RSI + 1h momentum) for comparison until scanner parity is fully
-inspected. This is still not the final Chan-grade replay because the live-vs-
-replay comparison arrives in a later Stage 1 item.
+today. When `Config.TRADE_STRATEGY_PROFILE` is `NOAI_SIMPLE_MR_BASELINE`,
+scanner mode then applies the same VWAP-stretch + RSI-exhaustion rules used by
+the live NoAI scanner. `--score-mode simple` keeps the old simplified replay
+score (EMA-cross + RSI + 1h momentum) for legacy comparison only.
 
 Usage
 -----
@@ -381,6 +381,59 @@ def score_bar_scanner(symbol: str, candles_15m: list[dict], candles_day: list[di
     )
 
 
+def score_bar_simple_mr(scanner_snapshot: dict, cfg) -> tuple[float, str] | None:
+    tech = scanner_snapshot.get("technical", {}) or {}
+    rsi_data = tech.get("rsi", {}) or {}
+    vwap_data = tech.get("vwap", {}) or {}
+    band_data = tech.get("vwap_bands", {}) or {}
+    try:
+        rsi_val = float(rsi_data.get("rsi", 0) or 0)
+        vwap_dev = float(vwap_data.get("deviation_pct", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if rsi_val <= 0:
+        return None
+
+    band = str(band_data.get("signal", "INSIDE") or "INSIDE").upper()
+    buy_band = band in {"AT_LOWER_1SD", "AT_LOWER_2SD"}
+    sell_band = band in {"AT_UPPER_1SD", "AT_UPPER_2SD"}
+    min_dev = float(getattr(cfg, "SIMPLE_MR_MIN_VWAP_DEV_PCT", 0.35))
+    require_band = bool(getattr(cfg, "SIMPLE_MR_REQUIRE_VWAP_BAND", True))
+
+    is_buy = (
+        vwap_dev <= -min_dev
+        and rsi_val <= float(getattr(cfg, "SIMPLE_MR_RSI_BUY_MAX", 40.0))
+        and (buy_band or not require_band)
+    )
+    is_sell = (
+        vwap_dev >= min_dev
+        and rsi_val >= float(getattr(cfg, "SIMPLE_MR_RSI_SELL_MIN", 60.0))
+        and (sell_band or not require_band)
+    )
+    if not (is_buy or is_sell):
+        return None
+
+    score_abs = 2.0 + min(abs(vwap_dev), 1.5)
+    if band in {"AT_LOWER_2SD", "AT_UPPER_2SD"}:
+        score_abs += 1.0
+    elif band in {"AT_LOWER_1SD", "AT_UPPER_1SD"}:
+        score_abs += 0.5
+    if (is_buy and rsi_val <= 30) or (is_sell and rsi_val >= 70):
+        score_abs += 0.5
+
+    min_score = float(getattr(cfg, "SIMPLE_MR_MIN_SCORE", 3.0))
+    if score_abs < min_score:
+        return None
+    score_abs = round(min(score_abs, 6.0), 1)
+    side = "BUY" if is_buy else "SELL"
+    signed = score_abs if side == "BUY" else -score_abs
+    reason = (
+        f"{side} VWAP mean-reversion: dev {vwap_dev:+.2f}% "
+        f"band {band}, RSI {rsi_val:.0f}"
+    )
+    return signed, reason
+
+
 def _list_symbols(db_path: str, source_kind: str) -> list[str]:
     if not os.path.isfile(db_path):
         return []
@@ -507,6 +560,8 @@ def _candidate_row(
     config_version: str,
     config_hash: str,
     scanner_snapshot: dict | None = None,
+    strategy_profile: str = "",
+    strategy_reason: str | None = None,
 ) -> dict:
     side = "BUY" if score > 0 else "SELL"
     row = {
@@ -517,6 +572,8 @@ def _candidate_row(
         "side": side,
         "combined_score": round(float(score), 3),
         "score_mode": score_mode,
+        "strategy_profile": strategy_profile,
+        "strategy_reason": strategy_reason,
         "config_version": config_version,
         "config_hash": config_hash,
         "status": "SCORED",
@@ -538,6 +595,8 @@ def _candidate_row(
             "adx": _nested_float_or_none(technical, ("adx", "adx")),
             "rvol": _float_or_none(scanner_snapshot.get("rvol")),
             "vwap": _float_or_none(scanner_snapshot.get("vwap")),
+            "vwap_dev": _nested_float_or_none(technical, ("vwap", "deviation_pct")),
+            "vwap_band": (technical.get("vwap_bands") or {}).get("signal"),
             "ltp": _float_or_none(scanner_snapshot.get("current_price")),
             "technical_signal": technical.get("signal"),
             "patterns": (pattern_summary.get("patterns") or [])[:5],
@@ -678,8 +737,7 @@ def main():
                         help="End date inclusive (YYYY-MM-DD).")
     parser.add_argument("--symbol", default=None,
                         help="Single symbol (default: every symbol in cache).")
-    parser.add_argument("--min-score", type=int,
-                        default=getattr(Config, "MIN_SCORE", 5),
+    parser.add_argument("--min-score", type=float, default=None,
                         help="Score threshold for opening a synthetic trade.")
     parser.add_argument("--max-trades-per-day", type=int, default=10,
                         help="Cap trades per session (mirrors live cap).")
@@ -698,6 +756,13 @@ def main():
                         help="Output JSON path override.")
     args = parser.parse_args()
 
+    strategy_profile = str(getattr(Config, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL"))
+    if args.min_score is None:
+        if args.score_mode == "scanner" and strategy_profile == "NOAI_SIMPLE_MR_BASELINE":
+            args.min_score = float(getattr(Config, "SIMPLE_MR_MIN_SCORE", 3.0))
+        else:
+            args.min_score = float(getattr(Config, "MIN_SCORE", 5))
+
     start = datetime.date.fromisoformat(args.dt_from)
     end = datetime.date.fromisoformat(args.dt_to)
     if end < start:
@@ -710,6 +775,7 @@ def main():
     cfg = Config()
     version, cfg_hash = Config.snapshot_hash()
     print(f"  Config: {version} / {cfg_hash}")
+    print(f"  Strategy profile: {strategy_profile}")
     print(f"  Window: {start} .. {end}")
     print(f"  Min score: {args.min_score}")
     print(f"  Score mode: {args.score_mode}")
@@ -750,11 +816,21 @@ def main():
             lookback = 80 if args.score_mode == "scanner" else 30
             window = candles[max(0, i - lookback): i + 1]
             scanner_snapshot = None
+            strategy_reason = None
             if args.score_mode == "scanner":
                 scanner_snapshot = score_bar_scanner(sym, window, daily_candles, bar["ts"])
                 if not scanner_snapshot:
                     continue
-                score = scanner_snapshot["combined_score"]
+                if strategy_profile == "NOAI_SIMPLE_MR_BASELINE":
+                    simple_mr = score_bar_simple_mr(scanner_snapshot, Config)
+                    if not simple_mr:
+                        continue
+                    score, strategy_reason = simple_mr
+                    scanner_snapshot["combined_score"] = score
+                    scanner_snapshot["strategy_id"] = strategy_profile
+                    scanner_snapshot["strategy_reason"] = strategy_reason
+                else:
+                    score = scanner_snapshot["combined_score"]
             else:
                 score = score_bar(window)
             if score == 0:
@@ -768,6 +844,8 @@ def main():
                 config_version=version,
                 config_hash=cfg_hash,
                 scanner_snapshot=scanner_snapshot,
+                strategy_profile=strategy_profile,
+                strategy_reason=strategy_reason,
             )
 
             if abs(score) < args.min_score:
@@ -799,6 +877,8 @@ def main():
             tr["symbol"] = sym
             tr["score"]  = score
             tr["score_mode"] = args.score_mode
+            tr["strategy_profile"] = strategy_profile
+            tr["strategy_reason"] = strategy_reason
             if scanner_snapshot:
                 tr["technical_signal"] = scanner_snapshot["technical"].get("signal")
                 tr["patterns"] = scanner_snapshot["pattern_summary"].get("patterns", [])[:5]
@@ -923,6 +1003,7 @@ def main():
             "to":             str(end),
             "min_score":      args.min_score,
             "score_mode":     args.score_mode,
+            "strategy_profile": strategy_profile,
             "candle_source":  source_kind,
             "cost_model": {
                 "trade_value_inr": round(args.trade_value, 2),

@@ -24,6 +24,7 @@ As of 2026-05-18:
 - Stage 1 T1.4 tooling is shipped: `scripts/trade/live_vs_replay.py` compares replay JSON to read-only live candidate/logical/tax data under the same config hash and writes red-flagged JSON reports. First all-symbol run is `DATA_GAP`, not parity proof, because historical `intraday_candidates` is empty and logical-vs-tax trade counts differ.
 - Stage 1 T1.5 is shipped: dry-run evidence is separated into `data/trade_analysis.db`; dry-run candidate telemetry and simulated after-cost outcomes do not write to `data/trades.db`, `trades`, or `intraday_tax_ledger`.
 - Stage 1 T1.6 is shipped: dry-run reports use separate `*_dry_run` filenames, and end-of-day dry-run/live saves generate daily Chan evidence snapshots with candidate counts, after-cost outcomes, config hash, DB source, and red flags.
+- Stage 1 T1.7 is shipped: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, selecting only VWAP-stretch plus RSI-exhaustion mean reversion for dry-run; legacy blended NoAI remains available only as `NOAI_LEGACY_FULL` comparison/control.
 - Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
 - Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
 - Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
@@ -78,8 +79,8 @@ Do not treat a clever gate as alpha. Risk controls reduce damage; they do not pr
 Follow the staged roadmap unless the user explicitly changes direction:
 
 1. Stage 0 - Research Reset: add visible runtime/report/dashboard status such as `Chan Research Reset`, plus telemetry-health warning. No entry behavior change.
-2. Stage 1 - Full-Fidelity Replay: make live scanner decisions replayable under historical candles and config hashes.
-3. Stage 2 - Mean-Reversion V1: first isolated strategy family to test, likely VWAP-band stretch plus exhaustion confirmation.
+2. Stage 1 - Full-Fidelity Replay and Strategy Isolation: make live scanner decisions replayable under historical candles/config hashes, then run the first isolated dry-run profile.
+3. Stage 2 - Mean-Reversion V1: promote only after `NOAI_SIMPLE_MR_BASELINE` has enough dry-run/replay evidence; add one confirmation layer at a time.
 4. Stage 3 - Momentum/ORB V1: reintroduce continuation only after replay proves where it works.
 5. Stage 4 - Pairs/statistical-arbitrage research.
 6. Stage 5 - Seasonality/calendar effects.
@@ -87,16 +88,16 @@ Follow the staged roadmap unless the user explicitly changes direction:
 
 ## What To Do Next
 
-Continue Stage 1, not Stage 2:
+Continue Stage 1.7, not Stage 2 promotion:
 
 - Keep live trading paused. Do not place new trades or require Zerodha paid/dev trading APIs unless the user explicitly recharges/enables them for broker-side testing.
-- Keep `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"` unless an actual strategy/runtime config change ships.
+- Current strategy config is `STRATEGY_CONFIG_VERSION = "v1.1-2026-05-18"` with `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"`.
 - Before editing data code, check both repos: `git status --short --branch` and `git -C ../ai-portfolio-backtest-data status --short --branch`.
 - Run the data-safety smoke tests from `copilot/trade-chan-reset.md` when data scripts change.
-- Next work is to run NoAI dry-run forward sessions using the current baseline, then compare those dry-run analysis rows against replay under the same config hash. Keep actual dashboard/tax P&L sourced only from live, verified `intraday_tax_ledger` rows.
-- Sample ladder: baseline sanity needs at least 5 dry-run sessions and 30 simulated closed trades; new strategy replay needs at least 60 sessions after costs; forward dry-run needs at least 20 sessions and 30 simulated closed trades; live pilot needs at least 10 sessions and 20 closed trades before scale consideration.
+- Next work is to run NoAI dry-run forward sessions using `NOAI_SIMPLE_MR_BASELINE`, then compare those dry-run analysis rows against replay under the same config hash. Keep actual dashboard/tax P&L sourced only from live, verified `intraday_tax_ledger` rows.
+- Sample ladder: L0 baseline sanity needs at least 5 dry-run sessions and 30 simulated closed trades, or continue to 10 sessions if sparse; L1 pattern confirmation needs 20 additional sessions or 30 new trades plus replay; any strategy replay promotion needs at least 60 historical sessions after costs; live pilot needs at least 10 sessions and 20 closed trades before scale consideration.
 
-Do not build Mean-Reversion V1 until the current NoAI baseline has telemetry-bearing dry-run/live comparison evidence after costs. The first strategy rollout should be staged by family, not the full complicated blended system.
+Do not promote Mean-Reversion V1 until `NOAI_SIMPLE_MR_BASELINE` has telemetry-bearing dry-run/replay comparison evidence after costs. The first strategy rollout should be staged by family, not the full complicated blended system.
 
 ## Required Commands For Evidence Checks
 

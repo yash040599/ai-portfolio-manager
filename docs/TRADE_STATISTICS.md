@@ -6,11 +6,11 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | `v1.0-2026-05-11` |
-| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status. |
+| Runtime strategy version | `v1.1-2026-05-18` |
+| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status; Stage 1.7 simple MR dry-run profile is active for NoAI selection. |
 | Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
-| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison tooling, and T1.5 dry-run analysis separation are shipped; next is NoAI dry-run forward evidence. |
+| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison, T1.5 dry-run analysis separation, T1.6 daily evidence, and T1.7 simple MR strategy isolation are shipped; next is dry-run forward evidence. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -83,9 +83,9 @@ Interpretation: the bot is not mainly failing because it lacks more exits. It is
 | Should score-weighted sizing come back? | No. The latest live evidence still does not justify larger sizing by score. |
 | Should we tune more thresholds live? | No. That risks overfitting the same losing window. |
 | Should the current all-in-one NoAI score remain the main research baseline? | Yes, as a baseline to beat, not as a strategy to scale. |
-| What should be tested first? | First collect NoAI dry-run baseline evidence with separated analysis data; then test a separate mean-reversion strategy with full-fidelity replay and forward sample. |
+| What should be tested first? | Start with `NOAI_SIMPLE_MR_BASELINE`: VWAP-stretch plus RSI-exhaustion mean reversion only, in dry-run, with live trading still paused. |
 
-Strategy decision: there is no production base strategy today. Keep the current blended NoAI score only as `NOAI_BASELINE` for measurement; the first candidate production base is `MEAN_REVERSION_V1` if it passes replay, dry-run, and live-pilot evidence. Momentum/ORB, pairs, seasonality, and microstructure stay later-stage until they pass separately.
+Strategy decision: there is no production base strategy today. The default NoAI dry-run profile is now `NOAI_SIMPLE_MR_BASELINE`; the old blended NoAI score is `NOAI_LEGACY_FULL` and is retained only for replay/control comparison. The first candidate production base is `MEAN_REVERSION_V1` if it passes replay, dry-run, and live-pilot evidence. Momentum/ORB, pairs, seasonality, and microstructure stay later-stage until they pass separately.
 
 The old theory was: enough gates should lift selected trades toward a 55% win rate and positive expectancy. The live ledger has not validated that. From this reset onward, theoretical edge estimates are treated as hypotheses, not conclusions.
 
@@ -110,6 +110,8 @@ Current config states that match the reset posture:
 | Feature | Current State | Decision |
 |---|---|---|
 | Live trading | `TRADE_LIVE_TRADING_PAUSED = True` | Keep paused until a staged strategy earns promotion. |
+| NoAI strategy profile | `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"` | Use for tomorrow's dry-run. It selects only VWAP-stretch plus RSI-exhaustion mean reversion. |
+| Legacy blended NoAI | `NOAI_LEGACY_FULL` profile only | Keep disabled by default; use only as replay/control evidence, not as the active dry-run strategy. |
 | Score-weighted sizing | `SCORE_WEIGHTED_SIZING_ENABLED = False` | Keep disabled. |
 | Rolling-PF full-day pause | `ROLLING_PF_PAUSE_ENABLED = False` | Keep disabled unless new evidence proves incremental value. |
 | Late no-rescue floor | `LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False` | Keep disabled; prior EV audit contradicted it. |
@@ -158,7 +160,7 @@ Every staged strategy should report these numbers separately by `strategy_id` an
 | Max drawdown | <= 3% of average daily capital |
 | Cost drag | Charges must be shown separately from gross P&L |
 
-The key change is separation. A mean-reversion test, a momentum test, and a future pairs test must not be merged into one score and then judged as if we know which idea worked.
+The key change is separation. Tomorrow's dry-run should generate evidence for `NOAI_SIMPLE_MR_BASELINE` only. A mean-reversion test, a momentum test, and a future pairs test must not be merged into one score and then judged as if we know which idea worked.
 
 T1.3 smoke result, using the current default replay cost assumptions (`trade_value=Rs.20,000`, base slippage `0.15%`, spread `0.05%`): RELIANCE over 2026-04-07..2026-04-24 produced 46 synthetic entries with raw PF 3.35, but after costs net P&L was Rs.-3,157.06, expectancy Rs.-68.63/trade, and net PF 0.07. Treat this as plumbing evidence and a warning about friction, not as a promoted strategy result.
 
@@ -167,6 +169,8 @@ T1.4 smoke result, using the all-symbol scanner replay over 2026-04-07..2026-04-
 T1.5 data-boundary decision: run NoAI dry-runs for research, but keep them out of actual intraday P&L. Dry-run rows go to `data/trade_analysis.db` with simulated regulatory charges and net P&L; live dashboard and tax pages continue to read actual `intraday_tax_ledger` rows from `data/trades.db` only.
 
 T1.6 automation decision: end-of-day trade reports now write mode-specific evidence. Dry-run report artifacts use `trading_data_DD_dry_run.json` and `trading_report_DD_dry_run.txt`; live reports keep the dashboard/tax filenames. Each run writes `chan_evidence_DD_dryrun.*` or `chan_evidence_DD_live.*`, so tomorrow's dry-run can be reviewed without touching actual P&L.
+
+T1.7 strategy-isolation decision: `STRATEGY_CONFIG_VERSION` is `v1.1-2026-05-18`, and the active profile is `NOAI_SIMPLE_MR_BASELINE`. The scanner now selects only VWAP-stretch plus RSI-exhaustion mean reversion. The order engine keeps safety/execution/risk gates, but skips old momentum-style alpha gates that would otherwise reject the intended MR setup, such as BUY-below-VWAP and BUY-oversold blocks. The legacy blended score remains available as `NOAI_LEGACY_FULL` for comparison.
 
 ## 6. Update Protocol
 

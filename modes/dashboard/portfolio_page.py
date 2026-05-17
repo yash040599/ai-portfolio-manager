@@ -1,8 +1,8 @@
 """Portfolio dashboard pages — D25 (summary), D26 (per-stock
 drill-down), D28 (Zerodha login), D29 (latest-vs-prior history).
 
-Every page renders the shared four-link nav (Portfolio · Trading ·
-Tax · Theory) plus a small auth-status pill (D28) so a user with an
+Every page renders the shared dashboard nav plus a small auth-status
+pill (D28) so a user with an
 expired Zerodha token can re-login from the dashboard without
 dropping back to the CLI.
 
@@ -38,6 +38,7 @@ from modes.analyze.types import (
     StockAnalysis,
 )
 from modes.dashboard.portfolio_actions import estimate_ai_cost, latest_status
+from modes.dashboard.nav import render_topnav
 
 
 # ── Shared chrome ───────────────────────────────────────────────
@@ -98,28 +99,8 @@ def _research_pill() -> str:
 
 
 def _topnav(here: str) -> str:
-    """Render the four-link nav with `here` highlighted as <span>."""
-    items = [
-        ("Portfolio", "/portfolio"),
-        ("Swing", "/swing"),
-        ("Trading (Live P&L)", "/trading"),
-        ("Tax", "/tax"),
-        ("Theory", "/theory/statistics"),
-    ]
-    parts = []
-    for i, (label, href) in enumerate(items):
-        if i:
-            parts.append('<span class="sep">·</span>')
-        if href.startswith(here) or label.startswith(here):
-            parts.append(f'<span class="here">{html.escape(label)}</span>')
-        else:
-            parts.append(f'<a href="{href}">{html.escape(label)}</a>')
-    return ('<nav class="topnav">'
-            + "".join(parts)
-            + '<span class="spacer"></span>'
-          + _research_pill()
-            + _auth_pill()
-            + '</nav>')
+    """Render the shared nav with `here` highlighted as <span>."""
+    return render_topnav(here, after_links=_research_pill() + _auth_pill())
 
 
 _STYLE = r"""
@@ -127,7 +108,8 @@ _STYLE = r"""
         --card: #ffffff; --line: #e5e7eb;
         --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
         --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
-        --risk-bg: #fdecec; --risk-fg: #c62828; --risk-line: #f4c0c0; }
+        --risk-bg: #fdecec; --risk-fg: #c62828; --risk-line: #f4c0c0;
+        --soft: #f0f1f3; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
        background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
@@ -144,8 +126,15 @@ nav.topnav { display: flex; gap: 14px; align-items: center;
              padding: 10px 16px; background: var(--card);
              border: 1px solid var(--line); border-radius: 8px;
              margin-bottom: 18px; font-size: 14px; }
-nav.topnav a { color: var(--fg); text-decoration: none; font-weight: 500; }
+nav.topnav a,
+nav.topnav button.nav-back { color: var(--fg); text-decoration: none;
+                             font-weight: 500; }
 nav.topnav a:hover { text-decoration: underline; }
+nav.topnav button.nav-back { font: inherit; padding: 4px 9px;
+                             border: 1px solid var(--line);
+                             border-radius: 5px; background: white;
+                             cursor: pointer; }
+nav.topnav button.nav-back:hover { background: var(--soft); }
 nav.topnav .here { color: var(--muted); cursor: default; }
 nav.topnav .sep { color: var(--muted); }
 nav.topnav .spacer { flex: 1; }

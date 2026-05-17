@@ -642,6 +642,7 @@ class ReportWriter:
         charges    = pnl["charges"]
         research_phase = self._research_phase_payload()
         strategy_config_version, strategy_config_hash = self.cfg.snapshot_hash()
+        strategy_profile = str(getattr(self.cfg, "TRADE_STRATEGY_PROFILE", ""))
 
         with open(txt_path, "w", encoding="utf-8") as f:
             # ── Header ────────────────────────────────────────────
@@ -664,6 +665,8 @@ class ReportWriter:
             f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
             f.write(f"Budget          : Rs.{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
+            if strategy_profile:
+                f.write(f"Strategy profile: {strategy_profile}\n")
             if market_condition:
                 f.write(f"Market condition: {market_condition}\n")
             f.write(f"Max positions   : {self.cfg.MAX_POSITIONS}\n")
@@ -810,6 +813,7 @@ class ReportWriter:
                 "max_positions": self.cfg.MAX_POSITIONS,
                 "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
                 "target_pct":    self.cfg.DEFAULT_TARGET_PCT,
+                "strategy_profile": strategy_profile,
                 "strategy_config_version": strategy_config_version,
                 "strategy_config_hash": strategy_config_hash,
                 "git_sha":      _git_short_sha(),

@@ -18,6 +18,7 @@ import webbrowser
 from pathlib import Path
 
 from config import Config
+from modes.dashboard.nav import render_topnav, topnav_css
 from modes.dashboard.metrics import HeadlinePnL
 from modes.dashboard.verdict import VerdictResult
 
@@ -115,7 +116,9 @@ def render_shell(initial_payload: dict, *, server_mode: bool) -> str:
     initial_json = json.dumps(initial_payload).replace("</", "<\\/")
     server_flag  = "true" if server_mode else "false"
     return _SHELL_TEMPLATE.replace("__SERVER_FLAG__", server_flag) \
-                          .replace("__INITIAL_JSON__", initial_json)
+                          .replace("__INITIAL_JSON__", initial_json) \
+                          .replace("__TOPNAV_CSS__", topnav_css()) \
+                          .replace("__TOPNAV__", render_topnav("/trading"))
 
 
 def write_and_maybe_open(html_str: str, *, date_to: str,
@@ -145,7 +148,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
 <style>
   :root {
     --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
-    --card: #ffffff; --line: #e5e7eb;
+    --card: #ffffff; --line: #e5e7eb; --soft: #f0f1f3;
   }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -226,27 +229,12 @@ _SHELL_TEMPLATE = r"""<!doctype html>
                    border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
   .static-banner.reset { background: #eef4ff; border-color: #cfd9eb; color: #1c1f23; }
   .static-banner.reset strong { color: #1c4ed8; }
-  nav.topnav { display: flex; gap: 14px; align-items: center;
-               padding: 10px 16px; background: var(--card);
-               border: 1px solid var(--line); border-radius: 8px;
-               margin-bottom: 18px; font-size: 14px; }
-  nav.topnav a { color: var(--fg); text-decoration: none; font-weight: 500; }
-  nav.topnav a:hover { text-decoration: underline; }
-  nav.topnav .here { color: var(--muted); cursor: default; }
-  nav.topnav .sep { color: var(--muted); }
+  __TOPNAV_CSS__
 </style>
 </head>
 <body>
 <div class="wrap">
-  <nav class="topnav">
-    <a href="/portfolio">Portfolio</a>
-    <span class="sep">·</span>
-    <span class="here">Trading (Live P&amp;L)</span>
-    <span class="sep">·</span>
-    <a href="/tax">Tax</a>
-    <span class="sep">·</span>
-    <a href="/theory/statistics">Theory</a>
-  </nav>
+  __TOPNAV__
   <h1>AI Portfolio Manager — Trading P&amp;L Dashboard</h1>
   <div class="sub" id="window-sub">…</div>
 

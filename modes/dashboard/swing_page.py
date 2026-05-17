@@ -30,6 +30,7 @@ from modes.swing.persistence import (
 )
 from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import get_live_quotes
+from modes.dashboard.nav import render_topnav
 from modes.dashboard.swing_actions import latest_swing_status
 
 
@@ -153,26 +154,7 @@ def _auth_pill() -> str:
 
 
 def _topnav(here: str) -> str:
-    items = [
-        ("Portfolio", "/portfolio"),
-        ("Swing", "/swing"),
-        ("Trading (Live P&L)", "/trading"),
-        ("Tax", "/tax"),
-        ("Theory", "/theory/statistics"),
-    ]
-    parts = []
-    for i, (label, href) in enumerate(items):
-        if i:
-            parts.append('<span class="sep">&middot;</span>')
-        if href == here:
-            parts.append(f'<span class="here">{html.escape(label)}</span>')
-        else:
-            parts.append(f'<a href="{href}">{html.escape(label)}</a>')
-    return ('<nav class="topnav">'
-            + "".join(parts)
-            + '<span class="spacer"></span>'
-            + _auth_pill()
-            + '</nav>')
+    return render_topnav(here, after_links=_auth_pill())
 
 
 # ── Page renderer ───────────────────────────────────────────────
@@ -2563,7 +2545,8 @@ _STYLE = r"""
 :root { --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
         --card: #ffffff; --line: #e5e7eb;
         --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
-        --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a; }
+        --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
+        --soft: #f0f1f3; }
 * { box-sizing: border-box; }
 body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
        background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
@@ -2579,8 +2562,15 @@ nav.topnav { display: flex; gap: 14px; align-items: center;
              padding: 10px 16px; background: var(--card);
              border: 1px solid var(--line); border-radius: 8px;
              margin-bottom: 18px; font-size: 14px; }
-nav.topnav a { color: var(--fg); text-decoration: none; font-weight: 500; }
+nav.topnav a,
+nav.topnav button.nav-back { color: var(--fg); text-decoration: none;
+                             font-weight: 500; }
 nav.topnav a:hover { text-decoration: underline; }
+nav.topnav button.nav-back { font: inherit; padding: 4px 9px;
+                             border: 1px solid var(--line);
+                             border-radius: 5px; background: white;
+                             cursor: pointer; }
+nav.topnav button.nav-back:hover { background: var(--soft); }
 nav.topnav .here { color: var(--muted); cursor: default; }
 nav.topnav .sep { color: var(--muted); }
 nav.topnav .spacer { flex: 1; }
