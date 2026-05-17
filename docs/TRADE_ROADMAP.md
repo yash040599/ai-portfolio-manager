@@ -15,7 +15,7 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
 | Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
-| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed and T1.1 replay-safe scanner scoring are shipped; T1.2 accepted/rejected candidate replay is next. |
+| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, and T1.2 accepted/rejected candidate replay are shipped; T1.3 after-cost replay is next. |
 
 ## Ground Rules
 
@@ -71,7 +71,7 @@ Data architecture decision for Stage 1:
 - Clone/sync that repo beside the main checkout at `../ai-portfolio-backtest-data`; replay reads the local copy at runtime on both Windows and the Linux VM.
 - Use `scripts/shared/sync_backtest_data.py` for clone/pull/status/push. It is a Git snapshot sync, not the row-merge operational backup flow.
 - Use `scripts/trade/export_backtest_data.py` to seed the first SQLite/CSV replay dataset from `data/candle_cache.db` without broker/network calls.
-- `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned. It supports `--score-mode scanner` for replay-safe scanner-style scoring and keeps `--score-mode simple` as the legacy comparison path.
+- `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned. It supports `--score-mode scanner` for replay-safe scanner-style scoring, keeps `--score-mode simple` as the legacy comparison path, and writes a config-hash-stamped candidate ledger for accepted/rejected replay decisions.
 - Treat `market-research` as standalone ATH-dip research/reference material, not as an intraday replay runtime dependency.
 - Full data contract: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md).
 
@@ -81,7 +81,7 @@ Deliverables:
 |---|---|---|
 | T1.0 | Decide the normalized backtest data contract and sync model. | Shipped 2026-05-15: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md) defines repo roles, sibling `../ai-portfolio-backtest-data/`, manifest fields, SQLite/CSV shape, Linux VM pull flow, sync/export scripts, seeded data repo, migration restore path, and the backtest data-root bridge. |
 | T1.1 | Parameterise the scanner/replay clock so backtest can use live scoring logic instead of simplified scoring. | Shipped 2026-05-15: scanner/indicator scoring accepts an injected `as_of` time, replay can run `--score-mode scanner` from local candles without Zerodha calls, and `scripts/trade/replay_clock_check.py` guards against wall-clock leakage. |
-| T1.2 | Replay accepted and rejected candidates by config hash. | Backtest output can explain why each candidate entered or failed. |
+| T1.2 | Replay accepted and rejected candidates by config hash. | Shipped 2026-05-17: backtest JSON includes a `candidates` ledger with `ENTERED`/`REJECTED` status, replay rejection reason, config version/hash, score fields, and entry/exit outcome when a synthetic trade enters. No-trade runs now still write an evidence artifact. |
 | T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | PF/expectancy are reported after costs. |
 | T1.4 | Add live-vs-replay comparison report. | Recent sessions show comparable candidate count, entry count, and exit split. |
 
@@ -95,6 +95,15 @@ T1.1 implementation record:
 | T1.1d | Let backtest call the real NoAI scoring path. | Done: `scripts/trade/backtest.py --score-mode scanner` scores local historical candles without Zerodha network calls; `--score-mode simple` remains available for comparison. |
 | T1.1e | Add a small parity/guard test. | Done: `scripts/trade/replay_clock_check.py` verifies a fixed historical timestamp produces session VWAP/ORB features independent of the actual current date. |
 
+T1.2 implementation record:
+
+| Step | Work | Boundary / Done When |
+|---|---|---|
+| T1.2a | Add candidate-level replay rows. | Done: each non-zero replay score in the entry window becomes a candidate row stamped with config version/hash, score mode, score, side, indicator summary, and `ENTERED`/`REJECTED` status. |
+| T1.2b | Preserve rejected-only evidence. | Done: high-threshold/no-trade runs write JSON with rejection counts instead of exiting without an artifact. |
+| T1.2c | Make replay output filenames run-specific. | Done: default report names include date range, symbol scope, score mode, minimum score, and config hash so threshold/symbol sweeps do not overwrite each other. |
+| T1.2d | Validate with local smoke runs. | Done: `--min-score 999 --score-mode scanner` produced 10,405 `SCORE_FLOOR` rejections; a RELIANCE scanner replay produced 95 candidates, 46 synthetic trades, and mixed `SCORE_FLOOR`/`REPLAY_TRADE_CAP` rejections. |
+
 Next Stage 1 commands:
 
 ```powershell
@@ -104,6 +113,7 @@ git -C ../ai-portfolio-backtest-data status --short --branch
 .\.venv\Scripts\python.exe -m py_compile scripts\trade\backtest.py scripts\trade\replay_clock_check.py modes\trade\stock_scanner.py shared\technical_indicators.py
 .\.venv\Scripts\python.exe scripts\trade\replay_clock_check.py
 .\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --min-score 999 --score-mode scanner
+.\.venv\Scripts\python.exe scripts\trade\backtest.py --from 2026-04-07 --to 2026-04-24 --symbol RELIANCE --min-score 2 --score-mode scanner
 ```
 
 T1.1 target files changed:
@@ -113,7 +123,7 @@ T1.1 target files changed:
 - `scripts/trade/backtest.py`: bridge from candle rows to scanner-style feature/scoring call, with a fallback/simple mode until the live-score path is validated.
 - `scripts/trade/replay_clock_check.py`: fixed historical timestamp guard for replay-safe session features.
 
-Do not do these before T1.2/T1.3 are complete:
+Do not do these before T1.3 is complete:
 
 - Do not add `MEAN_REVERSION_V1` yet.
 - Do not tune score weights or entry thresholds.

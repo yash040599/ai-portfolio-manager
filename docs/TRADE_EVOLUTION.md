@@ -37,6 +37,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T1.2 | Infra | Replay output now writes a config-hash-stamped candidate ledger showing which historical candidates entered or were rejected, including no-trade runs. |
 | T1.1 | Infra | Replay can now score historical candles through the scanner-style NoAI candle path with an injected session clock, while the old simplified score remains available for comparison. |
 | T1 | Infra | Replay now has a private versioned data repo, a local SQLite/CSV seed dataset, and a backtest reader that uses that dataset before falling back to the old candle cache. |
 | T0 | Infra | The trade runtime now labels runs as Stage 0 Chan Research Reset, warns when candidate telemetry is unhealthy, and blocks live order placement while the reset pause is active. |

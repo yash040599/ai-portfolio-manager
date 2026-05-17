@@ -22,8 +22,12 @@ script:
 
 Output
 ------
-Per-trade JSON to `reports/backtest/<from>_to_<to>_<hash>.json` and a
-summary table (WR, PF, expectancy, max-DD) printed to stdout.
+Per-trade JSON to `reports/backtest/` and a summary table (WR, PF,
+expectancy, max-DD) printed to stdout. The output filename includes the
+date range, symbol scope, score mode, minimum score, and config hash so
+separate replay runs do not overwrite each other. The same JSON now also
+includes a config-hash-stamped `candidates` ledger showing which replay
+candidates entered and which were rejected by the replay floor/cap checks.
 
 Scoring fidelity (read this!)
 -----------------------------
@@ -32,8 +36,8 @@ injected historical timestamp, so VWAP, ORB, gap, hourly/short-cutoff, and
 intraday-volume features bind to the replay session instead of wall-clock
 today. `--score-mode simple` keeps the old simplified replay score
 (EMA-cross + RSI + 1h momentum) for comparison until scanner parity is fully
-inspected. This is still not the final Chan-grade replay because accepted vs
-rejected candidates and after-cost P&L arrive in later Stage 1 items.
+inspected. This is still not the final Chan-grade replay because the live-vs-
+replay comparison and after-cost P&L arrive in later Stage 1 items.
 
 Usage
 -----
@@ -473,6 +477,86 @@ def _close(entry, exit_bar, side, reason, entry_price, sl, tgt,
     }
 
 
+def _float_or_none(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _nested_float_or_none(mapping: dict, path: tuple[str, ...]) -> float | None:
+    current = mapping
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return _float_or_none(current)
+
+
+def _candidate_row(
+    *,
+    symbol: str,
+    bar: dict,
+    score: float,
+    score_mode: str,
+    config_version: str,
+    config_hash: str,
+    scanner_snapshot: dict | None = None,
+) -> dict:
+    side = "BUY" if score > 0 else "SELL"
+    row = {
+        "date": bar["ts"].date().isoformat(),
+        "scan_time": bar["ts"].isoformat(),
+        "symbol": symbol,
+        "exchange": "NSE",
+        "side": side,
+        "combined_score": round(float(score), 3),
+        "score_mode": score_mode,
+        "config_version": config_version,
+        "config_hash": config_hash,
+        "status": "SCORED",
+        "rejected_gate": None,
+        "entry_price": None,
+        "entry_time": None,
+        "exit_price": None,
+        "exit_time": None,
+        "exit_reason": None,
+        "pnl_pct": None,
+    }
+    if scanner_snapshot:
+        technical = scanner_snapshot.get("technical", {}) or {}
+        pattern_summary = scanner_snapshot.get("pattern_summary", {}) or {}
+        row.update({
+            "pattern_score": _float_or_none(pattern_summary.get("score")),
+            "tech_score": _float_or_none(technical.get("score")),
+            "rsi": _nested_float_or_none(technical, ("rsi", "rsi")),
+            "adx": _nested_float_or_none(technical, ("adx", "adx")),
+            "rvol": _float_or_none(scanner_snapshot.get("rvol")),
+            "vwap": _float_or_none(scanner_snapshot.get("vwap")),
+            "ltp": _float_or_none(scanner_snapshot.get("current_price")),
+            "technical_signal": technical.get("signal"),
+            "patterns": (pattern_summary.get("patterns") or [])[:5],
+        })
+    return row
+
+
+def _count_by(rows: list[dict], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(key) or "<none>"
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _slug(value) -> str:
+    text = str(value).strip()
+    cleaned = "".join(char if char.isalnum() else "-" for char in text)
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "ALL"
+
+
 # ────────────────────────────────────────────────────────────────
 # Main
 # ────────────────────────────────────────────────────────────────
@@ -525,6 +609,7 @@ def main():
     print(f"  Symbols: {len(symbols)} from candle source")
 
     trades: list[dict] = []
+    candidates: list[dict] = []
     per_day_count: dict[str, int] = {}
 
     for sym in symbols:
@@ -543,8 +628,6 @@ def main():
             if not (datetime.time(10, 0) <= bar["ts"].time() <= datetime.time(14, 30)):
                 continue
             day_key = f"{sym}_{bar['ts'].date().isoformat()}"
-            if per_day_count.get(day_key, 0) >= args.max_trades_per_day:
-                continue
             lookback = 80 if args.score_mode == "scanner" else 30
             window = candles[max(0, i - lookback): i + 1]
             scanner_snapshot = None
@@ -555,7 +638,29 @@ def main():
                 score = scanner_snapshot["combined_score"]
             else:
                 score = score_bar(window)
+            if score == 0:
+                continue
+
+            candidate = _candidate_row(
+                symbol=sym,
+                bar=bar,
+                score=score,
+                score_mode=args.score_mode,
+                config_version=version,
+                config_hash=cfg_hash,
+                scanner_snapshot=scanner_snapshot,
+            )
+
             if abs(score) < args.min_score:
+                candidate["status"] = "REJECTED"
+                candidate["rejected_gate"] = "SCORE_FLOOR"
+                candidates.append(candidate)
+                continue
+
+            if per_day_count.get(day_key, 0) >= args.max_trades_per_day:
+                candidate["status"] = "REJECTED"
+                candidate["rejected_gate"] = "REPLAY_TRADE_CAP"
+                candidates.append(candidate)
                 continue
             side = "BUY" if score > 0 else "SELL"
             atr_val = _atr(window, 14)
@@ -568,21 +673,30 @@ def main():
                 tr["patterns"] = scanner_snapshot["pattern_summary"].get("patterns", [])[:5]
             tr["config_version"] = version
             tr["config_hash"]    = cfg_hash
+            candidate["status"] = "ENTERED"
+            candidate["entry_price"] = tr.get("entry")
+            candidate["entry_time"] = tr.get("entry_ts")
+            candidate["exit_price"] = tr.get("exit")
+            candidate["exit_time"] = tr.get("exit_ts")
+            candidate["exit_reason"] = tr.get("reason")
+            candidate["pnl_pct"] = tr.get("pnl_pct")
+            candidates.append(candidate)
             trades.append(tr)
             per_day_count[day_key] = per_day_count.get(day_key, 0) + 1
-
-    if not trades:
-        print("\n  No synthetic trades generated for this window.")
-        sys.exit(0)
 
     # ── summary stats ───────────────────────────────────────────
     wins = [t for t in trades if t["pnl_pct"] > 0]
     losses = [t for t in trades if t["pnl_pct"] <= 0]
-    total_win_pct = sum(t["pnl_pct"] for t in wins)
-    total_loss_pct = -sum(t["pnl_pct"] for t in losses)  # positive number
-    pf = (total_win_pct / total_loss_pct) if total_loss_pct > 0 else float("inf")
-    expectancy_pct = statistics.fmean(t["pnl_pct"] for t in trades)
-    wr = len(wins) / len(trades) * 100
+    if trades:
+        total_win_pct = sum(t["pnl_pct"] for t in wins)
+        total_loss_pct = -sum(t["pnl_pct"] for t in losses)  # positive number
+        pf = (total_win_pct / total_loss_pct) if total_loss_pct > 0 else float("inf")
+        expectancy_pct = statistics.fmean(t["pnl_pct"] for t in trades)
+        wr = len(wins) / len(trades) * 100
+    else:
+        pf = None
+        expectancy_pct = None
+        wr = None
 
     # Equity curve & max-DD on cumulative-pct basis
     cum = 0.0
@@ -594,21 +708,38 @@ def main():
         max_dd = max(max_dd, peak - cum)
 
     print(f"\n  ── Summary ────────────────────────────────────────")
+    status_counts = _count_by(candidates, "status")
+    rejection_counts = _count_by(
+        [row for row in candidates if row.get("status") == "REJECTED"],
+        "rejected_gate",
+    )
+    print(f"  Candidates        : {len(candidates)} {status_counts}")
+    if rejection_counts:
+        print(f"  Rejections        : {rejection_counts}")
     print(f"  Trades            : {len(trades)}")
     print(f"  Wins / Losses     : {len(wins)} / {len(losses)}")
-    print(f"  Win rate          : {wr:.2f}%")
-    print(f"  Avg P&L per trade : {expectancy_pct:+.3f}%")
-    print(f"  Profit factor     : {pf:.2f}")
+    if trades:
+        print(f"  Win rate          : {wr:.2f}%")
+        print(f"  Avg P&L per trade : {expectancy_pct:+.3f}%")
+        print(f"  Profit factor     : {pf:.2f}")
+    else:
+        print("  Win rate          : n/a")
+        print("  Avg P&L per trade : n/a")
+        print("  Profit factor     : n/a")
     print(f"  Max drawdown      : {max_dd:.2f}% (cum-pct basis)")
     by_reason = {}
     for t in trades:
         by_reason[t["reason"]] = by_reason.get(t["reason"], 0) + 1
     print(f"  Exit reasons      : {by_reason}")
+    if not trades:
+        print("\n  No synthetic trades generated for this window.")
 
     # ── write per-trade JSON ────────────────────────────────────
     os.makedirs(OUT_DIR, exist_ok=True)
+    symbol_tag = _slug(args.symbol.upper() if args.symbol else "ALL")
+    score_tag = _slug(f"{args.score_mode}_min{args.min_score}")
     out_path = args.out or os.path.join(
-        OUT_DIR, f"{start}_to_{end}_{cfg_hash}.json"
+        OUT_DIR, f"{start}_to_{end}_{symbol_tag}_{score_tag}_{cfg_hash}.json"
     )
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -620,18 +751,22 @@ def main():
             "score_mode":     args.score_mode,
             "candle_source":  source_kind,
             "summary": {
+                "candidates": len(candidates),
+                "candidate_status": status_counts,
+                "rejections": rejection_counts,
                 "trades": len(trades),
                 "wins":   len(wins),
                 "losses": len(losses),
-                "wr_pct": round(wr, 3),
-                "expectancy_pct": round(expectancy_pct, 4),
-                "profit_factor":  round(pf, 4) if pf != float("inf") else None,
+                "wr_pct": round(wr, 3) if wr is not None else None,
+                "expectancy_pct": round(expectancy_pct, 4) if expectancy_pct is not None else None,
+                "profit_factor":  round(pf, 4) if pf not in (None, float("inf")) else None,
                 "max_dd_pct":     round(max_dd, 3),
                 "exit_reasons":   by_reason,
             },
+            "candidates": candidates,
             "trades": trades,
         }, f, indent=2)
-    print(f"\n  Per-trade detail → {os.path.relpath(out_path, PROJECT_ROOT)}")
+    print(f"\n  Replay detail → {os.path.relpath(out_path, PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

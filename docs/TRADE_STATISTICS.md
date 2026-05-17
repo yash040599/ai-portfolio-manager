@@ -10,6 +10,7 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 | Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status. |
 | Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
+| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, and T1.2 accepted/rejected candidate replay are shipped; T1.3 after-cost replay is next. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -128,6 +129,7 @@ Stage 1 data policy:
 | `market-research` repo | Standalone daily ATH-dip research using `yfinance` and current NIFTY 50 membership. Use as reference/seed material, not an intraday replay runtime dependency. |
 | Backtest data storage | Use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready datasets. |
 | Main repo runtime access | Read from local sibling `../ai-portfolio-backtest-data/`, not GitHub on every replay run. |
+| Replay candidate evidence | `scripts/trade/backtest.py` writes a config-hash-stamped `candidates` ledger with `ENTERED`/`REJECTED` status and replay rejection reason, so no-trade runs still leave inspectable evidence. |
 | Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
 | Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
 | Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
