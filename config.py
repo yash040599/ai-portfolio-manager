@@ -114,6 +114,7 @@ class Config:
         "until a staged Chan-method strategy passes promotion gates."
     )
     TRADE_LIVE_TRADING_PAUSED: bool = True
+    TRADE_ANALYSIS_DB_PATH: str = os.path.join("data", "trade_analysis.db")
 
     # ── Market Timing (IST) ──────────────────────────────────────
     # The bot waits until MARKET_OPEN_HOUR:MARKET_OPEN_MINUTE to

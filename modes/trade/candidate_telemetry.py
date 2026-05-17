@@ -15,9 +15,10 @@
 #   - decide whether a score-bucket inversion is real or an artifact
 #     of which buckets the gates admitted.
 #
-# This module owns one SQLite table — `intraday_candidates` — inside
-# the existing `data/trades.db` so it shares the same backup-sync
-# pipeline (UNIQUE_TABLES in `scripts/shared/backup_data.py`).
+# This module owns one SQLite table — `intraday_candidates`. Live runs
+# write to `data/trades.db`; dry-run/research runs write to
+# `data/trade_analysis.db` so simulated evidence never pollutes actual
+# P&L, tax, or dashboard ledgers.
 #
 # Three writers (write-only API; readers go through scripts/view_*):
 #   1. `record_scored(candidate)` — called by the Scanner for every
@@ -40,19 +41,22 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from contextlib import closing
 from typing import Any
 
 from config import Config, now_ist
 
 
 DB_PATH = os.path.join("data", "trades.db")
+ANALYSIS_DB_PATH = Config.TRADE_ANALYSIS_DB_PATH
 
 
 class CandidateTelemetry:
     """Per-candidate feature/outcome store. Best-effort writes only."""
 
-    def __init__(self, log=None):
+    def __init__(self, log=None, db_path: str | None = None):
         self.log = log
+        self.db_path = db_path or self._default_db_path()
         # Health flag — when False, no writes will succeed and the
         # operator should see this in startup logs. Doesn't break trade
         # flow either way (every write method is wrapped in try/except).
@@ -74,8 +78,12 @@ class CandidateTelemetry:
 
     # ── DB plumbing ──────────────────────────────────────────────
 
+    @staticmethod
+    def _default_db_path() -> str:
+        return ANALYSIS_DB_PATH if Config.DRY_RUN else DB_PATH
+
     def _connect(self) -> sqlite3.Connection:
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         # 30s timeout (was 10s). WAL mode makes reader/writer contention
         # rare, but three writers (scanner SCORED, manager mark_attempted,
         # performance_tracker attach_outcome) plus the engine's writes to
@@ -83,13 +91,13 @@ class CandidateTelemetry:
         # 10-30s lock windows on slow VMs. Best-effort writes never block
         # a trade either way (every public method is try/except'd), but
         # the longer timeout reduces dropped telemetry rows under load.
-        conn = sqlite3.connect(DB_PATH, timeout=30)
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _ensure_db(self):
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS intraday_candidates (
@@ -137,6 +145,7 @@ class CandidateTelemetry:
                 "CREATE INDEX IF NOT EXISTS idx_candidates_symbol_date "
                 "ON intraday_candidates (symbol, date)"
             )
+            conn.commit()
 
     # ── Writer 1: SCORED row ─────────────────────────────────────
 
@@ -191,7 +200,7 @@ class CandidateTelemetry:
 
             cfg_version, cfg_hash = Config.snapshot_hash()
 
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute(
                     """INSERT OR IGNORE INTO intraday_candidates
                        (date, scan_time, symbol, exchange, side,
@@ -218,6 +227,7 @@ class CandidateTelemetry:
                         cfg_version, cfg_hash,
                     ),
                 )
+                conn.commit()
         except Exception as e:
             if self.log:
                 self.log.warning(f"CandidateTelemetry.record_scored({candidate.get('symbol')}): {e}")
@@ -242,7 +252,7 @@ class CandidateTelemetry:
         """
         try:
             today = str(now_ist().date())
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 if scan_time:
                     row = conn.execute(
                         """SELECT id FROM intraday_candidates
@@ -271,6 +281,7 @@ class CandidateTelemetry:
                     (status, rejected_gate, entry_price, entry_time,
                      notes, row[0]),
                 )
+                conn.commit()
         except Exception as e:
             if self.log:
                 self.log.warning(
@@ -292,7 +303,7 @@ class CandidateTelemetry:
         no exit_price.
         """
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 if entry_time:
                     row = conn.execute(
                         """SELECT id FROM intraday_candidates
@@ -319,6 +330,7 @@ class CandidateTelemetry:
                        WHERE id = ?""",
                     (exit_price, exit_time, exit_reason, pnl, row[0]),
                 )
+                conn.commit()
         except Exception as e:
             if self.log:
                 self.log.warning(

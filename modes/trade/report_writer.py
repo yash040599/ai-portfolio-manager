@@ -637,6 +637,7 @@ class ReportWriter:
         mode_label = "DRY RUN (simulated)" if dry_run else "LIVE TRADING"
         charges    = pnl["charges"]
         research_phase = self._research_phase_payload()
+        strategy_config_version, strategy_config_hash = self.cfg.snapshot_hash()
 
         with open(txt_path, "w", encoding="utf-8") as f:
             # ── Header ────────────────────────────────────────────
@@ -805,6 +806,8 @@ class ReportWriter:
                 "max_positions": self.cfg.MAX_POSITIONS,
                 "stop_loss_pct": self.cfg.DEFAULT_STOP_LOSS_PCT,
                 "target_pct":    self.cfg.DEFAULT_TARGET_PCT,
+                "strategy_config_version": strategy_config_version,
+                "strategy_config_hash": strategy_config_hash,
                 "git_sha":      _git_short_sha(),
             },
             "positions":  positions,
@@ -823,6 +826,19 @@ class ReportWriter:
 
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
+
+        # ── Auto-fill dry-run analysis ledger for simulated days ──
+        if dry_run:
+            try:
+                from scripts.trade.fill_dryrun_analysis import fill_reports
+                stats = fill_reports(date_from=str(today), date_to=str(today))
+                inserted = stats.get("inserted", 0)
+                if inserted:
+                    self.log.info(
+                        f"Dry-run analysis: {inserted} simulated trade(s) added to data/trade_analysis.db"
+                    )
+            except Exception as e:
+                self.log.warning(f"Dry-run analysis auto-fill skipped: {e}")
 
         # ── Auto-fill intraday tax ledger for live trading days ───
         if not dry_run:

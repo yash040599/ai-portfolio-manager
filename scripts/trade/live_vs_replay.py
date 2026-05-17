@@ -32,6 +32,7 @@ from config import Config  # noqa: E402
 
 
 DEFAULT_DB = os.path.join(PROJECT_ROOT, "data", "trades.db")
+DEFAULT_ANALYSIS_DB = os.path.join(PROJECT_ROOT, Config.TRADE_ANALYSIS_DB_PATH)
 OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "backtest")
 
 
@@ -261,7 +262,8 @@ def _fetch_rows(conn: sqlite3.Connection, table_name: str, columns: str,
 
 
 def _load_live_data(db_path: str, start: str, end: str, symbol: str | None,
-                    config_hash: str | None) -> dict[str, list[dict]]:
+                    config_hash: str | None, data_source: str) -> dict[str, list[dict]]:
+    tax_table = "dryrun_trade_ledger" if data_source == "dryrun" else "intraday_tax_ledger"
     with _connect_ro(db_path) as conn:
         all_candidates = _fetch_rows(
             conn,
@@ -275,18 +277,21 @@ def _load_live_data(db_path: str, start: str, end: str, symbol: str | None,
             symbol,
         )
         candidates = [row for row in all_candidates if row.get("config_hash") == config_hash] if config_hash else all_candidates
-        logical_trades = _fetch_rows(
-            conn,
-            "trades",
-            "date, symbol, side, entry_price, exit_price, qty, pnl, exit_reason, "
-            "entry_score, entry_rsi, entry_time, exit_time, market_condition",
-            start,
-            end,
-            symbol,
-        )
+        if data_source == "dryrun":
+            logical_trades = []
+        else:
+            logical_trades = _fetch_rows(
+                conn,
+                "trades",
+                "date, symbol, side, entry_price, exit_price, qty, pnl, exit_reason, "
+                "entry_score, entry_rsi, entry_time, exit_time, market_condition",
+                start,
+                end,
+                symbol,
+            )
         tax_trades = _fetch_rows(
             conn,
-            "intraday_tax_ledger",
+            tax_table,
             "date, symbol, exchange, side, qty, entry_price, exit_price, entry_time, "
             "exit_time, exit_reason, gross_pnl, buy_value, sell_value, turnover, "
             "total_charges, net_pnl, verified, sheet_verified",
@@ -398,6 +403,7 @@ def _build_red_flags(report: dict[str, Any]) -> list[str]:
     replay = report["replay"]
     replay_metrics = report["replay_metrics"]
     overlap = report["comparison"]["candidate_key_overlap_vs_score_passing"]
+    source_label = "Dry-run" if report.get("data_source") == "dryrun" else "Live"
 
     if replay.get("score_mode") != "scanner":
         flags.append("Replay score_mode is not scanner; rerun with --score-mode scanner for live-path parity evidence.")
@@ -406,26 +412,28 @@ def _build_red_flags(report: dict[str, Any]) -> list[str]:
     if replay.get("config_hash") and replay["config_hash"] != replay.get("current_config_hash"):
         flags.append(f"Replay config hash {replay['config_hash']} differs from current config hash {replay['current_config_hash']}.")
     if not live["candidate_rows_any_hash"]:
-        flags.append("No live candidate telemetry rows exist in this scope; candidate parity cannot be assessed yet.")
+        flags.append(f"No {source_label.lower()} candidate telemetry rows exist in this scope; candidate parity cannot be assessed yet.")
     elif not live["candidate_rows_compared"]:
-        flags.append("Live candidate rows exist, but none match the replay config_hash.")
+        flags.append(f"{source_label} candidate rows exist, but none match the replay config_hash.")
     if not live["tax_trade_rows"]:
-        flags.append("No live intraday_tax_ledger rows in this scope; after-cost live outcome comparison is unavailable.")
+        flags.append(f"No {source_label.lower()} after-cost outcome rows in this scope; outcome comparison is unavailable.")
     if not replay_metrics["trades"]["net"]["count"]:
         flags.append("Replay has no entered trades in this scope; outcome comparison is unavailable.")
     if live["tax_trade_rows"] and replay_metrics["trades"]["net"]["count"] and live["tax_trade_rows"] != replay_metrics["trades"]["net"]["count"]:
-        flags.append("Live tax trade count differs from replay trade count; outcome deltas describe scope mismatch, not parity.")
-    if live["tax_trade_rows"] and live["logical_trade_rows"] and live["tax_trade_rows"] != live["logical_trade_rows"]:
+        flags.append(f"{source_label} after-cost trade count differs from replay trade count; outcome deltas describe scope mismatch, not parity.")
+    if report.get("data_source") == "live" and live["tax_trade_rows"] and live["logical_trade_rows"] and live["tax_trade_rows"] != live["logical_trade_rows"]:
         flags.append("Live logical trade count differs from intraday_tax_ledger count; inspect reconciliation before using deltas.")
     if live["candidate_rows_compared"] and replay_metrics["candidates_score_passing"]["count"] and not overlap["candidate_key_overlap"]:
-        flags.append("Live and replay candidate overlap is zero at date|symbol|side granularity.")
+        flags.append(f"{source_label} and replay candidate overlap is zero at date|symbol|side granularity.")
     return flags
 
 
-def _default_out_path(start: str, end: str, symbol: str | None, config_hash: str | None) -> str:
+def _default_out_path(start: str, end: str, symbol: str | None, config_hash: str | None,
+                      data_source: str) -> str:
+    comparison_slug = "dryrun-vs-replay" if data_source == "dryrun" else "live-vs-replay"
     return os.path.join(
         OUT_DIR,
-        f"{start}_to_{end}_{_slug(symbol or 'ALL')}_live-vs-replay_{_slug(config_hash or 'NOHASH')}.json",
+        f"{start}_to_{end}_{_slug(symbol or 'ALL')}_{comparison_slug}_{_slug(config_hash or 'NOHASH')}.json",
     )
 
 
@@ -444,10 +452,11 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     symbol = _infer_symbol(replay, args.symbol)
     config_hash = args.config_hash or replay.get("config_hash")
     current_version, current_hash = Config.snapshot_hash()
+    db_path = os.path.abspath(args.db or (DEFAULT_ANALYSIS_DB if args.data_source == "dryrun" else DEFAULT_DB))
 
     replay_candidates_all, replay_trades = _filter_replay(replay, start, end, symbol)
     replay_candidates_passing = _replay_score_passing(replay, replay_candidates_all)
-    live = _load_live_data(args.db, start, end, symbol, None if args.allow_hash_mismatch else config_hash)
+    live = _load_live_data(db_path, start, end, symbol, None if args.allow_hash_mismatch else config_hash, args.data_source)
 
     live_candidates = live["candidates"]
     live_logical = live["logical_trades"]
@@ -455,8 +464,9 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     report: dict[str, Any] = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": "PENDING",
+        "data_source": args.data_source,
         "window": {"from": start, "to": end, "symbol": symbol},
-        "db_path": _relpath(args.db),
+        "db_path": _relpath(db_path),
         "replay": {
             "path": _relpath(replay_path),
             "config_version": replay.get("config_version"),
@@ -513,7 +523,8 @@ def main() -> None:
     parser.add_argument("--symbol", default=None, help="Single-symbol scope. Default: infer if replay has exactly one symbol.")
     parser.add_argument("--config-hash", default=None, help="Live candidate config hash. Default: replay JSON config_hash.")
     parser.add_argument("--allow-hash-mismatch", action="store_true", help="Compare all live candidate rows instead of filtering to the replay hash.")
-    parser.add_argument("--db", default=DEFAULT_DB, help="Path to trades.db. Opened read-only.")
+    parser.add_argument("--data-source", choices=("live", "dryrun"), default="live", help="Observed data source: live data/trades.db or dry-run data/trade_analysis.db.")
+    parser.add_argument("--db", default=None, help="Observed DB path. Default depends on --data-source. Opened read-only.")
     parser.add_argument("--out", default=None, help="Output JSON path.")
     parser.add_argument("--strict", action="store_true", help="Exit 1 when red flags are present.")
     args = parser.parse_args()
@@ -525,6 +536,7 @@ def main() -> None:
         report["window"]["to"],
         report["window"]["symbol"],
         report["replay"].get("config_hash"),
+        report["data_source"],
     ))
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(report, handle, indent=2, allow_nan=False)
@@ -533,14 +545,15 @@ def main() -> None:
     replay_candidates = report["replay_metrics"]["candidates_score_passing"]
     live_net = report["live_metrics"]["tax_trades"]["net"]
     replay_net = report["replay_metrics"]["trades"]["net"]
-    print("\n  Live vs replay comparison")
+    source_label = "Dry-run" if report["data_source"] == "dryrun" else "Live"
+    print(f"\n  {source_label} vs replay comparison")
     print(f"  Status       : {report['status']}")
     print(f"  Window       : {report['window']['from']} .. {report['window']['to']}")
     print(f"  Symbol scope : {report['window']['symbol'] or 'ALL'}")
     print(f"  Config hash  : {report['replay'].get('config_hash') or 'n/a'}")
-    print(f"  Candidates   : live {live_candidates['count']} vs replay {replay_candidates['count']}")
-    print(f"  Entered      : live {live_candidates['entered']} vs replay {replay_candidates['entered']}")
-    print(f"  Net P&L      : live {_fmt_money(live_net['net_pnl_inr'])} vs replay {_fmt_money(replay_net['net_pnl_inr'])}")
+    print(f"  Candidates   : {source_label.lower()} {live_candidates['count']} vs replay {replay_candidates['count']}")
+    print(f"  Entered      : {source_label.lower()} {live_candidates['entered']} vs replay {replay_candidates['entered']}")
+    print(f"  Net P&L      : {source_label.lower()} {_fmt_money(live_net['net_pnl_inr'])} vs replay {_fmt_money(replay_net['net_pnl_inr'])}")
     if report["red_flags"]:
         print("  Red flags    :")
         for flag in report["red_flags"]:
