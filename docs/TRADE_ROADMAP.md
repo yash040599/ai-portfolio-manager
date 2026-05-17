@@ -15,7 +15,7 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
 | Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
-| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison tooling, and T1.5 dry-run analysis separation are shipped; next is NoAI dry-run forward evidence. |
+| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison tooling, T1.5 dry-run analysis separation, and T1.6 daily evidence automation are shipped; next is NoAI dry-run forward evidence. |
 
 ## Ground Rules
 
@@ -39,6 +39,32 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | AI trade selection | Not part of the supported reset path. Keep optional, not evidence for live edge. |
 | HFT/WebSocket work | Defer until expectancy is positive. Speed does not fix a losing strategy. |
 | More combined-score gates | Defer. The current problem is unproven entry edge, not lack of guards. |
+
+## Strategy Rollout Decision
+
+This is the financial-analyst decision for the current strategy set under the Chan reset.
+
+| Strategy / family | Role now | Decision |
+|---|---|---|
+| `NOAI_BASELINE` / current blended score | Measurement benchmark only | Keep running in dry-run to prove telemetry, costs, and replay comparison plumbing. Do not scale or tune it as the production edge. |
+| `MEAN_REVERSION_V1` | First real candidate base strategy | Build next after the baseline has telemetry-bearing dry-run evidence. Rationale: VWAP stretch plus exhaustion is a clean, replayable hypothesis with a cost cushion. |
+| `MOMENTUM_ORB_V1` | Second candidate strategy | Defer until replay identifies trend regimes where continuation beats false-breakout damage after costs. |
+| Pairs / statistical arbitrage | Later research | Defer until one single-leg strategy passes the evidence process; pair replay needs hedge-ratio and two-leg cost modeling. |
+| Seasonality/calendar | Later research | Defer until the replay pipeline can measure the effect separately from one-off market windows. |
+| Microstructure/HFT | Telemetry only | Do not use as an entry strategy until expectancy is positive and tick/order-book replay exists. |
+| AI trade selection | Optional overlay only | Do not treat AI picks as proof of edge; any AI-assisted route must still pass strategy-family evidence gates. |
+
+Production base strategy today: none. The current all-in-one NoAI score is the benchmark to beat. The first candidate production base, if it earns promotion, is `MEAN_REVERSION_V1`.
+
+## Evidence Promotion Ladder
+
+| Step | Minimum sample | Must pass before moving on |
+|---|---:|---|
+| Baseline plumbing sanity | At least 5 NoAI dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions before deciding it is too sparse. | Candidate rows, dry-run outcomes, charge math, report files, daily evidence snapshots, and dryrun-vs-replay comparison commands work without contaminating live/tax data. |
+| Strategy historical replay | At least 60 historical sessions after costs, split into in-sample and out-of-sample or walk-forward segments. | Net PF >= 1.15, expectancy >= Rs.10/trade, trade win rate >= 40%, profitable-day rate >= 55%, max drawdown <= 3% of average daily capital, and no single-day outlier explains the edge. |
+| Strategy forward dry-run | At least 20 dry-run sessions and at least 30 simulated closed trades. | Same promotion metrics pass after costs, with stable telemetry and no material config drift. |
+| Live pilot | Only after replay plus dry-run pass; at least 10 live sessions and at least 20 closed trades at smallest practical capital, with no scale-up. | Live evidence does not break the dry-run/replay thesis and no dashboard/tax reconciliation gaps appear. |
+| Scale consideration | Fresh 20-session live window. | `scripts/trade/promotion_check.py --window 20` returns PASS and the strategy-specific evidence still agrees with the thesis. |
 
 ## Stage 0 - Research Reset
 
@@ -72,7 +98,8 @@ Data architecture decision for Stage 1:
 - Use `scripts/shared/sync_backtest_data.py` for clone/pull/status/push. It is a Git snapshot sync, not the row-merge operational backup flow.
 - Use `scripts/trade/export_backtest_data.py` to seed the first SQLite/CSV replay dataset from `data/candle_cache.db` without broker/network calls.
 - `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned. It supports `--score-mode scanner` for replay-safe scanner-style scoring, keeps `--score-mode simple` as the legacy comparison path, writes a config-hash-stamped candidate ledger for accepted/rejected replay decisions, and reports after-cost replay metrics using explicit trade-value, slippage, and spread assumptions. `scripts/trade/live_vs_replay.py` compares those replay files against either live data (`--data-source live`, `data/trades.db`) or dry-run analysis data (`--data-source dryrun`, `data/trade_analysis.db`).
-- Dry-run analysis policy: NoAI dry-runs are for research only. Candidate telemetry and simulated after-cost outcomes go to `data/trade_analysis.db`; actual dashboard/tax P&L continues to come only from live `intraday_tax_ledger` rows in `data/trades.db`.
+- Dry-run analysis policy: NoAI dry-runs are for research only. Candidate telemetry and simulated after-cost outcomes go to `data/trade_analysis.db`; dry-run trading reports use `*_dry_run` filenames; actual dashboard/tax P&L continues to come only from live `intraday_tax_ledger` rows in `data/trades.db` and live `trading_data_DD.json` reports.
+- Daily evidence automation: `scripts/trade/chan_daily_evidence.py` writes `chan_evidence_DD_dryrun.*` or `chan_evidence_DD_live.*` snapshots with candidate counts, after-cost outcomes, config hash, DB path, and red flags. `ReportWriter.save_trading_day()` runs this after end-of-day dry-run or live report generation.
 - Treat `market-research` as standalone ATH-dip research/reference material, not as an intraday replay runtime dependency.
 - Full data contract: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md).
 
@@ -86,6 +113,7 @@ Deliverables:
 | T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | Shipped 2026-05-17: entered replay trades now include synthetic quantity, adverse slippage/spread fills, Zerodha charge calculation via `Config.calculate_charges`, raw/gross/net INR P&L, net PF, net expectancy, net win rate, and net drawdown. Cost assumptions are stored in JSON and included in run-specific output names. |
 | T1.4 | Add live-vs-replay comparison report. | Shipped 2026-05-17: `scripts/trade/live_vs_replay.py` writes config-hash-aware JSON comparison reports and red-flags missing telemetry, config drift, missing outcomes, zero overlap, live-vs-replay trade-count mismatch, and logical-vs-tax ledger count gaps. First all-symbol report is `DATA_GAP` because historical live candidate telemetry is empty. |
 | T1.5 | Separate dry-run analysis from actual live/tax data. | Shipped 2026-05-18: dry-run candidate rows use `data/trade_analysis.db`, dry-run reports auto-fill a simulated after-cost ledger via `scripts/trade/fill_dryrun_analysis.py`, and dashboard/tax data remains isolated to live rows in `data/trades.db`. |
+| T1.6 | Automate daily Chan evidence and harden dry-run report artifacts. | Shipped 2026-05-18: dry-run report files no longer share live filenames, and both dry-run and live report saves write daily evidence JSON/Markdown snapshots after the correct DB fill step. |
 
 T1.1 implementation record:
 
@@ -133,6 +161,14 @@ T1.5 implementation record:
 | T1.5c | Make dry-run comparison explicit. | Done: `scripts/trade/live_vs_replay.py --data-source dryrun` reads the analysis DB; `--data-source live` remains the actual live/tax path. |
 | T1.5d | Preserve actual dashboard/tax finality. | Done: `intraday_tax_ledger` and dashboard tax/P&L views are not filled by dry-run imports. |
 
+T1.6 implementation record:
+
+| Step | Work | Boundary / Done When |
+|---|---|---|
+| T1.6a | Split same-day live and dry-run report files. | Done: dry-run uses `trading_data_DD_dry_run.json` and `trading_report_DD_dry_run.txt`; live/dashboard paths remain unchanged. |
+| T1.6b | Generate daily evidence snapshots. | Done: both modes write `chan_evidence_DD_<source>.json` and `.md` with config hash, candidate telemetry, after-cost outcomes, source DB, and red flags. |
+| T1.6c | Keep DB updates mode-specific. | Done: dry-run evidence reads `data/trade_analysis.db`; live evidence reads `data/trades.db` and `intraday_tax_ledger`. |
+
 Next Stage 1 commands:
 
 ```powershell
@@ -147,6 +183,7 @@ git -C ../ai-portfolio-backtest-data status --short --branch
 .\.venv\Scripts\python.exe scripts\trade\live_vs_replay.py --replay reports\backtest\2026-04-07_to_2026-04-24_ALL_scanner-min2_tv20000-slip0-150-spr0-050_15bca3355cc58fb3.json
 .\.venv\Scripts\python.exe -m py_compile scripts\trade\fill_dryrun_analysis.py
 .\.venv\Scripts\python.exe scripts\trade\fill_dryrun_analysis.py
+.\.venv\Scripts\python.exe scripts\trade\chan_daily_evidence.py --data-source dryrun --date <YYYY-MM-DD>
 .\.venv\Scripts\python.exe scripts\trade\live_vs_replay.py --data-source dryrun --replay reports\backtest\2026-04-07_to_2026-04-24_ALL_scanner-min2_tv20000-slip0-150-spr0-050_15bca3355cc58fb3.json
 ```
 
@@ -186,14 +223,15 @@ Deliverables:
 | T2.1 | Add strategy id `MEAN_REVERSION_V1`. | Every candidate/trade/report row can be filtered by strategy id. |
 | T2.2 | Define mean-reversion entry rules from VWAP band stretch, RSI/exhaustion, and cost cushion. | Momentum/ORB components are not part of the entry reason. |
 | T2.3 | Backtest against current NoAI baseline. | Report shows whether MR beats the all-in-one baseline after costs. |
-| T2.4 | Dry-run forward sample. | At least 20 sessions collected before live pilot. |
-| T2.5 | Live pilot only after dry-run passes. | Promotion gate PASS, with no capital scale-up yet. |
+| T2.4 | Dry-run forward sample. | At least 20 sessions and 30 simulated closed trades collected before live pilot. |
+| T2.5 | Live pilot only after dry-run passes. | At least 10 live sessions and 20 closed trades at smallest practical capital, with no capital scale-up yet. |
 
 Exit criteria:
 
 - Backtest PF >= 1.15 after costs over at least 60 sessions.
 - Walk-forward or out-of-sample segment remains positive.
-- Forward dry-run has at least 20 sessions and passes promotion criteria.
+- Forward dry-run has at least 20 sessions, at least 30 simulated closed trades, and passes promotion criteria.
+- Live pilot has at least 10 sessions and at least 20 closed trades before scale consideration.
 
 ## Stage 3 - Momentum / ORB V1
 

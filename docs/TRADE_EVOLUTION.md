@@ -37,6 +37,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T1.6 | Infra | Daily trade reports now generate Chan evidence snapshots, and dry-run report files are separated from live report files so research artifacts cannot merge into dashboard/tax actuals. |
 | T1.5 | Infra | Dry-run evidence now writes to a separate analysis database with simulated regulatory charges, keeping actual dashboard and tax P&L limited to live ledger rows. |
 | T1.4 | Infra | Live-vs-replay reports now compare replay output with live candidate telemetry, logical trades, and after-cost tax-ledger outcomes under the same config hash, while explicitly flagging missing telemetry instead of treating it as parity evidence. |
 | T1.3 | Infra | Replay now reports raw, gross, and net after-cost results using synthetic sizing, adverse slippage/spread fills, Zerodha charge math, and square-off-aware exits. |

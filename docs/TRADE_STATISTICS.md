@@ -85,6 +85,8 @@ Interpretation: the bot is not mainly failing because it lacks more exits. It is
 | Should the current all-in-one NoAI score remain the main research baseline? | Yes, as a baseline to beat, not as a strategy to scale. |
 | What should be tested first? | First collect NoAI dry-run baseline evidence with separated analysis data; then test a separate mean-reversion strategy with full-fidelity replay and forward sample. |
 
+Strategy decision: there is no production base strategy today. Keep the current blended NoAI score only as `NOAI_BASELINE` for measurement; the first candidate production base is `MEAN_REVERSION_V1` if it passes replay, dry-run, and live-pilot evidence. Momentum/ORB, pairs, seasonality, and microstructure stay later-stage until they pass separately.
+
 The old theory was: enough gates should lift selected trades toward a 55% win rate and positive expectancy. The live ledger has not validated that. From this reset onward, theoretical edge estimates are treated as hypotheses, not conclusions.
 
 ## 3. Break-Even Constraint
@@ -132,7 +134,8 @@ Stage 1 data policy:
 | Replay candidate evidence | `scripts/trade/backtest.py` writes a config-hash-stamped `candidates` ledger with `ENTERED`/`REJECTED` status and replay rejection reason, so no-trade runs still leave inspectable evidence. |
 | Replay cost evidence | Entered synthetic trades now show raw P&L, gross P&L after adverse slippage/spread fills, Zerodha charges, net P&L, net PF, net expectancy, and net drawdown. Cost assumptions are explicit CLI inputs and stored in the JSON report. |
 | Live-vs-replay evidence | `scripts/trade/live_vs_replay.py` reads live candidates, logical trades, and tax-ledger rows in read-only mode, compares them with replay JSON under the same config hash, and writes red flags instead of pretending missing data proves parity. |
-| Dry-run analysis evidence | Dry-run candidate telemetry and simulated after-cost outcomes are stored in `data/trade_analysis.db` via `scripts/trade/fill_dryrun_analysis.py`; they are analysis-only and must not feed dashboard/tax actual P&L. |
+| Dry-run analysis evidence | Dry-run candidate telemetry and simulated after-cost outcomes are stored in `data/trade_analysis.db` via `scripts/trade/fill_dryrun_analysis.py`; they are analysis-only and must not feed dashboard/tax actual P&L. Dry-run report files use `*_dry_run` filenames so same-day live reports stay separate. |
+| Daily Chan evidence | `scripts/trade/chan_daily_evidence.py` writes per-day JSON/Markdown snapshots after dry-run or live report generation, showing config hash, candidate rows, after-cost outcomes, source DB, and red flags. |
 | Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
 | Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
 | Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
@@ -144,7 +147,10 @@ Every staged strategy should report these numbers separately by `strategy_id` an
 
 | Metric | Promotion Bar |
 |---|---:|
-| Minimum sample | >= 30 trades and ideally >= 20 sessions |
+| Baseline plumbing sample | >= 5 dry-run sessions and >= 30 simulated closed trades, or continue to 10 sessions if the trade count is sparse |
+| Historical replay sample | >= 60 sessions with in-sample/out-of-sample or walk-forward separation |
+| Forward dry-run sample | >= 20 sessions and >= 30 simulated closed trades |
+| Live pilot sample | >= 10 sessions and >= 20 closed trades before scale consideration |
 | Profit factor | >= 1.15 after costs |
 | Expectancy | >= Rs.10/trade |
 | Profitable-day rate | >= 55% |
@@ -159,6 +165,8 @@ T1.3 smoke result, using the current default replay cost assumptions (`trade_val
 T1.4 smoke result, using the all-symbol scanner replay over 2026-04-07..2026-04-24 under config hash `15bca3355cc58fb3`: replay produced 10,405 non-zero candidates, 5,300 score-passing candidates, and 4,886 synthetic trades with net P&L Rs.-450,507.14, expectancy Rs.-92.20/trade, and net PF 0.2159. The live comparison report found 0 candidate telemetry rows, 151 logical live trades, and 94 tax-ledger rows with tax-ledger net P&L Rs.-199.28. Status is `DATA_GAP`; candidate parity is blocked until a telemetry-bearing forward/dry-run session exists, and live outcome deltas should be treated cautiously until live-vs-replay trade counts and logical-vs-tax counts reconcile.
 
 T1.5 data-boundary decision: run NoAI dry-runs for research, but keep them out of actual intraday P&L. Dry-run rows go to `data/trade_analysis.db` with simulated regulatory charges and net P&L; live dashboard and tax pages continue to read actual `intraday_tax_ledger` rows from `data/trades.db` only.
+
+T1.6 automation decision: end-of-day trade reports now write mode-specific evidence. Dry-run report artifacts use `trading_data_DD_dry_run.json` and `trading_report_DD_dry_run.txt`; live reports keep the dashboard/tax filenames. Each run writes `chan_evidence_DD_dryrun.*` or `chan_evidence_DD_live.*`, so tomorrow's dry-run can be reviewed without touching actual P&L.
 
 ## 6. Update Protocol
 
@@ -176,4 +184,5 @@ Useful commands:
 .\.venv\Scripts\python.exe scripts\shared\tax_summary.py --intraday
 .\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
 .\.venv\Scripts\python.exe scripts\trade\analyst_pulse.py
+.\.venv\Scripts\python.exe scripts\trade\chan_daily_evidence.py --data-source dryrun --date <YYYY-MM-DD>
 ```

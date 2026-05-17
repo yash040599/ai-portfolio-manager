@@ -23,6 +23,7 @@ As of 2026-05-18:
 - Stage 1 T1.3 is shipped: entered replay trades include synthetic sizing, adverse slippage/spread fills, Zerodha charge math, square-off exits, raw/gross/net P&L, net PF, and net expectancy.
 - Stage 1 T1.4 tooling is shipped: `scripts/trade/live_vs_replay.py` compares replay JSON to read-only live candidate/logical/tax data under the same config hash and writes red-flagged JSON reports. First all-symbol run is `DATA_GAP`, not parity proof, because historical `intraday_candidates` is empty and logical-vs-tax trade counts differ.
 - Stage 1 T1.5 is shipped: dry-run evidence is separated into `data/trade_analysis.db`; dry-run candidate telemetry and simulated after-cost outcomes do not write to `data/trades.db`, `trades`, or `intraday_tax_ledger`.
+- Stage 1 T1.6 is shipped: dry-run reports use separate `*_dry_run` filenames, and end-of-day dry-run/live saves generate daily Chan evidence snapshots with candidate counts, after-cost outcomes, config hash, DB source, and red flags.
 - Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
 - Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
 - Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
@@ -55,7 +56,7 @@ External research/data context:
 - Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
 - Seed/export script: `scripts/trade/export_backtest_data.py` converts local `data/candle_cache.db` into `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite`, `../ai-portfolio-backtest-data/candles/daily.sqlite`, symbol CSVs, and a stamped `manifest.json` without broker/network calls.
-- Backtest bridge: `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. Use `--score-mode scanner` for replay-safe scanner-style scoring and `--score-mode simple` for the legacy comparison path. Replay JSON includes a config-hash-stamped `candidates` ledger for accepted/rejected decisions and after-cost metrics based on explicit trade-value/slippage/spread assumptions. Use `scripts/trade/live_vs_replay.py --data-source live` for actual live/tax evidence and `--data-source dryrun` for separated dry-run analysis evidence from `data/trade_analysis.db`.
+- Backtest bridge: `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. Use `--score-mode scanner` for replay-safe scanner-style scoring and `--score-mode simple` for the legacy comparison path. Replay JSON includes a config-hash-stamped `candidates` ledger for accepted/rejected decisions and after-cost metrics based on explicit trade-value/slippage/spread assumptions. Use `scripts/trade/live_vs_replay.py --data-source live` for actual live/tax evidence and `--data-source dryrun` for separated dry-run analysis evidence from `data/trade_analysis.db`. Use `scripts/trade/chan_daily_evidence.py --data-source dryrun --date <YYYY-MM-DD>` after forward dry-runs if the automatic report hook needs to be rerun.
 - Matching copilot runbook: `copilot/trade-chan-reset.md` follows the repo's existing flat copilot skill-file convention and is synced with the operational data repo.
 
 ## Chan-Framework Decision Rule
@@ -93,6 +94,7 @@ Continue Stage 1, not Stage 2:
 - Before editing data code, check both repos: `git status --short --branch` and `git -C ../ai-portfolio-backtest-data status --short --branch`.
 - Run the data-safety smoke tests from `copilot/trade-chan-reset.md` when data scripts change.
 - Next work is to run NoAI dry-run forward sessions using the current baseline, then compare those dry-run analysis rows against replay under the same config hash. Keep actual dashboard/tax P&L sourced only from live, verified `intraday_tax_ledger` rows.
+- Sample ladder: baseline sanity needs at least 5 dry-run sessions and 30 simulated closed trades; new strategy replay needs at least 60 sessions after costs; forward dry-run needs at least 20 sessions and 30 simulated closed trades; live pilot needs at least 10 sessions and 20 closed trades before scale consideration.
 
 Do not build Mean-Reversion V1 until the current NoAI baseline has telemetry-bearing dry-run/live comparison evidence after costs. The first strategy rollout should be staged by family, not the full complicated blended system.
 
@@ -107,6 +109,7 @@ Use the project virtual environment:
 .\.venv\Scripts\python.exe scripts\shared\tax_summary.py --intraday
 .\.venv\Scripts\python.exe scripts\trade\analyst_pulse.py
 .\.venv\Scripts\python.exe scripts\trade\fill_dryrun_analysis.py
+.\.venv\Scripts\python.exe scripts\trade\chan_daily_evidence.py --data-source dryrun --date <YYYY-MM-DD>
 .\.venv\Scripts\python.exe scripts\trade\live_vs_replay.py --data-source dryrun --replay <replay-json>
 ```
 

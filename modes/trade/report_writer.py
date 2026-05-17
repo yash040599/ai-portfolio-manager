@@ -106,12 +106,14 @@ class ReportWriter:
         return f"{ReportWriter._portfolio_dir(date)}/portfolio_sheet_{date.day:02d}.tsv"
 
     @staticmethod
-    def trading_report_path(date: datetime.date) -> str:
-        return f"{ReportWriter._trading_dir(date)}/trading_report_{date.day:02d}.txt"
+    def trading_report_path(date: datetime.date, *, dry_run: bool = False) -> str:
+        suffix = "_dry_run" if dry_run else ""
+        return f"{ReportWriter._trading_dir(date)}/trading_report_{date.day:02d}{suffix}.txt"
 
     @staticmethod
-    def trading_data_path(date: datetime.date) -> str:
-        return f"{ReportWriter._trading_dir(date)}/trading_data_{date.day:02d}.json"
+    def trading_data_path(date: datetime.date, *, dry_run: bool = False) -> str:
+        suffix = "_dry_run" if dry_run else ""
+        return f"{ReportWriter._trading_dir(date)}/trading_data_{date.day:02d}{suffix}.json"
 
     @staticmethod
     def find_latest_portfolio_data(before: datetime.date) -> dict | None:
@@ -578,13 +580,15 @@ class ReportWriter:
         Outputs:
             reports/trading/<year>/<month>/trading_report_DD.txt
             reports/trading/<year>/<month>/trading_data_DD.json
+            Dry-run mode uses *_dry_run filenames so simulated reports
+            never merge into live report artifacts for the same date.
 
         Returns the path to the .txt file.
         """
         today     = now_ist().date()
         os.makedirs(self._trading_dir(today), exist_ok=True)
-        txt_path  = self.trading_report_path(today)
-        json_path = self.trading_data_path(today)
+        txt_path  = self.trading_report_path(today, dry_run=dry_run)
+        json_path = self.trading_data_path(today, dry_run=dry_run)
 
         # ── Merge with existing session data if report exists ─────
         session_count = 1
@@ -857,6 +861,17 @@ class ReportWriter:
                     self.log.info(f"Tax ledger     : {n} trade(s) added to intraday_tax_ledger")
             except Exception as e:
                 self.log.warning(f"Tax ledger auto-fill skipped: {e}")
+
+        try:
+            from scripts.trade.chan_daily_evidence import write_daily_evidence
+            evidence = write_daily_evidence(
+                str(today),
+                "dryrun" if dry_run else "live",
+                update_dbs=False,
+            )
+            self.log.info(f"Chan evidence  : {evidence['evidence_markdown_path']}")
+        except Exception as e:
+            self.log.warning(f"Chan evidence snapshot skipped: {e}")
 
         return txt_path
 

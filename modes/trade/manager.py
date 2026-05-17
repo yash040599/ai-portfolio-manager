@@ -2564,7 +2564,7 @@ class PortfolioManager:
         """
         try:
             today = now_ist().date()
-            path = self.report.trading_data_path(today)
+            path = self.report.trading_data_path(today, dry_run=self.cfg.DRY_RUN)
             if not os.path.exists(path):
                 return 1
             with open(path, "r", encoding="utf-8") as f:
