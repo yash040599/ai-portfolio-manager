@@ -10,7 +10,7 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 | Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status. |
 | Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
-| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, and T1.3 after-cost replay are shipped; T1.4 live-vs-replay comparison is next. |
+| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, and T1.4 live-vs-replay comparison tooling are shipped; the first T1.4 report is a telemetry data gap, not parity proof. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -83,7 +83,7 @@ Interpretation: the bot is not mainly failing because it lacks more exits. It is
 | Should score-weighted sizing come back? | No. The latest live evidence still does not justify larger sizing by score. |
 | Should we tune more thresholds live? | No. That risks overfitting the same losing window. |
 | Should the current all-in-one NoAI score remain the main research baseline? | Yes, as a baseline to beat, not as a strategy to scale. |
-| What should be tested first? | A separate mean-reversion strategy with full-fidelity replay and forward sample. |
+| What should be tested first? | A separate mean-reversion strategy with full-fidelity replay and forward sample, after live-vs-replay evidence is available on telemetry-bearing sessions. |
 
 The old theory was: enough gates should lift selected trades toward a 55% win rate and positive expectancy. The live ledger has not validated that. From this reset onward, theoretical edge estimates are treated as hypotheses, not conclusions.
 
@@ -131,6 +131,7 @@ Stage 1 data policy:
 | Main repo runtime access | Read from local sibling `../ai-portfolio-backtest-data/`, not GitHub on every replay run. |
 | Replay candidate evidence | `scripts/trade/backtest.py` writes a config-hash-stamped `candidates` ledger with `ENTERED`/`REJECTED` status and replay rejection reason, so no-trade runs still leave inspectable evidence. |
 | Replay cost evidence | Entered synthetic trades now show raw P&L, gross P&L after adverse slippage/spread fills, Zerodha charges, net P&L, net PF, net expectancy, and net drawdown. Cost assumptions are explicit CLI inputs and stored in the JSON report. |
+| Live-vs-replay evidence | `scripts/trade/live_vs_replay.py` reads live candidates, logical trades, and tax-ledger rows in read-only mode, compares them with replay JSON under the same config hash, and writes red flags instead of pretending missing data proves parity. |
 | Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
 | Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
 | Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
@@ -153,6 +154,8 @@ Every staged strategy should report these numbers separately by `strategy_id` an
 The key change is separation. A mean-reversion test, a momentum test, and a future pairs test must not be merged into one score and then judged as if we know which idea worked.
 
 T1.3 smoke result, using the current default replay cost assumptions (`trade_value=Rs.20,000`, base slippage `0.15%`, spread `0.05%`): RELIANCE over 2026-04-07..2026-04-24 produced 46 synthetic entries with raw PF 3.35, but after costs net P&L was Rs.-3,157.06, expectancy Rs.-68.63/trade, and net PF 0.07. Treat this as plumbing evidence and a warning about friction, not as a promoted strategy result.
+
+T1.4 smoke result, using the all-symbol scanner replay over 2026-04-07..2026-04-24 under config hash `15bca3355cc58fb3`: replay produced 10,405 non-zero candidates, 5,300 score-passing candidates, and 4,886 synthetic trades with net P&L Rs.-450,507.14, expectancy Rs.-92.20/trade, and net PF 0.2159. The live comparison report found 0 candidate telemetry rows, 151 logical live trades, and 94 tax-ledger rows with tax-ledger net P&L Rs.-199.28. Status is `DATA_GAP`; candidate parity is blocked until a telemetry-bearing forward/dry-run session exists, and live outcome deltas should be treated cautiously until live-vs-replay trade counts and logical-vs-tax counts reconcile.
 
 ## 6. Update Protocol
 
