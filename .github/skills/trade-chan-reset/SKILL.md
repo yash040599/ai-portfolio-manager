@@ -20,7 +20,8 @@ As of 2026-05-17:
 - Stage 1 T1.0 is shipped: the backtest data contract, sync helper, exporter, seeded private data repo, and backtest data-root bridge are in place.
 - Stage 1 T1.1 is shipped: scanner/indicator scoring accepts injected historical time, `backtest.py --score-mode scanner` can score local candles without Zerodha calls, and `replay_clock_check.py` guards against wall-clock leakage.
 - Stage 1 T1.2 is shipped: `backtest.py` writes a config-hash-stamped `candidates` ledger with accepted/rejected replay decisions and rejection reasons, including no-trade runs.
-- Current active work item is Stage 1 T1.3: add transaction-cost, spread/slippage, and square-off modeling to replay summaries.
+- Stage 1 T1.3 is shipped: entered replay trades include synthetic sizing, adverse slippage/spread fills, Zerodha charge math, square-off exits, raw/gross/net P&L, net PF, and net expectancy.
+- Current active work item is Stage 1 T1.4: add a live-vs-replay comparison report for recent sessions.
 - Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
 - Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
 - Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
@@ -53,7 +54,7 @@ External research/data context:
 - Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.
 - Seed/export script: `scripts/trade/export_backtest_data.py` converts local `data/candle_cache.db` into `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite`, `../ai-portfolio-backtest-data/candles/daily.sqlite`, symbol CSVs, and a stamped `manifest.json` without broker/network calls.
-- Backtest bridge: `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. Use `--score-mode scanner` for replay-safe scanner-style scoring and `--score-mode simple` for the legacy comparison path. Replay JSON includes a config-hash-stamped `candidates` ledger for accepted/rejected decisions.
+- Backtest bridge: `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present and only falls back to `data/candle_cache.db` if the Stage 1 data repo is absent. Use `--score-mode scanner` for replay-safe scanner-style scoring and `--score-mode simple` for the legacy comparison path. Replay JSON includes a config-hash-stamped `candidates` ledger for accepted/rejected decisions and after-cost metrics based on explicit trade-value/slippage/spread assumptions.
 - Matching copilot runbook: `copilot/trade-chan-reset.md` follows the repo's existing flat copilot skill-file convention and is synced with the operational data repo.
 
 ## Chan-Framework Decision Rule
@@ -90,9 +91,9 @@ Continue Stage 1, not Stage 2:
 - Keep `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"` unless an actual strategy/runtime config change ships.
 - Before editing data code, check both repos: `git status --short --branch` and `git -C ../ai-portfolio-backtest-data status --short --branch`.
 - Run the data-safety smoke tests from `copilot/trade-chan-reset.md` when data scripts change.
-- Next engineering work is T1.3: add after-cost replay metrics with transaction charges, spread/slippage assumptions, and square-off behavior.
+- Next engineering work is T1.4: compare recent live ledger/candidate telemetry against replay output under the same config hash.
 
-Do not build Mean-Reversion V1 until replay can evaluate it against the current NoAI baseline after costs.
+Do not build Mean-Reversion V1 until replay can evaluate it against the current NoAI baseline after costs and the live-vs-replay comparison is inspectable.
 
 ## Required Commands For Evidence Checks
 

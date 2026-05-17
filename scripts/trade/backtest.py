@@ -28,6 +28,8 @@ date range, symbol scope, score mode, minimum score, and config hash so
 separate replay runs do not overwrite each other. The same JSON now also
 includes a config-hash-stamped `candidates` ledger showing which replay
 candidates entered and which were rejected by the replay floor/cap checks.
+Entered trades include an after-cost model using Config.calculate_charges(),
+adverse slippage, and an explicit bid/ask spread assumption.
 
 Scoring fidelity (read this!)
 -----------------------------
@@ -37,7 +39,7 @@ intraday-volume features bind to the replay session instead of wall-clock
 today. `--score-mode simple` keeps the old simplified replay score
 (EMA-cross + RSI + 1h momentum) for comparison until scanner parity is fully
 inspected. This is still not the final Chan-grade replay because the live-vs-
-replay comparison and after-cost P&L arrive in later Stage 1 items.
+replay comparison arrives in a later Stage 1 item.
 
 Usage
 -----
@@ -87,6 +89,7 @@ BACKTEST_DATA_ROOT = os.path.abspath(
     os.path.join(PROJECT_ROOT, CONFIGURED_BACKTEST_DATA_ROOT or DEFAULT_BACKTEST_DATA_ROOT)
 )
 OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "backtest")
+DEFAULT_REPLAY_SPREAD_PCT = 0.05
 
 
 # ────────────────────────────────────────────────────────────────
@@ -557,6 +560,111 @@ def _slug(value) -> str:
     return cleaned or "ALL"
 
 
+def _default_trade_value(cfg) -> float:
+    budget = float(getattr(cfg, "MAX_BUDGET_INR", 0) or 0)
+    pct = float(getattr(cfg, "MAX_POSITION_PCT", 0) or 0)
+    if budget > 0 and pct > 0:
+        return round(budget * pct / 100, 2)
+    return 20_000.0
+
+
+def _qty_for_trade_value(entry_price: float, trade_value: float) -> int:
+    if entry_price <= 0 or trade_value <= 0:
+        return 0
+    return int(trade_value // entry_price)
+
+
+def _timestamp_hour(iso_ts: str) -> int:
+    try:
+        return datetime.datetime.fromisoformat(iso_ts).hour
+    except ValueError:
+        return 0
+
+
+def _adjusted_replay_slippage(base_pct: float, iso_ts: str, cfg) -> float:
+    hour = _timestamp_hour(iso_ts)
+    if hour == int(getattr(cfg, "MARKET_OPEN_HOUR", 9)):
+        return base_pct * 2.0
+    if hour >= int(getattr(cfg, "SQUARE_OFF_HOUR", 15)) - 1:
+        return base_pct * 1.5
+    return base_pct
+
+
+def _adverse_fill(price: float, transaction: str, cost_pct: float) -> float:
+    if transaction == "BUY":
+        return round(price * (1 + cost_pct / 100), 2)
+    return round(price * (1 - cost_pct / 100), 2)
+
+
+def _costed_trade(trade: dict, qty: int, cfg, *, trade_value: float,
+                  slippage_pct: float, spread_pct: float) -> dict:
+    side = trade["side"]
+    raw_entry = float(trade["entry"])
+    raw_exit = float(trade["exit"])
+    entry_slip_pct = _adjusted_replay_slippage(slippage_pct, trade["entry_ts"], cfg)
+    exit_slip_pct = _adjusted_replay_slippage(slippage_pct, trade["exit_ts"], cfg)
+    half_spread_pct = max(0.0, spread_pct) / 2
+    entry_cost_pct = entry_slip_pct + half_spread_pct
+    exit_cost_pct = exit_slip_pct + half_spread_pct
+
+    if side == "BUY":
+        fill_entry = _adverse_fill(raw_entry, "BUY", entry_cost_pct)
+        fill_exit = _adverse_fill(raw_exit, "SELL", exit_cost_pct)
+        raw_pnl = (raw_exit - raw_entry) * qty
+        gross_pnl = (fill_exit - fill_entry) * qty
+        buy_turnover = fill_entry * qty
+        sell_turnover = fill_exit * qty
+    else:
+        fill_entry = _adverse_fill(raw_entry, "SELL", entry_cost_pct)
+        fill_exit = _adverse_fill(raw_exit, "BUY", exit_cost_pct)
+        raw_pnl = (raw_entry - raw_exit) * qty
+        gross_pnl = (fill_entry - fill_exit) * qty
+        sell_turnover = fill_entry * qty
+        buy_turnover = fill_exit * qty
+
+    charges = Config.calculate_charges(buy_turnover, sell_turnover, 2)
+    charges_inr = float(charges["total_tax_and_charges"])
+    net_pnl = gross_pnl - charges_inr
+    entry_value = raw_entry * qty
+    trade.update({
+        "qty": qty,
+        "trade_value_inr": round(trade_value, 2),
+        "fill_entry": fill_entry,
+        "fill_exit": fill_exit,
+        "raw_pnl_inr": round(raw_pnl, 2),
+        "gross_pnl_inr": round(gross_pnl, 2),
+        "charges_inr": round(charges_inr, 2),
+        "net_pnl_inr": round(net_pnl, 2),
+        "net_pnl_pct": round((net_pnl / entry_value * 100) if entry_value else 0, 3),
+        "execution_drag_inr": round(raw_pnl - gross_pnl, 2),
+        "cost_drag_inr": round(raw_pnl - net_pnl, 2),
+        "entry_slippage_pct": round(entry_slip_pct, 4),
+        "exit_slippage_pct": round(exit_slip_pct, 4),
+        "spread_pct": round(spread_pct, 4),
+        "charges": charges,
+    })
+    return trade
+
+
+def _profit_factor(values: list[float]) -> float | None:
+    wins = sum(v for v in values if v > 0)
+    losses = -sum(v for v in values if v <= 0)
+    if losses <= 0:
+        return float("inf") if wins > 0 else None
+    return wins / losses
+
+
+def _max_drawdown(values: list[float]) -> float:
+    cum = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for value in values:
+        cum += value
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+    return max_dd
+
+
 # ────────────────────────────────────────────────────────────────
 # Main
 # ────────────────────────────────────────────────────────────────
@@ -575,6 +683,13 @@ def main():
                         help="Score threshold for opening a synthetic trade.")
     parser.add_argument("--max-trades-per-day", type=int, default=10,
                         help="Cap trades per session (mirrors live cap).")
+    parser.add_argument("--trade-value", type=float, default=_default_trade_value(Config),
+                        help="Synthetic rupees allocated to each replay trade (default: config budget x max-position pct).")
+    parser.add_argument("--slippage-pct", type=float,
+                        default=float(getattr(Config, "SLIPPAGE_PCT", 0.0)),
+                        help="Base adverse slippage percent per fill; opening/late hours use the live dry-run multipliers.")
+    parser.add_argument("--spread-pct", type=float, default=DEFAULT_REPLAY_SPREAD_PCT,
+                        help="Assumed bid/ask spread percent; half is charged adversely on each fill because candle data has no L1 book.")
     parser.add_argument("--data-root", default=None,
                         help="Stage 1 backtest-data root (default: BACKTEST_DATA_PATH or ../ai-portfolio-backtest-data).")
     parser.add_argument("--score-mode", choices=("simple", "scanner"), default="simple",
@@ -598,6 +713,10 @@ def main():
     print(f"  Window: {start} .. {end}")
     print(f"  Min score: {args.min_score}")
     print(f"  Score mode: {args.score_mode}")
+    print(
+        f"  Cost model: Rs.{args.trade_value:,.0f}/trade, "
+        f"slippage {args.slippage_pct:.3f}%, spread {args.spread_pct:.3f}%"
+    )
     print(f"  Candle source: {source_kind} ({os.path.relpath(candle_db, PROJECT_ROOT)})")
     if args.score_mode == "scanner":
         print(f"  Daily source : {os.path.relpath(daily_db, PROJECT_ROOT)}")
@@ -663,8 +782,20 @@ def main():
                 candidates.append(candidate)
                 continue
             side = "BUY" if score > 0 else "SELL"
+            planned_qty = _qty_for_trade_value(bar["close"], args.trade_value)
+            if planned_qty <= 0:
+                candidate["status"] = "REJECTED"
+                candidate["rejected_gate"] = "REPLAY_TRADE_VALUE"
+                candidates.append(candidate)
+                continue
             atr_val = _atr(window, 14)
             tr = simulate_trade(i, candles, side, atr_val, cfg)
+            tr = _costed_trade(
+                tr, planned_qty, cfg,
+                trade_value=args.trade_value,
+                slippage_pct=max(0.0, args.slippage_pct),
+                spread_pct=max(0.0, args.spread_pct),
+            )
             tr["symbol"] = sym
             tr["score"]  = score
             tr["score_mode"] = args.score_mode
@@ -680,6 +811,11 @@ def main():
             candidate["exit_time"] = tr.get("exit_ts")
             candidate["exit_reason"] = tr.get("reason")
             candidate["pnl_pct"] = tr.get("pnl_pct")
+            candidate["qty"] = tr.get("qty")
+            candidate["gross_pnl_inr"] = tr.get("gross_pnl_inr")
+            candidate["charges_inr"] = tr.get("charges_inr")
+            candidate["net_pnl_inr"] = tr.get("net_pnl_inr")
+            candidate["net_pnl_pct"] = tr.get("net_pnl_pct")
             candidates.append(candidate)
             trades.append(tr)
             per_day_count[day_key] = per_day_count.get(day_key, 0) + 1
@@ -687,22 +823,45 @@ def main():
     # ── summary stats ───────────────────────────────────────────
     wins = [t for t in trades if t["pnl_pct"] > 0]
     losses = [t for t in trades if t["pnl_pct"] <= 0]
+    ordered_trades = sorted(trades, key=lambda x: x["entry_ts"])
+    raw_pnl_values = [float(t.get("raw_pnl_inr", 0) or 0) for t in ordered_trades]
+    gross_pnl_values = [float(t.get("gross_pnl_inr", 0) or 0) for t in ordered_trades]
+    net_pnl_values = [float(t.get("net_pnl_inr", 0) or 0) for t in ordered_trades]
+    net_wins = [v for v in net_pnl_values if v > 0]
+    net_losses = [v for v in net_pnl_values if v <= 0]
     if trades:
         total_win_pct = sum(t["pnl_pct"] for t in wins)
         total_loss_pct = -sum(t["pnl_pct"] for t in losses)  # positive number
         pf = (total_win_pct / total_loss_pct) if total_loss_pct > 0 else float("inf")
         expectancy_pct = statistics.fmean(t["pnl_pct"] for t in trades)
         wr = len(wins) / len(trades) * 100
+        net_pf = _profit_factor(net_pnl_values)
+        net_expectancy = statistics.fmean(net_pnl_values)
+        net_wr = len(net_wins) / len(net_pnl_values) * 100
     else:
         pf = None
         expectancy_pct = None
         wr = None
+        net_pf = None
+        net_expectancy = None
+        net_wr = None
+
+    raw_pnl_total = round(sum(raw_pnl_values), 2)
+    gross_pnl_total = round(sum(gross_pnl_values), 2)
+    net_pnl_total = round(sum(net_pnl_values), 2)
+    charges_total = round(sum(float(t.get("charges_inr", 0) or 0) for t in trades), 2)
+    execution_drag_total = round(sum(float(t.get("execution_drag_inr", 0) or 0) for t in trades), 2)
+    cost_drag_total = round(sum(float(t.get("cost_drag_inr", 0) or 0) for t in trades), 2)
+    turnover_total = round(
+        sum(float((t.get("charges") or {}).get("total_turnover", 0) or 0) for t in trades), 2
+    )
+    net_max_dd = round(_max_drawdown(net_pnl_values), 2)
 
     # Equity curve & max-DD on cumulative-pct basis
     cum = 0.0
     peak = 0.0
     max_dd = 0.0
-    for t in sorted(trades, key=lambda x: x["entry_ts"]):
+    for t in ordered_trades:
         cum += t["pnl_pct"]
         peak = max(peak, cum)
         max_dd = max(max_dd, peak - cum)
@@ -722,11 +881,23 @@ def main():
         print(f"  Win rate          : {wr:.2f}%")
         print(f"  Avg P&L per trade : {expectancy_pct:+.3f}%")
         print(f"  Profit factor     : {pf:.2f}")
+        print(f"  Raw P&L           : Rs.{raw_pnl_total:+,.2f} (before fills/charges)")
+        print(f"  Gross P&L         : Rs.{gross_pnl_total:+,.2f} (after slippage/spread)")
+        print(f"  Charges           : Rs.{charges_total:,.2f}")
+        print(f"  Net P&L           : Rs.{net_pnl_total:+,.2f}")
+        print(f"  Net expectancy    : Rs.{net_expectancy:+,.2f}/trade")
+        if net_pf == float("inf"):
+            print("  Net profit factor : inf")
+        else:
+            print(f"  Net profit factor : {net_pf:.2f}" if net_pf is not None else "  Net profit factor : n/a")
+        print(f"  Net win rate      : {net_wr:.2f}%")
     else:
         print("  Win rate          : n/a")
         print("  Avg P&L per trade : n/a")
         print("  Profit factor     : n/a")
     print(f"  Max drawdown      : {max_dd:.2f}% (cum-pct basis)")
+    if trades:
+        print(f"  Net max drawdown  : Rs.{net_max_dd:,.2f}")
     by_reason = {}
     for t in trades:
         by_reason[t["reason"]] = by_reason.get(t["reason"], 0) + 1
@@ -738,8 +909,11 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     symbol_tag = _slug(args.symbol.upper() if args.symbol else "ALL")
     score_tag = _slug(f"{args.score_mode}_min{args.min_score}")
+    cost_tag = _slug(
+        f"tv{args.trade_value:.0f}_slip{args.slippage_pct:.3f}_spr{args.spread_pct:.3f}"
+    )
     out_path = args.out or os.path.join(
-        OUT_DIR, f"{start}_to_{end}_{symbol_tag}_{score_tag}_{cfg_hash}.json"
+        OUT_DIR, f"{start}_to_{end}_{symbol_tag}_{score_tag}_{cost_tag}_{cfg_hash}.json"
     )
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump({
@@ -750,6 +924,15 @@ def main():
             "min_score":      args.min_score,
             "score_mode":     args.score_mode,
             "candle_source":  source_kind,
+            "cost_model": {
+                "trade_value_inr": round(args.trade_value, 2),
+                "base_slippage_pct": round(max(0.0, args.slippage_pct), 4),
+                "spread_pct": round(max(0.0, args.spread_pct), 4),
+                "spread_model": "half-spread adverse on entry and exit fills",
+                "slippage_model": "base pct with live dry-run time multipliers: open x2, last hour x1.5",
+                "charges_model": "Config.calculate_charges per synthetic round trip, num_orders=2",
+                "square_off_model": "EOD_SQUARE_OFF exits use the configured square-off timestamp and the same adverse exit fill model",
+            },
             "summary": {
                 "candidates": len(candidates),
                 "candidate_status": status_counts,
@@ -761,6 +944,19 @@ def main():
                 "expectancy_pct": round(expectancy_pct, 4) if expectancy_pct is not None else None,
                 "profit_factor":  round(pf, 4) if pf not in (None, float("inf")) else None,
                 "max_dd_pct":     round(max_dd, 3),
+                "raw_pnl_inr": round(raw_pnl_total, 2),
+                "gross_pnl_inr": round(gross_pnl_total, 2),
+                "charges_inr": round(charges_total, 2),
+                "net_pnl_inr": round(net_pnl_total, 2),
+                "execution_drag_inr": round(execution_drag_total, 2),
+                "cost_drag_inr": round(cost_drag_total, 2),
+                "turnover_inr": round(turnover_total, 2),
+                "net_wins": len(net_wins),
+                "net_losses": len(net_losses),
+                "net_wr_pct": round(net_wr, 3) if net_wr is not None else None,
+                "net_expectancy_inr": round(net_expectancy, 2) if net_expectancy is not None else None,
+                "net_profit_factor": round(net_pf, 4) if net_pf not in (None, float("inf")) else None,
+                "net_max_dd_inr": round(net_max_dd, 2),
                 "exit_reasons":   by_reason,
             },
             "candidates": candidates,

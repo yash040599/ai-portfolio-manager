@@ -10,7 +10,7 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 | Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status. |
 | Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
-| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, and T1.2 accepted/rejected candidate replay are shipped; T1.3 after-cost replay is next. |
+| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, and T1.3 after-cost replay are shipped; T1.4 live-vs-replay comparison is next. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -130,6 +130,7 @@ Stage 1 data policy:
 | Backtest data storage | Use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready datasets. |
 | Main repo runtime access | Read from local sibling `../ai-portfolio-backtest-data/`, not GitHub on every replay run. |
 | Replay candidate evidence | `scripts/trade/backtest.py` writes a config-hash-stamped `candidates` ledger with `ENTERED`/`REJECTED` status and replay rejection reason, so no-trade runs still leave inspectable evidence. |
+| Replay cost evidence | Entered synthetic trades now show raw P&L, gross P&L after adverse slippage/spread fills, Zerodha charges, net P&L, net PF, net expectancy, and net drawdown. Cost assumptions are explicit CLI inputs and stored in the JSON report. |
 | Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
 | Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
 | Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
@@ -150,6 +151,8 @@ Every staged strategy should report these numbers separately by `strategy_id` an
 | Cost drag | Charges must be shown separately from gross P&L |
 
 The key change is separation. A mean-reversion test, a momentum test, and a future pairs test must not be merged into one score and then judged as if we know which idea worked.
+
+T1.3 smoke result, using the current default replay cost assumptions (`trade_value=Rs.20,000`, base slippage `0.15%`, spread `0.05%`): RELIANCE over 2026-04-07..2026-04-24 produced 46 synthetic entries with raw PF 3.35, but after costs net P&L was Rs.-3,157.06, expectancy Rs.-68.63/trade, and net PF 0.07. Treat this as plumbing evidence and a warning about friction, not as a promoted strategy result.
 
 ## 6. Update Protocol
 

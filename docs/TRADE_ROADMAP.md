@@ -15,7 +15,7 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
 | Strategy version in config | `v1.0-2026-05-11`; Stage 0 status is operational metadata and does not alter the strategy hash. |
-| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, and T1.2 accepted/rejected candidate replay are shipped; T1.3 after-cost replay is next. |
+| Roadmap operating mode | Stage 1 Full-Fidelity Replay: T1.0 data contract/seed, T1.1 replay-safe scanner scoring, T1.2 accepted/rejected candidate replay, and T1.3 after-cost replay are shipped; T1.4 live-vs-replay comparison is next. |
 
 ## Ground Rules
 
@@ -71,7 +71,7 @@ Data architecture decision for Stage 1:
 - Clone/sync that repo beside the main checkout at `../ai-portfolio-backtest-data`; replay reads the local copy at runtime on both Windows and the Linux VM.
 - Use `scripts/shared/sync_backtest_data.py` for clone/pull/status/push. It is a Git snapshot sync, not the row-merge operational backup flow.
 - Use `scripts/trade/export_backtest_data.py` to seed the first SQLite/CSV replay dataset from `data/candle_cache.db` without broker/network calls.
-- `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned. It supports `--score-mode scanner` for replay-safe scanner-style scoring, keeps `--score-mode simple` as the legacy comparison path, and writes a config-hash-stamped candidate ledger for accepted/rejected replay decisions.
+- `scripts/trade/backtest.py` now reads `../ai-portfolio-backtest-data/candles/intraday_15m.sqlite` when present, falling back to the old candle cache only when the Stage 1 data repo has not been cloned. It supports `--score-mode scanner` for replay-safe scanner-style scoring, keeps `--score-mode simple` as the legacy comparison path, writes a config-hash-stamped candidate ledger for accepted/rejected replay decisions, and reports after-cost replay metrics using explicit trade-value, slippage, and spread assumptions.
 - Treat `market-research` as standalone ATH-dip research/reference material, not as an intraday replay runtime dependency.
 - Full data contract: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md).
 
@@ -82,7 +82,7 @@ Deliverables:
 | T1.0 | Decide the normalized backtest data contract and sync model. | Shipped 2026-05-15: [docs/TRADE_BACKTEST_DATA.md](TRADE_BACKTEST_DATA.md) defines repo roles, sibling `../ai-portfolio-backtest-data/`, manifest fields, SQLite/CSV shape, Linux VM pull flow, sync/export scripts, seeded data repo, migration restore path, and the backtest data-root bridge. |
 | T1.1 | Parameterise the scanner/replay clock so backtest can use live scoring logic instead of simplified scoring. | Shipped 2026-05-15: scanner/indicator scoring accepts an injected `as_of` time, replay can run `--score-mode scanner` from local candles without Zerodha calls, and `scripts/trade/replay_clock_check.py` guards against wall-clock leakage. |
 | T1.2 | Replay accepted and rejected candidates by config hash. | Shipped 2026-05-17: backtest JSON includes a `candidates` ledger with `ENTERED`/`REJECTED` status, replay rejection reason, config version/hash, score fields, and entry/exit outcome when a synthetic trade enters. No-trade runs now still write an evidence artifact. |
-| T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | PF/expectancy are reported after costs. |
+| T1.3 | Add cost model to replay: charges, spread, slippage, square-off. | Shipped 2026-05-17: entered replay trades now include synthetic quantity, adverse slippage/spread fills, Zerodha charge calculation via `Config.calculate_charges`, raw/gross/net INR P&L, net PF, net expectancy, net win rate, and net drawdown. Cost assumptions are stored in JSON and included in run-specific output names. |
 | T1.4 | Add live-vs-replay comparison report. | Recent sessions show comparable candidate count, entry count, and exit split. |
 
 T1.1 implementation record:
@@ -104,6 +104,15 @@ T1.2 implementation record:
 | T1.2c | Make replay output filenames run-specific. | Done: default report names include date range, symbol scope, score mode, minimum score, and config hash so threshold/symbol sweeps do not overwrite each other. |
 | T1.2d | Validate with local smoke runs. | Done: `--min-score 999 --score-mode scanner` produced 10,405 `SCORE_FLOOR` rejections; a RELIANCE scanner replay produced 95 candidates, 46 synthetic trades, and mixed `SCORE_FLOOR`/`REPLAY_TRADE_CAP` rejections. |
 
+T1.3 implementation record:
+
+| Step | Work | Boundary / Done When |
+|---|---|---|
+| T1.3a | Add synthetic trade sizing. | Done: replay uses `--trade-value` defaulting to config budget × max-position pct and rejects score-passing trades that cannot buy one share under that value. |
+| T1.3b | Model adverse execution costs. | Done: replay applies the live dry-run slippage multipliers and a fixed `--spread-pct` assumption as half-spread adverse cost on entry and exit fills. |
+| T1.3c | Add Zerodha charges and net metrics. | Done: each entered synthetic trade uses `Config.calculate_charges(..., num_orders=2)` and reports gross P&L after fills, charges, net P&L, net PF, net expectancy, and net drawdown. |
+| T1.3d | Validate cost drag visibility. | Done: RELIANCE scanner smoke over 2026-04-07..2026-04-24 still showed 46 raw synthetic trades, but after default costs fell to net Rs.-3,157.06, expectancy Rs.-68.63/trade, and net PF 0.07. |
+
 Next Stage 1 commands:
 
 ```powershell
@@ -123,7 +132,7 @@ T1.1 target files changed:
 - `scripts/trade/backtest.py`: bridge from candle rows to scanner-style feature/scoring call, with a fallback/simple mode until the live-score path is validated.
 - `scripts/trade/replay_clock_check.py`: fixed historical timestamp guard for replay-safe session features.
 
-Do not do these before T1.3 is complete:
+Do not do these before T1.4 is complete:
 
 - Do not add `MEAN_REVERSION_V1` yet.
 - Do not tune score weights or entry thresholds.
