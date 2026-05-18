@@ -32,6 +32,7 @@ from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import get_live_quotes
 from modes.dashboard.nav import render_topnav
 from modes.dashboard.swing_actions import latest_swing_status
+from shared.stock_names import get_nse_stock_name
 
 
 # ── Shared nav + style (matches portfolio_page.py) ──────────────
@@ -166,9 +167,9 @@ def render_swing_page() -> str:
     # Use the most recent run for display — may be for yesterday if
     # the scan ran before market close.
     latest_run_row = latest_run()
-    positions = open_positions()
-    watchlist = get_watchlist()
-    pnl = realised_pnl_summary()
+    positions = open_positions(exchange="NSE")
+    watchlist = get_watchlist(exchange="NSE")
+    pnl = realised_pnl_summary(exchange="NSE")
 
     default_capital = float(getattr(Config, "SWING_TICKET_AMOUNT", 20_000.0))
     capital_source_note = (
@@ -588,6 +589,7 @@ def render_swing_page() -> str:
         body.append('<table class="holdings">')
         body.append('<tr>'
                     '<th>Symbol</th>'
+                    '<th>Name</th>'
                     '<th>Setup</th>'
                     '<th class="right">Watchlist Price</th>'
                     '<th class="right">Live Price</th>'
@@ -607,11 +609,14 @@ def render_swing_page() -> str:
             pcls = "pos" if vpnl >= 0 else "neg"
             added_short = w.added_at[:10] if w.added_at else ""
 
+            stock_name = get_nse_stock_name(w.symbol)
             body.append(
                 f'<tr>'
                 f'<td><a href="/swing/{html.escape(w.symbol)}" '
                 f'style="color:var(--fg);font-weight:600">'
                 f'{html.escape(w.symbol)}</a></td>'
+                f'<td><span style="font-size:11px;color:var(--muted)">'
+                f'{html.escape(stock_name)}</span></td>'
                 f'<td style="font-size:11px">'
                 f'{html.escape((w.setup_type or "").replace("_"," ").title())}</td>'
                 f'<td class="right">Rs.{w.added_price:,.2f}</td>'
@@ -642,7 +647,8 @@ def render_swing_page() -> str:
     if positions:
         body.append('<table class="holdings">')
         body.append('<tr>'
-                    '<th>Symbol</th><th class="right">Qty</th>'
+                    '<th>Symbol</th><th>Name</th>'
+                    '<th class="right">Qty</th>'
                     '<th class="right">Entry</th>'
                     '<th class="right">Live Price</th>'
                     '<th class="right">P&amp;L</th>'
@@ -666,11 +672,14 @@ def render_swing_page() -> str:
             # have no markers — they never change between scans.
             entry_price_str = f"{p.entry_price}"
             qty_str = f"{p.managed_qty}"
+            stock_name = get_nse_stock_name(p.symbol)
             body.append(
                 f'<tr data-live-symbol="{html.escape(p.symbol)}" '
                 f'data-entry-price="{entry_price_str}" '
                 f'data-managed-qty="{qty_str}">'
                 f'<td><strong>{html.escape(p.symbol)}</strong></td>'
+                f'<td><span style="font-size:11px;color:var(--muted)">'
+                f'{html.escape(stock_name)}</span></td>'
                 f'<td class="right">{p.managed_qty}</td>'
                 f'<td class="right">Rs.{p.entry_price:,.2f}</td>'
                 f'<td class="right" data-live-field="price">'
@@ -720,7 +729,8 @@ def _render_action_table(actions: list, live: dict,
     parts: list[str] = []
     parts.append('<table class="holdings">')
     parts.append('<tr>'
-                 '<th>#</th><th>Symbol</th><th>' + html.escape(show_setup_as) + '</th>'
+                 '<th>#</th><th>Symbol</th><th>Name</th>'
+                 '<th>' + html.escape(show_setup_as) + '</th>'
                  '<th class="right">% Below 52w High</th>'
                  '<th class="right">Live Price</th>'
                  '<th class="right">Entry</th><th class="right">Stop</th>'
@@ -760,12 +770,15 @@ def _render_action_table(actions: list, live: dict,
             dip_cell = (f'<span class="muted" title="ATH Rs.{ath_price:,.2f}">'
                         f'{dip_pct:.1f}%</span>')
 
+        stock_name = get_nse_stock_name(a.symbol)
         parts.append(
             f'<tr data-live-symbol="{html.escape(a.symbol)}">'
             f'<td>{a.priority_rank}</td>'
             f'<td><a href="/swing/{html.escape(a.symbol)}" '
             f'style="color:var(--fg);font-weight:600">'
             f'{html.escape(a.symbol)}</a></td>'
+            f'<td><span style="font-size:11px;color:var(--muted)">'
+            f'{html.escape(stock_name)}</span></td>'
             f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
             f'<td class="right">{dip_cell}</td>'
             f'<td class="right" data-live-field="price_with_change">'
@@ -1423,8 +1436,8 @@ def render_swing_data_json() -> str:
     init_db()
     today = now_ist().date().isoformat()
     latest_run_row = latest_run()
-    positions = open_positions()
-    pnl = realised_pnl_summary()
+    positions = open_positions(exchange="NSE")
+    pnl = realised_pnl_summary(exchange="NSE")
 
     entry_actions: list[dict] = []
     if latest_run_row:

@@ -1110,12 +1110,21 @@ def actions_for_run(run_id: int, path: str = DB_PATH) -> list[SwingAction]:
 
 # ── Read: positions ─────────────────────────────────────────────
 
-def open_positions(path: str = DB_PATH) -> list[SwingPosition]:
+def open_positions(path: str = DB_PATH,
+                   exchange: str | None = None) -> list[SwingPosition]:
     """All OPEN swing positions."""
     if not os.path.exists(path):
         return []
     with _connect(path) as conn:
         _ensure_schema(conn)
+        if exchange:
+            rows = conn.execute(
+                """SELECT * FROM swing_positions
+                   WHERE status = 'OPEN' AND exchange = ?
+                   ORDER BY entry_date ASC""",
+                (exchange.upper(),),
+            ).fetchall()
+            return [_row_to_position(r) for r in rows]
         rows = conn.execute(
             """SELECT * FROM swing_positions
                WHERE status = 'OPEN'
@@ -1136,12 +1145,28 @@ def all_positions(path: str = DB_PATH) -> list[SwingPosition]:
         return [_row_to_position(r) for r in rows]
 
 
-def realised_pnl_summary(path: str = DB_PATH) -> dict:
+def realised_pnl_summary(path: str = DB_PATH,
+                         exchange: str | None = None) -> dict:
     """Aggregate realised P&L from closed positions."""
     if not os.path.exists(path):
         return {"gross_pnl": 0.0, "charges": 0.0, "net_pnl": 0.0, "count": 0}
     with _connect(path) as conn:
         _ensure_schema(conn)
+        if exchange:
+            row = conn.execute("""
+                SELECT COALESCE(SUM(gross_pnl), 0) AS gross,
+                       COALESCE(SUM(charges), 0)   AS charges,
+                       COALESCE(SUM(net_pnl), 0)   AS net,
+                       COUNT(*)                    AS cnt
+                FROM swing_positions
+                WHERE status = 'CLOSED' AND exchange = ?
+            """, (exchange.upper(),)).fetchone()
+            return {
+                "gross_pnl": float(row["gross"]),
+                "charges":   float(row["charges"]),
+                "net_pnl":   float(row["net"]),
+                "count":     int(row["cnt"]),
+            }
         row = conn.execute("""
             SELECT COALESCE(SUM(gross_pnl), 0) AS gross,
                    COALESCE(SUM(charges), 0)   AS charges,
@@ -1242,7 +1267,11 @@ def _merge_or_insert_entry_position(
 
     if existing:
         pos = _row_to_position(existing)
-        new_qty = int(pos.managed_qty) + int(executed_qty)
+        # Use float so fractional US shares (the dashboard sends
+        # qty as float for NASDAQ/NYSE) survive a merge.  NSE callers
+        # always pass whole numbers, so this is a no-op for Indian
+        # swing.
+        new_qty = float(pos.managed_qty) + float(executed_qty)
         if new_qty <= 0:
             return None
         avg_price = round(
@@ -1519,17 +1548,26 @@ def edit_position(
         return _load_position(conn, position_id)
 
 
-def get_watchlist(path: str = DB_PATH) -> list[WatchlistItem]:
+def get_watchlist(path: str = DB_PATH,
+                  exchange: str | None = None) -> list[WatchlistItem]:
     """All active watchlist items (WATCHING status)."""
     if not os.path.exists(path):
         return []
     with _connect(path) as conn:
         _ensure_schema(conn)
-        rows = conn.execute(
-            """SELECT * FROM swing_watchlist
-               WHERE status = 'WATCHING'
-               ORDER BY added_at DESC"""
-        ).fetchall()
+        if exchange:
+            rows = conn.execute(
+                """SELECT * FROM swing_watchlist
+                   WHERE status = 'WATCHING' AND exchange = ?
+                   ORDER BY added_at DESC""",
+                (exchange.upper(),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT * FROM swing_watchlist
+                   WHERE status = 'WATCHING'
+                   ORDER BY added_at DESC"""
+            ).fetchall()
         items = []
         for r in rows:
             items.append(WatchlistItem(

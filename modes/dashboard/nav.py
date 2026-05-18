@@ -8,6 +8,7 @@ import html
 NAV_ITEMS = [
     ("Portfolio", "/portfolio"),
     ("Swing", "/swing"),
+    ("US", "/us"),
     ("Trading (Live P&L)", "/trading"),
     ("Chan", "/chan"),
     ("Tax", "/tax"),

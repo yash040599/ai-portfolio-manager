@@ -57,6 +57,7 @@ from modes.dashboard.swing_page import (
     render_swing_page, render_swing_data_json, render_swing_status_json,
     render_swing_detail,
 )
+from modes.dashboard.us_page import render_us_detail, render_us_page
 from modes.dashboard.swing_actions import submit_swing_run
 
 
@@ -207,6 +208,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_tax_api(parse_qs(url.query))
             elif url.path == "/swing" or url.path == "/swing/":
                 self._serve_swing()
+            elif url.path == "/us" or url.path == "/us/":
+                self._serve_us()
+            elif url.path == "/api/us/run":
+                self._serve_us_run(parse_qs(url.query))
+            elif url.path == "/api/us/analyse":
+                self._serve_us_analyse(parse_qs(url.query))
+            elif url.path.startswith("/us/"):
+                sym = url.path[len("/us/"):].strip("/")
+                self._serve_us_detail(sym)
             elif url.path.startswith("/swing/") and not url.path.startswith("/swing/api"):
                 # /swing/<symbol> detail page
                 sym = url.path[len("/swing/"):].strip("/")
@@ -223,6 +233,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_changes_since()
             elif url.path == "/api/live_prices":
                 self._serve_live_prices(parse_qs(url.query))
+            elif url.path == "/api/us/live_prices":
+                self._serve_us_live_prices(parse_qs(url.query))
+            elif url.path == "/api/fx/usdinr":
+                self._serve_fx_usdinr(parse_qs(url.query))
             elif url.path == "/api/errors":
                 self._serve_errors(parse_qs(url.query))
             elif url.path == "/api/data":
@@ -231,9 +245,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_day(parse_qs(url.query))
             else:
                 self.send_error(404, "Not found")
+        except (ConnectionAbortedError, ConnectionResetError,
+                BrokenPipeError):
+            # Client navigated away mid-response (browser refresh,
+            # tab close).  Nothing to recover, nothing to log loudly.
+            pass
         except Exception as exc:  # noqa: BLE001 — surface to browser
             sys.stderr.write(f"[dashboard] ERROR: {exc!r}\n")
-            self.send_error(500, f"Server error: {exc}")
+            try:
+                self.send_error(500, f"Server error: {exc}")
+            except (ConnectionAbortedError, ConnectionResetError,
+                    BrokenPipeError):
+                pass
 
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
@@ -256,6 +279,22 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_position_exit(url.path)
             elif url.path == "/api/swing/positions/add":
                 self._serve_swing_position_add()
+            elif url.path == "/api/us/positions/add":
+                self._serve_swing_position_add(
+                    default_exchange="NASDAQ",
+                    source="DASHBOARD_US_MANUAL_ADD",
+                    notes="Manual Add+ from US page",
+                )
+            elif url.path.startswith("/api/us/positions/") and url.path.endswith("/edit"):
+                self._serve_swing_position_edit(url.path)
+            elif url.path.startswith("/api/us/positions/") and url.path.endswith("/exit"):
+                self._serve_swing_position_exit(url.path, exchange_filter=None)
+            elif url.path == "/api/us/watchlist/add":
+                self._serve_us_watchlist_add()
+            elif url.path.startswith("/api/us/watchlist/") and url.path.endswith("/promote"):
+                self._serve_swing_watchlist_promote(url.path)
+            elif url.path.startswith("/api/us/watchlist/") and url.path.endswith("/remove"):
+                self._serve_swing_watchlist_remove(url.path)
             elif url.path == "/api/swing/watchlist/add":
                 self._serve_swing_watchlist_add()
             elif url.path.startswith("/api/swing/watchlist/") and url.path.endswith("/promote"):
@@ -361,6 +400,89 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         body = render_swing_page().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us(self) -> None:
+        body = render_us_page().encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us_detail(self, symbol: str) -> None:
+        body = render_us_detail(symbol).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us_run(self, qs: dict[str, list[str]]) -> None:
+        mode = (qs.get("mode") or ["NOAI"])[0].upper()
+        ticket = _parse_float((qs.get("ticket") or [""])[0], 0.0)
+        universe = (qs.get("universe") or [""])[0].strip().upper() or None
+        limit = _parse_int((qs.get("limit") or [None])[0]) or 0
+        try:
+            from modes.dashboard.us_analysis import analyse_us_universe
+            payload = analyse_us_universe(
+                mode=mode,
+                ticket_amount=ticket,
+                universe=universe,
+                limit=limit,
+            )
+            status = 200
+        except Exception as exc:
+            payload = {"ok": False, "error": str(exc)[:300]}
+            status = 500
+        body = json.dumps(payload, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us_analyse(self, qs: dict[str, list[str]]) -> None:
+        symbol = (qs.get("symbol") or [""])[0].strip().upper()
+        ticket = _parse_float((qs.get("ticket") or [""])[0], 0.0)
+        use_ai = (qs.get("ai") or ["0"])[0] in ("1", "true", "True", "yes")
+        force_refresh = (qs.get("force") or ["1"])[0] in (
+            "1", "true", "True", "yes")
+        if not symbol:
+            body = json.dumps({"ok": False, "error": "missing symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        try:
+            from modes.dashboard.us_analysis import analyse_us_symbol
+            # Manual single-stock analyse defaults to a fresh fetch —
+            # the user typed the ticker expecting current data, and
+            # the lru_cache may otherwise pin a short response from a
+            # throttled batch (origin: 2026-05-19 ORCL report).  Compare
+            # can pass force=0 to keep side-by-side checks responsive.
+            payload = analyse_us_symbol(
+                symbol,
+                ticket_amount=ticket,
+                use_ai=use_ai,
+                force_refresh=force_refresh,
+            )
+            status = 200
+        except Exception as exc:
+            payload = {"ok": False, "symbol": symbol, "error": str(exc)[:300]}
+            status = 500
+        body = json.dumps(payload, default=str).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -598,6 +720,53 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_us_live_prices(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/us/live_prices?symbols=A,B,C - returns
+        `{symbol: {price, change_pct, as_of}}` for US tickers via
+        the throttled yfinance poller in `us_analysis`. The /us
+        page polls this every 15 s so price/P&L cells update
+        without a full reload."""
+        from modes.dashboard.us_analysis import get_us_live_quotes
+        raw = (qs.get("symbols") or [""])[0]
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for s in raw.split(","):
+            sym = s.strip().upper()
+            if sym and sym not in seen:
+                seen.add(sym)
+                symbols.append(sym)
+            if len(symbols) >= 100:
+                break
+        quotes = get_us_live_quotes(symbols) if symbols else {}
+        out = {sym: quotes.get(sym, {}) for sym in symbols}
+        body = json.dumps({
+            "quotes": out,
+            "ts": now_ist().isoformat(),
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_fx_usdinr(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/fx/usdinr - returns the cached USD/INR rate.
+
+        Refreshes upstream at most once every five minutes (handled
+        in `get_usd_inr_rate`); the dashboard polls this every five
+        minutes to keep the currency toggle accurate."""
+        from modes.dashboard.us_analysis import get_usd_inr_rate
+        force = (qs.get("refresh") or ["0"])[0] in ("1", "true", "True")
+        fx = get_usd_inr_rate(force_refresh=force)
+        body = json.dumps(fx, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_errors(self, qs: dict[str, list[str]]) -> None:
         """GET /api/errors?since=<id>[&max_age_secs=N][&init=1]
         — returns external-API errors recorded in `core.error_sink`
@@ -750,7 +919,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_swing_position_exit(self, path: str) -> None:
+    def _serve_swing_position_exit(self, path: str,
+                                   exchange_filter: str | None = "NSE") -> None:
         # /api/swing/positions/<id>/exit — creates a FULL_EXIT action + confirms it
         parts = path.strip("/").split("/")
         try:
@@ -767,7 +937,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         from config import now_ist as _now
 
         # Find the position
-        positions = open_positions()
+        positions = open_positions(exchange=exchange_filter)
         pos = next((p for p in positions if p.position_id == pos_id), None)
         if not pos:
             body = json.dumps({"ok": False, "error": "Position not found"}).encode("utf-8")
@@ -787,7 +957,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         # fat-fingered "10000" on a 50-share position can't mark
         # CLOSED with absurd P&L either.
         try:
-            qty = int(data.get("qty", pos.managed_qty))
+            qty = float(data.get("qty", pos.managed_qty))
             price = float(data.get("price", 0))
         except (TypeError, ValueError):
             err = json.dumps({"ok": False,
@@ -829,9 +999,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             _ensure_schema(conn)
             cur = conn.execute("""
                 INSERT INTO swing_actions (
-                    position_id, symbol, exchange, action_type, status,
+                    run_id, position_id, symbol, exchange, action_type, status,
                     suggested_qty, suggested_price, created_at
-                ) VALUES (?, ?, ?, 'FULL_EXIT', 'PENDING', ?, ?, ?)
+                ) VALUES (0, ?, ?, ?, 'FULL_EXIT', 'PENDING', ?, ?, ?)
             """, (pos_id, pos.symbol, pos.exchange, qty, price, ts))
             exit_action_id = int(cur.lastrowid or 0)
 
@@ -848,15 +1018,25 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_swing_position_add(self) -> None:
+    def _serve_swing_position_add(
+        self,
+        default_exchange: str = "NSE",
+        source: str = "DASHBOARD_MANUAL_ADD",
+        notes: str = "Manual Add+ from swing detail/search",
+    ) -> None:
         """POST /api/swing/positions/add — manual Add+ into open book."""
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         data = json.loads(raw)
 
         symbol = (data.get("symbol") or "").strip().upper()
+        exchange = (data.get("exchange") or default_exchange).strip().upper()
+        if not exchange:
+            exchange = default_exchange
         try:
-            qty = int(data.get("qty", 0))
+            # float so US fractional shares survive; NSE callers
+            # send whole numbers, so this is a no-op for them.
+            qty = float(data.get("qty", 0))
             price = float(data.get("price", 0))
             stop = float(data.get("stop", 0) or 0)
             target = float(data.get("target", 0) or 0)
@@ -899,7 +1079,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             executed_price=price,
             stop_price=stop,
             target_price=target,
-            notes="Manual Add+ from swing detail/search",
+            exchange=exchange,
+            source=source,
+            notes=notes,
         )
         body = json.dumps({
             "ok": pos is not None,
@@ -924,7 +1106,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         data = json.loads(raw)
         try:
-            qty = int(data.get("qty", 0))
+            qty = float(data.get("qty", 0))
             price = float(data.get("price", 0))
             stop = float(data.get("stop", 0) or 0)
             target = float(data.get("target", 0) or 0)
@@ -1019,6 +1201,49 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_us_watchlist_add(self) -> None:
+        """POST /api/us/watchlist/add — add a US stock to watchlist."""
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        symbol = (data.get("symbol") or "").strip().upper()
+        if not symbol:
+            body = json.dumps({"ok": False, "error": "No symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        try:
+            price = float(data.get("price", 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        setup_type = (data.get("setup_type") or "").strip().upper()
+        exchange = (data.get("exchange") or "NASDAQ").strip().upper()
+        if price <= 0:
+            try:
+                from modes.dashboard.us_analysis import analyse_us_symbol
+                row = analyse_us_symbol(symbol)
+                price = float(row.get("current_price") or 0)
+                setup_type = setup_type or row.get("setup_type", "")
+            except Exception:
+                price = 0.0
+        from modes.swing.persistence import add_to_watchlist
+        wid = add_to_watchlist(
+            symbol=symbol,
+            price=price,
+            setup_type=setup_type,
+            exchange=exchange,
+            notes="US dashboard watchlist",
+        )
+        body = json.dumps({"ok": True, "watchlist_id": wid}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_swing_watchlist_promote(self, path: str) -> None:
         """POST /api/swing/watchlist/<id>/promote — move to open book."""
         parts = path.strip("/").split("/")
@@ -1033,7 +1258,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         from modes.swing.persistence import promote_watchlist_to_position
         result = promote_watchlist_to_position(
             watchlist_id=wid,
-            executed_qty=int(data.get("qty", 0)),
+            executed_qty=float(data.get("qty", 0)),
             executed_price=float(data.get("price", 0)),
             stop_price=float(data.get("stop", 0)),
         )
@@ -1228,7 +1453,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             return
 
         scanner = SwingScanner(Config, zerodha, log)
-        positions = open_positions()
+        positions = open_positions(exchange="NSE")
         existing = [{
             "symbol": p.symbol,
             "risk_rupees": (p.entry_price - p.stop_price) * p.managed_qty,

@@ -275,6 +275,12 @@ class Config:
     # higher-priced technical setups feasible.
     SWING_TICKET_AMOUNT:      float = 20_000.0
 
+    # US page sizing uses a per-stock USD ticket for single-stock
+    # technical analysis and suggested share count.
+    US_TICKET_AMOUNT:         float = 500.0
+    US_SCAN_UNIVERSE:         str   = "US100"
+    US_AI_MAX_CANDIDATES:     int   = 5
+
     # ── Swing — AI overlay cost cap ───────────────────────────────
     # SWING_AI_MAX_CANDIDATES caps how many *accepted* candidates the
     # Claude overlay will process in a single swing run. Without this

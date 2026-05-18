@@ -142,7 +142,7 @@ class SwingManager:
         self.zerodha.login()
 
         # 4. Load open positions
-        positions = open_positions()
+        positions = open_positions(exchange="NSE")
         self.log.info(f"Open swing positions: {len(positions)}")
 
         # 5. Fetch NIFTY candles (for RS calculation)
@@ -372,7 +372,7 @@ class SwingManager:
     def list_positions(self) -> list[SwingPosition]:
         """List all open positions."""
         init_db()
-        positions = open_positions()
+        positions = open_positions(exchange="NSE")
         if not positions:
             print("\n  No open swing positions.\n")
             return positions
