@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from functools import lru_cache
 import json
 import math
@@ -9,7 +10,10 @@ import os
 import time
 from typing import Any
 
+import requests
+
 from config import Config, now_ist
+from shared.candle_cache import CandleCache
 from modes.swing.signals import classify_setup, compute_swing_indicators
 
 
@@ -24,6 +28,11 @@ _quote_cache: dict[str, dict[str, Any]] = {}
 _MIN_FX_POLL_INTERVAL = 300.0
 _last_fx_poll: float = 0.0
 _fx_cache: dict[str, Any] = {}
+
+_US_CACHE_EXCHANGE = "US"
+_US_CACHE_INTERVAL = "day"
+_US_CACHE_LOOKBACK_DAYS = 900
+_US_CACHE_FRESH_DAYS = 5
 
 US100_SYMBOLS = [
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "GOOG", "META", "BRK-B",
@@ -59,7 +68,7 @@ def analyse_us_symbol(
     benchmark_candles: list[dict] | None = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """Analyse one US ticker using yfinance daily candles."""
+    """Analyse one US ticker using cached/Yahoo daily candles."""
     display_symbol = symbol.strip().upper()
     yf_symbol = _normalise_yfinance_symbol(display_symbol)
     if not yf_symbol:
@@ -69,8 +78,8 @@ def analyse_us_symbol(
         force_refresh_us_candles(display_symbol)
 
     ticket = _ticket(ticket_amount)
-    candles = _download_daily_candles(yf_symbol)
-    spy_candles = benchmark_candles or _download_daily_candles("SPY")
+    candles = _download_daily_candles(yf_symbol, force_refresh)
+    spy_candles = benchmark_candles or _download_daily_candles("SPY", force_refresh)
     result = _build_analysis(display_symbol, yf_symbol, candles, spy_candles, ticket)
     if use_ai:
         result["ai_overlay"] = _ai_overlay(result)
@@ -395,15 +404,38 @@ def force_refresh_us_candles(symbol: str | None = None) -> None:
 
 
 @lru_cache(maxsize=256)
-def _download_daily_candles(symbol: str) -> list[dict]:
-    try:
-        import yfinance as yf
-    except ImportError as exc:  # pragma: no cover - depends on env
-        raise RuntimeError("yfinance is required for US analysis") from exc
-
+def _download_daily_candles(symbol: str, force_network: bool = False) -> list[dict]:
+    symbol = _normalise_yfinance_symbol(symbol)
     last_err: Exception | None = None
     best_candles: list[dict] = []
+
+    cached = [] if force_network else _read_cached_us_candles(symbol)
+    if len(cached) >= _MIN_CANDLES:
+        return cached
+
+    # Prefer Yahoo's public chart JSON endpoint over yfinance for
+    # historical candles.  It avoids yfinance's cookie/crumb layer and
+    # is less likely to return a throttled 5-row dataframe for SPY.
     for period in _PERIOD_FALLBACKS:
+        try:
+            candles = _download_yahoo_chart_candles(symbol, period)
+        except Exception as exc:  # pragma: no cover - network surface
+            last_err = exc
+            continue
+        if len(candles) > len(best_candles):
+            best_candles = candles
+        if len(candles) >= _MIN_CANDLES:
+            _store_cached_us_candles(symbol, candles)
+            return candles
+
+    # yfinance remains as a secondary provider because it is already a
+    # dependency for names, live quotes, and FX.
+    for period in _PERIOD_FALLBACKS:
+        try:
+            import yfinance as yf
+        except ImportError as exc:  # pragma: no cover - depends on env
+            last_err = RuntimeError("yfinance is required for US analysis")
+            break
         try:
             df = yf.download(
                 symbol,
@@ -441,7 +473,13 @@ def _download_daily_candles(symbol: str) -> list[dict]:
         if len(candles) > len(best_candles):
             best_candles = candles
         if len(candles) >= _MIN_CANDLES:
+            _store_cached_us_candles(symbol, candles)
             return candles
+
+    stale_cached = cached or _read_cached_us_candles(symbol, max_stale_days=None)
+    if len(stale_cached) >= _MIN_CANDLES:
+        return stale_cached
+
     # All periods exhausted.  Raise so lru_cache does not pin the
     # partial result — the next attempt will retry from scratch.
     if not best_candles:
@@ -452,8 +490,113 @@ def _download_daily_candles(symbol: str) -> list[dict]:
     raise ValueError(
         f"not enough daily candles for {symbol} "
         f"(got {len(best_candles)}, need >= {_MIN_CANDLES}); "
-        "yfinance may be rate-limited — try again in a minute"
+        "Yahoo/yfinance may be rate-limited and no local cache is available"
     )
+
+
+def _read_cached_us_candles(
+    symbol: str,
+    max_stale_days: int | None = _US_CACHE_FRESH_DAYS,
+) -> list[dict]:
+    to_date = now_ist().date()
+    from_date = to_date - datetime.timedelta(days=_US_CACHE_LOOKBACK_DAYS)
+    try:
+        candles = CandleCache().get_cached_candles(
+            symbol,
+            _US_CACHE_EXCHANGE,
+            _US_CACHE_INTERVAL,
+            from_date,
+            to_date,
+        )
+    except Exception:
+        return []
+    if max_stale_days is None or not candles:
+        return candles
+    last_date = _candle_date(candles[-1])
+    if last_date is None:
+        return []
+    if (to_date - last_date).days > max_stale_days:
+        return []
+    return candles
+
+
+def _store_cached_us_candles(symbol: str, candles: list[dict]) -> None:
+    try:
+        CandleCache().store_candles(
+            symbol,
+            _US_CACHE_EXCHANGE,
+            _US_CACHE_INTERVAL,
+            candles,
+        )
+    except Exception:
+        pass
+
+
+def _download_yahoo_chart_candles(symbol: str, period: str) -> list[dict]:
+    response = requests.get(
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+        params={"range": period, "interval": "1d", "events": "history"},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=12,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    chart = payload.get("chart") or {}
+    error = chart.get("error")
+    if error:
+        raise ValueError(error.get("description") or str(error))
+    results = chart.get("result") or []
+    if not results:
+        raise ValueError(f"no Yahoo chart candles returned for {symbol}")
+    result = results[0]
+    timestamps = result.get("timestamp") or []
+    indicators = result.get("indicators") or {}
+    quotes = indicators.get("quote") or []
+    quote = quotes[0] if quotes else {}
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+    candles: list[dict] = []
+    for idx, ts in enumerate(timestamps):
+        try:
+            open_ = float(opens[idx])
+            high = float(highs[idx])
+            low = float(lows[idx])
+            close = float(closes[idx])
+        except (IndexError, TypeError, ValueError):
+            continue
+        try:
+            volume = float(volumes[idx] or 0.0)
+        except (IndexError, TypeError, ValueError):
+            volume = 0.0
+        if not all(_finite(v) and v > 0 for v in (open_, high, low, close)):
+            continue
+        candles.append({
+            "date": datetime.datetime.fromtimestamp(
+                int(ts), tz=datetime.timezone.utc).date(),
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        })
+    return candles
+
+
+def _candle_date(candle: dict) -> datetime.date | None:
+    value = candle.get("date")
+    if value is None:
+        return None
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    try:
+        return datetime.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
 
 def _cell(row: Any, name: str) -> float:
@@ -486,12 +629,28 @@ def get_us_stock_name(symbol: str) -> str:
     """Return the long company name for a US ticker, or '' on failure.
 
     Cached per-process via lru_cache so repeated table renders don't
-    re-hit yfinance.  Falls back to short_name then to '' so callers
-    can safely render `name or symbol`.
+    re-hit upstream providers.  Uses Yahoo Search first because the
+    yfinance info path can fail when Yahoo rejects its crumb/cookie.
     """
     if not symbol:
         return ""
     yf_sym = _normalise_yfinance_symbol(symbol)
+    try:
+        response = requests.get(
+            "https://query1.finance.yahoo.com/v1/finance/search",
+            params={"q": yf_sym, "quotesCount": 6, "newsCount": 0},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+        )
+        if response.ok:
+            quotes = (response.json().get("quotes") or [])
+            for quote in quotes:
+                if str(quote.get("symbol") or "").upper() == yf_sym:
+                    name = (quote.get("longname") or quote.get("shortname") or "")
+                    if name:
+                        return str(name).strip()
+    except Exception:
+        pass
     try:
         import yfinance as yf
     except ImportError:
