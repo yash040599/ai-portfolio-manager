@@ -901,13 +901,18 @@ def render_swing_detail(symbol: str) -> str:
     detail_action_id = 0
     if getattr(cand, "_run_id", 0):
         try:
+            symbol_action_id = 0
             for action in actions_for_run(int(cand._run_id)):
                 if (action.symbol == sym and action.action_type == "ENTRY"
-                        and action.status == "PENDING"
-                        and (not getattr(cand, "_id", 0)
-                             or action.candidate_id == cand._id)):
-                    detail_action_id = action.action_id
-                    break
+                        and action.status == "PENDING"):
+                    if not symbol_action_id:
+                        symbol_action_id = action.action_id
+                    if (not getattr(cand, "_id", 0)
+                            or action.candidate_id == cand._id):
+                        detail_action_id = action.action_id
+                        break
+            if not detail_action_id:
+                detail_action_id = symbol_action_id
         except Exception:
             detail_action_id = 0
 

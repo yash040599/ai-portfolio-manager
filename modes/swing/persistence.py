@@ -586,11 +586,12 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
       1. Use the latest run_id that contains this symbol, including
          SEARCH_BOX rows. A fresh rejected one-stock search must not be
          hidden behind yesterday's accepted full-scan row.
-      2. Within that same run, prefer ACCEPTED over rejected rows. This
-         preserves the S41/S42 fix where an accepted dip-buy row should
-         beat a rejected technical companion from the same scan.
-      3. If status ties, prefer technical (non-dip-buy) rows because they
-         carry richer diagnostic detail than ATH_DIP / 52W_DIP rows.
+      2. Within that same run, prefer a real technical setup over a
+         dip-buy row. Dip-buy rows remain available through
+         `dip_candidate_by_symbol`, but technical rows carry the richer
+         setup/reason context the detail page and AI prompt need.
+      3. If the technical scanner only emitted NONE, prefer an ACCEPTED
+         row (usually 52W_DIP) over a no-setup diagnostic row.
 
     AI overlay carry-forward (S48, 2026-05-14): if the picked
     candidate's `ai_overlay_json` is empty (e.g. a fresh SEARCH_BOX
@@ -617,7 +618,12 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
                SELECT * FROM swing_candidates
                WHERE symbol = ?
                  AND run_id = (SELECT run_id FROM latest)
-               ORDER BY
+                             ORDER BY
+                                 CASE
+                                     WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP', 'NONE')
+                                     THEN 0
+                                     ELSE 1
+                                 END,
                  CASE status WHEN 'ACCEPTED' THEN 0 ELSE 1 END,
                  CASE WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP')
                       THEN 0 ELSE 1 END,
@@ -960,8 +966,8 @@ def latest_candidate_row_id_by_symbol(symbol: str,
     Used by the per-stock AI analyse endpoints so the Claude response
     is persisted back to the row the detail page is actually showing.
     The ordering intentionally mirrors `candidate_by_symbol`: latest
-    run for this symbol first, then ACCEPTED within that run, then
-    technical rows over dip-buy rows.
+    run for this symbol first, then real technical setup rows over
+    dip-buy rows, with ACCEPTED as the tie-breaker.
     """
     if not os.path.exists(path):
         return None
@@ -976,7 +982,12 @@ def latest_candidate_row_id_by_symbol(symbol: str,
                SELECT id FROM swing_candidates
                WHERE symbol = ?
                  AND run_id = (SELECT run_id FROM latest)
-               ORDER BY
+                             ORDER BY
+                                 CASE
+                                     WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP', 'NONE')
+                                     THEN 0
+                                     ELSE 1
+                                 END,
                  CASE status WHEN 'ACCEPTED' THEN 0 ELSE 1 END,
                  CASE WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP')
                       THEN 0 ELSE 1 END,
