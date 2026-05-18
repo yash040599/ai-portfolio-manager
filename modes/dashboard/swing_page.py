@@ -898,6 +898,19 @@ def render_swing_detail(symbol: str) -> str:
     if not cand:
         cand = dip_cand
 
+    detail_action_id = 0
+    if getattr(cand, "_run_id", 0):
+        try:
+            for action in actions_for_run(int(cand._run_id)):
+                if (action.symbol == sym and action.action_type == "ENTRY"
+                        and action.status == "PENDING"
+                        and (not getattr(cand, "_id", 0)
+                             or action.candidate_id == cand._id)):
+                    detail_action_id = action.action_id
+                    break
+        except Exception:
+            detail_action_id = 0
+
     # Live quote
     lq = get_live_quotes([sym])
     lprice = lq.get(sym, {}).get("price", cand.close_price) or cand.close_price
@@ -906,6 +919,18 @@ def render_swing_detail(symbol: str) -> str:
     # ── Summary card ────────────────────────────────────────────
     body.append('<div class="card">')
     body.append('<h2>Recommendation Summary</h2>')
+    body.append(
+        '<div style="display:flex;justify-content:flex-end;margin:-4px 0 12px">'
+        f'<select class="add-dropdown" '
+        f'onchange="addAction(this, {detail_action_id}, \'{html.escape(sym)}\')" '
+        f'style="padding:5px 8px;font-size:12px;font-weight:600;'
+        f'border:1px solid var(--accent);border-radius:5px;'
+        f'background:var(--card);cursor:pointer">'
+        f'<option value="">Add+</option>'
+        f'<option value="watch">Watch</option>'
+        f'<option value="buy">I Bought It</option>'
+        f'</select></div>'
+    )
 
     # Plain-English setup explanation
     setup_explain = {
@@ -1260,6 +1285,7 @@ def render_swing_detail(symbol: str) -> str:
         body.append('</div>')
 
     body.append('</div>')  # .wrap
+    body.append(_js())
     return _wrap(f"Swing — {sym}", body)
 
 
@@ -1732,7 +1758,7 @@ function _parsePosNum(raw, label) {
     return n;
 }
 
-function confirmPurchase(postUrl, failureLabel) {
+function confirmPurchase(postUrl, failureLabel, extraBody) {
     // Show a modal dialog with qty + price fields together
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
@@ -1789,10 +1815,14 @@ function confirmPurchase(postUrl, failureLabel) {
             stop = s;
         }
         document.body.removeChild(overlay);
+        var payload = extraBody || {};
+        payload.qty = Math.floor(qty);
+        payload.price = price;
+        payload.stop = stop;
         fetch(postUrl, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
+            body: JSON.stringify(payload)
         })
             .then(function(r) {
                 return r.json()
@@ -1820,6 +1850,10 @@ function confirmAction(actionId) {
     confirmPurchase('/api/swing/actions/' + actionId + '/confirm', 'Confirm failed');
 }
 
+function addDirectBuy(symbol) {
+    confirmPurchase('/api/swing/positions/add', 'Manual add failed', {symbol: symbol});
+}
+
 function addAction(selectEl, actionId, symbol) {
     var choice = selectEl.value;
     if (!choice) return;
@@ -1839,7 +1873,11 @@ function addAction(selectEl, actionId, symbol) {
             })
             .catch(function(e) { alert('Error: ' + e); });
     } else if (choice === 'buy') {
-        confirmAction(actionId);
+        if (actionId) {
+            confirmAction(actionId);
+        } else {
+            addDirectBuy(symbol);
+        }
     }
 }
 
@@ -2049,7 +2087,17 @@ function _renderSingleResult(host, data) {
         // Always offer the detail-page link so the user can drill
         // in to see the full health-check + AI analyse button even
         // when the stock didn't qualify for entry today.
-        html += '<div style="margin-top:8px">';
+        html += '<div style="margin-top:8px;display:flex;gap:8px;' +
+            'align-items:center;flex-wrap:wrap">';
+        html += '<select class="add-dropdown" ' +
+            'onchange="addAction(this, 0, \\'' + c.symbol + '\\')" ' +
+            'style="padding:4px 6px;font-size:12px;font-weight:600;' +
+            'border:1px solid var(--accent);border-radius:5px;' +
+            'background:var(--card);cursor:pointer">' +
+            '<option value="">Add+</option>' +
+            '<option value="watch">Watch</option>' +
+            '<option value="buy">I Bought It</option>' +
+            '</select>';
         html += '<a href="/swing/' + encodeURIComponent(c.symbol) +
                 '" style="padding:5px 10px;font-size:12px;' +
                 'border:1px solid #cfd9eb;border-radius:5px;' +
@@ -2096,10 +2144,11 @@ function _renderSingleResult(host, data) {
             html += '</ul>';
         }
 
-        if (actionId) {
+        {
+            var addActionId = actionId || 0;
             html += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">';
             html += '<select class="add-dropdown" ' +
-                    'onchange="addAction(this, ' + actionId + ', \\'' + c.symbol + '\\')" ' +
+                'onchange="addAction(this, ' + addActionId + ', \\'' + c.symbol + '\\')" ' +
                     'style="padding:4px 6px;font-size:12px;font-weight:600;' +
                     'border:1px solid var(--accent);border-radius:5px;' +
                     'background:var(--card);cursor:pointer">' +

@@ -252,6 +252,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_action_skip(url.path)
             elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/exit"):
                 self._serve_swing_position_exit(url.path)
+            elif url.path == "/api/swing/positions/add":
+                self._serve_swing_position_add()
             elif url.path == "/api/swing/watchlist/add":
                 self._serve_swing_watchlist_add()
             elif url.path.startswith("/api/swing/watchlist/") and url.path.endswith("/promote"):
@@ -835,6 +837,69 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             source="DASHBOARD",
         )
         body = json.dumps({"ok": result is not None}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_swing_position_add(self) -> None:
+        """POST /api/swing/positions/add — manual Add+ into open book."""
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+
+        symbol = (data.get("symbol") or "").strip().upper()
+        try:
+            qty = int(data.get("qty", 0))
+            price = float(data.get("price", 0))
+            stop = float(data.get("stop", 0) or 0)
+            target = float(data.get("target", 0) or 0)
+        except (TypeError, ValueError):
+            err = json.dumps({
+                "ok": False,
+                "error": "symbol, qty, and price are required; qty/price must be numeric",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        if not symbol:
+            err = json.dumps({"ok": False, "error": "No symbol"}).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        if qty <= 0 or price <= 0:
+            err = json.dumps({
+                "ok": False,
+                "error": "qty and price must be positive numbers",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        from modes.swing.persistence import add_manual_position
+        pos = add_manual_position(
+            symbol=symbol,
+            executed_qty=qty,
+            executed_price=price,
+            stop_price=stop,
+            target_price=target,
+            notes="Manual Add+ from swing detail/search",
+        )
+        body = json.dumps({
+            "ok": pos is not None,
+            "position_id": pos.position_id if pos else 0,
+        }).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

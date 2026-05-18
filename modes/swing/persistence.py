@@ -580,20 +580,17 @@ def candidates_for_run(run_id: int, path: str = DB_PATH) -> list[SwingCandidate]
 
 
 def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | None:
-    """Most recent candidate record for a symbol (any status).
+    """Best candidate record for the symbol's latest run.
 
     Resolution order (most-preferred first):
-      1. Most recent **ACCEPTED** candidate of any setup type
-         (a fresh ACCEPTED dip-buy beats a stale REJECTED technical
-         row — the prior dashboard bug, fixed 2026-05-14, was
-         showing zeros for SBIN because the technical scanner
-         emits NONE rows with empty indicator fields and those
-         won the lookup).
-      2. Most recent technical (non-dip-buy) candidate, regardless
-         of status, since technical rows carry richer indicator
-         detail than legacy ATH_DIP / current 52W_DIP rows when
-         both exist for the same name.
-      3. Any candidate including dip-buy rows.
+      1. Use the latest run_id that contains this symbol, including
+         SEARCH_BOX rows. A fresh rejected one-stock search must not be
+         hidden behind yesterday's accepted full-scan row.
+      2. Within that same run, prefer ACCEPTED over rejected rows. This
+         preserves the S41/S42 fix where an accepted dip-buy row should
+         beat a rejected technical companion from the same scan.
+      3. If status ties, prefer technical (non-dip-buy) rows because they
+         carry richer diagnostic detail than ATH_DIP / 52W_DIP rows.
 
     AI overlay carry-forward (S48, 2026-05-14): if the picked
     candidate's `ai_overlay_json` is empty (e.g. a fresh SEARCH_BOX
@@ -611,40 +608,24 @@ def candidate_by_symbol(symbol: str, path: str = DB_PATH) -> SwingCandidate | No
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        cand: SwingCandidate | None = None
-        # Pass 1: any ACCEPTED row, newest first. Catches the live
-        # dip-buy candidate so the detail page shows real numbers.
         row = conn.execute(
-            """SELECT * FROM swing_candidates
-               WHERE symbol = ? AND status = 'ACCEPTED'
-               ORDER BY run_id DESC, id DESC
+            """WITH latest AS (
+                   SELECT MAX(run_id) AS run_id
+                   FROM swing_candidates
+                   WHERE symbol = ?
+               )
+               SELECT * FROM swing_candidates
+               WHERE symbol = ?
+                 AND run_id = (SELECT run_id FROM latest)
+               ORDER BY
+                 CASE status WHEN 'ACCEPTED' THEN 0 ELSE 1 END,
+                 CASE WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP')
+                      THEN 0 ELSE 1 END,
+                 id DESC
                LIMIT 1""",
-            (symbol.upper(),),
+            (symbol.upper(), symbol.upper()),
         ).fetchone()
-        if row:
-            cand = _row_to_candidate(row)
-        if cand is None:
-            # Pass 2: most recent technical (non-dip-buy) candidate.
-            row = conn.execute(
-                """SELECT * FROM swing_candidates
-                   WHERE symbol = ?
-                     AND setup_type NOT IN ('ATH_DIP', '52W_DIP')
-                   ORDER BY run_id DESC, id DESC
-                   LIMIT 1""",
-                (symbol.upper(),),
-            ).fetchone()
-            if row:
-                cand = _row_to_candidate(row)
-        if cand is None:
-            # Pass 3: anything else (dip-buy rows, etc.).
-            row = conn.execute(
-                """SELECT * FROM swing_candidates
-                   WHERE symbol = ?
-                   ORDER BY run_id DESC, id DESC
-                   LIMIT 1""",
-                (symbol.upper(),),
-            ).fetchone()
-            cand = _row_to_candidate(row) if row else None
+        cand = _row_to_candidate(row) if row else None
         if cand is None:
             return None
         # AI overlay carry-forward (S48). Reads the most recent good
@@ -974,43 +955,37 @@ def diff_latest_vs_prior_day(
 
 def latest_candidate_row_id_by_symbol(symbol: str,
                                       path: str = DB_PATH) -> int | None:
-    """Return the `swing_candidates.id` of the latest ACCEPTED row
-    for a symbol (any setup type). Used by the per-stock AI analyse
-    endpoint (S37) and the search-box analyse_one endpoint (S38) so
-    the Claude response can be persisted back to the live row the
-    detail page is showing.
+    """Return the `swing_candidates.id` matching `candidate_by_symbol`.
 
-    Resolution order (S42 hardening, 2026-05-14):
-      1. Most recent ACCEPTED row, regardless of setup type.
-      2. Most recent SCORED / PLANNED row.
-      3. Most recent row of any status as a final fallback.
-
-    Pre-S42 the function did `WHERE symbol = ? ORDER BY run_id DESC
-    LIMIT 1` with no status filter, so a fresh AI analyse on a
-    symbol that ALSO had an older REJECTED row in the same scan
-    pool wrote the AI overlay to the rejected row — and the detail
-    page (which prefers ACCEPTED rows after S41) never displayed
-    the analysis. Same bug class as S41: stale REJECTED rows
-    shadowing live ACCEPTED ones in lookups.
+    Used by the per-stock AI analyse endpoints so the Claude response
+    is persisted back to the row the detail page is actually showing.
+    The ordering intentionally mirrors `candidate_by_symbol`: latest
+    run for this symbol first, then ACCEPTED within that run, then
+    technical rows over dip-buy rows.
     """
     if not os.path.exists(path):
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        for status_clause in (
-            "AND status = 'ACCEPTED'",
-            "AND status IN ('SCORED', 'PLANNED')",
-            "",  # final fallback: any status
-        ):
-            row = conn.execute(
-                f"""SELECT id FROM swing_candidates
-                    WHERE symbol = ? {status_clause}
-                    ORDER BY run_id DESC, id DESC
-                    LIMIT 1""",
-                (symbol.upper(),),
-            ).fetchone()
-            if row:
-                return int(row["id"])
+        row = conn.execute(
+            """WITH latest AS (
+                   SELECT MAX(run_id) AS run_id
+                   FROM swing_candidates
+                   WHERE symbol = ?
+               )
+               SELECT id FROM swing_candidates
+               WHERE symbol = ?
+                 AND run_id = (SELECT run_id FROM latest)
+               ORDER BY
+                 CASE status WHEN 'ACCEPTED' THEN 0 ELSE 1 END,
+                 CASE WHEN setup_type NOT IN ('ATH_DIP', '52W_DIP')
+                      THEN 0 ELSE 1 END,
+                 id DESC
+               LIMIT 1""",
+            (symbol.upper(), symbol.upper()),
+        ).fetchone()
+        if row:
+            return int(row["id"])
         return None
 
 
@@ -1195,6 +1170,8 @@ def _row_to_candidate(row: sqlite3.Row) -> SwingCandidate:
         try:
             full = json.loads(snap)
             cand = SwingCandidate.from_dict(full)
+            cand._id = int(d.get("id") or 0)
+            cand._run_id = int(d.get("run_id") or 0)
             # Overlay live mutable columns on top of the snapshot.
             live_ai = d.get("ai_overlay_json") or ""
             if live_ai:
@@ -1202,7 +1179,10 @@ def _row_to_candidate(row: sqlite3.Row) -> SwingCandidate:
             return cand
         except (json.JSONDecodeError, TypeError):
             pass
-    return SwingCandidate.from_dict(d)
+    cand = SwingCandidate.from_dict(d)
+    cand._id = int(d.get("id") or 0)
+    cand._run_id = int(d.get("run_id") or 0)
+    return cand
 
 
 def _row_to_position(row: sqlite3.Row) -> SwingPosition:
@@ -1357,6 +1337,54 @@ def promote_watchlist_to_position(
         """, (pos_id, ts, json.dumps({
             "qty": executed_qty, "price": executed_price,
             "watchlist_id": watchlist_id,
+        })))
+
+        return _load_position(conn, pos_id)
+
+
+def add_manual_position(
+    symbol: str,
+    executed_qty: int,
+    executed_price: float,
+    stop_price: float = 0.0,
+    target_price: float = 0.0,
+    exchange: str = "NSE",
+    source: str = "DASHBOARD_MANUAL_ADD",
+    notes: str = "",
+    path: str = DB_PATH,
+) -> SwingPosition | None:
+    """Add a manually bought swing position without a pending action."""
+    if executed_qty <= 0 or executed_price <= 0:
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        ts = now_ist().isoformat()
+        if stop_price <= 0:
+            stop_price = round(executed_price * 0.90, 2)
+        if target_price <= 0:
+            target_price = round(executed_price * 1.15, 2)
+
+        cur = conn.execute("""
+            INSERT INTO swing_positions (
+                symbol, exchange, side, managed_qty, entry_price,
+                entry_date, stop_price, target_price, status,
+                source, notes
+            ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN', ?, ?)
+        """, (
+            symbol.upper(), exchange, executed_qty, executed_price,
+            ts[:10], stop_price, target_price, source, notes,
+        ))
+        pos_id = int(cur.lastrowid or 0)
+
+        conn.execute("""
+            INSERT INTO swing_events (position_id, event_time,
+                event_type, new_value, reason)
+            VALUES (?, ?, 'ENTRY', ?, 'Manual dashboard Add+')
+        """, (pos_id, ts, json.dumps({
+            "qty": executed_qty,
+            "price": executed_price,
+            "stop": stop_price,
+            "target": target_price,
         })))
 
         return _load_position(conn, pos_id)
