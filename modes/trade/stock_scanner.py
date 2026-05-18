@@ -388,7 +388,10 @@ class StockScanner:
         zerodha: ZerodhaClient,
         log:     Logger,
     ):
-        super().__init__(config, claude, log)
+        self.cfg = config
+        self.claude = claude
+        self.log = log
+        self._budget = float(config.MAX_BUDGET_INR)
         self.zerodha = zerodha
         self._cache = CandleCache()
 

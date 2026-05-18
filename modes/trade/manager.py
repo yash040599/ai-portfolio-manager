@@ -60,8 +60,33 @@ class PortfolioManager:
 
 
     def __init__(self, config: type[Config]):
-        # Initialize parent (sets up all shared infra)
-        super().__init__(config)
+        self.cfg = config
+        self.log = Logger("PortfolioManager")
+        self.claude = ClaudeClient(config, self.log)
+        self.zerodha = ZerodhaClient(config, self.log)
+        self.engine = OrderEngine(config, self.zerodha, Logger("OrderEngine"))
+        self.report = ReportWriter(config, self.log)
+        self.tracker = PerformanceTracker(config, self.log)
+
+        self._budget: float = float(config.MAX_BUDGET_INR)
+        self._available_funds: float | None = None
+        self._trade_plans: list[dict] = []
+        self._scan_failed = False
+        self._shutdown_requested = False
+        self._market_condition = "UNKNOWN"
+        self._india_vix = 0.0
+        self._india_vix_open = 0.0
+        self._fii_dii_bias = ""
+        self._preopen_data: dict[str, dict] = {}
+        self._expiry_applied = False
+        self._vix_adjustments_applied = False
+        self._initial_entry_done = False
+        self._circuit_broken = False
+        self._last_external_sync = 0.0
+        self._last_partial_rescan = 0.0
+        self._prev_runs = None
+        self._run_number = None
+        self._status_lines_printed = False
 
         # Replace the V1 scanner with V2 (candle-aware)
         self.scanner = StockScanner(
