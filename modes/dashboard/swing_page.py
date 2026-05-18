@@ -1732,7 +1732,7 @@ function _parsePosNum(raw, label) {
     return n;
 }
 
-function confirmAction(actionId) {
+function confirmPurchase(postUrl, failureLabel) {
     // Show a modal dialog with qty + price fields together
     var overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
@@ -1789,15 +1789,19 @@ function confirmAction(actionId) {
             stop = s;
         }
         document.body.removeChild(overlay);
-        fetch('/api/swing/actions/' + actionId + '/confirm', {
+        fetch(postUrl, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
         })
-            .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
+            .then(function(r) {
+                return r.json()
+                    .catch(function() { return {}; })
+                    .then(function(j) { return {ok: r.ok, body: j}; });
+            })
             .then(function(res) {
                 if (!res.ok || !res.body.ok) {
-                    alert('Confirm failed: ' + (res.body.error || 'unknown error'));
+                    alert(failureLabel + ': ' + (res.body.error || 'unknown error'));
                     return;
                 }
                 location.reload();
@@ -1810,6 +1814,10 @@ function confirmAction(actionId) {
         if (e.key === 'Enter') { document.getElementById('buy-submit').click(); }
         if (e.key === 'Escape') { document.body.removeChild(overlay); }
     });
+}
+
+function confirmAction(actionId) {
+    confirmPurchase('/api/swing/actions/' + actionId + '/confirm', 'Confirm failed');
 }
 
 function addAction(selectEl, actionId, symbol) {
@@ -1836,30 +1844,8 @@ function addAction(selectEl, actionId, symbol) {
 }
 
 function promoteWatchlist(watchlistId, symbol) {
-    var qtyRaw = prompt(symbol + ' — How many shares did you buy?');
-    var qty = _parsePosNum(qtyRaw, 'quantity');
-    if (qty === null) return;
-    var priceRaw = prompt('At what price (Rs.)?');
-    var price = _parsePosNum(priceRaw, 'price');
-    if (price === null) return;
-    var stopRaw = prompt('Stop-loss price (Rs.) — leave blank for 10% below buy:', '');
-    var stop = 0;
-    if (stopRaw && stopRaw.trim()) {
-        var s = _parsePosNum(stopRaw, 'stop');
-        if (s === null) return;
-        stop = s;
-    }
-    fetch('/api/swing/watchlist/' + watchlistId + '/promote', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: Math.floor(qty), price: price, stop: stop})
-    })
-        .then(function(r) { return r.json(); })
-        .then(function(j) {
-            if (j.ok) { location.reload(); }
-            else { alert('Failed: ' + (j.error || 'unknown')); }
-        })
-        .catch(function(e) { alert('Error: ' + e); });
+    confirmPurchase('/api/swing/watchlist/' + watchlistId + '/promote',
+        'Watchlist promote failed');
 }
 
 function removeWatchlist(watchlistId) {
