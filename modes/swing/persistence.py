@@ -269,14 +269,28 @@ def save_run(result: SwingRunResult, path: str = DB_PATH,
             c._id = int(cur2.lastrowid or 0)
             c._run_id = run_id
 
+        def _price_same(left: float, right: float) -> bool:
+            return abs(float(left or 0.0) - float(right or 0.0)) <= 0.01
+
+        def _link_candidate_id(a: SwingAction) -> int:
+            matches = [c for c in result.candidates
+                       if c.symbol == a.symbol and c._id]
+            for c in matches:
+                if (c.status in ("ACCEPTED", "PLANNED")
+                        and int(c.suggested_qty or 0) == int(a.suggested_qty or 0)
+                        and _price_same(c.entry_price, a.suggested_price)
+                        and _price_same(c.stop_price, a.suggested_stop)
+                        and _price_same(c.target_price, a.suggested_target)):
+                    return int(c._id)
+            for c in matches:
+                if c.status in ("ACCEPTED", "PLANNED"):
+                    return int(c._id)
+            return int(matches[0]._id) if matches else 0
+
         # Actions
         for a in result.actions:
             a.run_id = run_id
-            # Link candidate_id if symbol matches
-            for c in result.candidates:
-                if c.symbol == a.symbol and c._id:
-                    a.candidate_id = c._id
-                    break
+            a.candidate_id = _link_candidate_id(a)
             cur3 = conn.execute("""
                 INSERT INTO swing_actions (
                     run_id, candidate_id, position_id, symbol, exchange,
@@ -355,30 +369,20 @@ def confirm_action(
             if existing:
                 return _load_position(conn, int(existing["position_id"]))
 
-            cur = conn.execute("""
-                INSERT INTO swing_positions (
-                    symbol, exchange, side, managed_qty, entry_price,
-                    entry_date, stop_price, target_price, status,
-                    source, linked_run_id, linked_action_id, notes
-                ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
-            """, (
-                action.symbol, action.exchange, executed_qty,
-                executed_price, ts[:10],
-                confirmed_stop or action.suggested_stop,
-                action.suggested_target, source,
-                action.run_id, action_id, notes,
-            ))
-            pos_id = int(cur.lastrowid or 0)
-
-            conn.execute("""
-                INSERT INTO swing_events (position_id, event_time,
-                    event_type, new_value, reason)
-                VALUES (?, ?, 'ENTRY', ?, 'Confirmed via dashboard/CLI')
-            """, (pos_id, ts, json.dumps({
-                "qty": executed_qty, "price": executed_price,
-            })))
-
-            return _load_position(conn, pos_id)
+            return _merge_or_insert_entry_position(
+                conn,
+                symbol=action.symbol,
+                exchange=action.exchange,
+                executed_qty=executed_qty,
+                executed_price=executed_price,
+                stop_price=confirmed_stop or action.suggested_stop,
+                target_price=action.suggested_target,
+                source=source,
+                linked_run_id=action.run_id,
+                linked_action_id=action_id,
+                notes=notes,
+                reason="Confirmed via dashboard/CLI",
+            )
 
         elif action.action_type in ("FULL_EXIT", "PARTIAL_EXIT"):
             pos_id = action.position_id
@@ -1210,6 +1214,103 @@ def _load_position(conn: sqlite3.Connection,
     return _row_to_position(row) if row else None
 
 
+def _merge_or_insert_entry_position(
+    conn: sqlite3.Connection,
+    *,
+    symbol: str,
+    exchange: str,
+    executed_qty: int,
+    executed_price: float,
+    stop_price: float,
+    target_price: float,
+    source: str,
+    linked_run_id: int = 0,
+    linked_action_id: int = 0,
+    notes: str = "",
+    reason: str = "Entry confirmed",
+) -> SwingPosition | None:
+    ts = now_ist().isoformat()
+    symbol = symbol.upper()
+    existing = conn.execute(
+        """SELECT * FROM swing_positions
+           WHERE symbol = ? AND exchange = ? AND side = 'BUY'
+             AND status = 'OPEN'
+           ORDER BY position_id DESC
+           LIMIT 1""",
+        (symbol, exchange),
+    ).fetchone()
+
+    if existing:
+        pos = _row_to_position(existing)
+        new_qty = int(pos.managed_qty) + int(executed_qty)
+        if new_qty <= 0:
+            return None
+        avg_price = round(
+            ((pos.entry_price * pos.managed_qty)
+             + (executed_price * executed_qty)) / new_qty,
+            2,
+        )
+        new_stop = stop_price if stop_price > 0 else pos.stop_price
+        new_target = target_price if target_price > 0 else pos.target_price
+        new_linked_run_id = linked_run_id if linked_run_id > 0 else pos.linked_run_id
+        new_linked_action_id = (
+            linked_action_id if linked_action_id > 0 else pos.linked_action_id
+        )
+        merged_notes = notes or pos.notes
+
+        conn.execute(
+            """UPDATE swing_positions
+               SET managed_qty = ?, entry_price = ?, stop_price = ?,
+                   target_price = ?, linked_run_id = ?, linked_action_id = ?,
+                   notes = ?
+               WHERE position_id = ?""",
+            (new_qty, avg_price, new_stop, new_target,
+             new_linked_run_id, new_linked_action_id, merged_notes,
+             pos.position_id),
+        )
+        conn.execute(
+            """INSERT INTO swing_events (position_id, event_time,
+                   event_type, old_value, new_value, reason)
+               VALUES (?, ?, 'ENTRY', ?, ?, ?)""",
+            (pos.position_id, ts,
+             json.dumps({"qty": pos.managed_qty, "avg_price": pos.entry_price}),
+             json.dumps({
+                 "added_qty": executed_qty,
+                 "added_price": executed_price,
+                 "qty": new_qty,
+                 "avg_price": avg_price,
+                 "linked_action_id": linked_action_id,
+             }),
+             reason),
+        )
+        return _load_position(conn, pos.position_id)
+
+    cur = conn.execute("""
+        INSERT INTO swing_positions (
+            symbol, exchange, side, managed_qty, entry_price,
+            entry_date, stop_price, target_price, status,
+            source, linked_run_id, linked_action_id, notes
+        ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)
+    """, (
+        symbol, exchange, executed_qty, executed_price, ts[:10],
+        stop_price, target_price, source, linked_run_id,
+        linked_action_id, notes,
+    ))
+    pos_id = int(cur.lastrowid or 0)
+
+    conn.execute("""
+        INSERT INTO swing_events (position_id, event_time,
+            event_type, new_value, reason)
+        VALUES (?, ?, 'ENTRY', ?, ?)
+    """, (pos_id, ts, json.dumps({
+        "qty": executed_qty,
+        "price": executed_price,
+        "linked_action_id": linked_action_id,
+    }), reason))
+
+    return _load_position(conn, pos_id)
+
+
 def _estimate_delivery_charges(entry_price: float, exit_price: float,
                                qty: int) -> float:
     """Estimate statutory delivery charges for a CNC round-trip.
@@ -1322,35 +1423,21 @@ def promote_watchlist_to_position(
             WHERE watchlist_id = ?
         """, (ts, watchlist_id))
 
-        # Create the position
         if stop_price <= 0:
             stop_price = round(executed_price * 0.90, 2)
-
         target_price = round(executed_price * 1.15, 2)
-
-        cur = conn.execute("""
-            INSERT INTO swing_positions (
-                symbol, exchange, side, managed_qty, entry_price,
-                entry_date, stop_price, target_price, status,
-                source, notes
-            ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN',
-                      'WATCHLIST_PROMOTE', ?)
-        """, (symbol, exchange, executed_qty, executed_price,
-              ts[:10], stop_price, target_price,
-              f"Promoted from watchlist #{watchlist_id}"))
-
-        pos_id = int(cur.lastrowid or 0)
-
-        conn.execute("""
-            INSERT INTO swing_events (position_id, event_time,
-                event_type, new_value, reason)
-            VALUES (?, ?, 'ENTRY', ?, 'Promoted from watchlist')
-        """, (pos_id, ts, json.dumps({
-            "qty": executed_qty, "price": executed_price,
-            "watchlist_id": watchlist_id,
-        })))
-
-        return _load_position(conn, pos_id)
+        return _merge_or_insert_entry_position(
+            conn,
+            symbol=symbol,
+            exchange=exchange,
+            executed_qty=executed_qty,
+            executed_price=executed_price,
+            stop_price=stop_price,
+            target_price=target_price,
+            source="WATCHLIST_PROMOTE",
+            notes=f"Promoted from watchlist #{watchlist_id}",
+            reason="Promoted from watchlist",
+        )
 
 
 def add_manual_position(
@@ -1369,36 +1456,67 @@ def add_manual_position(
         return None
     with _connect(path) as conn:
         _ensure_schema(conn)
-        ts = now_ist().isoformat()
         if stop_price <= 0:
             stop_price = round(executed_price * 0.90, 2)
         if target_price <= 0:
             target_price = round(executed_price * 1.15, 2)
+        return _merge_or_insert_entry_position(
+            conn,
+            symbol=symbol,
+            exchange=exchange,
+            executed_qty=executed_qty,
+            executed_price=executed_price,
+            stop_price=stop_price,
+            target_price=target_price,
+            source=source,
+            notes=notes,
+            reason="Manual dashboard Add+",
+        )
 
-        cur = conn.execute("""
-            INSERT INTO swing_positions (
-                symbol, exchange, side, managed_qty, entry_price,
-                entry_date, stop_price, target_price, status,
-                source, notes
-            ) VALUES (?, ?, 'BUY', ?, ?, ?, ?, ?, 'OPEN', ?, ?)
-        """, (
-            symbol.upper(), exchange, executed_qty, executed_price,
-            ts[:10], stop_price, target_price, source, notes,
-        ))
-        pos_id = int(cur.lastrowid or 0)
 
-        conn.execute("""
-            INSERT INTO swing_events (position_id, event_time,
-                event_type, new_value, reason)
-            VALUES (?, ?, 'ENTRY', ?, 'Manual dashboard Add+')
-        """, (pos_id, ts, json.dumps({
-            "qty": executed_qty,
-            "price": executed_price,
-            "stop": stop_price,
-            "target": target_price,
-        })))
-
-        return _load_position(conn, pos_id)
+def edit_position(
+    position_id: int,
+    managed_qty: int,
+    entry_price: float,
+    stop_price: float = 0.0,
+    target_price: float = 0.0,
+    notes: str = "Manual open-book edit",
+    path: str = DB_PATH,
+) -> SwingPosition | None:
+    """Edit an open position's total shares and average cost."""
+    if managed_qty <= 0 or entry_price <= 0:
+        return None
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        pos = _load_position(conn, position_id)
+        if not pos or pos.status != "OPEN":
+            return None
+        new_stop = stop_price if stop_price > 0 else pos.stop_price
+        new_target = target_price if target_price > 0 else pos.target_price
+        ts = now_ist().isoformat()
+        conn.execute(
+            """UPDATE swing_positions
+               SET managed_qty = ?, entry_price = ?, stop_price = ?,
+                   target_price = ?, notes = ?
+               WHERE position_id = ?""",
+            (managed_qty, entry_price, new_stop, new_target,
+             notes or pos.notes, position_id),
+        )
+        conn.execute(
+            """INSERT INTO swing_events (position_id, event_time,
+                   event_type, old_value, new_value, reason)
+               VALUES (?, ?, 'EDIT', ?, ?, ?)""",
+            (position_id, ts,
+             json.dumps({"qty": pos.managed_qty, "avg_price": pos.entry_price}),
+             json.dumps({
+                 "qty": managed_qty,
+                 "avg_price": entry_price,
+                 "stop": new_stop,
+                 "target": new_target,
+             }),
+             notes or "Manual open-book edit"),
+        )
+        return _load_position(conn, position_id)
 
 
 def get_watchlist(path: str = DB_PATH) -> list[WatchlistItem]:

@@ -269,6 +269,12 @@ class Config:
     SWING_DIP_BUY_AMOUNT:    float = 20_000.0
     SWING_DIP_LOOKBACK_DAYS: int   = 252
 
+    # Swing scan sizing uses a per-stock ticket amount, not total
+    # available Zerodha funds. The user decides how much to deploy per
+    # selected idea and can rerun the review with a larger ticket to make
+    # higher-priced technical setups feasible.
+    SWING_TICKET_AMOUNT:      float = 20_000.0
+
     # ── Swing — AI overlay cost cap ───────────────────────────────
     # SWING_AI_MAX_CANDIDATES caps how many *accepted* candidates the
     # Claude overlay will process in a single swing run. Without this

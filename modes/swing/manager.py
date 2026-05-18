@@ -42,8 +42,8 @@ from modes.swing.types import (
 MARKET_CLOSE_HOUR   = 15
 MARKET_CLOSE_MINUTE = 30
 
-# Default swing capital — should come from config later
-DEFAULT_SWING_CAPITAL = 100_000.0
+# Default amount to invest per selected swing idea.
+DEFAULT_SWING_TICKET_AMOUNT = 20_000.0
 
 
 class SwingManager:
@@ -67,7 +67,8 @@ class SwingManager:
         """Run the full swing pipeline. Returns the result or None on failure.
 
         `force=True` skips the "already ran today" confirmation prompt.
-        `swing_capital` overrides Config.SWING_CAPITAL if provided.
+        `swing_capital` is the per-stock ticket amount. It overrides
+        Config.SWING_TICKET_AMOUNT if provided.
         Auto-triggers always skip silently; manual triggers ask.
         """
         self._print_banner()
@@ -174,7 +175,7 @@ class SwingManager:
         ]
 
         _capital = swing_capital or getattr(
-            self.cfg, "SWING_CAPITAL", DEFAULT_SWING_CAPITAL)
+            self.cfg, "SWING_TICKET_AMOUNT", DEFAULT_SWING_TICKET_AMOUNT)
 
         # When market is still open, tell scanner to use only candles
         # up to yesterday so today's incomplete candle is excluded.
@@ -198,6 +199,7 @@ class SwingManager:
         ath_candidates, ath_actions = ath_scanner.scan(
             existing_symbols=open_symbols,
             candle_to_date=candle_to_date,
+            buy_amount=_capital,
         )
         candidates.extend(ath_candidates)
         entry_actions.extend(ath_actions)

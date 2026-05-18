@@ -250,6 +250,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_action_confirm(url.path)
             elif url.path.startswith("/api/swing/actions/") and url.path.endswith("/skip"):
                 self._serve_swing_action_skip(url.path)
+            elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/edit"):
+                self._serve_swing_position_edit(url.path)
             elif url.path.startswith("/api/swing/positions/") and url.path.endswith("/exit"):
                 self._serve_swing_position_exit(url.path)
             elif url.path == "/api/swing/positions/add":
@@ -457,7 +459,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         scanner = SwingScanner(Config, zerodha, log)
 
         def _scan_one(sym: str):
-            return scanner.scan_one(sym, swing_capital=100_000.0)
+            ticket = float(getattr(Config, "SWING_TICKET_AMOUNT", 20_000.0))
+            return scanner.scan_one(sym, swing_capital=ticket)
 
         result = compare_symbols(symbols, scan_one=_scan_one,
                                  sector=chosen_sector)
@@ -651,6 +654,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         if mode not in ("NOAI", "AI"):
             mode = "NOAI"
         capital = _parse_float((qs.get("capital") or ["0"])[0], 0.0)
+        if capital <= 0:
+            capital = float(getattr(Config, "SWING_TICKET_AMOUNT", 20_000.0))
         job = submit_swing_run(mode=mode, trigger_source="DASHBOARD_BUTTON",
                                swing_capital=capital)
         body = json.dumps({
@@ -906,6 +911,64 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_swing_position_edit(self, path: str) -> None:
+        """POST /api/swing/positions/<id>/edit — update qty/avg cost."""
+        parts = path.strip("/").split("/")
+        try:
+            pos_id = int(parts[3])
+        except (IndexError, ValueError):
+            self.send_error(400, "Invalid position ID")
+            return
+
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        try:
+            qty = int(data.get("qty", 0))
+            price = float(data.get("price", 0))
+            stop = float(data.get("stop", 0) or 0)
+            target = float(data.get("target", 0) or 0)
+        except (TypeError, ValueError):
+            err = json.dumps({
+                "ok": False,
+                "error": "qty and average price are required numeric values",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+        if qty <= 0 or price <= 0:
+            err = json.dumps({
+                "ok": False,
+                "error": "qty and average price must be positive numbers",
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        from modes.swing.persistence import edit_position
+        pos = edit_position(
+            position_id=pos_id,
+            managed_qty=qty,
+            entry_price=price,
+            stop_price=stop,
+            target_price=target,
+        )
+        body = json.dumps({
+            "ok": pos is not None,
+            "position_id": pos.position_id if pos else 0,
+        }).encode("utf-8")
+        self.send_response(200 if pos else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     # ── Watchlist endpoints ─────────────────────────────────────
 
     def _serve_swing_watchlist_add(self) -> None:
@@ -1122,7 +1185,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             capital = 0.0
         if capital <= 0:
-            capital = float(getattr(Config, "SWING_CAPITAL", 100_000.0))
+            capital = float(getattr(Config, "SWING_TICKET_AMOUNT", 20_000.0))
 
         if not symbol:
             err = json.dumps({"ok": False, "error": "missing symbol"}).encode("utf-8")

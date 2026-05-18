@@ -135,9 +135,8 @@ def _auth_pill() -> str:
     # Even when the token file looks fresh, a recent auth-shaped
     # external error (recorded via `core.error_sink`) means the
     # broker rejected the token — flip the pill so the user has a
-    # clear next step. Origin: 2026-05-14 user reported "Funds
-    # fetch failed (Incorrect api_key or access_token); using
-    # default Rs.1,00,000" while pill still showed Auth: OK.
+    # clear next step. Origin: 2026-05-14 user reported broker auth
+    # failures while the pill still showed Auth: OK.
     if valid:
         try:
             from core.error_sink import has_auth_invalid
@@ -171,81 +170,11 @@ def render_swing_page() -> str:
     watchlist = get_watchlist()
     pnl = realised_pnl_summary()
 
-    # Fetch Zerodha available funds for the capital default.
-    # Origin: 2026-05-14 user reported "swing capital is shown as 1L,
-    # why is it not fetching live data from zerodha?".
-    # Root cause was the bare `except Exception: pass` swallowing the
-    # real reason silently — the user sees "1L" with no idea why.
-    # New path captures the failure into `capital_source_note` so it
-    # surfaces in the muted hint below the input box, AND avoids the
-    # `login(interactive=False)` browser-fallback trap (the Zerodha
-    # client's `interactive=False` only suppresses input(), it still
-    # falls through to `_login_browser()` when the saved token is
-    # invalid — a real bug for a server-side render path).
-    default_capital = 100_000.0
-    capital_source_note = ""
-    try:
-        token_path = os.path.join("data", "access_token.json")
-        if not os.path.exists(token_path):
-            capital_source_note = (
-                "Zerodha not logged in — using default Rs.1,00,000. "
-                "Open the Login page (Auth pill above) to fetch live funds."
-            )
-        else:
-            import json as _j
-            with open(token_path, encoding="utf-8") as f:
-                saved = _j.load(f)
-            if saved.get("date") != str(now_ist().date()):
-                capital_source_note = (
-                    "Zerodha token expired — using default Rs.1,00,000. "
-                    "Re-login (Auth pill above) to fetch live funds."
-                )
-            else:
-                # Token is fresh — fetch margins.
-                from core.zerodha_client import ZerodhaClient
-                from core.logger import Logger as _Log
-                _z = ZerodhaClient(Config, _Log("SwingPageFunds"))
-                # We have a valid same-day token, so this should NOT
-                # hit the browser fallback; pass the saved token
-                # directly via the kite client to be safe.
-                try:
-                    from kiteconnect import KiteConnect as _KC
-                    _z._kite = _KC(api_key=Config.ZERODHA_API_KEY)
-                    _z._kite.set_access_token(saved["token"])
-                except Exception as login_exc:
-                    capital_source_note = (
-                        f"Zerodha client init failed ({login_exc}); "
-                        f"using default Rs.1,00,000."
-                    )
-                    # Surface the failure as a top-right toast too.
-                    from core.error_sink import record_external_error
-                    record_external_error("zerodha", login_exc)
-                else:
-                    try:
-                        default_capital = _z.get_available_funds()
-                        capital_source_note = (
-                            f"Live from Zerodha (Rs.{default_capital:,.0f} "
-                            "available margin)"
-                        )
-                    except Exception as funds_exc:
-                        capital_source_note = (
-                            f"Funds fetch failed ({funds_exc}); "
-                            f"using default Rs.1,00,000."
-                        )
-                        # Auth-shaped errors here ("Incorrect `api_key`
-                        # or `access_token`") will additionally invalidate
-                        # the saved token file inside `record_external_error`,
-                        # so the auth pill flips to "Re-login" on the
-                        # next render and the user knows exactly what
-                        # to do.
-                        from core.error_sink import record_external_error
-                        record_external_error("zerodha", funds_exc)
-    except Exception as outer_exc:
-        capital_source_note = (
-            f"Capital lookup failed ({outer_exc}); using default Rs.1,00,000."
-        )
-        from core.error_sink import record_external_error
-        record_external_error("zerodha", outer_exc)
+    default_capital = float(getattr(Config, "SWING_TICKET_AMOUNT", 20_000.0))
+    capital_source_note = (
+        "Used as the per-stock ticket for sizing technical entries; "
+        "increase and rerun to include higher-priced stocks."
+    )
 
     # Get pending entry actions (priority sorted) + candidates for reasons
     entry_actions: list[SwingAction] = []
@@ -258,38 +187,44 @@ def render_swing_page() -> str:
         entry_actions.sort(key=lambda a: a.priority_rank or 999)
         # Load candidates to populate per-symbol context (setup_type +
         # reasons + ath_price + dip_from_ath_pct).
-        # Resolution rule for duplicate symbols (when both scanners
-        # produced a row): prefer ACCEPTED > REJECTED, then prefer the
-        # ATH-dip record for ATH context, otherwise keep the first.
-        # This guards the "% Below 52w High" column from flipping based on
-        # DB insertion order; the technical and dip-buy scanners now
-        # share the same lookback window so the values agree, but
-        # this resolution still gives a deterministic winner.
+        # Resolution rule for duplicate symbols: prefer real technical
+        # setup rows for the Setup/Reason columns, but keep/copy the
+        # 52W dip context from the dip-buy row. If the technical scanner
+        # only emitted NONE, an ACCEPTED 52W_DIP remains the better row.
         for c in candidates_for_run(int(latest_run_row["run_id"])):
             existing = candidates_by_symbol.get(c.symbol)
             if existing is None:
                 candidates_by_symbol[c.symbol] = c
                 continue
-            # Prefer ACCEPTED over anything else.
-            if existing.status != "ACCEPTED" and c.status == "ACCEPTED":
+            _DIP_TYPES = {"ATH_DIP", "52W_DIP"}
+            existing_is_dip = existing.setup_type in _DIP_TYPES
+            current_is_dip = c.setup_type in _DIP_TYPES
+            existing_is_real_technical = (
+                not existing_is_dip and existing.setup_type != "NONE")
+            current_is_real_technical = (
+                not current_is_dip and c.setup_type != "NONE")
+
+            if existing_is_real_technical:
+                if current_is_dip:
+                    existing.ath_price = c.ath_price
+                    existing.dip_from_ath_pct = c.dip_from_ath_pct
+                continue
+
+            if current_is_real_technical:
+                if existing_is_dip:
+                    c.ath_price = existing.ath_price
+                    c.dip_from_ath_pct = existing.dip_from_ath_pct
                 candidates_by_symbol[c.symbol] = c
                 continue
-            # If both have the same status, prefer the technical setup
-            # (more diagnostic detail in `reasons`) but copy ath_price
-            # / dip_from_ath_pct from the dip-buy record. Always copy
-            # (S42 hardening, 2026-05-14): the prior `if not getattr(c,
-            # "ath_price", 0)` guard meant the technical row's
-            # ath_price (computed from a different lookback) silently
-            # won, which surfaced as a wrong "% Below 52w High" cell
-            # for any symbol with both row types in the same run.
-            # The dip-buy scanner's reference is the canonical one
-            # because it was the value used to qualify the dip rule.
-            # Both legacy 'ATH_DIP' and current '52W_DIP' are treated
-            # as dip-buy rows here.
+
+            if existing.status != "ACCEPTED" and c.status == "ACCEPTED":
+                candidates_by_symbol[c.symbol] = c
+
             if existing.status == c.status:
-                _DIP_TYPES = {"ATH_DIP", "52W_DIP"}
-                if c.setup_type not in _DIP_TYPES and existing.setup_type in _DIP_TYPES:
-                    # Keep dip-buy context, swap to technical row.
+                if current_is_dip and not existing_is_dip:
+                    existing.ath_price = c.ath_price
+                    existing.dip_from_ath_pct = c.dip_from_ath_pct
+                elif not current_is_dip and existing_is_dip:
                     c.ath_price = existing.ath_price
                     c.dip_from_ath_pct = existing.dip_from_ath_pct
                     candidates_by_symbol[c.symbol] = c
@@ -358,22 +293,17 @@ def render_swing_page() -> str:
                     '<span class="spinner"></span> Swing scan running&hellip;'
                     '</div>')
 
-    # Capital input
+    # Per-stock ticket input
     body.append('<div style="margin-bottom:12px">')
     body.append('<label style="font-size:13px;font-weight:500">'
-                'Swing Capital (Rs.): </label>')
+                'Amount per stock to invest (Rs.): </label>')
     body.append(f'<input type="number" id="swing-capital" '
                 f'value="{int(default_capital)}" '
-                f'min="10000" step="1000" '
+                f'min="1000" step="1000" '
                 f'style="width:160px;padding:6px 10px;font:inherit;'
                 f'border:1px solid #cfd9eb;border-radius:5px;'
                 f'font-variant-numeric:tabular-nums" />')
-    # The source-note carries either "Live from Zerodha (Rs.X)"
-    # (success) or a precise reason for the 1L fallback so the user
-    # never has to guess why the field defaulted.
-    note_color = ("#1b8e3a"
-                  if capital_source_note.startswith("Live from")
-                  else "#b06a00")
+    note_color = "#5d6b82"
     body.append(
         f'<span style="margin-left:8px;font-size:12px;color:{note_color}">'
         f'{html.escape(capital_source_note)}</span>'
@@ -752,6 +682,10 @@ def render_swing_page() -> str:
                 f'<td class="right" data-live-field="r_mult">{r_mult:+.1f}R</td>'
                 f'<td>{html.escape(p.daily_action)}</td>'
                 f'<td>'
+                f'<button class="action alt" '
+                f'onclick="editPosition({p.position_id}, {p.managed_qty}, '
+                f'{p.entry_price:.4f}, {p.stop_price:.4f}, {p.target_price:.4f})" '
+                f'style="padding:4px 8px;font-size:12px">Edit</button> '
                 f'<button class="action alt" '
                 f'onclick="exitPosition({p.position_id})" '
                 f'style="padding:4px 8px;font-size:12px">Mark Exit Done</button>'
@@ -1681,12 +1615,13 @@ function runSwingScan() {
         }
     }
 
-    // Read capital from input
+    // Read per-stock ticket amount from input
     var capitalEl = document.getElementById('swing-capital');
     var capital = capitalEl ? parseFloat(capitalEl.value.replace(/,/g, '')) : 0;
 
     // Show loading immediately
-    _swingBanner('Starting swing scan (' + mode + ')\\u2026 this can take 2-5 minutes for NIFTY 100.', 'info');
+    _swingBanner('Starting swing scan (' + mode + ', Rs.' +
+        (capital || 0).toLocaleString('en-IN') + '/stock)\u2026 this can take 2-5 minutes for NIFTY 100.', 'info');
     _swingDisableButtons(true);
 
     fetch('/api/swing/run?mode=' + mode + '&capital=' + capital, {method: 'POST'})
@@ -1929,6 +1864,46 @@ function exitPosition(posId) {
         .then(function(res) {
             if (!res.ok || !res.body.ok) {
                 alert('Exit failed: ' + (res.body.error || 'unknown error'));
+                return;
+            }
+            location.reload();
+        })
+        .catch(function(e) { alert('Network error: ' + e); });
+}
+
+function editPosition(posId, currentQty, currentAvg, currentStop, currentTarget) {
+    var qtyRaw = prompt('Total shares:', String(currentQty || ''));
+    var qty = _parsePosNum(qtyRaw, 'total shares');
+    if (qty === null) return;
+    var priceRaw = prompt('Average cost per share (Rs.):', String(currentAvg || ''));
+    var price = _parsePosNum(priceRaw, 'average cost');
+    if (price === null) return;
+    var stopRaw = prompt('Stop-loss price (Rs., optional):', String(currentStop || ''));
+    var stop = 0;
+    if (stopRaw !== null && String(stopRaw).trim()) {
+        stop = _parsePosNum(stopRaw, 'stop');
+        if (stop === null) return;
+    }
+    var targetRaw = prompt('Target price (Rs., optional):', String(currentTarget || ''));
+    var target = 0;
+    if (targetRaw !== null && String(targetRaw).trim()) {
+        target = _parsePosNum(targetRaw, 'target');
+        if (target === null) return;
+    }
+    fetch('/api/swing/positions/' + posId + '/edit', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            qty: Math.floor(qty),
+            price: price,
+            stop: stop,
+            target: target
+        })
+    })
+        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
+        .then(function(res) {
+            if (!res.ok || !res.body.ok) {
+                alert('Edit failed: ' + (res.body.error || 'unknown error'));
                 return;
             }
             location.reload();

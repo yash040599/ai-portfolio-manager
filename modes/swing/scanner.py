@@ -101,7 +101,7 @@ class SwingScanner:
             getattr(self.cfg, "SCAN_UNIVERSE", "NIFTY100"))
 
         self.log.info(f"Swing scan: {len(universe)} symbols, "
-                      f"capital Rs.{swing_capital:,.0f}")
+                  f"ticket Rs.{swing_capital:,.0f}/stock")
 
         # Fetch NIFTY candles for relative strength
         if nifty_candles is None:
@@ -250,12 +250,13 @@ class SwingScanner:
                     continue
 
                 # Portfolio-level checks
+                portfolio_capital = swing_capital * max(1, len(universe))
                 ok, reason = check_portfolio_limits(
                     new_risk_rupees=risk.risk_rupees,
                     new_position_value=risk.position_value,
                     new_sector=sector,
                     existing_positions=existing_positions,
-                    swing_capital=swing_capital,
+                    swing_capital=portfolio_capital,
                 )
                 if not ok:
                     c.status = "REJECTED"
@@ -589,12 +590,13 @@ class SwingScanner:
             cand.status = "REJECTED"
             cand.rejected_reason = risk.rejected_reason
             return cand, None
+        portfolio_capital = swing_capital * 100.0
         ok, reason = check_portfolio_limits(
             new_risk_rupees=risk.risk_rupees,
             new_position_value=risk.position_value,
             new_sector=sector,
             existing_positions=existing_positions,
-            swing_capital=swing_capital,
+            swing_capital=portfolio_capital,
         )
         if not ok:
             cand.status = "REJECTED"

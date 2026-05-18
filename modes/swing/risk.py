@@ -107,7 +107,9 @@ def compute_entry_risk(
     Entry = today's close (the user will enter near this).
     Stop  = max(entry - atr_mult × ATR, below nearest structural level).
     Target = entry + min_rr × risk_per_share (or prior resistance).
-    Qty   = risk_budget / risk_per_share, capped by max position value.
+    Qty   = floor(per-stock ticket amount / entry). The name
+    `swing_capital` is retained for API compatibility, but the value is
+    treated as the amount the user wants to invest in this stock.
     """
     result = RiskResult(entry_price=current_price)
 
@@ -161,14 +163,12 @@ def compute_entry_risk(
         result.rejected_reason = f"R:R {result.rr_ratio:.1f} < {min_rr:.1f}"
         return result
 
-    # Position sizing
-    risk_budget = swing_capital * (risk_per_trade_pct / 100.0)
-    qty = int(risk_budget / result.risk_per_share)
-
-    # Cap by max position value
-    max_value = swing_capital * (max_position_pct / 100.0)
-    max_qty_by_value = int(max_value / current_price) if current_price > 0 else 0
-    qty = min(qty, max_qty_by_value)
+    # Position sizing: the dashboard/CLI supplies the amount to invest
+    # per stock. Older code treated the same value as total portfolio
+    # capital and then capped each idea at 15%, which made high-priced
+    # technical rows round to zero shares even when the user wanted to
+    # allocate Rs.20K to that one idea.
+    qty = int(swing_capital / current_price)
 
     if qty <= 0:
         result.rejected = True
