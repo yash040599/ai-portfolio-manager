@@ -184,9 +184,21 @@ def _status_and_flags(data_source: str, candidates: dict[str, Any], outcomes: di
     return "REVIEW_REQUIRED", flags
 
 
-def build_daily_evidence(date_str: str, data_source: str, *, update_dbs: bool = True) -> dict[str, Any]:
+def build_daily_evidence(
+    date_str: str,
+    data_source: str,
+    *,
+    update_dbs: bool = True,
+    require_trading_report: bool = True,
+) -> dict[str, Any]:
     if data_source not in {"dryrun", "live"}:
         raise ValueError("data_source must be 'dryrun' or 'live'")
+    trading_json = _trading_json_path(date_str, data_source)
+    if require_trading_report and not trading_json.exists():
+        raise FileNotFoundError(
+            f"Trading data report not found for {date_str} {data_source}: "
+            f"{_relpath(trading_json)}. Run this after the trade report is generated."
+        )
     if update_dbs:
         if data_source == "dryrun":
             fill_reports(date_from=date_str, date_to=date_str)
@@ -194,7 +206,6 @@ def build_daily_evidence(date_str: str, data_source: str, *, update_dbs: bool = 
             fill_fy(indian_fy(date_str))
 
     config_version, config_hash = Config.snapshot_hash()
-    trading_json = _trading_json_path(date_str, data_source)
     report = _load_json(trading_json)
     report_config = report.get("config", {}) if isinstance(report.get("config"), dict) else {}
     config_version = str(report_config.get("strategy_config_version") or config_version)
@@ -282,10 +293,20 @@ def _markdown(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_daily_evidence(date_str: str | None = None, data_source: str = "dryrun",
-                         *, update_dbs: bool = True) -> dict[str, Any]:
+def write_daily_evidence(
+    date_str: str | None = None,
+    data_source: str = "dryrun",
+    *,
+    update_dbs: bool = True,
+    require_trading_report: bool = True,
+) -> dict[str, Any]:
     date_str = date_str or _today()
-    snapshot = build_daily_evidence(date_str, data_source, update_dbs=update_dbs)
+    snapshot = build_daily_evidence(
+        date_str,
+        data_source,
+        update_dbs=update_dbs,
+        require_trading_report=require_trading_report,
+    )
     json_path, md_path = _evidence_paths(date_str, data_source)
     json_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(snapshot, indent=2, allow_nan=False), encoding="utf-8")
@@ -300,12 +321,18 @@ def main() -> None:
     parser.add_argument("--date", default=_today(), help="Date YYYY-MM-DD. Default: today.")
     parser.add_argument("--data-source", choices=("dryrun", "live"), default="dryrun")
     parser.add_argument("--no-db-update", action="store_true", help="Only read current DB state; do not run ledger fill scripts.")
+    parser.add_argument(
+        "--allow-missing-report",
+        action="store_true",
+        help="Write a gap snapshot even when trading_data_DD*.json has not been generated.",
+    )
     args = parser.parse_args()
 
     snapshot = write_daily_evidence(
         args.date,
         args.data_source,
         update_dbs=not args.no_db_update,
+        require_trading_report=not args.allow_missing_report,
     )
     print("\n  Chan daily evidence")
     print(f"  Status      : {snapshot['status']}")
