@@ -275,6 +275,7 @@ class OrderEngine:
         self._opposing_thin_reason: str = ""
         self._opposing_thin_count: int = 0
         self._opposing_thin_max: int = 0
+        self._simple_mr_legacy_pause_skip_logged: bool = False
 
         # ── Intraday NIFTY-bounce bypass on directional pause ──────
         # Manager pushes NIFTY intraday-return % each scan via
@@ -303,6 +304,10 @@ class OrderEngine:
         # by #243 (always-on RR_HARD_FLOOR=1.3 made them no-ops).
         self._zero_entry_scans: int = 0
         self._rr_giveup: bool = False  # True = stop trading for the day
+        self._simple_mr_zero_entry_keepalive_logged: bool = False
+
+        self._last_entry_rejection_gate: str = ""
+        self._last_entry_rejection_reason: str = ""
 
         # Per-batch counter of R:R-related rejections (gross R:R below
         # `current_rr_floor()` OR net-of-charges R:R below 1.0). The
@@ -341,9 +346,28 @@ class OrderEngine:
         consecutive empty scans (#243 keeper — relaxation/retry are gone)."""
         if entered > 0:
             self._zero_entry_scans = 0
+            self._simple_mr_zero_entry_keepalive_logged = False
             return
 
         self._zero_entry_scans += 1
+
+        simple_mr_research_keepalive = (
+            bool(getattr(self.cfg, "DRY_RUN", False))
+            and getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_SIMPLE_MR_BASELINE"
+            and bool(getattr(self.cfg, "SIMPLE_MR_KEEP_RESEARCH_SCANS_AFTER_ZERO_ENTRY", False))
+        )
+        if simple_mr_research_keepalive:
+            if (
+                self._zero_entry_scans >= self.cfg.RR_GIVEUP_AFTER_FAILS
+                and not self._simple_mr_zero_entry_keepalive_logged
+            ):
+                self.log.info(
+                    f"Simple MR research profile: {self._zero_entry_scans} "
+                    f"zero-entry scan(s), keeping dry-run evidence collection "
+                    f"alive instead of arming R:R giveup."
+                )
+                self._simple_mr_zero_entry_keepalive_logged = True
+            return
 
         if self._zero_entry_scans >= self.cfg.RR_GIVEUP_AFTER_FAILS:
             self._rr_giveup = True
@@ -356,6 +380,12 @@ class OrderEngine:
     def is_rr_giveup(self) -> bool:
         """True if too many scans failed even at relaxed R:R floor."""
         return self._rr_giveup
+
+    def _reject_entry(self, gate: str, message: str) -> bool:
+        self._last_entry_rejection_gate = gate
+        self._last_entry_rejection_reason = message
+        self.log.warning(message)
+        return False
 
     def set_budget(self, amount: float):
         """Sets the trading budget and adjusts MAX_POSITIONS dynamically."""
@@ -1783,6 +1813,26 @@ class OrderEngine:
             or getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
         )
         simple_mr_entry = strategy_id == "NOAI_SIMPLE_MR_BASELINE"
+        self._last_entry_rejection_gate = ""
+        self._last_entry_rejection_reason = ""
+        skip_legacy_performance_pauses = (
+            simple_mr_entry
+            and bool(getattr(self.cfg, "SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES", False))
+        )
+        if skip_legacy_performance_pauses and not self._simple_mr_legacy_pause_skip_logged:
+            active_pauses = []
+            if self._rolling_pf_pause_armed:
+                active_pauses.append("rolling-PF")
+            if self._directional_pause_side:
+                active_pauses.append(f"directional-{self._directional_pause_side}")
+            if self._opposing_thin_side:
+                active_pauses.append(f"opposing-thin-{self._opposing_thin_side}")
+            if active_pauses:
+                self.log.info(
+                    "Simple MR research profile bypassing legacy performance "
+                    f"pause(s): {', '.join(active_pauses)}"
+                )
+                self._simple_mr_legacy_pause_skip_logged = True
 
         # ── Rolling-PF circuit breaker (Roadmap #253) ─────────────
         # Multi-day analogue of the intra-day soft-stop. Armed once at
@@ -1791,28 +1841,28 @@ class OrderEngine:
         # profit factor AND a net loss exceeding ROLLING_PF_PAUSE_NET_FLOOR.
         # Existing positions managed normally. Kill-switch:
         # ROLLING_PF_PAUSE_ENABLED.
-        if self.is_rolling_pf_paused():
-            self.log.warning(
+        if not skip_legacy_performance_pauses and self.is_rolling_pf_paused():
+            return self._reject_entry(
+                "ROLLING_PF_PAUSE",
                 f"{symbol}: rolling-PF pause active "
                 f"({self._rolling_pf_pause_reason}) — new entries "
                 f"blocked for the session. Skipping (existing "
                 f"positions still managed)."
             )
-            return False
 
         # ── Directional auto-pause (Roadmap #251) ─────────────────
         # Side-specific session-wide pause when the trailing-7-day
         # WR for `side` collapsed below threshold AND NIFTY's rolling
         # 7-day return is on the contra side. Armed by manager at
         # session start. Kill-switch: DIRECTIONAL_PAUSE_ENABLED.
-        if self.is_directional_paused(side):
-            self.log.warning(
+        if not skip_legacy_performance_pauses and self.is_directional_paused(side):
+            return self._reject_entry(
+                "DIRECTIONAL_PAUSE",
                 f"{symbol}: directional pause active for {side} "
                 f"({self._directional_pause_reason}) — {side} entries "
                 f"blocked for the session. Skipping (other-side and "
                 f"existing positions still managed)."
             )
-            return False
 
         # ── Opposing-thin fractional-Kelly cap (Roadmap #251a) ───
         # When the directional pause armed against the OTHER side based
@@ -1823,14 +1873,14 @@ class OrderEngine:
         # typical lookback for win-prob estimation; binomial CI at n=14
         # is ±26pp). Kill-switch: DIRECTIONAL_PAUSE_ENABLED (shared with
         # #251 — disabling that gate also disables this one).
-        if self.is_opposing_thin_capped(side):
-            self.log.warning(
+        if not skip_legacy_performance_pauses and self.is_opposing_thin_capped(side):
+            return self._reject_entry(
+                "OPPOSING_THIN_CAP",
                 f"{symbol}: opposing-thin cap reached for {side} "
                 f"({self._opposing_thin_count}/{self._opposing_thin_max} "
                 f"entries this session; {self._opposing_thin_reason}). "
                 f"Skipping (existing positions still managed)."
             )
-            return False
 
         # ── Entry-burst cap (Roadmap #179, budget-tiered #179a) ──
         # Hard cap on entries per rolling 60s. Same-direction sub-60s
@@ -2293,12 +2343,12 @@ class OrderEngine:
             if risk_qty < 1:
                 # Even 1 share would exceed risk budget — this is a
                 # very volatile or very high-priced stock. Skip.
-                self.log.warning(
+                return self._reject_entry(
+                    "ATR_SIZING_RISK",
                     f"{symbol}: 1 share has risk Rs.{sl_distance:.2f} > "
                     f"risk budget Rs.{risk_rupees:.0f} per trade. Skipping "
                     f"(ATR sizing). Disable ATR_SIZING_ENABLED to override."
                 )
-                return False
             if risk_qty < qty:
                 self.log.info(
                     f"  ✓ {symbol}: ATR sizing — qty reduced {qty} → "
@@ -2324,11 +2374,11 @@ class OrderEngine:
         if sl_dist > 0 and tgt_dist / sl_dist < rr_floor:
             actual_rr = tgt_dist / sl_dist
             self._rr_rejection_count += 1
-            self.log.warning(
+            return self._reject_entry(
+                "RR_FLOOR",
                 f"{symbol}: R:R {actual_rr:.2f}:1 is below {rr_floor:.1f}:1 "
                 f"{floor_label} floor — skipping"
             )
-            return False
         elif sl_dist > 0:
             self.log.info(
                 f"  ✓ {symbol}: R:R {tgt_dist/sl_dist:.2f}:1 OK "
@@ -2344,11 +2394,11 @@ class OrderEngine:
         min_profit = self.effective_min_profit()
         expected_profit = abs(target - entry) * qty
         if expected_profit < min_profit:
-            self.log.warning(
+            return self._reject_entry(
+                "MIN_EXPECTED_PROFIT",
                 f"{symbol}: expected profit Rs.{expected_profit:.0f} "
                 f"< min Rs.{min_profit:.0f} (charges will eat it). Skipping."
             )
-            return False
         self.log.info(
             f"  ✓ {symbol}: expected profit Rs.{expected_profit:.0f} OK "
             f"(min Rs.{min_profit:.0f})"
@@ -2392,12 +2442,12 @@ class OrderEngine:
                 trade["qty"] = qty
                 cost = entry * qty
             else:
-                self.log.warning(
+                return self._reject_entry(
+                    "BUDGET",
                     f"Cannot enter {symbol}: Rs.{cost:,.0f} would exceed "
                     f"budget (current exposure: Rs.{current_exposure:,.0f}, "
                     f"remaining: Rs.{remaining:,.0f})"
                 )
-                return False
 
         # ── Max positions check ───────────────────────────────────
         open_count = len([p for p in self.positions if p["status"] == "OPEN"])
@@ -2891,11 +2941,11 @@ class OrderEngine:
             net_risk = gross_risk + round_trip_charges
             if net_risk > 0 and net_profit / net_risk < 1.0:
                 self._rr_rejection_count += 1
-                self.log.warning(
+                return self._reject_entry(
+                    "NET_RR",
                     f"{symbol}: net-of-charges R:R {net_profit / net_risk:.2f}:1 "
                     f"< 1.0:1 (charges Rs.{round_trip_charges:.0f} eat the edge). Skipping."
                 )
-                return False
 
             # ── Charge-aware minimum target (Roadmap #162) ────────
             # Even if net R:R passes, reject when gross target profit
@@ -2904,12 +2954,12 @@ class OrderEngine:
             # expected profit leaves Rs.6 for all the slippage + risk.
             multiple = float(self.cfg.MIN_PROFIT_CHARGE_MULTIPLE)
             if multiple > 0 and gross_profit < round_trip_charges * multiple:
-                self.log.warning(
+                return self._reject_entry(
+                    "CHARGE_TARGET",
                     f"{symbol}: gross target profit Rs.{gross_profit:.2f} < "
                     f"{multiple:.1f}× round-trip charges Rs.{round_trip_charges:.2f} "
                     f"— target too thin after costs. Skipping."
                 )
-                return False
 
         # ── All pre-trade checks passed ───────────────────────────
         sl_pct_final = abs(entry - sl) / entry * 100

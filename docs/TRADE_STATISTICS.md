@@ -6,11 +6,12 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | `v1.1-2026-05-18` |
+| Runtime strategy version | `v1.2-2026-05-18` |
 | Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status; Stage 1.7 simple MR dry-run profile is active for NoAI selection. |
 | Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
 | Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison, T1.5 dry-run analysis separation, T1.6 daily evidence, and T1.7 simple MR strategy isolation are shipped; next is dry-run forward evidence. |
+| Dry-run evidence status | The 2026-05-18 pre-fix dry-run is excluded and purged because legacy entry/performance gates contaminated the simple MR research sample. The next valid sample starts under config `v1.2-2026-05-18` and its current config hash. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
@@ -110,7 +111,7 @@ Current config states that match the reset posture:
 | Feature | Current State | Decision |
 |---|---|---|
 | Live trading | `TRADE_LIVE_TRADING_PAUSED = True` | Keep paused until a staged strategy earns promotion. |
-| NoAI strategy profile | `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"` | Use for tomorrow's dry-run. It selects only VWAP-stretch plus RSI-exhaustion mean reversion. |
+| NoAI strategy profile | `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"` | Use for tomorrow's dry-run. It selects only VWAP-stretch plus RSI-exhaustion mean reversion and does not inherit legacy mixed-strategy performance pauses. |
 | Legacy blended NoAI | `NOAI_LEGACY_FULL` profile only | Keep disabled by default; use only as replay/control evidence, not as the active dry-run strategy. |
 | Score-weighted sizing | `SCORE_WEIGHTED_SIZING_ENABLED = False` | Keep disabled. |
 | Rolling-PF full-day pause | `ROLLING_PF_PAUSE_ENABLED = False` | Keep disabled unless new evidence proves incremental value. |
@@ -170,7 +171,7 @@ T1.5 data-boundary decision: run NoAI dry-runs for research, but keep them out o
 
 T1.6 automation decision: end-of-day trade reports now write mode-specific evidence. Dry-run report artifacts use `trading_data_DD_dry_run.json` and `trading_report_DD_dry_run.txt`; live reports keep the dashboard/tax filenames. Each run writes `chan_evidence_DD_dryrun.*` or `chan_evidence_DD_live.*`, so tomorrow's dry-run can be reviewed without touching actual P&L.
 
-T1.7 strategy-isolation decision: `STRATEGY_CONFIG_VERSION` is `v1.1-2026-05-18`, and the active profile is `NOAI_SIMPLE_MR_BASELINE`. The scanner now selects only VWAP-stretch plus RSI-exhaustion mean reversion. The order engine keeps safety/execution/risk gates, but skips old momentum-style alpha gates that would otherwise reject the intended MR setup, such as BUY-below-VWAP and BUY-oversold blocks. The legacy blended score remains available as `NOAI_LEGACY_FULL` for comparison.
+T1.7 strategy-isolation decision: `STRATEGY_CONFIG_VERSION` is `v1.2-2026-05-18`, and the active profile is `NOAI_SIMPLE_MR_BASELINE`. The scanner now selects only VWAP-stretch plus RSI-exhaustion mean reversion. The order engine keeps execution, cost, ATR sizing, budget, duplicate, sector, and position-risk gates, but skips old momentum-style alpha gates and legacy outcome-based performance pauses that would otherwise contaminate the MR test. Zero-entry dry-run scans keep collecting evidence instead of arming R:R giveup early. The contaminated 2026-05-18 pre-fix dry-run is not evidence and was purged from dry-run reports and `data/trade_analysis.db`. The legacy blended score remains available as `NOAI_LEGACY_FULL` for comparison.
 
 ## 6. Update Protocol
 

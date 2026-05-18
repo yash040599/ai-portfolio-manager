@@ -527,11 +527,19 @@ class PortfolioManager:
                             entry_time=entry_time,
                         )
                     else:
+                        rejected_gate = getattr(
+                            self.engine, "_last_entry_rejection_gate", ""
+                        ) or None
+                        rejected_reason = getattr(
+                            self.engine, "_last_entry_rejection_reason", ""
+                        ) or None
                         tele.mark_attempted(
                             symbol=trade.get("symbol", ""),
                             side=trade.get("side", ""),
                             scan_time=trade.get("_scan_time"),
                             status="REJECTED",
+                            rejected_gate=rejected_gate,
+                            notes=rejected_reason,
                         )
             except Exception as _e:
                 # Telemetry must never break a trade attempt.

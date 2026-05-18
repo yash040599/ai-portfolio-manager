@@ -24,7 +24,7 @@ As of 2026-05-18:
 - Stage 1 T1.4 tooling is shipped: `scripts/trade/live_vs_replay.py` compares replay JSON to read-only live candidate/logical/tax data under the same config hash and writes red-flagged JSON reports. First all-symbol run is `DATA_GAP`, not parity proof, because historical `intraday_candidates` is empty and logical-vs-tax trade counts differ.
 - Stage 1 T1.5 is shipped: dry-run evidence is separated into `data/trade_analysis.db`; dry-run candidate telemetry and simulated after-cost outcomes do not write to `data/trades.db`, `trades`, or `intraday_tax_ledger`.
 - Stage 1 T1.6 is shipped: dry-run reports use separate `*_dry_run` filenames, and end-of-day dry-run/live saves generate daily Chan evidence snapshots with candidate counts, after-cost outcomes, config hash, DB source, and red flags.
-- Stage 1 T1.7 is shipped: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, selecting only VWAP-stretch plus RSI-exhaustion mean reversion for dry-run; legacy blended NoAI remains available only as `NOAI_LEGACY_FULL` comparison/control.
+- Stage 1 T1.7 is shipped: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, selecting only VWAP-stretch plus RSI-exhaustion mean reversion for dry-run; legacy blended NoAI remains available only as `NOAI_LEGACY_FULL` comparison/control. Legacy rolling-PF, directional-pause, and opposing-thin performance vetoes are skipped for this research profile so old mixed-strategy losses do not block new MR evidence.
 - Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
 - Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
 - Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
@@ -91,7 +91,7 @@ Follow the staged roadmap unless the user explicitly changes direction:
 Continue Stage 1.7, not Stage 2 promotion:
 
 - Keep live trading paused. Do not place new trades or require Zerodha paid/dev trading APIs unless the user explicitly recharges/enables them for broker-side testing.
-- Current strategy config is `STRATEGY_CONFIG_VERSION = "v1.1-2026-05-18"` with `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"`.
+- Current strategy config is `STRATEGY_CONFIG_VERSION = "v1.2-2026-05-18"` with `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"`.
 - Before editing data code, check both repos: `git status --short --branch` and `git -C ../ai-portfolio-backtest-data status --short --branch`.
 - Run the data-safety smoke tests from `copilot/trade-chan-reset.md` when data scripts change.
 - Next work is to run NoAI dry-run forward sessions using `NOAI_SIMPLE_MR_BASELINE`, then compare those dry-run analysis rows against replay under the same config hash. Keep actual dashboard/tax P&L sourced only from live, verified `intraday_tax_ledger` rows.

@@ -37,6 +37,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T1.7a | Risk | Simple MR research dry-runs no longer inherit legacy rolling-PF, directional-pause, or opposing-thin performance vetoes, and zero-entry scans keep collecting evidence instead of ending the session early. |
 | T1.7 | Indicators | NoAI dry-run selection now defaults to `NOAI_SIMPLE_MR_BASELINE`: VWAP-stretch plus RSI-exhaustion mean reversion only, with legacy blended alpha retained only as a comparison profile. |
 | T1.6 | Infra | Daily trade reports now generate Chan evidence snapshots, and dry-run report files are separated from live report files so research artifacts cannot merge into dashboard/tax actuals. |
 | T1.5 | Infra | Dry-run evidence now writes to a separate analysis database with simulated regulatory charges, keeping actual dashboard and tax P&L limited to live ledger rows. |

@@ -14,8 +14,9 @@ The old roadmap tried to be a backlog, a completed-features archive, a bug-fix l
 | Capital scaling | Blocked until `scripts/trade/promotion_check.py` returns PASS on a fresh forward window. |
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
-| Strategy version in config | `v1.1-2026-05-18`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
+| Strategy version in config | `v1.2-2026-05-18`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
 | Roadmap operating mode | Stage 1.7 Full-Fidelity Replay + Strategy Isolation: T1.0-T1.6 evidence plumbing is shipped, T1.7 simple MR baseline is active, and next is dry-run forward evidence under the new config hash. |
+| Dry-run evidence status | The 2026-05-18 pre-fix dry-run is excluded from evidence. Its dry-run report/evidence files and dry-run analysis rows were purged because legacy entry/performance gates contaminated the sample. |
 
 ## Ground Rules
 
@@ -46,7 +47,7 @@ This is the financial-analyst decision for the current strategy set under the Ch
 
 | Strategy / family | Role now | Decision |
 |---|---|---|
-| `NOAI_SIMPLE_MR_BASELINE` | Current forward dry-run base | Active NoAI profile from 2026-05-18. It disables the blended alpha soup and selects only VWAP-stretch plus RSI-exhaustion mean reversion. Live trading remains paused. |
+| `NOAI_SIMPLE_MR_BASELINE` | Current forward dry-run base | Active NoAI profile from 2026-05-18. It disables the blended alpha soup and selects only VWAP-stretch plus RSI-exhaustion mean reversion. Legacy outcome-based performance pauses are skipped for this research profile so old mixed-strategy losses do not veto the new baseline. Live trading remains paused. |
 | `NOAI_LEGACY_FULL` / old blended score | Replay/control only | Keep available for historical comparison, but do not use as the default dry-run or live strategy. Pattern, momentum, ORB, sector, breadth, and NIFTY components are not accepted as blended production alpha. |
 | `MEAN_REVERSION_V1` | First promotable candidate strategy | Promote only after the simple baseline proves clean evidence plumbing and after replay/dry-run show after-cost edge. Pattern confirmation may be added as a separate level, not hidden inside the baseline. |
 | `MOMENTUM_ORB_V1` | Second candidate strategy | Defer until replay identifies trend regimes where continuation beats false-breakout damage after costs. |
@@ -57,26 +58,41 @@ This is the financial-analyst decision for the current strategy set under the Ch
 
 Production base strategy today: none. The forward dry-run base is `NOAI_SIMPLE_MR_BASELINE`; it is a measurement baseline, not a promoted live edge. The first candidate production base, if it earns promotion, is `MEAN_REVERSION_V1`.
 
-## Strategy Enablement Timeline
+## Chan-Aligned Strategy Rollout Ladder
 
-The operating rule is to start with one clean hypothesis and add exactly one strategy family at a time. If a level fails its gate, do not add features to mask the failure; freeze the level, inspect the evidence, and either tune within that single hypothesis or retire it.
+The financial-analyst decision is to climb the ladder by strategy family, not by randomly toggling every boolean in config. `TRADE_STRATEGY_PROFILE` and future profile ids select the alpha hypothesis. Strategy-specific numeric parameters are research knobs. Execution, cost, risk, duplicate-position, budget, ATR sizing, and live-pause controls stay on unless we are explicitly testing that control as its own risk experiment.
 
-| Level | Profile / feature set | Minimum sample before next level | Gate to move forward |
-|---|---|---:|---|
-| L0 | `NOAI_SIMPLE_MR_BASELINE`: VWAP stretch + RSI exhaustion only. No pattern, ORB, MACD, SuperTrend, sector, breadth, or AI alpha in selection. | 5 dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions. | Dry-run reports, candidate telemetry, analysis DB, daily evidence, and replay comparison all work cleanly; after-cost PF is not catastrophically below 1.0 and rejection reasons are explainable. |
-| L1 | Add one reversal-pattern confirmation layer to the same MR idea. | 20 additional dry-run sessions or at least 30 new closed trades, plus a matching replay sample. | Incremental evidence must improve net PF/expectancy versus L0 under the same costs; if it only reduces trades without improving expectancy, remove it. |
-| L2 | Add one regime filter: broad-market/breadth/sector context, measured separately. | 20 more dry-run sessions or at least 60 total strategy trades, plus >= 60 historical sessions. | After-cost PF >= 1.15, expectancy >= Rs.10/trade, profitable-day rate >= 55%, and max drawdown <= 3% of average daily capital. |
-| L3 | Separate `MOMENTUM_ORB_V1` track. Do not blend with MR. | >= 60 historical sessions before any forward dry-run. | Trend-day replay must pass after costs on its own; no MR evidence can be used to justify it. |
-| L4 | Strategy blending / allocation. | Both MR and momentum have separately passed replay, forward dry-run, and live pilot gates. | Blended allocation must beat the best standalone strategy after costs and with drawdown control. |
+If a level fails, do not add the next strategy family to hide the failure. Freeze that level, inspect replay and dry-run evidence, tune only the parameters that belong to that hypothesis, then either keep the best version as a baseline or retire it.
+
+| Level | What we test | Config knobs to vary | Minimum sample | Decision to climb |
+|---|---|---|---:|---|
+| L0 | `NOAI_SIMPLE_MR_BASELINE`: VWAP stretch plus RSI exhaustion only. No pattern, ORB, MACD, SuperTrend, sector, breadth, or AI alpha in selection. | `SIMPLE_MR_MIN_VWAP_DEV_PCT`, `SIMPLE_MR_RSI_BUY_MAX`, `SIMPLE_MR_RSI_SELL_MIN`, `SIMPLE_MR_MIN_SCORE`, `SIMPLE_MR_REQUIRE_VWAP_BAND`. | 5 forward dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions. | Evidence plumbing must be clean: candidate rows, rejection gates, dry-run ledger, charge math, daily evidence files, and dryrun-vs-replay comparison all work. L0 is a measurement baseline, not a live edge. |
+| L0-P | Parameter sweep inside simple MR. Replay first, then dry-run only the best small set. | Sweep one parameter family at a time: VWAP stretch band, RSI exhaustion band, score floor, then VWAP-band requirement. Keep cost/risk gates constant. | >= 60 replay sessions for each sweep group; dry-run the best candidate configs for 5-10 sessions before choosing one L0 reference config. | Pick the config that improves after-cost expectancy and PF versus the original L0 on the same symbols/dates/cost assumptions. Do not select a setting that only looks better because it almost stopped trading. |
+| L1 | `MEAN_REVERSION_V1`: add one reversal-pattern confirmation layer to the MR idea. | Pattern-confirmation threshold and allowed reversal pattern set only. Keep the L0 MR entry core visible in telemetry. | Matching replay sample plus 20 additional dry-run sessions or at least 30 new closed trades. | Must beat L0-P after costs on PF and expectancy. If it only reduces trade count without improving expectancy, remove the pattern layer. |
+| L2 | MR plus one regime filter: market breadth, NIFTY context, sector context, or trend-strength avoidance, measured separately. | One regime threshold at a time, for example breadth cutoff, sector weakness/strength cutoff, or trend-regime exclusion. | >= 60 historical sessions and 20 more dry-run sessions, or at least 60 total MR-family dry-run trades. | After-cost PF >= 1.15, expectancy >= Rs.10/trade, profitable-day rate >= 55%, trade win rate >= 40%, and drawdown <= 3% of average daily capital. |
+| L3 | Separate `MOMENTUM_ORB_V1`: ORB/EMA/SuperTrend/MACD/ADX/breadth continuation. Do not blend with MR. | ORB window, trend-strength threshold, VWAP alignment, breadth confirmation, and time-of-day window, one group at a time. | >= 60 historical sessions before any forward dry-run. Then 20 dry-run sessions and at least 30 simulated closed trades. | Trend-day replay and dry-run must pass after costs on their own. MR evidence cannot justify momentum. |
+| L4 | Seasonality/calendar overlays: expiry, open, lunch, close, weekday, and event-window effects. | Time windows and calendar filters only, applied to a strategy that already passed without them. | >= 60 replay sessions, with enough events per bucket to avoid one-off conclusions. | Overlay must improve the already-passing standalone strategy out of sample. It is a filter/overlay, not proof of a new entry edge by itself. |
+| L5 | Pairs/statistical arbitrage research. | Pair universe, hedge ratio, spread entry/exit band, stationarity window, and two-leg cost/slippage assumptions. | Research replay only until the two-leg simulator is realistic. | Promote only if stationarity, hedge ratio, borrow/short-cover practicality, and two-leg after-cost expectancy all pass. |
+| L6 | Microstructure/tape/HFT telemetry. | No live entry knobs yet; collect spread, fill, queue, and tick/order-book evidence. | Telemetry only until positive expectancy exists and tick/order-book replay is available. | Speed work can begin only after an entry strategy has edge. It cannot rescue a losing strategy. |
+| Blend | Allocation across standalone strategies. | Capital split, max concurrent exposure, correlation cap, and regime switch rules. | MR and momentum must each pass replay, dry-run, and live pilot alone. | Blend must beat the best standalone strategy after costs and drawdown, not merely diversify a weak system. |
+
+Parameter sweep discipline:
+
+1. Freeze the strategy id, config version, config hash, date window, symbol universe, trade value, slippage, spread, and cost assumptions before comparing settings.
+2. Change one parameter group at a time. Do not move VWAP, RSI, pattern, regime, and sizing knobs in one run.
+3. Compare every variant to the same baseline over the same replay dates and the same forward dry-run review window.
+4. Prefer robust parameter ranges over a single sharp optimum. A narrow winner that fails nearby values is treated as overfit.
+5. Require enough trades to make the result meaningful. A config that produces almost no trades is marked sparse, not promoted.
+6. Keep safety/execution controls on: `TRADE_LIVE_TRADING_PAUSED`, budget limits, ATR sizing, duplicate/sector caps, net-of-charges R:R, and charge targets are not alpha toggles.
 
 ## Evidence Promotion Ladder
 
 | Step | Minimum sample | Must pass before moving on |
 |---|---:|---|
-| Baseline plumbing sanity | At least 5 `NOAI_SIMPLE_MR_BASELINE` dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions before deciding it is too sparse. | Candidate rows, dry-run outcomes, charge math, report files, daily evidence snapshots, and dryrun-vs-replay comparison commands work without contaminating live/tax data. |
+| Baseline plumbing sanity | At least 5 `NOAI_SIMPLE_MR_BASELINE` dry-run sessions and at least 30 simulated closed trades; if fewer than 30 trades, continue until 10 sessions before deciding it is too sparse. | Candidate rows, rejection reasons, dry-run outcomes, charge math, report files, daily evidence snapshots, and dryrun-vs-replay comparison commands work without contaminating live/tax data. |
 | Strategy historical replay | At least 60 historical sessions after costs, split into in-sample and out-of-sample or walk-forward segments. | Net PF >= 1.15, expectancy >= Rs.10/trade, trade win rate >= 40%, profitable-day rate >= 55%, max drawdown <= 3% of average daily capital, and no single-day outlier explains the edge. |
-| Strategy forward dry-run | At least 20 dry-run sessions and at least 30 simulated closed trades. | Same promotion metrics pass after costs, with stable telemetry and no material config drift. |
-| Live pilot | Only after replay plus dry-run pass; at least 10 live sessions and at least 20 closed trades at smallest practical capital, with no scale-up. | Live evidence does not break the dry-run/replay thesis and no dashboard/tax reconciliation gaps appear. |
+| Strategy forward dry-run | At least 20 dry-run sessions and at least 30 simulated closed trades for the selected strategy/config hash. | Same promotion metrics pass after costs, with stable telemetry, explainable rejection gates, and no material config drift. |
+| Live pilot | Only after replay plus dry-run pass; at least 10 live sessions and at least 20 closed trades at the smallest practical capital, with no scale-up. | Live evidence does not break the dry-run/replay thesis and no dashboard/tax reconciliation gaps appear. |
 | Scale consideration | Fresh 20-session live window. | `scripts/trade/promotion_check.py --window 20` returns PASS and the strategy-specific evidence still agrees with the thesis. |
 
 ## Stage 0 - Research Reset
@@ -127,7 +143,7 @@ Deliverables:
 | T1.4 | Add live-vs-replay comparison report. | Shipped 2026-05-17: `scripts/trade/live_vs_replay.py` writes config-hash-aware JSON comparison reports and red-flags missing telemetry, config drift, missing outcomes, zero overlap, live-vs-replay trade-count mismatch, and logical-vs-tax ledger count gaps. First all-symbol report is `DATA_GAP` because historical live candidate telemetry is empty. |
 | T1.5 | Separate dry-run analysis from actual live/tax data. | Shipped 2026-05-18: dry-run candidate rows use `data/trade_analysis.db`, dry-run reports auto-fill a simulated after-cost ledger via `scripts/trade/fill_dryrun_analysis.py`, and dashboard/tax data remains isolated to live rows in `data/trades.db`. |
 | T1.6 | Automate daily Chan evidence and harden dry-run report artifacts. | Shipped 2026-05-18: dry-run report files no longer share live filenames, and both dry-run and live report saves write daily evidence JSON/Markdown snapshots after the correct DB fill step. |
-| T1.7 | Isolate the first forward dry-run strategy. | Shipped 2026-05-18: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, which selects only VWAP-stretch plus RSI-exhaustion mean reversion; the order engine keeps safety/execution gates but skips old momentum-style alpha gates that would invalidate the MR test. |
+| T1.7 | Isolate the first forward dry-run strategy. | Shipped 2026-05-18: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, which selects only VWAP-stretch plus RSI-exhaustion mean reversion; the order engine keeps execution, cost, and position-risk gates, skips old momentum-style alpha gates, skips legacy outcome-based performance pauses, and keeps zero-entry dry-run scans alive for evidence collection. |
 
 T1.1 implementation record:
 

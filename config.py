@@ -136,6 +136,8 @@ class Config:
     SIMPLE_MR_RSI_BUY_MAX: float = 40.0
     SIMPLE_MR_RSI_SELL_MIN: float = 60.0
     SIMPLE_MR_REQUIRE_VWAP_BAND: bool = True
+    SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES: bool = True
+    SIMPLE_MR_KEEP_RESEARCH_SCANS_AFTER_ZERO_ENTRY: bool = True
 
     # ── Market Timing (IST) ──────────────────────────────────────
     # The bot waits until MARKET_OPEN_HOUR:MARKET_OPEN_MINUTE to
@@ -2517,7 +2519,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v1.1-2026-05-18"
+    STRATEGY_CONFIG_VERSION: str = "v1.2-2026-05-18"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Sizing / budget
@@ -2544,6 +2546,8 @@ class Config:
         "TRADE_STRATEGY_PROFILE", "SIMPLE_MR_MIN_SCORE",
         "SIMPLE_MR_MIN_VWAP_DEV_PCT", "SIMPLE_MR_RSI_BUY_MAX",
         "SIMPLE_MR_RSI_SELL_MIN", "SIMPLE_MR_REQUIRE_VWAP_BAND",
+        "SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES",
+        "SIMPLE_MR_KEEP_RESEARCH_SCANS_AFTER_ZERO_ENTRY",
         "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",

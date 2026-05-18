@@ -14,7 +14,8 @@ Surfaces the SCORED / ENTERED / REJECTED candidate rows written by
 Usage
 -----
 
-    python scripts/trade/view_candidates.py                 # today's rows
+    python scripts/trade/view_candidates.py                 # today's live rows
+    python scripts/trade/view_candidates.py --data-source dryrun
     python scripts/trade/view_candidates.py --date 2026-05-12
     python scripts/trade/view_candidates.py --since 2026-05-01
     python scripts/trade/view_candidates.py --symbol RELIANCE
@@ -36,7 +37,8 @@ import sys
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")
+LIVE_DB_PATH = os.path.join(PROJECT_ROOT, "data", "trades.db")
+ANALYSIS_DB_PATH = os.path.join(PROJECT_ROOT, "data", "trade_analysis.db")
 
 
 def _utf8_stdout():
@@ -48,11 +50,11 @@ def _utf8_stdout():
             pass
 
 
-def _connect() -> sqlite3.Connection:
-    if not os.path.isfile(DB_PATH):
-        print(f"  ! DB not found: {DB_PATH}")
+def _connect(db_path: str) -> sqlite3.Connection:
+    if not os.path.isfile(db_path):
+        print(f"  ! DB not found: {db_path}")
         sys.exit(2)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -218,6 +220,9 @@ def main():
     parser.add_argument("--symbol", help="Filter by symbol.")
     parser.add_argument("--side", choices=("BUY", "SELL"), help="Filter by side.")
     parser.add_argument("--status", help="Filter by status (SCORED / ENTERED / REJECTED).")
+    parser.add_argument("--data-source", choices=("live", "dryrun"), default="live",
+                        help="Read candidates from live trades.db or dry-run trade_analysis.db.")
+    parser.add_argument("--db", help="Explicit SQLite DB path override.")
     parser.add_argument("--summary", action="store_true",
                         help="Show counts + per-gate / per-side rollups.")
     parser.add_argument("--hash", action="store_true",
@@ -225,7 +230,10 @@ def main():
                              "tune actually moved decisions).")
     args = parser.parse_args()
 
-    conn = _connect()
+    db_path = args.db or (
+        ANALYSIS_DB_PATH if args.data_source == "dryrun" else LIVE_DB_PATH
+    )
+    conn = _connect(db_path)
     try:
         if not _table_exists(conn):
             print("  ! intraday_candidates table not found. The bot writes the "
