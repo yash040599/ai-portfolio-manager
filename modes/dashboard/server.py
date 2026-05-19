@@ -233,6 +233,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_us_run(parse_qs(url.query))
             elif url.path == "/api/us/analyse":
                 self._serve_us_analyse(parse_qs(url.query))
+            elif url.path == "/api/us/changes_since":
+                self._serve_us_changes_since()
             elif url.path.startswith("/us/"):
                 sym = url.path[len("/us/"):].strip("/")
                 self._serve_us_detail(sym)
@@ -759,6 +761,49 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_us_changes_since(self) -> None:
+        """GET /api/us/changes_since — diff the latest /us scan
+        against the immediately prior scan. Same payload shape as
+        `/api/swing/changes_since` so the dashboard JS renderer is
+        shared (positions/scores/setup are equivalent across the
+        two products). Origin: 2026-05-19 user asked for the same
+        "what changed" card on /us that /swing already has."""
+        from modes.dashboard.us_analysis import us_scan_diff
+        diff = us_scan_diff() or {}
+        # Build the human-friendly "yesterday's scan" label client-
+        # side mirror of the swing implementation.
+        age_label = ""
+        try:
+            import datetime as _dt
+            cur_d = diff.get("current_run_date") or ""
+            prior_d = diff.get("prior_run_date") or ""
+            prior_fin = diff.get("prior_run_finished_at") or ""
+            if cur_d and prior_d:
+                cur = _dt.date.fromisoformat(cur_d)
+                prior = _dt.date.fromisoformat(prior_d)
+                delta_days = (cur - prior).days
+                scan_time = prior_fin[11:16] if len(prior_fin) > 15 else ""
+                time_suffix = f" at {scan_time}" if scan_time else ""
+                if delta_days == 0:
+                    age_label = f"earlier today ({prior_d}{time_suffix})"
+                elif delta_days == 1:
+                    age_label = f"yesterday ({prior_d}{time_suffix})"
+                elif 1 < delta_days <= 4:
+                    age_label = (f"{prior.strftime('%A').lower()}'s "
+                                 f"scan ({prior_d}{time_suffix})")
+                else:
+                    age_label = f"scan from {prior_d}{time_suffix}"
+        except Exception:
+            age_label = ""
+        diff["prior_run_age_label"] = age_label
+        body = json.dumps(diff, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _serve_live_prices(self, qs: dict[str, list[str]]) -> None:
         """GET /api/live_prices?symbols=A,B,C — returns
         `{symbol: {price, change_pct, as_of}}` for the requested
@@ -1252,24 +1297,69 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        # Always use live LTP as the watchlist entry price — this is
-        # what the stock costs RIGHT NOW, not the scan's suggested entry.
+        # Watchlist entry price MUST come from a live Zerodha quote —
+        # no candidate-row / cached-close fallback. After-hours or
+        # missing-session adds were the 2026-05-18 SUNPHARMA bug
+        # (added via individual search, no Zerodha session, no
+        # candidate, so the row landed with added_price = 0).
+        # Retry the live fetch a few times before giving up so a
+        # transient rate-limit / network blip doesn't fail the add.
+        #
+        # We call `ZerodhaClient.get_quotes` directly (NOT the
+        # dashboard's `get_live_quotes` wrapper) because that
+        # wrapper has a 5s rate-limit that returns cached snapshots —
+        # for a freshly-searched symbol the cache is empty and the
+        # wrapper would short-circuit to {} on every retry.
         price = 0.0
         setup_type = ""
 
-        # Get live price from Zerodha
-        from modes.dashboard.live_quotes import get_live_quotes
-        lq = get_live_quotes([symbol])
-        price = lq.get(symbol, {}).get("price", 0)
+        # Setup type is metadata only — pull from the latest candidate
+        # row if one exists, but never let it influence the price.
+        from modes.swing.persistence import candidate_by_symbol as _cbs
+        c = _cbs(symbol)
+        if c:
+            setup_type = c.setup_type or ""
 
-        # Get setup type from candidate
-        if action_id:
-            from modes.swing.persistence import candidate_by_symbol as _cbs
-            c = _cbs(symbol)
-            if c:
-                setup_type = c.setup_type
-                if price <= 0:
-                    price = c.close_price
+        # ── Live Zerodha LTP with retries ──
+        last_err: str = ""
+        try:
+            from core.zerodha_client import ZerodhaClient
+            from core.logger import Logger as _Logger
+            zerodha = ZerodhaClient(Config, _Logger("WatchlistAdd"))
+            zerodha.login(interactive=False)
+            for attempt in range(3):
+                try:
+                    raw = zerodha.get_quotes(
+                        [{"symbol": symbol, "exchange": "NSE"}]
+                    )
+                    q = raw.get(f"NSE:{symbol}") if isinstance(raw, dict) else None
+                    if isinstance(q, dict):
+                        price = float(q.get("last_price", 0) or 0)
+                    if price > 0:
+                        break
+                    last_err = "Zerodha returned no live price"
+                except Exception as exc:  # noqa: BLE001 — surface to client
+                    last_err = str(exc)
+                time.sleep(0.6 * (attempt + 1))  # 0.6s, 1.2s back-off
+        except Exception as exc:  # noqa: BLE001 — login / construction failure
+            last_err = f"Zerodha session unavailable: {exc}"
+
+        if price <= 0:
+            body = json.dumps({
+                "ok": False,
+                "error": (
+                    f"Could not fetch live Zerodha price for {symbol} "
+                    f"after 3 attempts. {last_err or ''} "
+                    "Confirm Zerodha is logged in and the market data "
+                    "feed is reachable, then retry."
+                ).strip(),
+            }).encode("utf-8")
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         from modes.swing.persistence import add_to_watchlist
         wid = add_to_watchlist(
@@ -1284,7 +1374,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_us_watchlist_add(self) -> None:
-        """POST /api/us/watchlist/add — add a US stock to watchlist."""
+        """POST /api/us/watchlist/add — add a US stock to watchlist.
+
+        2026-05-19: rewritten to mirror the Indian swing rule —
+        watchlist entry price MUST come from a live yfinance / Yahoo
+        quote, no candidate-row / cached-close fallback. Retry is
+        the ONLY fallback. The old fallback silently inserted
+        `added_price = 0` whenever yfinance was rate-limited or the
+        client posted no price, which was the SUNPHARMA-equivalent
+        bug for US tickers.
+        """
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         data = json.loads(raw)
@@ -1297,20 +1396,41 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        try:
-            price = float(data.get("price", 0) or 0)
-        except (TypeError, ValueError):
-            price = 0.0
+
         setup_type = (data.get("setup_type") or "").strip().upper()
         exchange = (data.get("exchange") or "NASDAQ").strip().upper()
-        if price <= 0:
+
+        # ── Live yfinance price with retries ──
+        from modes.dashboard.us_analysis import fetch_us_live_price_now
+        price = 0.0
+        last_err = ""
+        for attempt in range(3):
             try:
-                from modes.dashboard.us_analysis import analyse_us_symbol
-                row = analyse_us_symbol(symbol)
-                price = float(row.get("current_price") or 0)
-                setup_type = setup_type or row.get("setup_type", "")
-            except Exception:
-                price = 0.0
+                price = fetch_us_live_price_now(symbol)
+                if price > 0:
+                    break
+                last_err = "yfinance/Yahoo returned no live price"
+            except Exception as exc:  # noqa: BLE001
+                last_err = str(exc)
+            time.sleep(0.6 * (attempt + 1))  # 0.6s, 1.2s back-off
+
+        if price <= 0:
+            body = json.dumps({
+                "ok": False,
+                "error": (
+                    f"Could not fetch live price for {symbol} after 3 "
+                    f"attempts. {last_err or ''} "
+                    "yfinance may be rate-limited — wait a moment and "
+                    "try again."
+                ).strip(),
+            }).encode("utf-8")
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         from modes.swing.persistence import add_to_watchlist
         wid = add_to_watchlist(
             symbol=symbol,

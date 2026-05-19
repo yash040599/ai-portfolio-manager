@@ -18,6 +18,10 @@ from modes.swing.signals import classify_setup, compute_swing_indicators
 
 
 US_SCAN_CACHE_PATH = os.path.join("data", "us_scan_latest.json")
+# 2026-05-19: keep the immediately previous scan on disk so the
+# "what changed since last scan" card on /us can diff the latest
+# scan vs the one before it, mirroring the Indian Swing diff card.
+US_SCAN_PRIOR_PATH = os.path.join("data", "us_scan_prior.json")
 _FX_CACHE_PATH = os.path.join("data", "usdinr_rate.json")
 
 # Live quote + FX cache (process-local, throttled).
@@ -157,9 +161,240 @@ def latest_us_scan() -> dict[str, Any] | None:
 
 
 def save_us_scan(payload: dict[str, Any]) -> None:
+    """Persist a US scan snapshot, rolling the prior snapshot to
+    `US_SCAN_PRIOR_PATH` first so the dashboard can show a
+    "what changed since last scan" diff (mirrors the Indian Swing
+    `diff_latest_vs_prior_day` behaviour, but file-backed because
+    US scans are JSON-only — no per-run SQLite table)."""
     os.makedirs(os.path.dirname(US_SCAN_CACHE_PATH), exist_ok=True)
+    # Roll latest → prior BEFORE writing the new latest, but only
+    # if the existing latest belongs to a different scan (different
+    # `finished_at`). Re-saving the same scan must not clobber the
+    # genuine prior, otherwise the diff would silently become a
+    # no-op against an identical snapshot.
+    try:
+        existing = latest_us_scan() or {}
+        new_finished = payload.get("finished_at") or ""
+        old_finished = existing.get("finished_at") or ""
+        if existing and old_finished and old_finished != new_finished:
+            with open(US_SCAN_PRIOR_PATH, "w", encoding="utf-8") as fh:
+                json.dump(existing, fh, indent=2, default=str)
+    except Exception:
+        # Diffing is a nice-to-have; never let a snapshot-roll
+        # failure block writing the fresh scan.
+        pass
     with open(US_SCAN_CACHE_PATH, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, default=str)
+
+
+def latest_us_scan_prior() -> dict[str, Any] | None:
+    """Return the most recent prior US scan snapshot (the one that
+    was the "latest" before the current `latest_us_scan()` was
+    written). Returns None if no prior snapshot exists yet — the
+    `/us` diff card renders an "only one scan on file" message."""
+    if not os.path.exists(US_SCAN_PRIOR_PATH):
+        return None
+    try:
+        with open(US_SCAN_PRIOR_PATH, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def us_scan_diff(rank_move_threshold: int = 3) -> dict[str, Any]:
+    """Compare the latest US scan vs the most recent prior scan and
+    return the same shape used by the Indian Swing
+    `/api/swing/changes_since` endpoint so the /us page can render
+    an identical "what changed" card.
+
+    The diff is computed over `candidates` only (the rows the user
+    sees in Entry Recommendations). New entries / drops / rank
+    movers are sorted by rank, ascending in magnitude.
+    """
+    latest = latest_us_scan() or {}
+    prior = latest_us_scan_prior() or {}
+
+    def _rank_map(scan: dict) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for c in (scan.get("candidates") or []):
+            sym = str(c.get("symbol") or "").strip().upper()
+            if not sym:
+                continue
+            try:
+                rank = int(c.get("priority_rank") or 0)
+            except (TypeError, ValueError):
+                rank = 0
+            try:
+                score = float(c.get("score") or 0.0)
+            except (TypeError, ValueError):
+                score = 0.0
+            out[sym] = {
+                "symbol": sym,
+                "rank": rank,
+                "score": score,
+                "setup_type": c.get("setup_type") or "",
+            }
+        return out
+
+    latest_map = _rank_map(latest)
+    prior_map = _rank_map(prior)
+
+    if not latest:
+        return {
+            "current_run_id": None,
+            "current_run_date": "",
+            "current_run_finished_at": "",
+            "prior_run_id": None,
+            "prior_run_date": "",
+            "prior_run_finished_at": "",
+            "compared_to_latest": True,
+            "skipped_runs": 0,
+            "new_entries": [],
+            "dropped": [],
+            "rank_movers": [],
+            "summary": "no US scans on file yet",
+        }
+
+    new_entries = sorted(
+        [v for s, v in latest_map.items() if s not in prior_map],
+        key=lambda d: d["rank"] or 9_999,
+    )
+    dropped = sorted(
+        [
+            {
+                "symbol": s,
+                "prior_rank": v["rank"],
+                "prior_score": v["score"],
+                "prior_setup_type": v["setup_type"],
+                "now_status": "MISSING",
+            }
+            for s, v in prior_map.items() if s not in latest_map
+        ],
+        key=lambda d: d["prior_rank"] or 9_999,
+    )
+    rank_movers: list[dict[str, Any]] = []
+    for s, v in latest_map.items():
+        if s not in prior_map:
+            continue
+        pr = prior_map[s]["rank"]
+        nr = v["rank"]
+        if pr <= 0 or nr <= 0:
+            continue
+        delta = pr - nr  # +ve = moved up
+        if abs(delta) >= int(rank_move_threshold):
+            rank_movers.append({
+                "symbol": s,
+                "prior_rank": pr,
+                "new_rank": nr,
+                "delta": delta,
+                "score_delta": round(v["score"] - prior_map[s]["score"], 2),
+            })
+    rank_movers.sort(key=lambda d: -abs(d["delta"]))
+
+    bits: list[str] = []
+    if new_entries: bits.append(f"{len(new_entries)} new")
+    if dropped: bits.append(f"{len(dropped)} dropped")
+    if rank_movers:
+        bits.append(
+            f"{len(rank_movers)} rank mover"
+            + ("s" if len(rank_movers) != 1 else "")
+        )
+    summary = " · ".join(bits) if bits else "no notable changes"
+
+    return {
+        # Mirror the swing diff payload keys so the JS renderer
+        # can be shared verbatim. We synthesise "run_id" from the
+        # finished_at timestamp string (good enough for "different
+        # scan" detection on the client).
+        "current_run_id": latest.get("finished_at") or "",
+        "current_run_date": (latest.get("finished_at") or "")[:10],
+        "current_run_finished_at": latest.get("finished_at") or "",
+        "prior_run_id": (prior.get("finished_at") or "") if prior else None,
+        "prior_run_date": ((prior.get("finished_at") or "")[:10]
+                           if prior else None),
+        "prior_run_finished_at": prior.get("finished_at") if prior else None,
+        "compared_to_latest": True,
+        "skipped_runs": 0,
+        "new_entries": new_entries,
+        "dropped": dropped,
+        "rank_movers": rank_movers,
+        "summary": summary,
+    }
+
+
+def fetch_us_live_price_now(symbol: str) -> float:
+    """Direct yfinance/Yahoo call for the freshest available price
+    of a US ticker. Bypasses the throttled `_quote_cache` so retries
+    actually hit the network and never silently return stale data.
+
+    Used by the watchlist-add endpoint to enforce the same rule as
+    Indian swing adds: the watchlist entry price MUST come from a
+    live quote, no candidate / cached-close fallback. Returns 0 if
+    every attempt fails — the caller is expected to surface an
+    error to the user instead of inserting a zero-price row.
+
+    Tries (in order):
+      1. yfinance `Ticker.fast_info["last_price"]` (one HTTP roundtrip).
+      2. Yahoo `chart` API for `range=1d&interval=1m` last finite close.
+    """
+    if not symbol:
+        return 0.0
+    yf_sym = _normalise_yfinance_symbol(symbol)
+
+    # 1. yfinance fast_info — pulls just the live quote, not history.
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(yf_sym)
+        fast = getattr(ticker, "fast_info", None)
+        if fast is not None:
+            for key in ("last_price", "lastPrice", "regular_market_price",
+                        "regularMarketPrice"):
+                try:
+                    raw = fast[key] if isinstance(fast, dict) else getattr(fast, key, None)
+                except (KeyError, AttributeError):
+                    raw = None
+                try:
+                    price = float(raw or 0)
+                except (TypeError, ValueError):
+                    price = 0.0
+                if price > 0 and _finite(price):
+                    return round(price, 4)
+    except Exception:
+        pass
+
+    # 2. Yahoo chart API — most recent 1-minute close.
+    try:
+        response = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}",
+            params={"range": "1d", "interval": "1m"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        result = ((payload.get("chart") or {}).get("result") or [{}])[0]
+        meta = result.get("meta") or {}
+        for key in ("regularMarketPrice", "previousClose"):
+            try:
+                price = float(meta.get(key) or 0)
+            except (TypeError, ValueError):
+                price = 0.0
+            if price > 0 and _finite(price):
+                return round(price, 4)
+        closes = (((result.get("indicators") or {}).get("quote")
+                   or [{}])[0].get("close") or [])
+        for value in reversed(closes):
+            try:
+                price = float(value or 0)
+            except (TypeError, ValueError):
+                continue
+            if price > 0 and _finite(price):
+                return round(price, 4)
+    except Exception:
+        pass
+
+    return 0.0
 
 
 def _build_analysis(

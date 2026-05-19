@@ -65,6 +65,25 @@ def render_us_page() -> str:
     # Daily Scan card.
     body.append(_render_scan_card(default_ticket, latest_scan))
 
+    # What-changed-since-last-scan card (mirrors the Indian Swing
+    # diff card so every analyse-run click surfaces exactly what
+    # entered, dropped, or moved in rank. Diff data is loaded
+    # client-side from `/api/us/changes_since` (see _js below) so a
+    # fresh in-page scan re-fetches it without a full reload.
+    # Origin: 2026-05-19 user asked for the same "what changed"
+    # signal on /us that they already get on /swing.
+    body.append('<div class="card">')
+    body.append('<h2>What changed since last scan</h2>')
+    body.append(
+        '<p class="muted" style="margin-bottom:10px">'
+        'Compares the latest US scan against the immediately '
+        'previous scan. New entries, drops, and rank moves of 3+ '
+        'positions are highlighted.</p>'
+    )
+    body.append('<div id="us-changes-since-host">'
+                '<span class="muted">Loading\u2026</span></div>')
+    body.append('</div>')
+
     # Single-stock analyse card.
     body.append(_render_single_stock_card(default_ticket))
 
@@ -180,7 +199,12 @@ def render_us_detail(symbol: str) -> str:
                 f'<br>{html.escape(setup_text)}</div>')
 
     ind = row.get("indicators") or {}
-    body.append(f'<table class="kvtable" data-live-symbol="{html.escape(sym)}">')
+    # Detail page lives in its own 15 s polling tier so a user
+    # actively studying one symbol gets the freshest possible
+    # quote without contending with the dashboard's 30/60 s
+    # buckets.
+    body.append(f'<table class="kvtable" data-live-symbol="{html.escape(sym)}" '
+                 f'data-live-tier="detail">')
     _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
     body.append(_kv("Exchange", html.escape(row.get("exchange", "NASDAQ"))))
     body.append(_kv("Data Source",
@@ -469,7 +493,10 @@ window.addEventListener('DOMContentLoaded', function() {
             }
             host.innerHTML = String(j.html || '');
             _applyCurrencyToAll();
-            if (_usLiveEnabled()) setTimeout(_usPollLivePrices, 50);
+            // Sections just got swapped in — cascade fresh quotes
+            // (open first, then watch, then reco) so the user sees
+            // their open book light up before the reco list.
+            if (_usLiveEnabled()) setTimeout(_usCascadePoll, 50);
         })
         .catch(function() {
             host.innerHTML = '<div class="banner warn">Could not load US sections.</div>';
@@ -550,7 +577,11 @@ def _render_recommendations(latest_scan: dict, live: dict,
         else:
             dip_cell = f'<span class="muted">{dip:.1f}%</span>'
         out.append(
-            f'<tr data-live-symbol="{html.escape(sym)}">'
+            # `data-live-tier="reco"` puts recommendation rows in
+            # the slow 60 s polling bucket — these are not
+            # money-at-risk so they don't need 15 s refreshes.
+            f'<tr data-live-symbol="{html.escape(sym)}" '
+            f'data-live-tier="reco">'
             f'<td>{int(r.get("priority_rank") or 0)}</td>'
             f'<td><a href="/us/{html.escape(sym)}" class="ticker">'
             f'{html.escape(sym)}</a></td>'
@@ -620,7 +651,14 @@ def _render_watchlist(watchlist, live: dict,
         added_short = w.added_at[:10] if w.added_at else ""
         buy_label = "I Bought More" if sym.strip().upper() in (open_symbols or set()) else "I Bought It"
         out.append(
-            f'<tr data-live-symbol="{html.escape(sym)}">'
+            # `data-watch-price` is what the live-price poller
+            # reads to recompute virtual P&L on every tick.
+            # `data-live-tier="watch"` puts watchlist rows in the
+            # 30 s polling bucket (slower than open book, faster
+            # than recommendations).
+            f'<tr data-live-symbol="{html.escape(sym)}" '
+            f'data-live-tier="watch" '
+            f'data-watch-price="{w.added_price}">'
             f'<td><a href="/us/{html.escape(sym)}" class="ticker">'
             f'{html.escape(sym)}</a></td>'
             f'<td><span class="small">{html.escape(stock_name)}</span></td>'
@@ -681,7 +719,12 @@ def _render_positions(positions: list[SwingPosition],
         pnl_cls = "pos" if upnl >= 0 else "neg"
         stock_name = (names or {}).get(p.symbol.strip().upper(), "")
         out.append(
+            # `data-live-tier="open"` puts this row in the
+            # fastest polling bucket (15 s) so live P&L on real
+            # money positions refreshes ahead of watchlist and
+            # recommendations. See `_usPollTier` in _js below.
             f'<tr data-live-symbol="{html.escape(p.symbol)}" '
+            f'data-live-tier="open" '
             f'data-entry-price="{p.entry_price}" '
             f'data-managed-qty="{p.managed_qty}">'
             f'<td><a href="/us/{html.escape(p.symbol)}" class="ticker">'
@@ -1095,52 +1138,116 @@ function toggleUsCurrency() {
     _applyCurrencyToAll();
 }
 
-/* ── Live price poller ─────────────────────────────────────── */
-function _usPollLivePrices() {
-    if (!_usLiveEnabled() || document.hidden) return;
-    var nodes = document.querySelectorAll('[data-live-symbol]');
-    if (!nodes.length) return;
+/* ── Live price poller (tiered) ────────────────────────────
+ *
+ * 2026-05-19: split the previous single 15 s poller into three
+ * independent tiers so real-money positions refresh first,
+ * watchlist next, and recommendations (no money at risk) get a
+ * slow 60 s cadence.
+ *
+ *   open   — open book rows         → every 15 s
+ *   watch  — watchlist rows         → every 30 s
+ *   reco   — recommendation rows    → every 60 s
+ *   detail — /us/<symbol> kvtable   → every 15 s
+ *
+ * Each tier fetches only its own symbols so a slow / rate-limited
+ * yfinance batch on one tier never blocks another. On toggle-on
+ * we cascade open → watch → reco with a 250 ms gap so the user
+ * visibly sees their open book come alive first.
+ */
+var _US_TIER_INTERVALS = {
+    open: 15000,
+    watch: 30000,
+    reco: 60000,
+    detail: 15000
+};
+var _US_TIER_TIMERS = {};
+
+function _usCollectTierSymbols(tier) {
+    var nodes = document.querySelectorAll(
+        '[data-live-symbol][data-live-tier="' + tier + '"]');
     var symbols = [];
     for (var i = 0; i < nodes.length; i++) {
         var s = nodes[i].getAttribute('data-live-symbol');
         if (s && symbols.indexOf(s) === -1) symbols.push(s);
     }
-    if (!symbols.length) return;
-    fetch('/api/us/live_prices?symbols=' + encodeURIComponent(symbols.join(',')))
+    return {nodes: nodes, symbols: symbols};
+}
+
+function _usApplyQuotesToNodes(nodes, quotes) {
+    for (var i = 0; i < nodes.length; i++) {
+        var row = nodes[i];
+        var sym = row.getAttribute('data-live-symbol');
+        var q = quotes[sym];
+        if (!q || !q.price) continue;
+        var price = Number(q.price || 0);
+        var change = Number(q.change_pct || 0);
+        _updateLiveCell(row, 'price', price, false);
+        _updateLiveCell(row, 'price_with_change', price, false, change);
+        var entry = parseFloat(row.getAttribute('data-entry-price') || '0');
+        var qty = parseFloat(row.getAttribute('data-managed-qty') || '0');
+        if (entry > 0 && qty > 0) {
+            var pnl = (price - entry) * qty;
+            _updateLiveCell(row, 'pnl', pnl, true);
+            var rm = (price - entry) / Math.max(entry * 0.001, 1e-6);
+            var stopAttr = parseFloat(row.getAttribute('data-stop-price') || '0');
+            if (stopAttr > 0 && entry > stopAttr) {
+                rm = (price - entry) / (entry - stopAttr);
+            }
+            var rmCell = row.querySelector('[data-live-field="r_mult"]');
+            if (rmCell) rmCell.textContent =
+                (rm >= 0 ? '+' : '') + rm.toFixed(2) + 'R';
+        }
+        var watchAdded = parseFloat(row.getAttribute('data-watch-price') || '0');
+        if (watchAdded > 0) {
+            var v = price - watchAdded;
+            var vp = (price / watchAdded - 1) * 100;
+            _updateWatchVpnl(row, v, vp);
+        }
+    }
+}
+
+function _usPollTier(tier) {
+    if (!_usLiveEnabled() || document.hidden) return;
+    var bundle = _usCollectTierSymbols(tier);
+    if (!bundle.symbols.length) return;
+    fetch('/api/us/live_prices?symbols=' +
+          encodeURIComponent(bundle.symbols.join(',')))
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            var quotes = (d && d.quotes) || {};
-            for (var i = 0; i < nodes.length; i++) {
-                var row = nodes[i];
-                var sym = row.getAttribute('data-live-symbol');
-                var q = quotes[sym];
-                if (!q || !q.price) continue;
-                var price = Number(q.price || 0);
-                var change = Number(q.change_pct || 0);
-                _updateLiveCell(row, 'price', price, false);
-                _updateLiveCell(row, 'price_with_change', price, false, change);
-                var entry = parseFloat(row.getAttribute('data-entry-price') || '0');
-                var qty = parseFloat(row.getAttribute('data-managed-qty') || '0');
-                if (entry > 0 && qty > 0) {
-                    var pnl = (price - entry) * qty;
-                    _updateLiveCell(row, 'pnl', pnl, true);
-                    var rm = (price - entry) / Math.max(entry * 0.001, 1e-6);
-                    var stopAttr = parseFloat(row.getAttribute('data-stop-price') || '0');
-                    if (stopAttr > 0 && entry > stopAttr) {
-                        rm = (price - entry) / (entry - stopAttr);
-                    }
-                    var rmCell = row.querySelector('[data-live-field="r_mult"]');
-                    if (rmCell) rmCell.textContent = (rm >= 0 ? '+' : '') + rm.toFixed(2) + 'R';
-                }
-                var watchAdded = parseFloat(row.getAttribute('data-watch-price') || '0');
-                if (watchAdded > 0) {
-                    var v = price - watchAdded;
-                    var vp = (price / watchAdded - 1) * 100;
-                    _updateWatchVpnl(row, v, vp);
-                }
-            }
+            _usApplyQuotesToNodes(bundle.nodes, (d && d.quotes) || {});
         })
         .catch(function() {});
+}
+
+/* Bottom-up cascade: open book first, watchlist second,
+ * recommendations last. Used on toggle-on and on tab-visible. */
+function _usCascadePoll() {
+    if (!_usLiveEnabled() || document.hidden) return;
+    _usPollTier('open');
+    _usPollTier('detail');
+    setTimeout(function() { _usPollTier('watch'); }, 250);
+    setTimeout(function() { _usPollTier('reco'); }, 500);
+}
+
+function _usStartTierTimers() {
+    _usStopTierTimers();
+    var tiers = ['open', 'watch', 'reco', 'detail'];
+    for (var i = 0; i < tiers.length; i++) {
+        var tier = tiers[i];
+        (function(t) {
+            _US_TIER_TIMERS[t] = setInterval(function() {
+                _usPollTier(t);
+            }, _US_TIER_INTERVALS[t]);
+        })(tier);
+    }
+}
+
+function _usStopTierTimers() {
+    for (var k in _US_TIER_TIMERS) {
+        if (_US_TIER_TIMERS[k]) clearInterval(_US_TIER_TIMERS[k]);
+        _US_TIER_TIMERS[k] = null;
+    }
 }
 
 function _usLiveEnabled() {
@@ -1152,7 +1259,12 @@ function _setUsLiveEnabled(enabled) {
     try { localStorage.setItem('us-live-prices', enabled ? '1' : '0'); }
     catch (e) {}
     _syncUsLiveToggle();
-    if (enabled) setTimeout(_usPollLivePrices, 50);
+    if (enabled) {
+        _usCascadePoll();
+        _usStartTierTimers();
+    } else {
+        _usStopTierTimers();
+    }
 }
 
 function _syncUsLiveToggle() {
@@ -1161,7 +1273,7 @@ function _syncUsLiveToggle() {
     var enabled = _usLiveEnabled();
     if (btn) btn.textContent = enabled ? 'Pause live prices' : 'Load live prices';
     if (state) state.textContent = enabled
-        ? 'Live prices refresh every 15 seconds while this tab is visible'
+        ? 'Open book 15 s · Watchlist 30 s · Recommendations 60 s'
         : 'Live prices paused';
 }
 function _updateLiveCell(row, field, price, signed, changePct) {
@@ -1175,6 +1287,16 @@ function _updateLiveCell(row, field, price, signed, changePct) {
             _fmtMoneyUsd(price, false) + '</span></span> ' +
             '<span class="muted">(' +
             (changePct >= 0 ? '+' : '') + Number(changePct || 0).toFixed(1) + '%)</span>';
+    } else if (signed) {
+        // P&L cells: wrap in pos/neg so green/red colour stays in
+        // sync with the live value (2026-05-19 fix — used to drop
+        // the colour class on every poll, causing the open-book
+        // P&L colour to flip between black and pos/neg every 15 s).
+        var pnlCls = price >= 0 ? 'pos' : 'neg';
+        cell.innerHTML =
+            '<span class="' + pnlCls + '">' +
+            '<span class="money" data-usd="' + price + '" data-signed="1">' +
+            _fmtMoneyUsd(price, true) + '</span></span>';
     } else {
         cell.innerHTML =
             '<span class="money" data-usd="' + price + '" data-signed="' +
@@ -1217,17 +1339,156 @@ window.addEventListener('DOMContentLoaded', function() {
     if (btn) btn.addEventListener('click', function() {
         _setUsLiveEnabled(!_usLiveEnabled());
     });
-    if (_usLiveEnabled()) _usPollLivePrices();
+    if (_usLiveEnabled()) {
+        // Bottom-up cascade: open book lights up first, then
+        // watchlist (250 ms later), then recommendations (500 ms).
+        _usCascadePoll();
+        _usStartTierTimers();
+    }
     setTimeout(_usPollFx, 1000);
-    setInterval(_usPollLivePrices, 15000);
     setInterval(_usPollFx, 5 * 60 * 1000);
+    if (window._loadUsChangesSince) window._loadUsChangesSince();
 });
 
 document.addEventListener('visibilitychange', function() {
     if (document.hidden) return;
-    if (_usLiveEnabled()) _usPollLivePrices();
+    // Tab came back into focus: re-cascade so the user sees fresh
+    // prices in their open book first, watchlist next, recos last.
+    if (_usLiveEnabled()) _usCascadePoll();
     _usPollFx();
 });
+
+/* ── What changed since last US scan (mirrors swing diff card) ──
+ * Loads /api/us/changes_since once on page-load and re-fetches
+ * whenever an in-page scan completes (runUsScan triggers a full
+ * location.reload so this fires again on the next render). The
+ * renderer mirrors the swing _renderChangesSince HTML so the two
+ * cards look identical.
+ */
+window._loadUsChangesSince = function () {
+    var host = document.getElementById('us-changes-since-host');
+    if (!host) return;
+    fetch('/api/us/changes_since')
+        .then(function (r) { return r.json(); })
+        .then(function (j) { _renderUsChangesSince(host, j || {}); })
+        .catch(function () {
+            host.innerHTML = '<span class="muted">Unable to load ' +
+                             'change diff.</span>';
+        });
+};
+
+function _renderUsChangesSince(host, d) {
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+        });
+    }
+    if (!d || !d.current_run_id) {
+        host.innerHTML = '<span class="muted">No US scan on file yet — ' +
+                         'click <em>Run Scan</em> above to start tracking ' +
+                         'changes.</span>';
+        return;
+    }
+    if (!d.prior_run_id) {
+        host.innerHTML = '<span class="muted">First US scan on file — ' +
+                         'the next scan will produce a diff here.</span>';
+        return;
+    }
+    var html = '';
+    var priorLabel = d.prior_run_age_label || ('scan from ' +
+                     (d.prior_run_date || '?'));
+    var curStamp = d.current_run_finished_at || d.current_run_date || '';
+    html += '<div style="font-size:13px;margin-bottom:10px">';
+    html += '<strong>Comparing latest scan</strong> ' +
+            '<span class="muted">(' + esc(d.current_run_date) +
+            (curStamp && curStamp !== d.current_run_date
+                ? ' · ' + esc(curStamp.slice(11, 16))
+                : '') + ')</span>';
+    html += ' <strong>vs ' + esc(priorLabel) + '</strong>';
+    html += '</div>';
+
+    var nIn  = (d.new_entries || []).length;
+    var nOut = (d.dropped || []).length;
+    var nMov = (d.rank_movers || []).length;
+    if (nIn === 0 && nOut === 0 && nMov === 0) {
+        html += '<div class="muted">No changes from the previous scan.</div>';
+        host.innerHTML = html;
+        return;
+    }
+
+    html += '<div style="margin-bottom:12px;font-size:13px">';
+    if (nIn) html += '<span style="background:#e6f4ea;color:#1b5e20;' +
+                    'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                    'font-weight:600">+' + nIn + ' new</span>';
+    if (nOut) html += '<span style="background:#fde8e8;color:#7a1f1f;' +
+                     'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                     'font-weight:600">−' + nOut + ' dropped</span>';
+    if (nMov) html += '<span style="background:#fff4cc;color:#7a5500;' +
+                     'padding:3px 8px;border-radius:4px;margin-right:6px;' +
+                     'font-weight:600">⇅ ' + nMov + ' rank mover' +
+                     (nMov === 1 ? '' : 's') + '</span>';
+    html += '</div>';
+
+    function _link(sym) {
+        return '<a href="/us/' + encodeURIComponent(sym) +
+               '" style="font-weight:600;color:var(--fg)">' +
+               esc(sym) + '</a>';
+    }
+
+    if (nIn) {
+        html += '<div style="margin-bottom:10px"><strong>New entries</strong>' +
+                ' <span class="muted">— in the latest scan but not in ' +
+                esc(priorLabel) + ':</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.new_entries.forEach(function (e) {
+            html += '• ' + _link(e.symbol) +
+                    ' <span class="muted">(rank #' + e.rank +
+                    ', score ' + (Number(e.score) || 0).toFixed(1) +
+                    ', ' + esc(e.setup_type || '') + ')</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    if (nOut) {
+        html += '<div style="margin-bottom:10px"><strong>Dropped</strong>' +
+                ' <span class="muted">— were in ' + esc(priorLabel) +
+                ' but not in the latest scan:</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.dropped.forEach(function (e) {
+            html += '• ' + _link(e.symbol) +
+                    ' <span class="muted">(was rank #' + e.prior_rank +
+                    ', score ' + (Number(e.prior_score) || 0).toFixed(1) +
+                    ', ' + esc(e.prior_setup_type || '') +
+                    ') — not present in latest</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    if (nMov) {
+        html += '<div style="margin-bottom:6px"><strong>Rank movers</strong>' +
+                ' <span class="muted">— in both scans, |Δrank| ≥ 3:' +
+                '</span><br>';
+        html += '<div style="margin-top:6px;font-size:13px;line-height:1.8">';
+        d.rank_movers.forEach(function (e) {
+            var dir = e.delta > 0 ? '↑' : '↓';
+            var col = e.delta > 0 ? '#1b5e20' : '#7a1f1f';
+            html += '• ' + _link(e.symbol) +
+                    ' <span style="color:' + col + ';font-weight:600">' +
+                    dir + Math.abs(e.delta) + '</span> ' +
+                    '<span class="muted">(#' + e.prior_rank +
+                    ' → #' + e.new_rank;
+            if (e.score_delta && Math.abs(e.score_delta) >= 0.1) {
+                html += ', Δscore ' +
+                        (e.score_delta > 0 ? '+' : '') +
+                        Number(e.score_delta).toFixed(1);
+            }
+            html += ')</span><br>';
+        });
+        html += '</div></div>';
+    }
+
+    host.innerHTML = html;
+}
 
 /* ── Scan controls ─────────────────────────────────────────── */
 function _scanBanner(msg, kind) {
