@@ -6,7 +6,7 @@ verified-only filters can be changed from the webpage itself
 webpage directly"). Stdlib only — no Flask, no WSGI runner.
 
 Routes:
-    GET /              -> HTML shell with the initial payload inlined.
+    GET /              -> Lightweight dashboard home page.
     GET /api/data      -> JSON payload for a given filter combination.
     GET /favicon.ico   -> 204 (silences the browser).
 
@@ -21,6 +21,7 @@ import datetime
 import json
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -40,25 +41,40 @@ from modes.dashboard.metrics import (
     cumulative_series,
     headline_pnl,
 )
-from modes.dashboard.render_html import build_payload, render_shell
-from modes.dashboard.chan_page import render_chan_page
-from modes.dashboard.portfolio_page import (
-    render_login_page,
-    render_portfolio_page,
-    render_status_json,
-    render_stock_chart_json,
-    render_stock_drilldown,
-)
-from modes.dashboard.portfolio_actions import submit_run
-from modes.dashboard.theory_page import render_theory_page
-from modes.dashboard.tax_page import render_tax_api, render_tax_page_v2
 from modes.dashboard.verdict import LadderRung, verdict_for
-from modes.dashboard.swing_page import (
-    render_swing_page, render_swing_data_json, render_swing_status_json,
-    render_swing_detail,
-)
-from modes.dashboard.us_page import render_us_detail, render_us_page
-from modes.dashboard.swing_actions import submit_swing_run
+
+
+_RENDER_CACHE_TTL_SECS = 45.0
+_RENDER_CACHE_LOCK = threading.Lock()
+_RENDER_CACHE: dict[str, tuple[float, bytes, str]] = {}
+
+
+def _cached_response(key: str) -> tuple[bytes, str] | None:
+    now = time.monotonic()
+    with _RENDER_CACHE_LOCK:
+        item = _RENDER_CACHE.get(key)
+        if not item:
+            return None
+        ts, body, content_type = item
+        if now - ts > _RENDER_CACHE_TTL_SECS:
+            _RENDER_CACHE.pop(key, None)
+            return None
+        return body, content_type
+
+
+def _store_cached_response(key: str, body: bytes, content_type: str) -> None:
+    with _RENDER_CACHE_LOCK:
+        _RENDER_CACHE[key] = (time.monotonic(), body, content_type)
+
+
+def _invalidate_render_cache(prefix: str | None = None) -> None:
+    with _RENDER_CACHE_LOCK:
+        if prefix is None:
+            _RENDER_CACHE.clear()
+            return
+        for key in list(_RENDER_CACHE):
+            if key.startswith(prefix):
+                _RENDER_CACHE.pop(key, None)
 
 
 def _parse_int(val: str | None) -> int | None:
@@ -107,6 +123,8 @@ def compute_payload(
     include_provisional: bool,
 ) -> dict:
     """Resolve the window, fetch from DB, build the SPA JSON payload."""
+    from modes.dashboard.render_html import build_payload
+
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "daily"
 
@@ -171,12 +189,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         try:
             if url.path == "/":
-                # D24 (2026-05-12): default landing page is now the
-                # tool-wide Portfolio Analyser. The legacy intraday
-                # P&L SPA moved to /trading.
-                self.send_response(302)
-                self.send_header("Location", "/portfolio")
-                self.end_headers()
+                self._serve_home()
+            elif url.path == "/home" or url.path == "/home/":
+                self._serve_home()
             elif url.path == "/portfolio" or url.path == "/portfolio/":
                 self._serve_portfolio()
             elif url.path.startswith("/portfolio/"):
@@ -191,6 +206,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_login()
             elif url.path == "/api/run_status":
                 self._serve_run_status()
+            elif url.path == "/api/portfolio/sections":
+                self._serve_portfolio_sections()
             elif url.path == "/api/stock_chart":
                 self._serve_stock_chart(parse_qs(url.query))
             elif url.path == "/theory" or url.path == "/theory/":
@@ -210,6 +227,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing()
             elif url.path == "/us" or url.path == "/us/":
                 self._serve_us()
+            elif url.path == "/api/us/sections":
+                self._serve_us_sections()
             elif url.path == "/api/us/run":
                 self._serve_us_run(parse_qs(url.query))
             elif url.path == "/api/us/analyse":
@@ -258,8 +277,47 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     BrokenPipeError):
                 pass
 
+    def _serve_home(self) -> None:
+        from modes.dashboard.home_page import render_home_page
+        self._write_html(render_home_page().encode("utf-8"))
+
+    def _write_html(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _write_json(self, body: bytes, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_cached_html(self, key: str, render) -> None:
+        cached = _cached_response(key)
+        if cached:
+            self._write_html(cached[0])
+            return
+        body = render().encode("utf-8")
+        _store_cached_response(key, body, "text/html; charset=utf-8")
+        self._write_html(body)
+
+    def _serve_cached_json(self, key: str, render) -> None:
+        cached = _cached_response(key)
+        if cached:
+            self._write_json(cached[0])
+            return
+        body = render().encode("utf-8")
+        _store_cached_response(key, body, "application/json; charset=utf-8")
+        self._write_json(body)
+
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
+        _invalidate_render_cache()
         try:
             if url.path == "/api/analyse_run":
                 self._serve_analyse_run(parse_qs(url.query))
@@ -314,15 +372,18 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     # — Endpoints —
 
     def _serve_portfolio(self) -> None:
-        body = render_portfolio_page().encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        from modes.dashboard.portfolio_page import render_portfolio_page
+        self._serve_cached_html("page:portfolio", render_portfolio_page)
+
+    def _serve_portfolio_sections(self) -> None:
+        from modes.dashboard.portfolio_page import render_portfolio_sections_json
+        self._serve_cached_json(
+            "json:portfolio:sections",
+            render_portfolio_sections_json,
+        )
 
     def _serve_portfolio_drilldown(self, symbol: str) -> None:
+        from modes.dashboard.portfolio_page import render_stock_drilldown
         body = render_stock_drilldown(symbol).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -332,6 +393,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_login(self) -> None:
+        from modes.dashboard.portfolio_page import render_login_page
         qs = parse_qs(urlparse(self.path).query)
         ok = bool(qs.get("ok"))
         err = (qs.get("err") or [""])[0]
@@ -344,6 +406,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_chan(self) -> None:
+        from modes.dashboard.chan_page import render_chan_page
         body = render_chan_page().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -353,7 +416,16 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_run_status(self) -> None:
-        body = render_status_json().encode("utf-8")
+        from modes.dashboard.portfolio_page import render_status_json
+        raw = render_status_json()
+        try:
+            status = json.loads(raw).get("status")
+            if status in ("DONE", "FAILED"):
+                _invalidate_render_cache("page:portfolio")
+                _invalidate_render_cache("json:portfolio")
+        except Exception:
+            pass
+        body = raw.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -362,6 +434,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_stock_chart(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.portfolio_page import render_stock_chart_json
         symbol = (qs.get("symbol") or [""])[0]
         try:
             lookback = int((qs.get("lookback") or ["365"])[0])
@@ -376,6 +449,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_analyse_run(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.portfolio_actions import submit_run
         mode = (qs.get("mode") or ["NOAI"])[0].upper()
         if mode not in ("NOAI", "AI"):
             mode = "NOAI"
@@ -397,24 +471,19 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     # — Swing endpoints (D31) —
 
     def _serve_swing(self) -> None:
-        body = render_swing_page().encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        from modes.dashboard.swing_page import render_swing_page
+        self._serve_cached_html("page:swing", render_swing_page)
 
     def _serve_us(self) -> None:
-        body = render_us_page().encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        from modes.dashboard.us_page import render_us_page
+        self._serve_cached_html("page:us", render_us_page)
+
+    def _serve_us_sections(self) -> None:
+        from modes.dashboard.us_page import render_us_sections_json
+        self._serve_cached_json("json:us:sections", render_us_sections_json)
 
     def _serve_us_detail(self, symbol: str) -> None:
+        from modes.dashboard.us_page import render_us_detail
         body = render_us_detail(symbol).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -436,6 +505,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 universe=universe,
                 limit=limit,
             )
+            _invalidate_render_cache("page:us")
+            _invalidate_render_cache("json:us")
             status = 200
         except Exception as exc:
             payload = {"ok": False, "error": str(exc)[:300]}
@@ -489,6 +560,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_swing_detail(self, symbol: str) -> None:
+        from modes.dashboard.swing_page import render_swing_detail
         body = render_swing_detail(symbol).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -498,6 +570,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_swing_data(self) -> None:
+        from modes.dashboard.swing_page import render_swing_data_json
         body = render_swing_data_json().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -507,7 +580,15 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_swing_run_status(self) -> None:
-        body = render_swing_status_json().encode("utf-8")
+        from modes.dashboard.swing_page import render_swing_status_json
+        raw = render_swing_status_json()
+        try:
+            status = json.loads(raw).get("status")
+            if status in ("DONE", "FAILED"):
+                _invalidate_render_cache("page:swing")
+        except Exception:
+            pass
+        body = raw.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -819,6 +900,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_swing_run(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.swing_actions import submit_swing_run
         mode = (qs.get("mode") or ["NOAI"])[0].upper()
         if mode not in ("NOAI", "AI"):
             mode = "NOAI"
@@ -1261,6 +1343,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             executed_qty=float(data.get("qty", 0)),
             executed_price=float(data.get("price", 0)),
             stop_price=float(data.get("stop", 0)),
+            target_price=float(data.get("target", 0) or 0),
         )
         body = json.dumps({"ok": result is not None}).encode("utf-8")
         self.send_response(200)
@@ -1669,6 +1752,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _serve_shell(self) -> None:
+        from modes.dashboard.render_html import render_shell
         d_from, d_to = current_fy_window()
         payload = compute_payload(
             date_from=d_from, date_to=d_to,
@@ -1683,6 +1767,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_theory(self, slug: str = "") -> None:
+        from modes.dashboard.theory_page import render_theory_page
         body = render_theory_page(slug or "statistics").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1693,6 +1778,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
     # — /tax —
     def _serve_tax(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.tax_page import render_tax_page_v2
         fy_start = _parse_int(qs.get("fy", [None])[0])
         other_income = _parse_float(qs.get("other_income", ["0"])[0], 0.0)
         is_salaried = (qs.get("is_salaried", ["1"])[0] != "0")
@@ -1709,6 +1795,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_tax_api(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.tax_page import render_tax_api
         fy_start = _parse_int(qs.get("fy", [None])[0])
         other_income = _parse_float(qs.get("other_income", ["0"])[0], 0.0)
         is_salaried = (qs.get("is_salaried", ["1"])[0] != "0")

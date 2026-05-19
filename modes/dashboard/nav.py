@@ -6,6 +6,7 @@ import html
 
 
 NAV_ITEMS = [
+    ("Home", "/"),
     ("Portfolio", "/portfolio"),
     ("Swing", "/swing"),
     ("US", "/us"),
@@ -34,7 +35,7 @@ def render_topnav(here: str = "", *, after_links: str = "") -> str:
     parts = [
         '<button class="nav-back" type="button" '
         'onclick="if (window.history.length > 1) { window.history.back(); } '
-        'else { window.location.href=\'/portfolio\'; }">Back</button>'
+        'else { window.location.href=\'/\'; }">Back</button>'
     ]
     for label, href in NAV_ITEMS:
         parts.append('<span class="sep">&middot;</span>')

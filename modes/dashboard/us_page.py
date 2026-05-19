@@ -18,7 +18,7 @@ from config import Config, now_ist
 from modes.dashboard.us_analysis import (
     analyse_us_symbol, analyse_us_universe, latest_us_scan,
     cached_us_live_quotes, get_us_live_quotes,
-    get_us_stock_name, get_usd_inr_rate,
+    get_us_stock_name, cached_usd_inr_rate, get_usd_inr_rate,
     build_us_health_checks,
 )
 from modes.dashboard.nav import render_topnav, topnav_css
@@ -42,20 +42,16 @@ def render_us_page() -> str:
     positions.sort(key=lambda p: (p.exchange, p.symbol, p.position_id))
     watchlist = _us_watchlist()
     latest_scan = latest_us_scan() or {}
-    fx = get_usd_inr_rate()
+    fx = cached_usd_inr_rate()
     pnl = realised_pnl_summary(exchange=None)  # filter to US below
     pnl = _filter_pnl_for_us(pnl)
 
-    # Live quotes for everything visible.
+    # Symbols that can opt into live polling after the first paint.
     live_syms = sorted({p.symbol for p in positions}
                        | {w.symbol for w in watchlist}
                        | {c.get("symbol", "")
                           for c in (latest_scan.get("candidates") or [])
                           if c.get("symbol")})
-    # Live quotes — use cache-only on initial render so the page
-    # is not blocked on yfinance.  The client-side poller refreshes
-    # in the background every 15 s.
-    live = cached_us_live_quotes(live_syms) if live_syms else {}
 
     body: list[str] = []
     body.append(_topnav("/us", fx))
@@ -75,21 +71,45 @@ def render_us_page() -> str:
     # Compare up to 4 stocks (matches the Indian Swing compare flow).
     body.append(_render_compare_card(default_ticket))
 
-    # Entry Recommendations.
-    body.append(_render_recommendations(latest_scan, live))
-
-    # Watchlist.
-    body.append(_render_watchlist(watchlist, live))
-
-    # Manual Add card.
-    body.append(_render_add_card())
-
-    # Open US Book.
-    body.append(_render_positions(positions, live))
+    body.append(_render_us_sections_loader())
 
     body.append('</div>')  # /.wrap
     body.append(_js(fx))
     return _wrap("US", body, fx)
+
+
+def render_us_sections_json() -> str:
+    init_db()
+    positions = _us_positions()
+    positions.sort(key=lambda p: (p.exchange, p.symbol, p.position_id))
+    watchlist = _us_watchlist()
+    latest_scan = latest_us_scan() or {}
+    live_syms = sorted({p.symbol for p in positions}
+                       | {w.symbol for w in watchlist}
+                       | {c.get("symbol", "")
+                          for c in (latest_scan.get("candidates") or [])
+                          if c.get("symbol")})
+    live = cached_us_live_quotes(live_syms) if live_syms else {}
+    names = _scan_names(latest_scan)
+    rows = latest_scan.get("candidates") or []
+    open_symbols = {p.symbol.strip().upper() for p in positions}
+    html_frag = "".join([
+        _render_broker_instructions(rows),
+        _render_recommendations(latest_scan, live, open_symbols),
+        _render_watchlist(watchlist, live, names, open_symbols),
+        _render_positions(positions, live, names),
+    ])
+    return json.dumps({"ok": True, "html": html_frag})
+
+
+def _scan_names(latest_scan: dict) -> dict[str, str]:
+    names: dict[str, str] = {}
+    for candidate in latest_scan.get("candidates") or []:
+        symbol = str(candidate.get("symbol") or "").strip().upper()
+        stock_name = str(candidate.get("stock_name") or "").strip()
+        if symbol and stock_name:
+            names[symbol] = stock_name
+    return names
 
 
 def render_us_detail(symbol: str) -> str:
@@ -124,6 +144,9 @@ def render_us_detail(symbol: str) -> str:
     payload = html.escape(json.dumps(_action_payload(row),
                                      separators=(",", ":")))
     pnl_cls = "pos" if chg >= 0 else "neg"
+    buy_label = "I Bought More" if any(
+        p.symbol.strip().upper() == sym for p in _us_positions()
+    ) else "I Bought It"
 
     # ── Summary card ───────────────────────────────────────────
     body.append('<div class="card">')
@@ -134,7 +157,7 @@ def render_us_detail(symbol: str) -> str:
         f'onchange="addUsCandidate(this)">'
         '<option value="">Add+</option>'
         '<option value="watch">Watch</option>'
-        '<option value="buy">I Bought It</option>'
+        f'<option value="buy">{html.escape(buy_label)}</option>'
         '</select></div>'
     )
 
@@ -276,8 +299,12 @@ def _render_freshness(latest_scan: dict, has_live: bool,
     else:
         parts.append('No US analysis run yet.')
     if has_live:
-        parts.append('Live prices refresh every 15 seconds '
-                     '(yfinance polling)')
+        parts.append(
+            '<button id="us-live-toggle" class="action alt" '
+            'style="padding:3px 8px;font-size:12px" type="button">'
+            'Load live prices</button> '
+            '<span id="us-live-state">Live prices paused</span>'
+        )
     rate = float(fx.get("rate") or 0.0)
     if rate > 0:
         fx_ts = (fx.get("as_of", "")[:16].replace("T", " "))
@@ -292,9 +319,7 @@ def _render_pnl_card(pnl: dict, positions: list[SwingPosition]) -> str:
     pnl_cls = "pos" if pnl.get("net_pnl", 0) >= 0 else "neg"
     out: list[str] = []
     out.append('<div class="card">')
-    out.append('<details open><summary class="collapse-header">'
-               '<h2 style="display:inline">Realised US P&amp;L</h2>'
-               '<span class="collapse-hint">click to expand</span></summary>')
+    out.append('<h2>Realised US P&amp;L</h2>')
     out.append('<table class="kvtable">')
     _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
     out.append(_kv("Gross P&amp;L",
@@ -306,7 +331,7 @@ def _render_pnl_card(pnl: dict, positions: list[SwingPosition]) -> str:
     out.append(_kv("Open Positions", str(len(positions))))
     out.append(_kv("Total Shares", f'{shares:,}'))
     out.append(_kv("Book Cost", _money_span(invested)))
-    out.append('</table></details></div>')
+    out.append('</table></div>')
     return "".join(out)
 
 
@@ -314,25 +339,8 @@ def _render_scan_card(default_ticket: float,
                        latest_scan: dict) -> str:
     out: list[str] = []
     out.append('<div class="card">')
-    out.append('<details open><summary class="collapse-header">'
-               '<h2 style="display:inline">Daily Scan</h2>'
-               '<span class="collapse-hint">click to expand</span></summary>')
+    out.append('<h2>Daily Scan</h2>')
     out.append('<div id="us-scan-banner"></div>')
-    out.append('<table class="kvtable" style="margin-bottom:12px">')
-    out.append('<tr><td>Universe</td><td>'
-               '<select id="us-scan-universe" '
-               'style="min-width:90px;padding:3px 7px;'
-               'border:1px solid #cfd9eb;border-radius:5px;'
-               'font:inherit" '
-               'title="US50 is the top 50 by market cap and runs ~2x faster than US100">'
-               '<option value="US100">US100</option>'
-               '<option value="US50">US50 (faster)</option>'
-               '</select></td></tr>')
-    out.append('<tr><td>Benchmark</td><td>SPY</td></tr>')
-    out.append('<tr><td>Data Source</td>'
-               '<td>yfinance daily candles</td></tr>')
-    out.append('<tr><td>Scanner</td>'
-               '<td>Trend setups + 52W dip-buy scan</td></tr>')
     if latest_scan:
         finished = (latest_scan.get("finished_at", "")
                     [:19].replace("T", " "))
@@ -340,21 +348,29 @@ def _render_scan_card(default_ticket: float,
         count = int(latest_scan.get("candidate_count")
                      or len(latest_scan.get("candidates") or []))
         last_universe = latest_scan.get("universe", "")
-        out.append(f'<tr><td>Last Scan</td><td>{html.escape(mode)} run '
-                   f'completed {html.escape(finished)} on '
-                   f'{html.escape(last_universe)} &middot; '
-                   f'{count} candidates</td></tr>')
+        out.append(f'<div class="muted" style="margin-bottom:12px">Last run: '
+                   f'{html.escape(mode)} on {html.escape(last_universe)} '
+                   f'&middot; ran {html.escape(finished)} '
+                   f'&middot; {count} candidates</div>')
     else:
-        out.append('<tr><td>Last Scan</td>'
-                   '<td>No US scan run yet</td></tr>')
-    out.append('</table>')
+        out.append('<div class="muted" style="margin-bottom:12px">'
+                   'No US scan run yet.</div>')
     out.append('<div style="margin-bottom:12px">')
     out.append('<label style="font-size:13px;font-weight:500">'
-               'Amount per stock ($): </label>')
+               'Universe: </label>')
+    out.append('<select id="us-scan-universe" '
+               'style="min-width:100px;padding:6px 10px;font:inherit;'
+               'border:1px solid #cfd9eb;border-radius:5px;margin-right:10px" '
+               'title="US50 is the top 50 by market cap and runs faster than US100">'
+               '<option value="US100">US100</option>'
+               '<option value="US50">US50 (faster)</option>'
+               '</select>')
+    out.append('<label style="font-size:13px;font-weight:500">'
+               'Amount per stock to invest ($): </label>')
     out.append(f'<input type="number" id="us-scan-ticket" '
                f'value="{int(default_ticket)}" '
                f'min="1" step="50" '
-               f'style="width:140px;padding:6px 10px;font:inherit;'
+               f'style="width:150px;padding:6px 10px;font:inherit;'
                f'border:1px solid #cfd9eb;border-radius:5px;'
                f'font-variant-numeric:tabular-nums" />')
     out.append('<span style="margin-left:8px;font-size:12px;color:#5d6b82">'
@@ -369,42 +385,34 @@ def _render_scan_card(default_ticket: float,
                '<span class="hint">(NoAI is default)</span>'
                '</label>')
     out.append('</div>')
-    out.append('</details></div>')
+    out.append('<div class="muted" style="font-size:12px;margin-top:8px">'
+               'Scans are manual-only from this dashboard. US data uses cached daily candles first, then refreshes only when you run a scan.'
+               '</div>')
+    out.append('</div>')
     return "".join(out)
 
 
 def _render_single_stock_card(default_ticket: float) -> str:
     return f"""
 <div class="card">
-  <details open><summary class="collapse-header">
-    <h2 style="display:inline">Analyse a Single Stock</h2>
-    <span class="collapse-hint">click to expand</span>
-  </summary>
-  <p class="muted" style="margin-bottom:10px">
-    Type any US ticker (e.g. AAPL, MSFT, NVDA) and click <em>Analyse</em>.
-    Tick the AI box to add a Claude qualitative overlay.
+    <h2>Analyse a Single Stock</h2>
+    <p class="muted" style="margin-top:0;font-size:13px">
+        Type any US ticker, including names outside the scan universe.
   </p>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
     <input type="text" id="us-analyse-symbol" placeholder="e.g. AAPL"
-           style="width:180px;padding:6px 10px;font:inherit;
+                     style="width:180px;padding:8px 10px;font:inherit;
                   border:1px solid #cfd9eb;border-radius:5px;
                   text-transform:uppercase"
            onkeydown="if(event.key==='Enter'){{analyseUsStock();}}" />
-    <label style="font-size:13px;font-weight:500">
-      Amount per stock ($):
-      <input type="number" id="us-ticket" value="{int(default_ticket)}"
-             min="1" step="50"
-             style="width:120px;padding:6px 10px;font:inherit;
-                    border:1px solid #cfd9eb;border-radius:5px" />
-    </label>
     <button class="action" onclick="analyseUsStock()">Analyse</button>
-    <label class="ai-toggle">
+        <label class="ai-toggle" title="Run Claude overlay for this one stock">
       <input type="checkbox" id="us-single-ai-toggle">
-      <span class="lbl">Use Claude AI overlay</span>
+            <span class="lbl">Use AI</span>
+            <span class="hint">(one-stock overlay)</span>
     </label>
   </div>
   <div id="us-analysis-result"></div>
-  </details>
 </div>
 """
 
@@ -412,10 +420,7 @@ def _render_single_stock_card(default_ticket: float) -> str:
 def _render_compare_card(default_ticket: float) -> str:
         return f"""
 <div class="card">
-    <details open><summary class="collapse-header">
-        <h2 style="display:inline">Compare Stocks (up to 4)</h2>
-        <span class="collapse-hint">click to expand</span>
-    </summary>
+    <h2>Compare Stocks (up to 4)</h2>
     <p class="muted" style="margin-bottom:10px">
         Side-by-side comparison of up to 4 US stocks using the same US swing
         indicators, 52w context, and SPY-relative strength used by the scan.
@@ -427,21 +432,75 @@ def _render_compare_card(default_ticket: float) -> str:
                                     border:1px solid #cfd9eb;border-radius:5px;
                                     text-transform:uppercase"
                      onkeydown="if(event.key==='Enter'){{compareUsStocks();}}" />
-        <input type="number" id="us-compare-ticket" value="{int(default_ticket)}"
-                     min="1" step="50"
-                     style="width:120px;padding:6px 10px;font:inherit;
-                                    border:1px solid #cfd9eb;border-radius:5px" />
+        <select id="us-compare-group" onchange="compareUsGroupChanged()"
+                     style="min-width:180px;padding:6px 10px;font:inherit;
+                                    border:1px solid #cfd9eb;border-radius:5px">
+            <option value="">-- or pick a group --</option>
+            <option value="AAPL, MSFT, NVDA, GOOGL">Mega-cap tech</option>
+            <option value="NVDA, AVGO, AMD, INTC">Semiconductors</option>
+            <option value="MSFT, ORCL, CRM, ADBE">Software</option>
+            <option value="SPY, QQQ, DIA, IWM">US ETFs</option>
+        </select>
         <button class="action" onclick="compareUsStocks()">Compare</button>
         <button class="action alt" onclick="compareUsClear()"
                         style="padding:5px 10px;font-size:12px">Clear</button>
     </div>
     <div id="us-compare-result-host"></div>
-    </details>
 </div>
 """
 
 
-def _render_recommendations(latest_scan: dict, live: dict) -> str:
+def _render_us_sections_loader() -> str:
+        return """
+<div id="us-sections-host">
+    <div class="card"><p class="muted"><span class="spinner"></span>
+        Loading US recommendations, watchlist, and open book...</p></div>
+</div>
+<script>
+window.addEventListener('DOMContentLoaded', function() {
+    var host = document.getElementById('us-sections-host');
+    if (!host) return;
+    fetch('/api/us/sections')
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (!j || !j.ok) {
+                host.innerHTML = '<div class="banner warn">Could not load US sections.</div>';
+                return;
+            }
+            host.innerHTML = String(j.html || '');
+            _applyCurrencyToAll();
+            if (_usLiveEnabled()) setTimeout(_usPollLivePrices, 50);
+        })
+        .catch(function() {
+            host.innerHTML = '<div class="banner warn">Could not load US sections.</div>';
+        });
+});
+</script>
+"""
+
+
+def _render_broker_instructions(rows: list[dict]) -> str:
+        if not rows:
+                return ""
+        return """
+<div class="card">
+    <h2>How to Enter in Broker</h2>
+    <ol style="font-size:13px;line-height:1.8">
+        <li>Open your US broker and search the symbol on NASDAQ / NYSE / AMEX / ARCA.</li>
+        <li>Use a delivery/cash buy, not margin unless you explicitly intend leverage.</li>
+        <li>Use the suggested quantity and limit price from the table below.</li>
+        <li>Place or note the suggested stop and target for position management.</li>
+        <li>After your order fills, come back here and choose Add+ -> I Bought It.</li>
+    </ol>
+    <div class="muted" style="font-size:12px;margin-top:6px">
+        Tip: fractional shares are supported; the confirmation popup accepts decimals.
+    </div>
+</div>
+"""
+
+
+def _render_recommendations(latest_scan: dict, live: dict,
+                            open_symbols: set[str] | None = None) -> str:
     rows = latest_scan.get("candidates") or []
     out: list[str] = []
     out.append('<div class="card">')
@@ -451,7 +510,7 @@ def _render_recommendations(latest_scan: dict, live: dict) -> str:
     out.append('<p class="muted" style="margin-bottom:10px">'
                'Combined view of trend setups (breakouts / pullbacks / '
                'continuations / support reversals) and 52w-dip buys. '
-               'Live prices refresh every 15s.</p>')
+               'Use the page-level live-price toggle to refresh quotes.</p>')
     if not rows:
         out.append('<div class="muted">No US recommendations yet. '
                    'Click <em>Run Scan</em> above to analyse the universe.</div>')
@@ -483,6 +542,7 @@ def _render_recommendations(latest_scan: dict, live: dict) -> str:
         chg = float(lq.get("change_pct") or 0.0)
         chg_cls = "pos" if chg >= 0 else "neg"
         stock_name = r.get("stock_name") or ""
+        buy_label = "I Bought More" if sym.strip().upper() in (open_symbols or set()) else "I Bought It"
         if dip >= 18:
             dip_cell = f'<span class="neg" style="font-weight:600">{dip:.1f}%</span>'
         elif dip >= 10:
@@ -512,7 +572,7 @@ def _render_recommendations(latest_scan: dict, live: dict) -> str:
             f'style="padding:4px 6px;font-size:12px">'
             f'<option value="">Add+</option>'
             f'<option value="watch">Watch</option>'
-            f'<option value="buy">I Bought It</option>'
+            f'<option value="buy">{html.escape(buy_label)}</option>'
             f'</select></td>'
             f'</tr>'
         )
@@ -521,7 +581,9 @@ def _render_recommendations(latest_scan: dict, live: dict) -> str:
     return "".join(out)
 
 
-def _render_watchlist(watchlist, live: dict) -> str:
+def _render_watchlist(watchlist, live: dict,
+                      names: dict[str, str] | None = None,
+                      open_symbols: set[str] | None = None) -> str:
     out: list[str] = []
     out.append('<div class="card">')
     out.append('<details open><summary class="collapse-header">'
@@ -529,7 +591,7 @@ def _render_watchlist(watchlist, live: dict) -> str:
                '<span class="collapse-hint">click to expand</span></summary>')
     out.append('<p class="muted" style="margin-bottom:10px">'
                'US stocks you are watching but have not bought yet. '
-               'Live price + virtual P&amp;L update every 15s.</p>')
+               'Live price + virtual P&amp;L update when live prices are enabled.</p>')
     if not watchlist:
         out.append('<div class="muted">No stocks in US watchlist. '
                    'Use Add+ on a recommendation to watch it.</div>')
@@ -554,8 +616,9 @@ def _render_watchlist(watchlist, live: dict) -> str:
             vpnl = 0.0
             vpct = 0.0
         pcls = "pos" if vpnl >= 0 else "neg"
-        stock_name = get_us_stock_name(sym)
+        stock_name = (names or {}).get(sym.strip().upper(), "")
         added_short = w.added_at[:10] if w.added_at else ""
+        buy_label = "I Bought More" if sym.strip().upper() in (open_symbols or set()) else "I Bought It"
         out.append(
             f'<tr data-live-symbol="{html.escape(sym)}">'
             f'<td><a href="/us/{html.escape(sym)}" class="ticker">'
@@ -571,9 +634,9 @@ def _render_watchlist(watchlist, live: dict) -> str:
             f'({vpct:+.1f}%)</span></td>'
             f'<td class="muted" style="font-size:11px">{html.escape(added_short)}</td>'
             f'<td>'
-            f'<button class="action alt" '
+            f'<button class="action" '
             f'onclick="promoteUsWatchlist({w.watchlist_id})" '
-            f'style="padding:4px 8px;font-size:12px">I Bought It</button> '
+            f'style="padding:4px 8px;font-size:12px">{html.escape(buy_label)}</button> '
             f'<button class="action alt" '
             f'onclick="removeUsWatchlist({w.watchlist_id})" '
             f'style="padding:4px 8px;font-size:12px">Remove</button>'
@@ -584,55 +647,28 @@ def _render_watchlist(watchlist, live: dict) -> str:
     return "".join(out)
 
 
-def _render_add_card() -> str:
-    return """
-<div class="card">
-  <details><summary class="collapse-header">
-    <h2 style="display:inline">Add US Holding (manual)</h2>
-    <span class="collapse-hint">click to expand</span>
-  </summary>
-  <div class="form-row">
-    <label>Symbol<br><input id="us-symbol" placeholder="AAPL"></label>
-    <label>Exchange<br>
-      <select id="us-exchange">
-        <option>NASDAQ</option><option>NYSE</option>
-        <option>AMEX</option><option>ARCA</option>
-      </select>
-    </label>
-    <label>Total Shares<br><input id="us-qty" type="number" min="1" step="1"></label>
-    <label>Average Cost ($)<br><input id="us-price" type="number" min="0.01" step="0.01"></label>
-    <label>Stop ($)<br><input id="us-stop" type="number" min="0" step="0.01"></label>
-    <label>Target ($)<br><input id="us-target" type="number" min="0" step="0.01"></label>
-    <button class="action" type="button" onclick="addUsPosition()">Add</button>
-  </div>
-  <div id="us-msg" class="muted"></div>
-  </details>
-</div>
-"""
-
-
 def _render_positions(positions: list[SwingPosition],
-                       live: dict) -> str:
+                       live: dict,
+                       names: dict[str, str] | None = None) -> str:
     out: list[str] = []
+    out.append('<h2>Open US Book</h2>')
     out.append('<div class="card">')
-    out.append('<details open><summary class="collapse-header">'
-               f'<h2 style="display:inline">Open US Book ({len(positions)})</h2>'
-               '<span class="collapse-hint">click to expand</span></summary>')
     if not positions:
         out.append('<div class="muted">No open US positions. '
                    'Confirm an entry recommendation above to start tracking.</div>')
-        out.append('</details></div>')
+        out.append('</div>')
         return "".join(out)
     out.append('<table class="holdings">')
     out.append('<tr>'
-               '<th>Symbol</th><th>Name</th><th>Exchange</th>'
+               '<th>Symbol</th><th>Name</th>'
                '<th class="right">Qty</th>'
-               '<th class="right">Avg Cost</th>'
+               '<th class="right">Entry</th>'
                '<th class="right">Live Price</th>'
                '<th class="right">P&amp;L</th>'
                '<th class="right">Stop</th>'
                '<th class="right">Target</th>'
                '<th class="right">R</th>'
+               '<th>Action</th>'
                '<th>Controls</th>'
                '</tr>')
     for p in positions:
@@ -643,15 +679,15 @@ def _render_positions(positions: list[SwingPosition],
         r_mult = ((lprice - p.entry_price) / risk_per
                   if risk_per > 0 else 0)
         pnl_cls = "pos" if upnl >= 0 else "neg"
-        stock_name = get_us_stock_name(p.symbol)
+        stock_name = (names or {}).get(p.symbol.strip().upper(), "")
         out.append(
             f'<tr data-live-symbol="{html.escape(p.symbol)}" '
             f'data-entry-price="{p.entry_price}" '
             f'data-managed-qty="{p.managed_qty}">'
             f'<td><a href="/us/{html.escape(p.symbol)}" class="ticker">'
-            f'{html.escape(p.symbol)}</a></td>'
+            f'{html.escape(p.symbol)}</a><br>'
+            f'<span class="small muted">{html.escape(p.exchange)}</span></td>'
             f'<td><span class="small">{html.escape(stock_name)}</span></td>'
-            f'<td>{html.escape(p.exchange)}</td>'
             f'<td class="right">{_fmt_qty(p.managed_qty)}</td>'
             f'<td class="right">{_money_span(p.entry_price)}</td>'
             f'<td class="right" data-live-field="price">{_money_span(lprice)}</td>'
@@ -660,6 +696,7 @@ def _render_positions(positions: list[SwingPosition],
             f'<td class="right">{_money_span(p.stop_price)}</td>'
             f'<td class="right">{_money_span(p.target_price)}</td>'
             f'<td class="right" data-live-field="r_mult">{r_mult:+.2f}R</td>'
+            f'<td><span class="small">{html.escape(p.daily_action or "HOLD")}</span></td>'
             f'<td>'
             f'<button class="action alt" '
             f'onclick="editUsPosition({p.position_id}, {p.managed_qty}, '
@@ -673,7 +710,7 @@ def _render_positions(positions: list[SwingPosition],
             f'</tr>'
         )
     out.append('</table>')
-    out.append('</details></div>')
+    out.append('</div>')
     return "".join(out)
 
 
@@ -786,82 +823,92 @@ def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
 
 
 _STYLE = """
-:root { --bg:#f6f8fb; --card:#ffffff; --fg:#172033; --muted:#64748b;
-        --line:#d8e1ef; --soft:#eef4fb; --accent:#0f766e;
-        --pos:#047857; --neg:#b91c1c; }
+:root { --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
+    --card: #ffffff; --line: #e5e7eb;
+    --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
+    --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
+    --soft: #f0f1f3; }
 * { box-sizing: border-box; }
-body { margin: 0; padding: 18px; background: var(--bg); color: var(--fg);
-       font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif; }
-.wrap { max-width: 1200px; margin: 0 auto; }
-.page-title { margin: 0 0 14px; font-size: 28px; letter-spacing: 0; }
-.sub { margin: -6px 0 14px; color: var(--muted); font-size: 13px;
-       line-height: 1.6; }
-.sub a, .ticker { color: var(--fg); font-weight: 700; text-decoration: none; }
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+       background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
+.wrap { max-width: 1180px; margin: 0 auto; }
+h1.page-title { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+     color: var(--muted); margin: 28px 0 8px; font-weight: 600; }
+.sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.sub a, .ticker { color: var(--accent); font-weight: 700; text-decoration: none; }
 .sub a:hover, .ticker:hover { text-decoration: underline; }
-.card { background: var(--card); border: 1px solid var(--line);
-        border-radius: 8px; padding: 16px; margin-bottom: 14px; }
-h2 { margin: 0 0 12px; font-size: 17px; }
-.muted, .empty { color: var(--muted); font-size: 13px; }
+.muted, .empty { color: var(--muted); }
 .small { font-size: 12px; color: var(--muted); }
-.pos { color: var(--pos); }
-.neg { color: var(--neg); }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 8px 9px; border-bottom: 1px solid var(--line); text-align: left; }
-th { color: var(--muted); font-size: 12px; font-weight: 700; }
-.right { text-align: right; font-variant-numeric: tabular-nums; }
-table.holdings th { white-space: nowrap; }
-table.kvtable td:first-child { color: var(--muted); width: 200px; }
+.card { background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 18px 22px; margin-bottom: 16px; }
+.card a { color: var(--accent); }
+table.holdings { width: 100%; border-collapse: collapse; font-size: 13px;
+         font-variant-numeric: tabular-nums; }
+table.holdings th { text-align: left; padding: 6px 10px;
+            border-bottom: 2px solid var(--line);
+            color: var(--muted); font-weight: 600; font-size: 11px;
+            text-transform: uppercase; letter-spacing: 0.04em; }
+table.holdings td { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+table.holdings tr:hover td { background: #f7f8fa; }
+table.holdings .right, .right { text-align: right; }
+.pos { color: var(--pos); font-weight: 600; }
+.neg { color: var(--neg); font-weight: 600; }
+.kvtable { width: 100%; border-collapse: collapse; font-size: 14px;
+       font-variant-numeric: tabular-nums; }
+.kvtable td { padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.kvtable td:last-child { text-align: right; font-weight: 500; }
+button.action, .action { font: inherit; padding: 8px 14px; border: 1px solid #1c1f23;
+        border-radius: 5px; background: #1c1f23; color: white;
+        cursor: pointer; margin-right: 8px; font-weight: 500; }
+button.action.alt, .action.alt { background: white; color: #1c1f23; }
+button.action[disabled], .action[disabled] { opacity: 0.55; cursor: not-allowed; }
+input, select { padding: 7px 9px; border: 1px solid #cfd9eb; border-radius: 5px;
+        background: white; color: var(--fg); font: inherit; }
+input#us-symbol, input#us-analyse-symbol, input#us-compare-symbols { text-transform: uppercase; }
+label { color: var(--fg); }
 .form-row { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
-label { color: var(--muted); font-size: 12px; font-weight: 600; }
-input, select { min-width: 110px; margin-top: 4px; padding: 7px 9px;
-                border: 1px solid var(--line); border-radius: 5px;
-                background: white; color: var(--fg); font: inherit; }
-input#us-symbol, input#us-analyse-symbol { text-transform: uppercase; }
-.add-dropdown { padding: 5px 7px; border: 1px solid var(--accent); border-radius: 5px;
-                background: white; color: var(--accent); font-weight: 700;
-                cursor: pointer; }
-.action { border: 1px solid var(--accent); background: var(--accent); color: white;
-          border-radius: 5px; padding: 8px 12px; font: inherit; font-weight: 700;
-          cursor: pointer; }
-.action.alt { background: white; color: var(--accent); padding: 5px 9px;
-              font-size: 12px; }
-.action:hover { filter: brightness(0.96); }
-.ai-toggle { display: inline-flex; align-items: center; gap: 6px;
-             font-size: 12px; color: var(--fg); }
-.ai-toggle .hint { color: var(--muted); font-size: 11px; }
-.banner { margin: 0 0 10px; border-radius: 7px; padding: 9px 10px;
-          background: #e0f2fe; border: 1px solid #bae6fd; color: #075985;
-          font-size: 13px; }
-.banner.warn { background: #fff4cc; border-color: #fde68a; color: #7c2d12; }
-.banner.error { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.spinner { display: inline-block; width: 10px; height: 10px;
-           border: 2px solid currentColor; border-top-color: transparent;
-           border-radius: 50%; animation: spin 0.8s linear infinite;
-           vertical-align: -1px; margin-right: 6px; }
+.add-dropdown { padding: 4px 6px; font-size: 12px; font-weight: 600;
+        border: 1px solid var(--accent); border-radius: 5px;
+        background: var(--card); color: var(--accent); cursor: pointer; }
+.banner { padding: 10px 14px; border-radius: 6px; font-size: 13px;
+      margin-bottom: 12px; }
+.banner.info { background: #eef4ff; border: 1px solid #cfd9eb; }
+.banner.warn { background: var(--warn-bg); border: 1px solid var(--warn-line);
+           color: var(--warn-fg); }
+.banner.error { background: #fdecec; border: 1px solid #f4c0c0; color: var(--neg); }
+.spinner { display: inline-block; width: 14px; height: 14px;
+       border: 2px solid #cfd9eb; border-top-color: var(--accent);
+       border-radius: 50%; animation: spin 0.8s linear infinite;
+       vertical-align: middle; margin-right: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.fx-badge { background: #ecfdf5; color: #047857; border: 1px solid #99f6e4;
-            border-radius: 999px; padding: 3px 9px; font-size: 12px;
-            font-weight: 700; margin-left: 8px; white-space: nowrap; }
+footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
+summary.collapse-header { cursor: pointer; list-style: none; display: flex;
+              align-items: center; gap: 8px; }
+summary.collapse-header::-webkit-details-marker { display: none; }
+summary.collapse-header::before { content: '\25BE'; font-size: 14px; color: var(--muted);
+                  transition: transform 0.2s; }
+details:not([open]) > summary.collapse-header::before { transform: rotate(-90deg); }
+.collapse-hint { font-size: 11px; color: var(--muted); font-weight: 400; display: none; }
+details:not([open]) > summary .collapse-hint { display: inline; }
+.ai-toggle { display: inline-flex; align-items: center; gap: 8px;
+         padding: 6px 12px; background: var(--card);
+         border: 1px solid var(--line); border-radius: 999px;
+         font-size: 13px; cursor: pointer; user-select: none; }
+.ai-toggle input { margin: 0; cursor: pointer; }
+.ai-toggle .lbl { font-weight: 500; }
+.ai-toggle .hint { color: var(--muted); font-size: 11px; }
+.fx-badge { background: #e6f4ea; color: var(--pos); border: 1px solid #cce8d4;
+        border-radius: 999px; padding: 3px 9px; font-size: 12px;
+        font-weight: 700; margin-left: 8px; white-space: nowrap; }
 .cur-toggle { display: inline-flex; align-items: center; gap: 0;
-              background: white; border: 1px solid var(--line);
-              border-radius: 999px; padding: 0; margin-left: 8px;
-              cursor: pointer; font: inherit; overflow: hidden; }
+          background: white; border: 1px solid var(--line);
+          border-radius: 999px; padding: 0; margin-left: 8px;
+          cursor: pointer; font: inherit; overflow: hidden; }
 .cur-pill { padding: 3px 10px; font-size: 12px; font-weight: 700;
-            color: var(--muted); }
+        color: var(--muted); }
 .cur-pill.active { background: var(--accent); color: white; }
 .money { font-variant-numeric: tabular-nums; }
-summary.collapse-header { cursor: pointer; list-style: none; display: flex;
-                          align-items: center; gap: 8px; margin: 0 0 12px;
-                          padding: 0; }
-summary.collapse-header::-webkit-details-marker { display: none; }
-summary.collapse-header::before { content: '\25BE'; font-size: 14px;
-                                  color: var(--muted);
-                                  transition: transform 0.15s ease; }
-details:not([open]) > summary.collapse-header::before { transform: rotate(-90deg); }
-details:not([open]) > summary.collapse-header { margin-bottom: 0; }
-.collapse-hint { font-size: 11px; color: var(--muted); font-weight: 400;
-                 display: none; }
-details:not([open]) > summary .collapse-hint { display: inline; }
 """ + topnav_css()
 
 
@@ -899,6 +946,111 @@ function _optionalNum(raw, label) {
     var s = String(raw).trim();
     if (!s) return 0;
     return _num(s, label);
+}
+function _usTicketAmount() {
+    var ticketEl = document.getElementById('us-scan-ticket') ||
+                   document.getElementById('us-ticket') ||
+                   document.getElementById('us-compare-ticket');
+    return _num(ticketEl ? ticketEl.value : '500', 'Amount per stock');
+}
+function _defaultField(v) {
+    var n = Number(v || 0);
+    if (!isFinite(n) || n <= 0) return '';
+    return String(n);
+}
+function _jsonFetch(postUrl, payload, failureLabel) {
+    fetch(postUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload || {})
+    })
+        .then(function(r) {
+            return r.json()
+                .catch(function() { return {}; })
+                .then(function(j) { return {ok: r.ok, body: j}; });
+        })
+        .then(function(res) {
+            if (!res.ok || !res.body.ok) {
+                alert(failureLabel + ': ' + (res.body.error || 'unknown error'));
+                return;
+            }
+            location.reload();
+        })
+        .catch(function(e) { alert('Network error: ' + e); });
+}
+function confirmUsPurchase(postUrl, failureLabel, extraBody, defaults) {
+    defaults = defaults || {};
+    var symbol = String(defaults.symbol || (extraBody && extraBody.symbol) || '').toUpperCase();
+    var exchange = String(defaults.exchange || (extraBody && extraBody.exchange) || 'NASDAQ').toUpperCase();
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
+        'background:rgba(0,0,0,0.4);z-index:1000;display:flex;' +
+        'align-items:center;justify-content:center;padding:16px';
+    overlay.innerHTML =
+        '<div style="background:white;border-radius:10px;padding:24px 28px;' +
+        'min-width:320px;max-width:430px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.2)">' +
+        '<h3 style="margin:0 0 6px;font-size:16px">Confirm Purchase</h3>' +
+        '<div class="muted" style="font-size:12px;margin-bottom:16px">' +
+        _esc(symbol ? (symbol + ' ' + exchange) : 'US position') + '</div>' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Quantity (shares)</label>' +
+        '<input id="us-buy-qty" type="number" min="0.0001" step="0.0001" value="' +
+        _esc(_defaultField(defaults.qty)) + '" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:12px;font-size:15px" autofocus />' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Price per share ($)</label>' +
+        '<input id="us-buy-price" type="number" min="0.01" step="0.01" value="' +
+        _esc(_defaultField(defaults.price)) + '" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:12px;font-size:15px" />' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Stop-loss price ($) <span style="color:var(--muted);font-weight:400">optional</span></label>' +
+        '<input id="us-buy-stop" type="number" min="0" step="0.01" value="' +
+        _esc(_defaultField(defaults.stop)) + '" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:12px;font-size:15px" />' +
+        '<label style="font-size:13px;font-weight:500;display:block;margin-bottom:4px">' +
+        'Target price ($) <span style="color:var(--muted);font-weight:400">optional</span></label>' +
+        '<input id="us-buy-target" type="number" min="0" step="0.01" value="' +
+        _esc(_defaultField(defaults.target)) + '" ' +
+        'style="width:100%;padding:8px 10px;font:inherit;border:1px solid #cfd9eb;' +
+        'border-radius:5px;margin-bottom:16px;font-size:15px" />' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button id="us-buy-cancel" class="action alt" style="padding:8px 16px">Cancel</button>' +
+        '<button id="us-buy-submit" class="action" style="padding:8px 16px">Confirm</button>' +
+        '</div></div>';
+    document.body.appendChild(overlay);
+    setTimeout(function() { document.getElementById('us-buy-qty').focus(); }, 50);
+    overlay.addEventListener('click', function(e) {
+        if (e.target === overlay) document.body.removeChild(overlay);
+    });
+    document.getElementById('us-buy-cancel').onclick = function() {
+        document.body.removeChild(overlay);
+    };
+    document.getElementById('us-buy-submit').onclick = function() {
+        var qty = _qty(document.getElementById('us-buy-qty').value, 'quantity');
+        if (qty === null) return;
+        var price = _num(document.getElementById('us-buy-price').value, 'price');
+        if (price === null) return;
+        var stop = _optionalNum(document.getElementById('us-buy-stop').value, 'stop');
+        if (stop === null) return;
+        var target = _optionalNum(document.getElementById('us-buy-target').value, 'target');
+        if (target === null) return;
+        var payload = Object.assign({}, extraBody || {});
+        if (symbol && !payload.symbol) payload.symbol = symbol;
+        if (exchange && !payload.exchange) payload.exchange = exchange;
+        payload.qty = qty;
+        payload.price = price;
+        payload.stop = stop;
+        payload.target = target;
+        document.body.removeChild(overlay);
+        _jsonFetch(postUrl, payload, failureLabel);
+    };
+    overlay.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') document.getElementById('us-buy-submit').click();
+        if (e.key === 'Escape') document.body.removeChild(overlay);
+    });
 }
 
 /* ── Currency toggle ───────────────────────────────────────── */
@@ -945,6 +1097,7 @@ function toggleUsCurrency() {
 
 /* ── Live price poller ─────────────────────────────────────── */
 function _usPollLivePrices() {
+    if (!_usLiveEnabled() || document.hidden) return;
     var nodes = document.querySelectorAll('[data-live-symbol]');
     if (!nodes.length) return;
     var symbols = [];
@@ -967,7 +1120,7 @@ function _usPollLivePrices() {
                 _updateLiveCell(row, 'price', price, false);
                 _updateLiveCell(row, 'price_with_change', price, false, change);
                 var entry = parseFloat(row.getAttribute('data-entry-price') || '0');
-                var qty = parseInt(row.getAttribute('data-managed-qty') || '0', 10);
+                var qty = parseFloat(row.getAttribute('data-managed-qty') || '0');
                 if (entry > 0 && qty > 0) {
                     var pnl = (price - entry) * qty;
                     _updateLiveCell(row, 'pnl', pnl, true);
@@ -988,6 +1141,28 @@ function _usPollLivePrices() {
             }
         })
         .catch(function() {});
+}
+
+function _usLiveEnabled() {
+    try { return localStorage.getItem('us-live-prices') === '1'; }
+    catch (e) { return false; }
+}
+
+function _setUsLiveEnabled(enabled) {
+    try { localStorage.setItem('us-live-prices', enabled ? '1' : '0'); }
+    catch (e) {}
+    _syncUsLiveToggle();
+    if (enabled) setTimeout(_usPollLivePrices, 50);
+}
+
+function _syncUsLiveToggle() {
+    var btn = document.getElementById('us-live-toggle');
+    var state = document.getElementById('us-live-state');
+    var enabled = _usLiveEnabled();
+    if (btn) btn.textContent = enabled ? 'Pause live prices' : 'Load live prices';
+    if (state) state.textContent = enabled
+        ? 'Live prices refresh every 15 seconds while this tab is visible'
+        : 'Live prices paused';
 }
 function _updateLiveCell(row, field, price, signed, changePct) {
     var cell = row.querySelector('[data-live-field="' + field + '"]');
@@ -1023,6 +1198,7 @@ function _updateWatchVpnl(row, vpnl, vpct) {
 
 /* ── FX poller (every 5 min) ──────────────────────────────── */
 function _usPollFx() {
+    if (document.hidden) return;
     fetch('/api/fx/usdinr')
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -1036,9 +1212,21 @@ function _usPollFx() {
 
 window.addEventListener('DOMContentLoaded', function() {
     _applyCurrencyToAll();
-    _usPollLivePrices();
+    _syncUsLiveToggle();
+    var btn = document.getElementById('us-live-toggle');
+    if (btn) btn.addEventListener('click', function() {
+        _setUsLiveEnabled(!_usLiveEnabled());
+    });
+    if (_usLiveEnabled()) _usPollLivePrices();
+    setTimeout(_usPollFx, 1000);
     setInterval(_usPollLivePrices, 15000);
     setInterval(_usPollFx, 5 * 60 * 1000);
+});
+
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) return;
+    if (_usLiveEnabled()) _usPollLivePrices();
+    _usPollFx();
 });
 
 /* ── Scan controls ─────────────────────────────────────────── */
@@ -1095,55 +1283,22 @@ function addUsCandidate(selectEl) {
     buyUsCandidate(row);
 }
 function buyUsCandidate(row) {
-    var qty = _qty(prompt('Total shares (decimals OK):', String(row.qty || '')), 'Total shares');
-    if (qty === null) return;
-    var price = _num(prompt('Average fill price ($):', String(row.price || '')), 'Average fill price');
-    if (price === null) return;
-    var stop = _optionalNum(prompt('Stop price ($, optional):', String(row.stop || '')), 'Stop');
-    var target = _optionalNum(prompt('Target price ($, optional):', String(row.target || '')), 'Target');
-    fetch('/api/us/positions/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            symbol: row.symbol,
-            exchange: row.exchange || 'NASDAQ',
-            qty: qty,
-            price: price,
-            stop: stop,
-            target: target
-        })
-    })
-        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
-        .then(function(res) {
-            if (!res.ok || !res.body.ok) alert('Add failed: ' + (res.body.error || 'unknown error'));
-            else location.reload();
-        })
-        .catch(function(e) { alert('Network error: ' + e); });
+    confirmUsPurchase('/api/us/positions/add', 'Add failed', {
+        symbol: row.symbol,
+        exchange: row.exchange || 'NASDAQ'
+    }, row || {});
 }
 function addUsPosition() {
-    var data = {
-        symbol: (document.getElementById('us-symbol') || {}).value || '',
-        exchange: (document.getElementById('us-exchange') || {}).value || 'NASDAQ',
-        qty: parseFloat((document.getElementById('us-qty') || {}).value || '0'),
-        price: parseFloat((document.getElementById('us-price') || {}).value || '0'),
-        stop: parseFloat((document.getElementById('us-stop') || {}).value || '0'),
-        target: parseFloat((document.getElementById('us-target') || {}).value || '0')
-    };
-    if (!data.symbol || data.qty <= 0 || data.price <= 0) {
-        alert('Symbol, qty, and price are required');
+    var symbolEl = document.getElementById('us-analyse-symbol');
+    var symbol = String(symbolEl ? symbolEl.value : '').trim().toUpperCase();
+    if (!symbol) {
+        alert('Type a ticker in Analyse a Single Stock first, then use Add+.');
         return;
     }
-    fetch('/api/us/positions/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(data)
-    })
-        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
-        .then(function(res) {
-            if (!res.ok || !res.body.ok) alert('Add failed: ' + (res.body.error || 'unknown error'));
-            else location.reload();
-        })
-        .catch(function(e) { alert('Network error: ' + e); });
+    confirmUsPurchase('/api/us/positions/add', 'Add failed', {
+        symbol: symbol,
+        exchange: 'NASDAQ'
+    }, {symbol: symbol, exchange: 'NASDAQ'});
 }
 function editUsPosition(posId, qty, price, stop, target) {
     var newQty = _qty(prompt('Total shares (decimals OK):', String(qty)), 'Qty');
@@ -1182,22 +1337,8 @@ function exitUsPosition(posId, currentQty) {
         .catch(function(e) { alert('Network error: ' + e); });
 }
 function promoteUsWatchlist(watchlistId) {
-    var qty = _qty(prompt('Total shares (decimals OK):'), 'Total shares');
-    if (qty === null) return;
-    var price = _num(prompt('Average fill price ($):'), 'Average fill price');
-    if (price === null) return;
-    var stop = _optionalNum(prompt('Stop ($, optional):'), 'Stop');
-    fetch('/api/us/watchlist/' + watchlistId + '/promote', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: qty, price: price, stop: stop})
-    })
-        .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
-        .then(function(res) {
-            if (!res.ok || !res.body.ok) alert('Promote failed: ' + (res.body.error || 'unknown error'));
-            else location.reload();
-        })
-        .catch(function(e) { alert('Network error: ' + e); });
+    confirmUsPurchase('/api/us/watchlist/' + watchlistId + '/promote',
+        'Promote failed', {}, {});
 }
 function removeUsWatchlist(watchlistId) {
     if (!confirm('Remove from US watchlist?')) return;
@@ -1222,14 +1363,13 @@ function _actionLabel(action) {
 }
 function analyseUsStock(symbol) {
     var symbolEl = document.getElementById('us-analyse-symbol');
-    var ticketEl = document.getElementById('us-ticket');
     var host = _analysisHost();
     var ticker = String(symbol || (symbolEl ? symbolEl.value : '') || '').trim().toUpperCase();
     if (!ticker) { alert('Symbol is required'); return; }
     if (symbolEl) symbolEl.value = ticker;
-    var ticket = _num(ticketEl ? ticketEl.value : '0', 'Amount per stock');
+    var ticket = _usTicketAmount();
     if (ticket === null) return;
-    if (host) host.innerHTML = '<div class="card"><span class="spinner"></span>Analysing ' + _esc(ticker) + '\u2026</div>';
+    if (host) host.innerHTML = '<p class="muted"><span class="spinner"></span>Analysing ' + _esc(ticker) + '\u2026</p>';
     var useAi = document.getElementById('us-single-ai-toggle') && document.getElementById('us-single-ai-toggle').checked;
     fetch('/api/us/analyse?symbol=' + encodeURIComponent(ticker) + '&ticket=' + encodeURIComponent(ticket) + '&ai=' + (useAi ? '1' : '0'))
         .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
@@ -1268,6 +1408,7 @@ function _renderUsAnalysis(row) {
     var reasons = (row.reasons || []).map(function(r) { return '<li>' + _esc(r) + '</li>'; }).join('');
     var warnings = (row.warnings || []).map(function(r) { return '<li>' + _esc(r) + '</li>'; }).join('');
     var ai = row.ai_overlay || null;
+    var border = row.action === 'BUY_CANDIDATE' ? '#1b8e3a' : '#6a7280';
     var aiHtml = '';
     if (ai && ai.raw_response) aiHtml = '<p><strong>AI Overlay</strong></p><div class="banner">' + _esc(ai.raw_response).replace(/\n/g, '<br>') + '</div>';
     else if (ai && ai.error) aiHtml = '<div class="banner error">AI overlay failed: ' + _esc(ai.error) + '</div>';
@@ -1290,9 +1431,13 @@ function _renderUsAnalysis(row) {
         'Open detail page</a>' +
         '</div>';
     host.innerHTML =
-        '<div class="card" style="background:var(--soft)">' +
-        '<h3 style="margin:0 0 6px">' + _esc(row.symbol) + ' \u2014 ' +
-        _esc(row.stock_name || '') + '</h3>' +
+        '<div style="border-left:4px solid ' + border + ';padding:10px 12px;' +
+        'background:#fafbfc;border-radius:4px;margin-top:6px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+        '<strong style="font-size:15px">' + _esc(row.symbol) + '</strong>' +
+        '<span style="font-size:12px;color:' + border + ';font-weight:600">' +
+        _actionLabel(row.action) + '</span></div>' +
+        (_esc(row.stock_name || '') ? '<div class="muted small" style="margin-bottom:6px">' + _esc(row.stock_name || '') + '</div>' : '') +
         '<div class="muted small">' + _esc(row.data_source) + ' \u00b7 data through ' + _esc(row.as_of) + ' \u00b7 benchmark ' + _esc(row.benchmark || 'SPY') + '</div>' +
         '<table class="kvtable" style="margin-top:10px">' +
         '<tr><td>Action</td><td><strong>' + _actionLabel(row.action) + '</strong></td></tr>' +
@@ -1320,13 +1465,19 @@ function _renderUsAnalysis(row) {
 /* ── Compare up to 4 US stocks ────────────────────────────── */
 function compareUsClear() {
     var input = document.getElementById('us-compare-symbols');
+    var group = document.getElementById('us-compare-group');
     var host = document.getElementById('us-compare-result-host');
     if (input) input.value = '';
+    if (group) group.value = '';
     if (host) host.innerHTML = '';
+}
+function compareUsGroupChanged() {
+    var group = document.getElementById('us-compare-group');
+    var input = document.getElementById('us-compare-symbols');
+    if (group && input && group.value) input.value = group.value;
 }
 function compareUsStocks() {
     var input = document.getElementById('us-compare-symbols');
-    var ticketEl = document.getElementById('us-compare-ticket');
     var host = document.getElementById('us-compare-result-host');
     if (!input || !host) return;
     var symbols = String(input.value || '').split(',')
@@ -1338,7 +1489,7 @@ function compareUsStocks() {
         return;
     }
     input.value = symbols.join(', ');
-    var ticket = _num(ticketEl ? ticketEl.value : '0', 'Amount per stock');
+    var ticket = _usTicketAmount();
     if (ticket === null) return;
     host.innerHTML = '<p class="muted"><span class="spinner"></span>Comparing ' +
         _esc(symbols.join(', ')) + '\u2026</p>';
@@ -1441,4 +1592,4 @@ function aiAnalyseUsSingle(symbol) {
 </script>"""
 
 
-__all__ = ["render_us_page", "render_us_detail"]
+__all__ = ["render_us_page", "render_us_detail", "render_us_sections_json"]

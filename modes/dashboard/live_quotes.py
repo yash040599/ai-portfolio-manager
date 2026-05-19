@@ -26,6 +26,18 @@ _last_poll_time = 0.0
 _cached_quotes: dict[str, dict] = {}
 
 
+def cached_live_quotes(symbols: list[str]) -> dict[str, dict]:
+    """Return only already-cached NSE quote snapshots.
+
+    This never contacts Zerodha.  Pages use it for initial render so
+    opening a dashboard page is snapshot-first; the browser can opt in
+    to live polling after the page paints.
+    """
+    if not symbols:
+        return {}
+    return {s: _cached_quotes.get(s, {}) for s in symbols if s}
+
+
 def get_live_quotes(symbols: list[str],
                     exchange: str = "NSE") -> dict[str, dict]:
     """Fetch live quotes for a list of symbols.

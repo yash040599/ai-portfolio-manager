@@ -263,9 +263,7 @@ def render_portfolio_page() -> str:
     body.append(_render_actions(snap))
     body.append(_render_charts(snap))
     body.append(_render_metrics(snap.metrics))
-    body.append(_render_gaps(snap.gaps))
-    body.append(_render_holdings_table(snap))
-    body.append(_render_suggested(snap))
+    body.append(_render_lazy_sections_loader())
     return _wrap("Portfolio", "Portfolio", "".join(body),
                  holdings_count=len(snap.holdings))
 
@@ -310,7 +308,9 @@ def _render_header(snap: PortfolioSnapshot) -> str:
 <div class="sub">
   Run completed {html.escape(when)} · most-stale field: {html.escape(age)}
   · holdings: {len(snap.holdings)}
-  <br><span class="muted" style="font-size:11px">Live prices refresh every 5 seconds (Zerodha quote polling)</span>
+  <br><button id="portfolio-live-toggle" class="action alt"
+      style="padding:3px 8px;font-size:12px" type="button">Load live prices</button>
+      <span id="portfolio-live-state" class="muted" style="font-size:11px">Live prices paused</span>
 </div>
 <div class="card">
   <table class="kvtable">
@@ -320,6 +320,49 @@ def _render_header(snap: PortfolioSnapshot) -> str:
   </table>
 </div>
 """
+
+
+def _render_lazy_sections_loader() -> str:
+    return """
+<div id="portfolio-sections-host">
+  <h2>Details</h2>
+  <div class="card"><p class="muted"><span class="spinner"></span>
+    Loading holdings, gaps, and suggested additions...</p></div>
+</div>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  var host = document.getElementById('portfolio-sections-host');
+  if (!host) return;
+  fetch('/api/portfolio/sections')
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j || !j.ok) {
+        host.innerHTML = '<div class="banner warn">Could not load portfolio sections.</div>';
+        return;
+      }
+      host.innerHTML = String(j.html || '');
+      if (window._portfolioLiveEnabled && window._portfolioLiveEnabled()) {
+        setTimeout(window._portfolioPollLivePrices || function(){}, 50);
+      }
+    })
+    .catch(function () {
+      host.innerHTML = '<div class="banner warn">Could not load portfolio sections.</div>';
+    });
+});
+</script>
+"""
+
+
+def render_portfolio_sections_json() -> str:
+    snap = latest_snapshot()
+    if snap is None:
+        return json.dumps({"ok": True, "html": ""})
+    html_frag = "".join([
+        _render_gaps(snap.gaps),
+        _render_holdings_table(snap),
+        _render_suggested(snap),
+    ])
+    return json.dumps({"ok": True, "html": html_frag})
 
 
 def _render_actions(snap: PortfolioSnapshot) -> str:
@@ -1394,6 +1437,7 @@ window.addEventListener('DOMContentLoaded', function () {
 // previous DOM untouched so a network blip never blanks out the
 // table.
 function _portfolioPollLivePrices() {
+  if (!_portfolioLiveEnabled() || document.hidden) return;
   var rows = document.querySelectorAll('tr[data-live-symbol]');
   var symbols = [];
   var seen = {};
@@ -1441,9 +1485,42 @@ function _portfolioPollLivePrices() {
     .catch(function () { /* silent — keep stale values */ });
 }
 
+function _portfolioLiveEnabled() {
+  try { return localStorage.getItem('portfolio-live-prices') === '1'; }
+  catch (e) { return false; }
+}
+window._portfolioLiveEnabled = _portfolioLiveEnabled;
+window._portfolioPollLivePrices = _portfolioPollLivePrices;
+
+function _setPortfolioLiveEnabled(enabled) {
+  try { localStorage.setItem('portfolio-live-prices', enabled ? '1' : '0'); }
+  catch (e) {}
+  _syncPortfolioLiveToggle();
+  if (enabled) setTimeout(_portfolioPollLivePrices, 50);
+}
+
+function _syncPortfolioLiveToggle() {
+  var btn = document.getElementById('portfolio-live-toggle');
+  var state = document.getElementById('portfolio-live-state');
+  var enabled = _portfolioLiveEnabled();
+  if (btn) btn.textContent = enabled ? 'Pause live prices' : 'Load live prices';
+  if (state) state.textContent = enabled
+    ? 'Live prices refresh every 5 seconds while this tab is visible'
+    : 'Live prices paused';
+}
+
 window.addEventListener('DOMContentLoaded', function () {
-  setTimeout(_portfolioPollLivePrices, 800);
+  _syncPortfolioLiveToggle();
+  var btn = document.getElementById('portfolio-live-toggle');
+  if (btn) btn.addEventListener('click', function () {
+    _setPortfolioLiveEnabled(!_portfolioLiveEnabled());
+  });
+  if (_portfolioLiveEnabled()) setTimeout(_portfolioPollLivePrices, 800);
   setInterval(_portfolioPollLivePrices, 5000);
+});
+
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden && _portfolioLiveEnabled()) _portfolioPollLivePrices();
 });
 </script>
 """

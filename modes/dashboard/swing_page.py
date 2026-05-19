@@ -10,7 +10,7 @@
 #   - Open swing book with live prices
 #   - Action controls (Done / Skip / Exit)
 #   - AI mode control
-#   - Auto-scan trigger
+#   - Manual scan trigger
 # ================================================================
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from modes.swing.persistence import (
     get_watchlist, WatchlistItem,
 )
 from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
-from modes.dashboard.live_quotes import get_live_quotes
+from modes.dashboard.live_quotes import cached_live_quotes, get_live_quotes
 from modes.dashboard.nav import render_topnav
 from modes.dashboard.swing_actions import latest_swing_status
 from shared.stock_names import get_nse_stock_name
@@ -230,11 +230,12 @@ def render_swing_page() -> str:
                     c.dip_from_ath_pct = existing.dip_from_ath_pct
                     candidates_by_symbol[c.symbol] = c
 
-    # Live quotes
+    # Snapshot-first live quotes: do not contact Zerodha during page
+    # render.  The browser can opt in to live polling after first paint.
     all_symbols = list({a.symbol for a in entry_actions} |
                        {p.symbol for p in positions} |
                        {w.symbol for w in watchlist})
-    live = get_live_quotes(all_symbols) if all_symbols else {}
+    live = cached_live_quotes(all_symbols) if all_symbols else {}
 
     # Job status
     job = latest_swing_status()
@@ -258,7 +259,10 @@ def render_swing_page() -> str:
 
     if all_symbols:
         freshness_parts.append(
-            'Live prices refresh every 5 seconds (Zerodha quote polling)')
+            '<button id="swing-live-toggle" class="action alt" '
+            'style="padding:3px 8px;font-size:12px" type="button">'
+            'Load live prices</button> '
+            '<span id="swing-live-state">Live prices paused</span>')
 
     body.append('<div class="sub">' + '<br>'.join(freshness_parts) + '</div>')
 
@@ -367,15 +371,14 @@ def render_swing_page() -> str:
         f'window._swingAiCap={ai_cap};</script>'
     )
 
-    # Auto-run note
+    # Manual-only scan note
     body.append('<div class="muted" style="font-size:12px;margin-top:8px">')
     if _is_market_open():
-        body.append('Auto-scan will run at 3:30 PM IST today (after market close) '
-                    'if this page is open. You can also run manually anytime '
-                    '\u2014 pre-close scans use yesterday\'s completed data.')
+        body.append('Scans are manual-only from this dashboard. You can run anytime; '
+                    'pre-close scans use yesterday\'s completed data.')
     else:
-        body.append('Auto-scan runs once per day after 3:30 PM IST when this '
-                    'page is open. Next auto-scan: tomorrow after market close.')
+        body.append('Scans are manual-only from this dashboard. Run after market close '
+                    'for the freshest completed daily candles.')
     body.append('</div>')
 
     # Embed flag so JS can prompt before rerun
@@ -747,6 +750,12 @@ def _render_action_table(actions: list, live: dict,
 
         cand = candidates_by_symbol.get(a.symbol)
         setup = cand.setup_type.replace("_", " ").title() if cand else "Entry"
+        is_add_more = "add-more" in (a.notes or "").lower()
+        buy_label = "I Bought More" if is_add_more else "I Bought It"
+        setup_html = html.escape(setup)
+        if is_add_more:
+            setup_html += (' <span class="muted" style="font-size:10px;'
+                           'font-weight:600">ADD MORE</span>')
         short_reason = ""
         if cand and cand.reasons:
             short_reason = cand.reasons[0]
@@ -779,7 +788,7 @@ def _render_action_table(actions: list, live: dict,
             f'{html.escape(a.symbol)}</a></td>'
             f'<td><span style="font-size:11px;color:var(--muted)">'
             f'{html.escape(stock_name)}</span></td>'
-            f'<td><span style="font-size:11px">{html.escape(setup)}</span></td>'
+            f'<td><span style="font-size:11px">{setup_html}</span></td>'
             f'<td class="right">{dip_cell}</td>'
             f'<td class="right" data-live-field="price_with_change">'
             f'<span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
@@ -810,7 +819,7 @@ def _render_action_table(actions: list, live: dict,
             f'background:var(--card);cursor:pointer">'
             f'<option value="">Add+</option>'
             f'<option value="watch">Watch</option>'
-            f'<option value="buy">I Bought It</option>'
+            f'<option value="buy">{buy_label}</option>'
             f'</select>'
             f'</td>'
             f'</tr>'
@@ -862,6 +871,14 @@ def render_swing_detail(symbol: str) -> str:
                 detail_action_id = symbol_action_id
         except Exception:
             detail_action_id = 0
+    try:
+        is_add_more_detail = any(
+            p.symbol == sym and p.status == "OPEN"
+            for p in open_positions(exchange="NSE")
+        )
+    except Exception:
+        is_add_more_detail = False
+    detail_buy_label = "I Bought More" if is_add_more_detail else "I Bought It"
 
     # Live quote
     lq = get_live_quotes([sym])
@@ -880,7 +897,7 @@ def render_swing_detail(symbol: str) -> str:
         f'background:var(--card);cursor:pointer">'
         f'<option value="">Add+</option>'
         f'<option value="watch">Watch</option>'
-        f'<option value="buy">I Bought It</option>'
+        f'<option value="buy">{detail_buy_label}</option>'
         f'</select></div>'
     )
 
@@ -1944,6 +1961,7 @@ function editPosition(posId, currentQty, currentAvg, currentStop, currentTarget)
 // Quiet on errors: a failed poll leaves the previous DOM untouched
 // so a network blip doesn't blank out the table.
 function _swingPollLivePrices() {
+    if (!_swingLiveEnabled() || document.hidden) return;
     var nodes = document.querySelectorAll('[data-live-symbol]');
     var symbols = [];
     var seen = {};
@@ -2000,10 +2018,42 @@ function _swingPollLivePrices() {
         .catch(function () { /* silent — keep stale values */ });
 }
 
-// First poll a moment after load (let the page paint), then every 5s.
+function _swingLiveEnabled() {
+    try { return localStorage.getItem('swing-live-prices') === '1'; }
+    catch (e) { return false; }
+}
+
+function _setSwingLiveEnabled(enabled) {
+    try { localStorage.setItem('swing-live-prices', enabled ? '1' : '0'); }
+    catch (e) {}
+    _syncSwingLiveToggle();
+    if (enabled) setTimeout(_swingPollLivePrices, 50);
+}
+
+function _syncSwingLiveToggle() {
+    var btn = document.getElementById('swing-live-toggle');
+    var state = document.getElementById('swing-live-state');
+    var enabled = _swingLiveEnabled();
+    if (btn) btn.textContent = enabled ? 'Pause live prices' : 'Load live prices';
+    if (state) state.textContent = enabled
+        ? 'Live prices refresh every 5 seconds while this tab is visible'
+        : 'Live prices paused';
+}
+
+// First poll only after the page paints and the user has enabled live
+// prices; hidden tabs do not poll.
 window.addEventListener('DOMContentLoaded', function () {
-    setTimeout(_swingPollLivePrices, 800);
+    _syncSwingLiveToggle();
+    var btn = document.getElementById('swing-live-toggle');
+    if (btn) btn.addEventListener('click', function () {
+        _setSwingLiveEnabled(!_swingLiveEnabled());
+    });
+    if (_swingLiveEnabled()) setTimeout(_swingPollLivePrices, 800);
     setInterval(_swingPollLivePrices, 5000);
+});
+
+document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && _swingLiveEnabled()) _swingPollLivePrices();
 });
 
 // ── Single-stock analyse (S38 search box) ──────────────────────

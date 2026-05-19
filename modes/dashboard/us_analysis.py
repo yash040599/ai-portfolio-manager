@@ -762,6 +762,22 @@ def get_us_live_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
 
 # ── USD / INR ──────────────────────────────────────────────────
 
+def cached_usd_inr_rate() -> dict[str, Any]:
+    """Return the cached USD->INR rate without touching the network."""
+    if _fx_cache and _fx_cache.get("rate"):
+        return dict(_fx_cache)
+    if os.path.exists(_FX_CACHE_PATH):
+        try:
+            with open(_FX_CACHE_PATH, encoding="utf-8") as handle:
+                disk = json.load(handle)
+            if isinstance(disk, dict) and disk.get("rate"):
+                _fx_cache.update(disk)
+                return dict(disk)
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"rate": 0.0, "as_of": "", "source": "unavailable"}
+
+
 def get_usd_inr_rate(force_refresh: bool = False) -> dict[str, Any]:
     """Return the latest USD->INR conversion rate.
 

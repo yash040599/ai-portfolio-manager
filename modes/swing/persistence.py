@@ -1429,6 +1429,7 @@ def promote_watchlist_to_position(
     executed_qty: int,
     executed_price: float,
     stop_price: float = 0.0,
+    target_price: float = 0.0,
     path: str = DB_PATH,
 ) -> SwingPosition | None:
     """Move a watchlist item to the open swing book (I bought it)."""
@@ -1454,7 +1455,8 @@ def promote_watchlist_to_position(
 
         if stop_price <= 0:
             stop_price = round(executed_price * 0.90, 2)
-        target_price = round(executed_price * 1.15, 2)
+        if target_price <= 0:
+            target_price = round(executed_price * 1.15, 2)
         return _merge_or_insert_entry_position(
             conn,
             symbol=symbol,

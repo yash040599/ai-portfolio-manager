@@ -191,13 +191,16 @@ class SwingManager:
 
         # 7b. Dip-buy scan (52-week-high reference; legacy ATH name)
         self.log.section("DIP-BUY SCAN")
-        open_symbols = {p.symbol for p in positions}
-        # Also exclude symbols already accepted by the technical scan
-        open_symbols |= {c.symbol for c in candidates if c.status == "ACCEPTED"}
+        # Exclude only symbols already represented by the technical
+        # scanner in this run. Already-owned symbols are still valid
+        # add-more candidates; confirming the action averages into
+        # the existing open position in persistence.
+        open_symbols = {c.symbol for c in candidates if c.status == "ACCEPTED"}
 
         ath_scanner = DipBuyScanner(self.cfg, self.zerodha, self.log)
         ath_candidates, ath_actions = ath_scanner.scan(
             existing_symbols=open_symbols,
+            open_symbols={p.symbol for p in positions},
             candle_to_date=candle_to_date,
             buy_amount=_capital,
         )

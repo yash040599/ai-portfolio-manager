@@ -185,19 +185,6 @@ class SwingScanner:
                     ))
                     continue
 
-                # Skip if already in open book
-                if symbol in open_symbols:
-                    candidates.append(SwingCandidate(
-                        symbol=symbol, setup_type=setup_type, score=score,
-                        status="REJECTED",
-                        rejected_reason="Already in open swing book",
-                        close_price=ind["current"],
-                        sector=SECTOR_MAP.get(symbol, "OTHER"),
-                        ath_price=round(_ath_price, 2),
-                        dip_from_ath_pct=round(_dip_pct, 2),
-                    ))
-                    continue
-
                 # Risk sizing
                 risk = compute_entry_risk(
                     current_price=ind["current"],
@@ -242,6 +229,12 @@ class SwingScanner:
                     dip_from_ath_pct=round(_dip_pct, 2),
                     reasons=reasons,
                 )
+                is_add_more = symbol in open_symbols
+                if is_add_more:
+                    c.reasons = list(c.reasons or []) + [
+                        "Already held: eligible add-more candidate; "
+                        "confirming a buy will average into the open swing book."
+                    ]
 
                 if risk.rejected:
                     c.status = "REJECTED"
@@ -291,6 +284,7 @@ class SwingScanner:
         ts = now_ist().isoformat()
         actions: list[SwingAction] = []
         for c in accepted:
+            is_add_more = c.symbol in open_symbols
             actions.append(SwingAction(
                 symbol=c.symbol,
                 exchange=c.exchange,
@@ -304,6 +298,11 @@ class SwingScanner:
                 live_price=c.close_price,
                 broker_instruction_json=c.broker_instruction_json,
                 created_at=ts,
+                notes=(
+                    "Add-more candidate: already in open swing book; "
+                    "confirmed buy will average the open position."
+                    if is_add_more else ""
+                ),
             ))
 
         self.log.info(f"Swing scan complete: {len(candidates)} seen, "
@@ -345,6 +344,7 @@ class SwingScanner:
 
         symbol = (symbol or "").strip().upper()
         sector = SECTOR_MAP.get(symbol, "OTHER")
+        open_symbols = {p.get("symbol", "") for p in existing_positions}
 
         # Pre-flight: earnings blackout (one symbol only — cheap).
         from datetime import date as _date
@@ -456,6 +456,11 @@ class SwingScanner:
                     f"Buy Rs.{buy_amount_cfg:,.0f} = {qty} shares at "
                     f"Rs.{ind['current']:,.2f}",
                 ]
+                if symbol in open_symbols:
+                    dip_reasons.append(
+                        "Already held: eligible add-more candidate; "
+                        "confirming a buy will average into the open swing book."
+                    )
                 cand = SwingCandidate(
                     symbol=symbol, exchange="NSE",
                     setup_type=SETUP_52W_DIP,
@@ -499,7 +504,11 @@ class SwingScanner:
                     live_price=cand.close_price,
                     broker_instruction_json=cand.broker_instruction_json,
                     created_at=now_ist().isoformat(),
-                    notes=f"52w-dip single-stock analyse for {symbol}",
+                    notes=(
+                        f"52w-dip add-more single-stock analyse for {symbol}"
+                        if symbol in open_symbols
+                        else f"52w-dip single-stock analyse for {symbol}"
+                    ),
                 )
                 return cand, action
 
@@ -578,14 +587,11 @@ class SwingScanner:
             reasons=reasons,
         )
 
-        # Already-in-book / risk-rejected / portfolio-cap checks.
-        # We DO surface these so the user sees why a name they
-        # searched for was rejected.
-        open_symbols = {p.get("symbol", "") for p in existing_positions}
         if symbol in open_symbols:
-            cand.status = "REJECTED"
-            cand.rejected_reason = "Already in open swing book"
-            return cand, None
+            cand.reasons = list(cand.reasons or []) + [
+                "Already held: eligible add-more candidate; "
+                "confirming a buy will average into the open swing book."
+            ]
         if risk.rejected:
             cand.status = "REJECTED"
             cand.rejected_reason = risk.rejected_reason
@@ -626,7 +632,10 @@ class SwingScanner:
             live_price=cand.close_price,
             broker_instruction_json=cand.broker_instruction_json,
             created_at=now_ist().isoformat(),
-            notes=f"Single-stock analyse for {symbol}",
+            notes=(
+                f"Add-more single-stock analyse for {symbol}"
+                if symbol in open_symbols else f"Single-stock analyse for {symbol}"
+            ),
         )
         return cand, action
 

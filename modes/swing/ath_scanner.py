@@ -106,12 +106,18 @@ class DipBuyScanner:
         buy_amount: float | None = None,
         lookback_days: int | None = None,
         existing_symbols: set[str] | None = None,
+        open_symbols: set[str] | None = None,
         candle_to_date: datetime.date | None = None,
     ) -> tuple[list[SwingCandidate], list[SwingAction]]:
         """Find stocks currently X% below their rolling 52-week high.
 
         Returns (candidates, actions) — same shape as SwingScanner.scan()
         so they integrate into the same pipeline.
+
+        `existing_symbols` means symbols already emitted by an earlier
+        scanner in this same run; they are skipped to avoid duplicate
+        recommendation rows. `open_symbols` means already-owned names;
+        those remain eligible and are labelled as add-more candidates.
 
         When dip_pct / target_pct / buy_amount / lookback_days are not
         provided they fall through to Config
@@ -121,6 +127,8 @@ class DipBuyScanner:
         """
         if existing_symbols is None:
             existing_symbols = set()
+        if open_symbols is None:
+            open_symbols = set()
 
         # Resolve effective parameters (caller > Config > module fallback).
         if dip_pct is None:
@@ -233,14 +241,17 @@ class DipBuyScanner:
                     ))
                     continue
 
-                # Already in open book
+                # Already accepted by an earlier scanner in this run.
+                # Open-book ownership is not a rejection here: add-more
+                # buys are allowed and confirmation merges/averages the
+                # existing position.
                 if symbol in existing_symbols:
                     candidates.append(SwingCandidate(
                         symbol=symbol,
                         setup_type=SETUP_52W_DIP,
                         score=round(dip_from_ref, 1),
                         status="REJECTED",
-                        rejected_reason="Already in open swing book",
+                        rejected_reason="Already accepted by technical scan",
                         close_price=current,
                         sector=sector,
                         ath_price=round(ref_high, 2),
@@ -266,6 +277,11 @@ class DipBuyScanner:
                     f"(finite-cap V2 default: 20% gain)",
                     f"Buy Rs.{buy_amount:,.0f} worth = {qty} shares at Rs.{current:,.2f}",
                 ]
+                if symbol in open_symbols:
+                    reasons.append(
+                        "Already held: eligible add-more candidate; "
+                        "confirming a buy will average into the open swing book."
+                    )
 
                 # Compute indicators for the detail page (pass NIFTY
                 # candles so `rel_strength` is populated — see the
@@ -335,6 +351,7 @@ class DipBuyScanner:
         ts = now_ist().isoformat()
         actions: list[SwingAction] = []
         for c in accepted:
+            is_add_more = c.symbol in open_symbols
             actions.append(SwingAction(
                 symbol=c.symbol,
                 exchange=c.exchange,
@@ -348,7 +365,11 @@ class DipBuyScanner:
                 live_price=c.close_price,
                 broker_instruction_json=c.broker_instruction_json,
                 created_at=ts,
-                notes=f"52w dip: {c.score:.1f}% below 52w high",
+                notes=(
+                    f"52w dip add-more: {c.score:.1f}% below 52w high"
+                    if is_add_more
+                    else f"52w dip: {c.score:.1f}% below 52w high"
+                ),
             ))
 
         self.log.info(
