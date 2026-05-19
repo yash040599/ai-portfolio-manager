@@ -3,31 +3,52 @@
 This roadmap was reset on 2026-05-15 after the Chan-framework audit:
 [docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md](audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md).
 
-The old roadmap tried to be a backlog, a completed-features archive, a bug-fix log, and a research notebook at the same time. That made it hard to see what to do next. From now on this file is only the staged plan for intraday trading. Strategy history lives in [docs/TRADE_EVOLUTION.md](TRADE_EVOLUTION.md), and detailed old rows remain available in git history before this reset.
+The staged rollout (every gate on/off, every stage's parameter sweep, every promotion bar) now lives in [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). This file is the higher-level operating plan and posture; it is **not** the per-gate inventory anymore.
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Supported live mode | Paused. No new live trades until the staged Chan-method process allows them. |
+| Stage on the ladder | **`S0_PURE_MR`** (Simple MR alpha only; every other gate is OFF at config level). See [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). |
+| Supported live mode | Paused. No new live trades until the ladder reaches `S12_LIVE_PILOT`. |
 | Runtime reset status | `Stage 0 - Chan Research Reset` is surfaced in startup logs, reports, and dashboard status; live order placement is guarded by `TRADE_LIVE_TRADING_PAUSED = True`. |
-| Capital scaling | Blocked until `scripts/trade/promotion_check.py` returns PASS on a fresh forward window. |
+| Capital scaling | Blocked. |
 | Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
-| Strategy version in config | `v1.2-2026-05-18`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
-| Roadmap operating mode | Stage 1.7 Full-Fidelity Replay + Strategy Isolation: T1.0-T1.6 evidence plumbing is shipped, T1.7 simple MR baseline is active, and next is dry-run forward evidence under the new config hash. |
-| Dry-run evidence status | The 2026-05-18 pre-fix dry-run is excluded from evidence. Its dry-run report/evidence files and dry-run analysis rows were purged because legacy entry/performance gates contaminated the sample. |
+| Strategy version in config | `v1.3-2026-05-19-S0`; `TRADE_STAGE_NAME = S0_PURE_MR`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
+| Dry-run evidence status | Earlier dry-run sessions (including 2026-05-19) were generated with non-MR gates active and have been excluded/purged. The L0 sample restarts at zero from the next dry-run session under the new `v1.3-2026-05-19-S0` config hash. |
 
 ## Ground Rules
 
-1. No new live entry gate unless it fixes a verified bug or protects against a proven safety hole.
-2. No score-weight tuning until full-fidelity replay exists.
+1. Only the gates listed under the active `TRADE_STAGE_NAME` are enabled; everything else is OFF at config level (`LOG_DISABLED_GATES` is the only inspection override).
+2. No new live entry gate unless it fixes a verified bug or protects against a proven safety hole.
 3. No capital scale-up until promotion metrics pass after costs.
-4. Every new strategy must have a strategy id, config hash, backtest result, and forward result.
-5. Strategy families must be tested separately before they are blended.
+4. Every new strategy must have a strategy id, config hash, stage name, backtest result, and forward result.
+5. Strategy families are tested separately before they are blended.
 6. If an exit gate changes, run `scripts/trade/exit_coverage_check.py`.
-7. Backtest data must be versioned outside this main tool repo, then read locally through a gitignored cache path.
-8. If a roadmap count or archive is needed, use `TRADE_EVOLUTION.md` and git history, not this file.
+7. Backtest data lives outside this main tool repo and is read locally through a gitignored cache path.
+
+## Rollout Ladder
+
+Full ladder, parameter sweeps, and promotion bars: [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md).
+
+Short form (one line per stage):
+
+| Stage | Adds | Sample to promote |
+|---|---|---|
+| `S0_PURE_MR` | Simple MR alone. No vetoes, no mid-life exits, no sizing modifiers. | 10 sessions and 30 trades |
+| `S1_MR_SLT` | Stop-loss / target tuning | 10 sessions |
+| `S2_MR_ATR` | ATR-based SL/target distance | 10 sessions |
+| `S3_MR_ATRSIZE` | ATR-based position sizing | 10 sessions |
+| `S4_MR_CHARGE` | Charge-aware R:R veto | 10 sessions |
+| `S5_MR_DAYRISK` | Day-level risk (soft-stop, peak DD, consecutive-loss, MTM CB) | 10 sessions |
+| `S6_MR_MIDEXIT` | Stagnant + momentum-kill exits | 10 sessions |
+| `S7_MR_SIGEXIT` | Signal-reversal + signal-decay exits | 10 sessions |
+| `S8_MR_TIMEOFDAY` | Lunch lull, late-entry tightening, short cutoff | 10 sessions |
+| `S9_MR_CONTEXT` | Choppy-morning pause, breadth, sector-rank, sector-cascade | 10 sessions |
+| `S10_MR_PERFPAUSE` | Directional pause + rolling-PF | 20 sessions |
+| `S11_MR_EXPIRY` | Thursday expiry adjustments | 4 expiry Thursdays |
+| `S12_LIVE_PILOT` | First live pilot, smallest capital | 10 sessions, 20 trades |
 
 ## Paused Or Deferred
 

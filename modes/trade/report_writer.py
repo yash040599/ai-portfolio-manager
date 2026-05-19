@@ -816,6 +816,7 @@ class ReportWriter:
                 "strategy_profile": strategy_profile,
                 "strategy_config_version": strategy_config_version,
                 "strategy_config_hash": strategy_config_hash,
+                "trade_stage_name": str(getattr(self.cfg, "TRADE_STAGE_NAME", "")),
                 "git_sha":      _git_short_sha(),
             },
             "positions":  positions,
@@ -836,14 +837,31 @@ class ReportWriter:
         self.log.success(f"Trading data   : {json_path}")
 
         # ── Auto-fill dry-run analysis ledger for simulated days ──
+        dryrun_analysis_updated = False
         if dry_run:
+            expected_closed = sum(
+                1
+                for p in positions
+                if p.get("status") == "CLOSED"
+                and str(p.get("order_id") or "").startswith("DRY_RUN")
+            )
             try:
                 from scripts.trade.fill_dryrun_analysis import fill_reports
                 stats = fill_reports(date_from=str(today), date_to=str(today))
-                inserted = stats.get("inserted", 0)
-                if inserted:
-                    self.log.info(
-                        f"Dry-run analysis: {inserted} simulated trade(s) added to data/trade_analysis.db"
+                dryrun_analysis_updated = True
+                closed = int(stats.get("closed_positions", 0) or 0)
+                inserted = int(stats.get("inserted", 0) or 0)
+                skipped = int(stats.get("skipped", 0) or 0)
+                self.log.info(
+                    "Dry-run analysis DB: "
+                    f"{closed} closed simulated trade(s), {inserted} inserted, "
+                    f"{skipped} already present"
+                )
+                if expected_closed and closed < expected_closed:
+                    self.log.warning(
+                        "Dry-run analysis DB incomplete: "
+                        f"report has {expected_closed} closed dry-run position(s), "
+                        f"fill saw {closed}"
                     )
             except Exception as e:
                 self.log.warning(f"Dry-run analysis auto-fill skipped: {e}")
@@ -871,9 +889,12 @@ class ReportWriter:
             evidence = write_daily_evidence(
                 str(today),
                 "dryrun" if dry_run else "live",
-                update_dbs=False,
+                update_dbs=dry_run and not dryrun_analysis_updated,
             )
-            self.log.info(f"Chan evidence  : {evidence['evidence_markdown_path']}")
+            self.log.info(
+                f"Chan evidence  : {evidence['evidence_markdown_path']} "
+                f"({evidence.get('status', 'UNKNOWN')})"
+            )
         except Exception as e:
             self.log.warning(f"Chan evidence snapshot skipped: {e}")
 

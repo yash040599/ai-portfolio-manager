@@ -210,6 +210,10 @@ def build_daily_evidence(
     report_config = report.get("config", {}) if isinstance(report.get("config"), dict) else {}
     config_version = str(report_config.get("strategy_config_version") or config_version)
     config_hash = str(report_config.get("strategy_config_hash") or config_hash)
+    stage_name = str(
+        report_config.get("trade_stage_name")
+        or getattr(Config, "TRADE_STAGE_NAME", "")
+    )
 
     db_path = DRYRUN_DB if data_source == "dryrun" else LIVE_DB
     conn = _connect_existing(db_path)
@@ -228,6 +232,7 @@ def build_daily_evidence(
         "date": date_str,
         "data_source": data_source,
         "status": status,
+        "stage_name": stage_name,
         "config_version": config_version,
         "config_hash": config_hash,
         "db_path": _relpath(db_path),
@@ -257,6 +262,7 @@ def _markdown(snapshot: dict[str, Any]) -> str:
         f"# Chan Daily Evidence - {snapshot['date']} ({title})",
         "",
         f"Status: `{snapshot['status']}`",
+        f"Stage: `{snapshot.get('stage_name') or '-'}`",
         f"Config: `{snapshot['config_version']} / {snapshot['config_hash']}`",
         f"DB: `{snapshot['db_path']}`",
         f"Trading report: `{snapshot['trading_report_path']}`",

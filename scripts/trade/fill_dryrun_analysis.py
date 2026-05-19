@@ -141,10 +141,14 @@ def _strategy_config(data: dict[str, Any]) -> tuple[str, str, str, str | None]:
     config = data.get("config", {}) if isinstance(data.get("config"), dict) else {}
     version = config.get("strategy_config_version")
     hash_value = config.get("strategy_config_hash")
-    note = None
+    stage_name = config.get("trade_stage_name") or getattr(Config, "TRADE_STAGE_NAME", "")
+    note_parts: list[str] = []
+    if stage_name:
+        note_parts.append(f"stage={stage_name}")
     if not version or not hash_value:
         version, hash_value = Config.snapshot_hash()
-        note = "config hash inferred at import time; source report predates config-hash stamping"
+        note_parts.append("config hash inferred at import time; source report predates config-hash stamping")
+    note = "; ".join(note_parts) if note_parts else None
     return str(version), str(hash_value), str(config.get("git_sha") or ""), note
 
 

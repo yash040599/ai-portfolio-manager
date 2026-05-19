@@ -2556,6 +2556,8 @@ class PortfolioManager:
         plan = self.cfg.claude()
         zrd  = self.cfg.zerodha()
         print(f"\n{'='*58}")
+        strategy_profile = str(getattr(self.cfg, "TRADE_STRATEGY_PROFILE", ""))
+        stage_name = str(getattr(self.cfg, "TRADE_STAGE_NAME", ""))
         if self._noai:
             print("  AI PORTFOLIO MANAGER — TRADE MODE ? NoAI")
         else:
@@ -2580,7 +2582,9 @@ class PortfolioManager:
             if paused:
                 print(f"  Live trading   : PAUSED by reset policy")
         print()
-        print(f"  \033[96m★ Trade Strategy\033[0m : Candle patterns + Technical indicators")
+        print(f"  \033[96m★ Trade Strategy\033[0m : {strategy_profile or 'Candle patterns + Technical indicators'}")
+        if stage_name:
+            print(f"    Stage       : {stage_name}  (see docs/TRADE_STRATEGY_ROLLOUT.md)")
         print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(7,2.0)")
         print(f"    Patterns    : Hammer, Engulfing, Morning/Evening Star, etc.")
         print(f"    Dynamic poll: faster near SL/target zones")

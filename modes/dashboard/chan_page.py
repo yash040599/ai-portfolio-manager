@@ -532,7 +532,8 @@ def render_chan_page() -> str:
 <div class="sub">Stage 1.7 research dashboard for intraday trade mode. Generated {html.escape(now_ist().strftime('%Y-%m-%d %H:%M IST'))}.</div>
 
 <section class="status-strip">
-  <div><span>Stage</span><strong>{html.escape(str(getattr(Config, 'TRADE_RESEARCH_STAGE', '-')))} - {html.escape(str(getattr(Config, 'TRADE_RESEARCH_PHASE_LABEL', '-')))}</strong></div>
+  <div><span>Stage</span><strong>{html.escape(str(getattr(Config, 'TRADE_STAGE_NAME', '-')))}</strong></div>
+  <div><span>Phase</span><strong>{html.escape(str(getattr(Config, 'TRADE_RESEARCH_STAGE', '-')))} - {html.escape(str(getattr(Config, 'TRADE_RESEARCH_PHASE_LABEL', '-')))}</strong></div>
   <div><span>Profile</span><strong>{html.escape(profile)}</strong></div>
   <div><span>Config</span><strong>{html.escape(version)} / {html.escape(config_hash)}</strong></div>
   <div><span>Live trading</span><strong>{'Paused' if getattr(Config, 'TRADE_LIVE_TRADING_PAUSED', False) else 'Enabled'}</strong></div>
@@ -584,11 +585,11 @@ def render_chan_page() -> str:
 <section class="grid two">
   <div class="card chart-card">
     <h2>Replay Cumulative Net P&amp;L</h2>
-    <canvas id="backtest-chart"></canvas>
+    <div class="chart-canvas-wrap"><canvas id="backtest-chart"></canvas></div>
   </div>
   <div class="card chart-card">
     <h2>Dry-Run Cumulative Net P&amp;L</h2>
-    <canvas id="dryrun-chart"></canvas>
+    <div class="chart-canvas-wrap"><canvas id="dryrun-chart"></canvas></div>
   </div>
 </section>
 
@@ -677,7 +678,7 @@ h1.page-title { font-size:24px; margin:0 0 4px; }
 .lead { margin-top:0; }
 .plain { margin:10px 0 0 18px; padding:0; font-size:13.5px; }
 .plain li { margin:5px 0; }
-.status-strip { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.status-strip { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:12px; margin-bottom:16px; }
 .status-strip span, .metric-label { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
 .status-strip strong { display:block; font-size:13px; margin-top:4px; overflow-wrap:anywhere; }
 .metric-value { font-size:20px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
@@ -698,7 +699,11 @@ table.kv td:first-child { color:var(--muted); width:36%; }
 .r { text-align:right; }
 .note { margin-top:12px; padding:10px 12px; background:#eef4ff; border-left:3px solid var(--blue); border-radius:0 4px 4px 0; font-size:13px; }
 .empty { color:var(--muted); font-size:13px; padding:10px 0; }
-.chart-card canvas { width:100%; height:260px; }
+/* Cumulative-P&L chart: Chart.js with responsive:true + maintainAspectRatio:false
+   needs a parent with fixed pixel height; otherwise canvas grows unbounded. */
+.chart-card { display:flex; flex-direction:column; }
+.chart-canvas-wrap { position:relative; height:260px; width:100%; }
+.chart-canvas-wrap canvas { width:100% !important; height:100% !important; }
 code { background:var(--soft); padding:1px 5px; border-radius:3px; font-size:12px; }
 footer { text-align:center; color:var(--muted); font-size:12px; margin-top:28px; }
 """
@@ -736,7 +741,7 @@ _SCRIPT = r"""
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { y: { ticks: { callback: v => 'Rs.' + v } } }
+        scales: { y: { ticks: { callback: v => (v < 0 ? '-' : '') + 'Rs.' + Math.abs(v).toLocaleString('en-IN') } } }
       }
     });
   }

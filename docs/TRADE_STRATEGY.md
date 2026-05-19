@@ -3,6 +3,13 @@
 <!-- Maintenance: keep in sync with code changes.  Per-pass history
      lives in commit messages and `docs/TRADE_ROADMAP.md`. -->
 
+> **Active stage (2026-05-19):** `S0_PURE_MR` — Simple MR alpha only.
+> Most gates documented below are currently **OFF at config level** and will be re-enabled one
+> at a time according to the ladder in [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md).
+> Treat this doc as the *reference for what each gate does when enabled*, not as a description of
+> what the bot is doing today. The single source of truth for which gates are live today is
+> `Config.TRADE_STAGE_NAME` and the rollout doc.
+
 > **Current operating status (2026-05-15):** intraday live trading is paused under `Stage 0 - Chan Research Reset`. This document describes the existing mechanics for audit, replay, and future staged research; it is not approval to place new live trades. New live trades resume only after the Chan-method staged process produces replay/forward evidence and promotion gates pass.
 
 

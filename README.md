@@ -272,7 +272,8 @@ their content.
 | Doc | What it covers |
 |-----|----------------|
 | [docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md) | Complete Trade strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
-| [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Pending / Awaiting-Data / Removed / Completed items with priorities |
+| [docs/TRADE_STRATEGY_ROLLOUT.md](docs/TRADE_STRATEGY_ROLLOUT.md) | **Active stage ladder** — which gates are ON/OFF, per-stage parameter sweeps, promotion bars. Current stage: `S0_PURE_MR` (Simple MR alpha only). |
+| [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Higher-level operating posture (live paused, capital scaling blocked, ground rules); per-gate inventory now lives in `TRADE_STRATEGY_ROLLOUT.md` |
 | [docs/TRADE_EVOLUTION.md](docs/TRADE_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
 | [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
 | [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |

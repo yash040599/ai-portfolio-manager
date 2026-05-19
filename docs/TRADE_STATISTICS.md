@@ -6,12 +6,13 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | `v1.2-2026-05-18` |
-| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status; Stage 1.7 simple MR dry-run profile is active for NoAI selection. |
-| Supported live path | Paused: no new live trades until replay/forward evidence allows the next staged method. |
+| Runtime strategy version | `v1.3-2026-05-19-S0` |
+| Active stage | **`S0_PURE_MR`** — see [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). Simple MR alpha only; every other entry/exit/sizing/performance gate is OFF at config level. |
+| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status; the rollout ladder governs which strategy family is enabled next. |
+| Supported live path | Paused: no new live trades until the ladder reaches `S12_LIVE_PILOT`. |
 | Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
-| Stage 1 evidence plumbing | T1.0 data contract, T1.1 scanner-clock replay, T1.2 accepted/rejected candidate replay, T1.3 after-cost replay, T1.4 live-vs-replay comparison, T1.5 dry-run analysis separation, T1.6 daily evidence, and T1.7 simple MR strategy isolation are shipped; next is dry-run forward evidence. |
-| Dry-run evidence status | The 2026-05-18 pre-fix dry-run is excluded and purged because legacy entry/performance gates contaminated the simple MR research sample. The next valid sample starts under config `v1.2-2026-05-18` and its current config hash. |
+| Stage 1 evidence plumbing | T1.0-T1.7 are shipped (data contract, replay, candidate ledger, after-cost replay, live-vs-replay, dry-run separation, daily evidence, simple MR profile). |
+| Dry-run evidence status | The 2026-05-18 and 2026-05-19 pre-reset dry-runs are excluded and purged because legacy entry/performance gates contaminated the simple MR research sample. The next valid sample starts under `v1.3-2026-05-19-S0`. |
 | Promotion status | FAIL on the latest 20-session window. |
 | Capital scaling | Blocked. |
 | New live alpha gates | Blocked unless they fix a verified bug or safety hole. |

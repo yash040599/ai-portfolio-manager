@@ -10,34 +10,44 @@ This skill keeps the intraday trading work aligned with the 2026-05-15 Chan-fram
 
 ## Current Journey State
 
-As of 2026-05-18:
+As of 2026-05-19:
 
 - The bot is not considered a validated profitable strategy.
-- Latest promotion check failed: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%.
-- FY intraday ledger is net negative after charges, about Rs.-3,928.68.
-- Supported posture is paused live trading: no new live trades until the Chan-method staged process allows them.
-- Stage 0 runtime status is active: startup logs, reports, and dashboard surfaces show `Stage 0 - Chan Research Reset`, and live order placement is paused by config.
-- Stage 1 T1.0 is shipped: the backtest data contract, sync helper, exporter, seeded private data repo, and backtest data-root bridge are in place.
-- Stage 1 T1.1 is shipped: scanner/indicator scoring accepts injected historical time, `backtest.py --score-mode scanner` can score local candles without Zerodha calls, and `replay_clock_check.py` guards against wall-clock leakage.
-- Stage 1 T1.2 is shipped: `backtest.py` writes a config-hash-stamped `candidates` ledger with accepted/rejected replay decisions and rejection reasons, including no-trade runs.
-- Stage 1 T1.3 is shipped: entered replay trades include synthetic sizing, adverse slippage/spread fills, Zerodha charge math, square-off exits, raw/gross/net P&L, net PF, and net expectancy.
-- Stage 1 T1.4 tooling is shipped: `scripts/trade/live_vs_replay.py` compares replay JSON to read-only live candidate/logical/tax data under the same config hash and writes red-flagged JSON reports. First all-symbol run is `DATA_GAP`, not parity proof, because historical `intraday_candidates` is empty and logical-vs-tax trade counts differ.
-- Stage 1 T1.5 is shipped: dry-run evidence is separated into `data/trade_analysis.db`; dry-run candidate telemetry and simulated after-cost outcomes do not write to `data/trades.db`, `trades`, or `intraday_tax_ledger`.
-- Stage 1 T1.6 is shipped: dry-run reports use separate `*_dry_run` filenames, and end-of-day dry-run/live saves generate daily Chan evidence snapshots with candidate counts, after-cost outcomes, config hash, DB source, and red flags.
-- Stage 1 T1.7 is shipped: default NoAI profile is `NOAI_SIMPLE_MR_BASELINE`, selecting only VWAP-stretch plus RSI-exhaustion mean reversion for dry-run; legacy blended NoAI remains available only as `NOAI_LEGACY_FULL` comparison/control. Legacy rolling-PF, directional-pause, and opposing-thin performance vetoes are skipped for this research profile so old mixed-strategy losses do not block new MR evidence.
-- Historical/live-read evidence collection can continue, but broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
-- Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20` returns PASS on a fresh forward window.
-- Do not add live alpha gates just because recent trades lost money. First prove the hypothesis through replay and forward evidence.
+- Live trading is paused (`TRADE_LIVE_TRADING_PAUSED = True`); broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
+- Active stage on the rollout ladder: **`S0_PURE_MR`** — Simple MR alpha only.
+  Every other gate (entry vetoes, mid-life exits, sizing modifiers, multi-day performance pauses,
+  breadth/sector overlays, time-of-day filters, charge-aware R:R) is OFF at config level.
+  The complete ladder, per-stage parameter sweeps, and promotion bars live in
+  `docs/TRADE_STRATEGY_ROLLOUT.md`.
+- `Config.TRADE_STAGE_NAME` is the single source of truth for which rung is active. It is stamped
+  into every trading report (`config.trade_stage_name`), dry-run ledger row (notes column),
+  and Chan evidence JSON/MD header so cohorts stay clean.
+- Active strategy version: `v1.3-2026-05-19-S0`. Active NoAI profile: `NOAI_SIMPLE_MR_BASELINE`.
+- Earlier dry-run sessions (including 2026-05-18 and 2026-05-19) were generated with non-MR gates
+  active and were purged. The L0 sample restarts at zero from the next dry-run.
+- Latest live promotion check failed: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%.
+  FY intraday ledger is about Rs.-3,928.68 net after charges.
+- Stage 1 plumbing (T1.0-T1.7) remains shipped: data contract, scanner-clock replay,
+  config-hash candidate ledger, after-cost replay, live-vs-replay reports, dry-run DB separation,
+  daily evidence files, simple MR profile isolation.
+- Do not move to the next rung until the current rung passes its sample bar (default: 10 sessions
+  and 30 closed simulated trades) AND a parameter sweep has been run on the variables listed in
+  that rung of the rollout doc.
+- Do not scale capital or relax major risk knobs until `scripts/trade/promotion_check.py --window 20`
+  returns PASS on a fresh forward window.
+- Do not add live alpha gates just because recent trades lost money. Prove the hypothesis through
+  replay and forward evidence on the current rung first.
 
 ## Must-Read Docs
 
 Before making or recommending intraday strategy changes, read these files:
 
-1. `docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md`
-2. `docs/TRADE_ROADMAP.md`
-3. `docs/TRADE_STATISTICS.md`
-4. `docs/TRADE_EVOLUTION.md`
-5. `config.py` for current feature flags and `STRATEGY_CONFIG_VERSION`
+1. `docs/TRADE_STRATEGY_ROLLOUT.md`  (active stage ladder, per-gate inventory, parameter sweeps, promotion bars)
+2. `docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md`
+3. `docs/TRADE_ROADMAP.md`
+4. `docs/TRADE_STATISTICS.md`
+5. `docs/TRADE_EVOLUTION.md`
+6. `config.py` for current `TRADE_STAGE_NAME`, `STRATEGY_CONFIG_VERSION`, and per-gate flags
 
 For implementation work, also inspect the relevant code path:
 

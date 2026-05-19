@@ -322,7 +322,7 @@ def analyse_candle_snapshot(
         if penalty_total > 0:
             magnitude = max(0.0, abs(combined_score) - penalty_total)
             new_score = magnitude if combined_score > 0 else -magnitude
-            if log:
+            if log and getattr(config, "PATTERN_CONTRADICTION_PENALTY_ENABLED", False):
                 log.debug(
                     f"{symbol}: pattern penalty applied "
                     f"({', '.join(penalty_reasons)}) - "
