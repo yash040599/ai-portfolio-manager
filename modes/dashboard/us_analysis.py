@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from config import Config, now_ist
+from modes.dashboard import us_config
 from shared.candle_cache import CandleCache
 from modes.swing.signals import classify_setup, compute_swing_indicators
 
@@ -113,7 +114,7 @@ def analyse_us_universe(
     mode = (mode or "NOAI").upper()
     if mode not in ("NOAI", "AI"):
         mode = "NOAI"
-    symbols = _build_universe(universe or getattr(Config, "US_SCAN_UNIVERSE", "US100"))
+    symbols = _build_universe(universe or us_config.US_SCAN_UNIVERSE)
     if limit and limit > 0:
         symbols = symbols[:limit]
     ticket = _ticket(ticket_amount)
@@ -139,14 +140,14 @@ def analyse_us_universe(
         row["priority_rank"] = idx
 
     if mode == "AI" and rows:
-        cap = max(1, int(getattr(Config, "US_AI_MAX_CANDIDATES", 5)))
+        cap = max(1, int(us_config.US_AI_MAX_CANDIDATES))
         for row in rows[:cap]:
             row["ai_overlay"] = _ai_overlay(row)
 
     payload = {
         "ok": True,
         "mode": mode,
-        "universe": universe or getattr(Config, "US_SCAN_UNIVERSE", "US100"),
+        "universe": universe or us_config.US_SCAN_UNIVERSE,
         "benchmark": "SPY",
         "data_source": "yfinance",
         "started_at": started,
@@ -568,8 +569,8 @@ def _build_universe(name: str) -> list[str]:
 
 
 def _ticket(value: float | None) -> float:
-    ticket = float(value or getattr(Config, "US_TICKET_AMOUNT", 500.0))
-    return ticket if ticket > 0 else float(getattr(Config, "US_TICKET_AMOUNT", 500.0))
+    ticket = float(value or us_config.US_TICKET_AMOUNT)
+    return ticket if ticket > 0 else float(us_config.US_TICKET_AMOUNT)
 
 
 def _ai_overlay(row: dict[str, Any]) -> dict[str, str]:

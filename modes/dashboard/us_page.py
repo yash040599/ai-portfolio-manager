@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 from config import Config, now_ist
+from modes.dashboard import us_config
 from modes.dashboard.us_analysis import (
     analyse_us_symbol, analyse_us_universe, latest_us_scan,
     cached_us_live_quotes, get_us_live_quotes,
@@ -36,7 +37,7 @@ US_EXCHANGES = {"NASDAQ", "NYSE", "AMEX", "ARCA", "US"}
 def render_us_page() -> str:
     """Render the /us dashboard page."""
     init_db()
-    default_ticket = float(getattr(Config, "US_TICKET_AMOUNT", 500.0))
+    default_ticket = float(us_config.US_TICKET_AMOUNT)
 
     positions = _us_positions()
     positions.sort(key=lambda p: (p.exchange, p.symbol, p.position_id))
@@ -153,7 +154,7 @@ def render_us_detail(symbol: str) -> str:
     as `render_swing_detail`."""
     init_db()
     sym = symbol.strip().upper()
-    default_ticket = float(getattr(Config, "US_TICKET_AMOUNT", 500.0))
+    default_ticket = float(us_config.US_TICKET_AMOUNT)
     fx = get_usd_inr_rate()
 
     body: list[str] = []

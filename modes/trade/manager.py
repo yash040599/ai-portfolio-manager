@@ -374,7 +374,7 @@ class PortfolioManager:
         # Disabled in DRY_RUN (no real Zerodha session) and when the
         # config kill-switch REJECTION_AUDIT_ENABLED is False.
         if (not self.cfg.DRY_RUN
-                and getattr(self.cfg, "REJECTION_AUDIT_ENABLED", True)):
+                and getattr(self.cfg, "REJECTION_AUDIT_ENABLED", False)):
             try:
                 from scripts.trade.rejection_audit import run_audit
                 self.log.info("Running rejection audit (post-trade review)...")
@@ -3633,7 +3633,7 @@ class PortfolioManager:
         Action: software SL → max(current, breakeven-with-buffer);
         exchange SL-M is replaced via `_update_exchange_sl()`.
         """
-        if not getattr(self.cfg, "SECTOR_CASCADE_EXIT_ENABLED", True):
+        if not getattr(self.cfg, "SECTOR_CASCADE_EXIT_ENABLED", False):
             return
         scanner = getattr(self, "scanner", None)
         if scanner is None:

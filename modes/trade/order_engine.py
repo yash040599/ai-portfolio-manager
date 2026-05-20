@@ -1917,7 +1917,7 @@ class OrderEngine:
         # the pause. Existing positions managed normally. Kill-switch:
         # VIX_SPIKE_ENTRY_PAUSE_ENABLED.
         if (
-            getattr(self.cfg, "VIX_SPIKE_ENTRY_PAUSE_ENABLED", True)
+            getattr(self.cfg, "VIX_SPIKE_ENTRY_PAUSE_ENABLED", False)
             and self.is_vix_spike_active()
         ):
             self.log.warning(
@@ -1935,16 +1935,6 @@ class OrderEngine:
         # (current_rr_floor + max-positions block); this is the score
         # half. Skip when score data is missing (don't penalise the
         # tiny path where _entry_score is None — let other gates run).
-        #
-        # #246 (2026-04-28) couples this floor to the rescue-gate
-        # floor: the effective late-entry minimum is
-        #     max(base_min + late_bump, SIGNAL_DECAY_MIN_ENTRY_SCORE)
-        # so the entry side cannot admit trades the rescue gates
-        # cannot save (the "no-rescue zone"). The constant is REUSED
-        # from `_signal_decay_exit` / `_signal_reversal_exit`
-        # intentionally — no new threshold knob — so the two stay
-        # coupled by code review. Kill-switch:
-        # LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED.
         if (
             getattr(self.cfg, "LATE_ENTRY_TIGHTENING_ENABLED", False)
             and now.hour >= int(self.cfg.LATE_ENTRY_HOUR)
@@ -1952,31 +1942,13 @@ class OrderEngine:
         ):
             base_min  = self.effective_min_score()
             late_bump = float(self.cfg.LATE_ENTRY_MIN_SCORE_BUMP)
-            bump_min  = base_min + late_bump
-            rescue_floor = float(
-                getattr(self.cfg, "SIGNAL_DECAY_MIN_ENTRY_SCORE", 0.0)
-            )
-            no_rescue_active = bool(
-                getattr(self.cfg, "LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED", False)
-            )
-            late_min = max(bump_min, rescue_floor) if no_rescue_active else bump_min
+            late_min  = base_min + late_bump
             score_abs_late = abs(float(trade.get("_entry_score") or 0))
             if score_abs_late < late_min:
-                # Tag whichever floor was binding so the rejection-audit
-                # and EOD review can grade #246 separately from #202.
-                if no_rescue_active and rescue_floor > bump_min and late_min == rescue_floor:
-                    reason_tag = (
-                        f"NO_RESCUE_ZONE (rescue floor {rescue_floor:.1f} "
-                        f"> bump floor {bump_min:.1f})"
-                    )
-                else:
-                    reason_tag = (
-                        f"late-entry tightening "
-                        f"(base {base_min:.1f} + late bump {late_bump:.1f})"
-                    )
                 self.log.warning(
-                    f"{symbol}: {reason_tag} — |score| "
-                    f"{score_abs_late:.1f} < {late_min:.1f}. "
+                    f"{symbol}: late-entry tightening "
+                    f"(base {base_min:.1f} + late bump {late_bump:.1f}) — "
+                    f"|score| {score_abs_late:.1f} < {late_min:.1f}. "
                     f"Skipping (after {self.cfg.LATE_ENTRY_HOUR:02d}:00 IST, "
                     f"only entries the rescue gates can save should run)."
                 )
@@ -2923,37 +2895,23 @@ class OrderEngine:
                         f"parse failed ({type(e).__name__}: {e})"
                     )
 
-        # ── Net-of-charges R:R check ──────────────────────────────
-        # Gross R:R may look 1.5:1, but after charges on small positions
-        # the effective R:R can be much worse. Ensure net profit > 1.0× net risk.
-        if qty > 0 and entry > 0:
+        # ── Charge-aware minimum target (Roadmap #162) ────────────
+        # Reject when gross target profit doesn't clear round-trip
+        # charges by a comfortable margin. Prevents tiny-target trades
+        # where a Rs.4 charge on Rs.10 expected profit leaves Rs.6 for
+        # all the slippage + risk.
+        # Kill-switch: MIN_PROFIT_CHARGE_MULTIPLE <= 0 (Stage S0_PURE_MR
+        # disables this; charge-aware vetoes activate at S4_MR_CHARGE).
+        multiple = float(self.cfg.MIN_PROFIT_CHARGE_MULTIPLE)
+        if multiple > 0 and qty > 0 and entry > 0:
             gross_profit = abs(target - entry) * qty
-            gross_risk = abs(entry - sl) * qty
             if side == "BUY":
-                buy_val = entry * qty
-                sell_val = target * qty
+                buy_val, sell_val = entry * qty, target * qty
             else:
-                sell_val = entry * qty
-                buy_val = target * qty
+                buy_val, sell_val = target * qty, entry * qty
             charges = Config.calculate_charges(buy_val, sell_val, 2)
             round_trip_charges = charges["total_tax_and_charges"]
-            net_profit = gross_profit - round_trip_charges
-            net_risk = gross_risk + round_trip_charges
-            if net_risk > 0 and net_profit / net_risk < 1.0:
-                self._rr_rejection_count += 1
-                return self._reject_entry(
-                    "NET_RR",
-                    f"{symbol}: net-of-charges R:R {net_profit / net_risk:.2f}:1 "
-                    f"< 1.0:1 (charges Rs.{round_trip_charges:.0f} eat the edge). Skipping."
-                )
-
-            # ── Charge-aware minimum target (Roadmap #162) ────────
-            # Even if net R:R passes, reject when gross target profit
-            # doesn't clear round-trip charges by a comfortable margin.
-            # Prevents tiny-target trades where a Rs.4 charge on Rs.10
-            # expected profit leaves Rs.6 for all the slippage + risk.
-            multiple = float(self.cfg.MIN_PROFIT_CHARGE_MULTIPLE)
-            if multiple > 0 and gross_profit < round_trip_charges * multiple:
+            if gross_profit < round_trip_charges * multiple:
                 return self._reject_entry(
                     "CHARGE_TARGET",
                     f"{symbol}: gross target profit Rs.{gross_profit:.2f} < "
@@ -3901,6 +3859,18 @@ class OrderEngine:
 
         trail_after = self.cfg.TRAIL_AFTER_RISK_MULTIPLE
         trail_pct   = self.cfg.TRAIL_STEP_PCT / 100
+
+        # ── Kill-switch: TRAIL_AFTER_RISK_MULTIPLE <= 0 disables ─
+        # Stage S0_PURE_MR sets TRAIL_AFTER_RISK_MULTIPLE = 0.0 to
+        # disable mid-life partial-profit / trailing-stop entirely
+        # (the only exits should be SL, TARGET, or end-of-day square-
+        # off). Without this guard, a 0.0 multiple actually fires the
+        # partial+trail on the FIRST positive tick (profit >= 0 ×
+        # initial_risk is trivially true), which pulls the SL to
+        # entry and gets stopped out by normal noise within seconds.
+        # That is exactly the bug observed in the 2026-05-20 dry-run.
+        if trail_after <= 0:
+            return
 
         if side == "BUY":
             profit = current_price - entry

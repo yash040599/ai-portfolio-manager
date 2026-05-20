@@ -30,6 +30,43 @@ def now_ist() -> datetime.datetime:
 
 
 class Config:
+    # ══════════════════════════════════════════════════════════════
+    # READ ME BEFORE TOUCHING THIS FILE
+    # ══════════════════════════════════════════════════════════════
+    #
+    # 1. The rollout plan is the source of truth for which gates run
+    #    at which stage: docs/TRADE_STRATEGY_ROLLOUT.md.
+    #    The active rung is `TRADE_STAGE_NAME` (currently `S0_PURE_MR`).
+    #    At S0 only the Simple MR alpha + structural execution checks
+    #    fire; everything else MUST be off.
+    #
+    # 2. ONE disable mechanism per gate. Pick exactly one of:
+    #       a) bool `<NAME>_ENABLED: bool = False`  AND code path
+    #          checks `if getattr(cfg, "X_ENABLED", False):`
+    #       b) numeric sentinel `<NAME>: float = 0` AND code path
+    #          checks `if val > 0:` (or analogous wide threshold).
+    #    NEVER both. Yesterday's NET_RR_GATE_ENABLED was a duplicate of
+    #    the existing `MIN_PROFIT_CHARGE_MULTIPLE = 0` pattern and has
+    #    been deleted (2026-05-20). Adding a second mechanism is the
+    #    pattern that grows config sprawl.
+    #
+    # 3. A `getattr` fallback default must match the S0-disabled value.
+    #    `getattr(cfg, "X_ENABLED", True)` when the config says False is
+    #    a latent bug — if the attribute ever disappears in a refactor,
+    #    the gate silently re-activates. The 2026-05-20 audit fixed
+    #    three of these (REJECTION_AUDIT_ENABLED, SECTOR_CASCADE_*,
+    #    VIX_SPIKE_*); follow the same default-False convention here.
+    #
+    # 4. Before adding a new knob: check the rollout plan. If the new
+    #    behaviour isn't on the ladder, it doesn't belong here. Either
+    #    add it to the plan first, or put it in the module that owns
+    #    the feature (e.g. dashboard-only knobs live in
+    #    `modes/dashboard/<feature>_config.py`, not on this class).
+    #
+    # 5. Decision-history comments are valuable but heavy. New entries
+    #    should reference a roadmap item or audit number in one line;
+    #    long-form rationale belongs in docs/TRADE_EVOLUTION.md or the
+    #    relevant audit file under docs/audit/.
 
     # ── Edit these two lines when you upgrade plans ───────────────
 
@@ -291,12 +328,6 @@ class Config:
     # selected idea and can rerun the review with a larger ticket to make
     # higher-priced technical setups feasible.
     SWING_TICKET_AMOUNT:      float = 20_000.0
-
-    # US page sizing uses a per-stock USD ticket for single-stock
-    # technical analysis and suggested share count.
-    US_TICKET_AMOUNT:         float = 500.0
-    US_SCAN_UNIVERSE:         str   = "US100"
-    US_AI_MAX_CANDIDATES:     int   = 5
 
     # ── Swing — AI overlay cost cap ───────────────────────────────
     # SWING_AI_MAX_CANDIDATES caps how many *accepted* candidates the
@@ -1314,24 +1345,6 @@ class Config:
     # trades have less than half the session left; they need a
     # visibly higher bar, not marginally higher.
     LATE_ENTRY_MIN_SCORE_BUMP:     float = 1.0
-
-    # ── No-Rescue-Zone alignment ─────────────────────────────────
-    # The rescue gates (`_signal_decay_exit`, `_signal_reversal_exit`)
-    # require |entry_score| ≥ SIGNAL_DECAY_MIN_ENTRY_SCORE (=7.0).
-    # On a SMALL Rs.50K budget the late-entry floor is only ~3.5, so
-    # entries 3.5-7.0 after 10:00 IST live in a "no-rescue zone" — if
-    # the thesis breaks, only SL/LOSER_EXIT/SQUARE_OFF can close them
-    # (JIOFIN 2026-04-28: entry +3.8, flipped to -5.5, ran to SL).
-    # Fix when enabled: clamp the late-entry floor to ≥ the rescue
-    # threshold (no new constant — coupling enforced by code review).
-    #
-    # DISABLED post-2026-05-05 EV audit (157 positions over 24 sessions):
-    # would-be-blocked cohort was WR 53.8% / +Rs.618 net; post-ship
-    # passing cohort was WR 33% / -Rs.451. Every sub-band of the
-    # blocked cohort was net-positive — the gate's predicate is
-    # contradicted by the live ledger. Re-enable trigger in roadmap
-    # Awaiting-Data once 30+ post-disable sessions accumulate.
-    LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED: bool = False
 
     # ── Post-Entry Momentum Kill ──────────────────────────────────
     # Targets the "slow bleed to SL" pattern: a fill turns red
