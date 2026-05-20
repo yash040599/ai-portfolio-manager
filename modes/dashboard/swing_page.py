@@ -614,7 +614,15 @@ def render_swing_page() -> str:
 
             stock_name = get_nse_stock_name(w.symbol)
             body.append(
-                f'<tr>'
+                # 2026-05-20: added live-poller hooks (`data-live-symbol`,
+                # `data-watch-price`, `data-live-field` on Live Price
+                # and Virtual P&L cells) so the swing watchlist
+                # actually updates with the 5 s poll. Previously the
+                # row had no markers and the JS in `_swingPollLivePrices`
+                # silently skipped it — user-reported "Live prices for
+                # indian swing watchlist are not updating".
+                f'<tr data-live-symbol="{html.escape(w.symbol)}" '
+                f'data-watch-price="{w.added_price}">'
                 f'<td><a href="/swing/{html.escape(w.symbol)}" '
                 f'style="color:var(--fg);font-weight:600">'
                 f'{html.escape(w.symbol)}</a></td>'
@@ -623,8 +631,10 @@ def render_swing_page() -> str:
                 f'<td style="font-size:11px">'
                 f'{html.escape((w.setup_type or "").replace("_"," ").title())}</td>'
                 f'<td class="right">Rs.{w.added_price:,.2f}</td>'
-                f'<td class="right">Rs.{lprice:,.2f}</td>'
-                f'<td class="right"><span class="{pcls}">'
+                f'<td class="right" data-live-field="price">'
+                f'Rs.{lprice:,.2f}</td>'
+                f'<td class="right" data-live-field="vpnl">'
+                f'<span class="{pcls}">'
                 f'Rs.{vpnl:+,.2f} ({vpnl_pct:+.1f}%)</span></td>'
                 f'<td class="muted" style="font-size:11px">{added_short}</td>'
                 f'<td>'
@@ -2004,6 +2014,27 @@ function _swingPollLivePrices() {
                                 + upnl.toLocaleString('en-IN',
                                     { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                 + '</span>';
+                        }
+                    } else if (field === 'vpnl') {
+                        // Watchlist virtual P&L: price - added_price.
+                        // No quantity (you haven't bought yet) — show
+                        // the per-share gain and the % move so the
+                        // user can see "did this trigger an entry?"
+                        // without doing mental arithmetic.
+                        // 2026-05-20 fix: previously the watchlist row
+                        // had no live-field markers so this branch
+                        // never ran.
+                        var added = Number(row.getAttribute('data-watch-price'));
+                        if (isFinite(added) && added > 0) {
+                            var v = price - added;
+                            var vp = (price / added - 1) * 100;
+                            var vcls = v >= 0 ? 'pos' : 'neg';
+                            cell.innerHTML = '<span class="' + vcls + '">Rs.'
+                                + (v >= 0 ? '+' : '')
+                                + v.toLocaleString('en-IN',
+                                    { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                + ' (' + (vp >= 0 ? '+' : '')
+                                + vp.toFixed(1) + '%)</span>';
                         }
                     } else if (field === 'r_mult') {
                         var entry2 = Number(row.getAttribute('data-entry-price'));
