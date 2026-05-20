@@ -235,6 +235,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_us_analyse(parse_qs(url.query))
             elif url.path == "/api/us/changes_since":
                 self._serve_us_changes_since()
+            elif url.path == "/api/us/sectors":
+                self._serve_us_sectors()
+            elif url.path == "/api/us/compare":
+                self._serve_us_compare(parse_qs(url.query))
             elif url.path.startswith("/us/"):
                 sym = url.path[len("/us/"):].strip("/")
                 self._serve_us_detail(sym)
@@ -754,6 +758,109 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             age_label = ""
         diff["prior_run_age_label"] = age_label
         body = json.dumps(diff, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us_sectors(self) -> None:
+        """GET /api/us/sectors — list US sector keys for the
+        compare-stocks dropdown on /us. Mirrors
+        `/api/swing/sectors`. Origin: 2026-05-19 user asked for
+        the /us compare card to look and behave exactly like
+        /swing — including the dynamic-sector dropdown."""
+        from modes.dashboard.us_compare import list_known_sectors
+        body = json.dumps({"sectors": list_known_sectors()}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=3600")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_us_compare(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/us/compare?symbols=A,B,C,D
+           GET /api/us/compare?sector=MEGACAP_TECH
+
+        Side-by-side comparison of up to 4 US tickers. Returns the
+        SAME payload shape as `/api/swing/compare` (rows,
+        winner_idx, winners_idx, win_counts, winner_overall,
+        sector, notes) so the existing JS renderer
+        (`_renderCompareResult`) works without per-product
+        branches. Roadmap: 2026-05-19 compare-card alignment.
+        """
+        from modes.dashboard.us_compare import (
+            MAX_COMPARE_STOCKS, normalise_sector, top_n_in_sector,
+            compare_symbols,
+        )
+        from modes.dashboard.us_analysis import analyse_us_symbol
+
+        symbols_param = (qs.get("symbols") or [""])[0].strip()
+        sector_param = (qs.get("sector") or [""])[0].strip()
+
+        chosen_sector = ""
+        if sector_param:
+            chosen_sector = normalise_sector(sector_param)
+            symbols = top_n_in_sector(chosen_sector, n=MAX_COMPARE_STOCKS)
+        else:
+            symbols = [s for s in symbols_param.split(",") if s.strip()]
+
+        if not symbols:
+            err = json.dumps({
+                "ok": False,
+                "error": ("No symbols. Pass ?symbols=A,B,C,D or "
+                          "?sector=NAME (e.g. MEGACAP_TECH / "
+                          "SEMICONDUCTORS / BANKS)."),
+            }).encode("utf-8")
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        def _one(sym: str) -> dict:
+            # Use the existing single-stock analyser. AI overlay
+            # is intentionally off — compare table is a structural
+            # head-to-head, not a Claude call.
+            return analyse_us_symbol(sym, use_ai=False)
+
+        try:
+            result = compare_symbols(
+                symbols, analyse_one=_one, sector=chosen_sector,
+            )
+        except Exception as exc:  # noqa: BLE001
+            err = json.dumps({
+                "ok": False,
+                "error": f"Compare failed: {exc}",
+            }).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
+            return
+
+        rows_json = [{
+            "label": r.label,
+            "values": r.values,
+            "winner_idx": r.winner_idx,
+            "winners_idx": r.winners_idx,
+            "direction": r.direction,
+            "explain": r.explain,
+        } for r in result.rows]
+        body = json.dumps({
+            "ok": True,
+            "symbols": result.symbols,
+            "sector": result.sector,
+            "rows": rows_json,
+            "winner_overall": result.winner_overall(),
+            "win_counts": [result.win_count(i)
+                           for i in range(len(result.symbols))],
+            "notes": result.notes,
+        }, default=str).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

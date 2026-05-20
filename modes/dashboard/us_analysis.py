@@ -24,9 +24,22 @@ US_SCAN_CACHE_PATH = os.path.join("data", "us_scan_latest.json")
 US_SCAN_PRIOR_PATH = os.path.join("data", "us_scan_prior.json")
 _FX_CACHE_PATH = os.path.join("data", "usdinr_rate.json")
 
-# Live quote + FX cache (process-local, throttled).
-_MIN_QUOTE_POLL_INTERVAL = 15.0
-_last_quote_poll: float = 0.0
+# Live quote + FX cache (process-local).
+#
+# Per-symbol TTL replaces the old shared "no more than one batch
+# every 15 s" throttle. Reason: the dashboard now polls three
+# tiers (open=15 s, watch=30 s, reco=60 s) in a cascade — under
+# the old shared throttle, the watch + reco fetches that fire
+# 250-500 ms after the open fetch always returned cached because
+# the global throttle hadn't elapsed. End result: watchlist and
+# recommendation P&L stopped updating after the first cascade.
+#
+# Now each cached snapshot carries an `as_of_mono` monotonic
+# timestamp and the helper rebuilds the upstream batch from
+# "symbols whose cache is older than `_QUOTE_SOFT_TTL` seconds".
+# Tiers stay independent and yfinance still gets one batched call
+# per tier instead of N single-symbol calls.
+_QUOTE_SOFT_TTL = 12.0  # accept cached snapshot if <12 s old
 _quote_cache: dict[str, dict[str, Any]] = {}
 
 _MIN_FX_POLL_INTERVAL = 300.0
@@ -916,23 +929,40 @@ def cached_us_live_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     """Return only what is already in the in-memory cache; never
     contacts yfinance.  Used during page render so the initial HTML
     response is not blocked on the network — the client-side poller
-    then fetches fresh prices in the background."""
+    then fetches fresh prices in the background.
+
+    Strips the internal `_mono` TTL tracker so the public payload
+    stays clean (price / change_pct / as_of)."""
     if not symbols:
         return {}
-    return {s.strip().upper(): _quote_cache.get(s.strip().upper(), {})
-            for s in symbols if s and s.strip()}
+    out: dict[str, dict[str, Any]] = {}
+    for raw in symbols:
+        if not raw or not raw.strip():
+            continue
+        sym = raw.strip().upper()
+        cached = _quote_cache.get(sym) or {}
+        out[sym] = {k: v for k, v in cached.items() if k != "_mono"}
+    return out
 
 
 def get_us_live_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
     """Return `{symbol: {price, change_pct, as_of}}` for US tickers.
 
-    Throttled to one upstream batch per `_MIN_QUOTE_POLL_INTERVAL`
-    seconds.  Uses `yfinance.download(period='2d')` for batch close
-    + prior-close so we can compute today's change %.  Symbols that
-    fail (delisted, typo, network) return the last cached snapshot
-    or an empty dict.
+    Per-symbol TTL: a cached snapshot <`_QUOTE_SOFT_TTL` s old is
+    returned without an upstream call. Anything older (or missing)
+    is re-fetched in one batched yfinance call.
+
+    2026-05-19 rewrite: previous version used
+    `yfinance.download(period='5d', interval='1d')`, which returns
+    DAILY candles. The last candle is yesterday's close once the
+    US session ends — so the dashboard tables stopped moving even
+    with live polling on, even during US market hours. We now go
+    straight to the Yahoo `chart` API with `interval=1m` and use
+    `meta.regularMarketPrice` (live tick) or the last finite 1-min
+    close as the live price, with `meta.previousClose` for change %.
+    Falls back to `yfinance.download(interval='1m')` if the chart
+    API errors out.
     """
-    global _last_quote_poll
     if not symbols:
         return {}
     syms = [s.strip().upper() for s in symbols if s and s.strip()]
@@ -942,57 +972,146 @@ def get_us_live_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
         if s not in seen:
             seen.add(s)
             uniq.append(s)
-    now = time.monotonic()
-    if now - _last_quote_poll < _MIN_QUOTE_POLL_INTERVAL and _quote_cache:
-        return {s: _quote_cache.get(s, {}) for s in uniq}
-    try:
-        import yfinance as yf
-    except ImportError:
-        return {s: _quote_cache.get(s, {}) for s in uniq}
-    yf_map = {_normalise_yfinance_symbol(s): s for s in uniq}
-    yf_syms = list(yf_map.keys())
-    try:
-        df = yf.download(
-            yf_syms,
-            period="5d",
-            interval="1d",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-            group_by="ticker",
-        )
-    except Exception:
-        return {s: _quote_cache.get(s, {}) for s in uniq}
-    if df is None or getattr(df, "empty", True):
-        return {s: _quote_cache.get(s, {}) for s in uniq}
+    if not uniq:
+        return {}
+
+    # Per-symbol TTL: pull from cache, mark stale ones for re-fetch.
+    now_mono = time.monotonic()
+    out: dict[str, dict[str, Any]] = {}
+    stale: list[str] = []
+    for sym in uniq:
+        cached = _quote_cache.get(sym)
+        if cached and (now_mono - float(cached.get("_mono", 0.0))
+                       < _QUOTE_SOFT_TTL):
+            # Strip internal _mono key when returning to caller.
+            out[sym] = {k: v for k, v in cached.items() if k != "_mono"}
+        else:
+            stale.append(sym)
+
+    if not stale:
+        return out
 
     ts = now_ist().isoformat()
-    out: dict[str, dict[str, Any]] = {}
+    yf_map = {_normalise_yfinance_symbol(s): s for s in stale}
+
+    # Per-symbol chart-API call (1m interval = true intraday). This
+    # is the source the detail page already uses successfully via
+    # `fetch_us_live_price_now`. Batched yfinance.download for
+    # 1m interval is unreliable across multiple symbols (Yahoo
+    # sometimes truncates), so we loop. With a small per-tier
+    # symbol set (open: ~5, watch: ~10) this is cheap.
+    fetched_any = False
     for yf_sym, display in yf_map.items():
+        snap = _fetch_us_intraday_snapshot(yf_sym, ts)
+        if snap:
+            snap["_mono"] = now_mono
+            _quote_cache[display] = snap
+            out[display] = {k: v for k, v in snap.items() if k != "_mono"}
+            fetched_any = True
+        else:
+            # Keep whatever was cached previously (may be empty).
+            cached = _quote_cache.get(display)
+            if cached:
+                out[display] = {k: v for k, v in cached.items() if k != "_mono"}
+            else:
+                out[display] = {}
+
+    # Yahoo chart 1m can rate-limit on very-fresh repeats. As a
+    # safety net, if NOTHING came back from the per-symbol loop,
+    # fall back to a single batched yfinance.download(interval='1m').
+    if not fetched_any:
         try:
-            sub = df[yf_sym] if len(yf_syms) > 1 else df
-        except (KeyError, ValueError):
-            out[display] = _quote_cache.get(display, {})
-            continue
-        try:
-            closes = [float(v) for v in sub["Close"].dropna().tolist()]
-        except (KeyError, AttributeError, TypeError, ValueError):
-            closes = []
-        if not closes:
-            out[display] = _quote_cache.get(display, {})
-            continue
-        last = closes[-1]
-        prev = closes[-2] if len(closes) >= 2 else last
-        change_pct = ((last / prev - 1.0) * 100.0) if prev > 0 else 0.0
-        snap = {
-            "price": round(last, 4),
-            "change_pct": round(change_pct, 2),
-            "as_of": ts,
-        }
-        out[display] = snap
-        _quote_cache[display] = snap
-    _last_quote_poll = time.monotonic()
+            import yfinance as yf
+            df = yf.download(
+                list(yf_map.keys()),
+                period="1d",
+                interval="1m",
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+                group_by="ticker",
+            )
+            for yf_sym, display in yf_map.items():
+                try:
+                    sub = df[yf_sym] if len(yf_map) > 1 else df
+                except (KeyError, ValueError):
+                    continue
+                try:
+                    closes = [float(v) for v in sub["Close"].dropna().tolist()]
+                except (KeyError, AttributeError, TypeError, ValueError):
+                    closes = []
+                if not closes:
+                    continue
+                last = closes[-1]
+                prev = closes[0] if len(closes) >= 2 else last
+                change_pct = ((last / prev - 1.0) * 100.0) if prev > 0 else 0.0
+                snap = {
+                    "price": round(last, 4),
+                    "change_pct": round(change_pct, 2),
+                    "as_of": ts,
+                    "_mono": now_mono,
+                }
+                _quote_cache[display] = snap
+                out[display] = {k: v for k, v in snap.items() if k != "_mono"}
+        except Exception:
+            pass
+
     return out
+
+
+def _fetch_us_intraday_snapshot(yf_sym: str, ts: str) -> dict[str, Any] | None:
+    """Single Yahoo `chart` API call with 1m interval. Returns
+    {price, change_pct, as_of} or None on any error. Used by
+    `get_us_live_quotes` per-symbol so a 15-stock watchlist still
+    fans out without a 15 s shared throttle in the way."""
+    try:
+        response = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}",
+            params={"range": "1d", "interval": "1m"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=6,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        return None
+    result = ((payload.get("chart") or {}).get("result") or [{}])[0]
+    meta = result.get("meta") or {}
+    # Prefer the LIVE tick from `regularMarketPrice` — this is the
+    # exact value Yahoo Finance's web UI shows in real time.
+    price = 0.0
+    for key in ("regularMarketPrice", "chartPreviousClose"):
+        try:
+            v = float(meta.get(key) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if v > 0 and _finite(v):
+            price = v
+            break
+    # Last finite 1m close as fallback.
+    if price <= 0:
+        closes = (((result.get("indicators") or {}).get("quote") or [{}])[0]
+                  .get("close") or [])
+        for value in reversed(closes):
+            try:
+                v = float(value or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if v > 0 and _finite(v):
+                price = v
+                break
+    if price <= 0:
+        return None
+    try:
+        prev = float(meta.get("previousClose") or 0.0)
+    except (TypeError, ValueError):
+        prev = 0.0
+    change_pct = ((price / prev - 1.0) * 100.0) if prev > 0 else 0.0
+    return {
+        "price": round(price, 4),
+        "change_pct": round(change_pct, 2),
+        "as_of": ts,
+    }
 
 
 # ── USD / INR ──────────────────────────────────────────────────

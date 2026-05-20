@@ -103,12 +103,29 @@ def render_us_sections_json() -> str:
     positions.sort(key=lambda p: (p.exchange, p.symbol, p.position_id))
     watchlist = _us_watchlist()
     latest_scan = latest_us_scan() or {}
-    live_syms = sorted({p.symbol for p in positions}
-                       | {w.symbol for w in watchlist}
-                       | {c.get("symbol", "")
-                          for c in (latest_scan.get("candidates") or [])
-                          if c.get("symbol")})
-    live = cached_us_live_quotes(live_syms) if live_syms else {}
+
+    # 2026-05-19: open book + watchlist symbols get a LIVE fetch on
+    # initial render so the first paint shows real prices instead
+    # of falling back to entry_price (which was the user-visible
+    # "live price = entry price" complaint). This matches the
+    # detail page, which already does a live call on render.
+    # Recommendation list stays cached-only because it can be ~100
+    # symbols and we don't want to block sections render on a big
+    # yfinance batch.
+    money_syms = sorted({p.symbol for p in positions}
+                        | {w.symbol for w in watchlist})
+    reco_syms = sorted({c.get("symbol", "")
+                        for c in (latest_scan.get("candidates") or [])
+                        if c.get("symbol")} - set(money_syms))
+    live: dict = {}
+    if money_syms:
+        try:
+            live.update(get_us_live_quotes(money_syms))
+        except Exception:
+            live.update(cached_us_live_quotes(money_syms))
+    if reco_syms:
+        live.update(cached_us_live_quotes(reco_syms))
+
     names = _scan_names(latest_scan)
     rows = latest_scan.get("candidates") or []
     open_symbols = {p.symbol.strip().upper() for p in positions}
@@ -442,33 +459,48 @@ def _render_single_stock_card(default_ticket: float) -> str:
 
 
 def _render_compare_card(default_ticket: float) -> str:
-        return f"""
+        # 2026-05-19 rewrite: now structurally identical to the
+        # Indian Swing compare card (`swing_page._render_compare_card`)
+        # so the two products have the same UX. Sector dropdown
+        # loads from `/api/us/sectors` on DOMContentLoaded; picking
+        # a sector auto-fills the input AND auto-renders the
+        # compare result. The result table is rendered by the
+        # shared `_renderCompareResult` JS which highlights winning
+        # cells in green and shows a "X of N metrics" tally per
+        # symbol.
+        return """
 <div class="card">
     <h2>Compare Stocks (up to 4)</h2>
     <p class="muted" style="margin-bottom:10px">
-        Side-by-side comparison of up to 4 US stocks using the same US swing
-        indicators, 52w context, and SPY-relative strength used by the scan.
+        Side-by-side comparison of up to 4 US swing candidates.
+        Type a comma-separated list of tickers OR pick a sector to
+        auto-populate the top 4. Each metric row highlights the
+        winning value so you can see WHY one stock outranks another
+        (example: <em>NVDA vs AMD &mdash; RS vs SPY +18% vs -2%,
+        composite score 7.1 vs 4.4, etc.</em>).
     </p>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+    <div style="display:flex;gap:8px;align-items:center;
+                flex-wrap:wrap;margin-bottom:8px">
         <input type="text" id="us-compare-symbols"
-                     placeholder="e.g. AAPL, MSFT, NVDA, ORCL"
-                     style="flex:1;min-width:280px;padding:6px 10px;font:inherit;
-                                    border:1px solid #cfd9eb;border-radius:5px;
-                                    text-transform:uppercase"
-                     onkeydown="if(event.key==='Enter'){{compareUsStocks();}}" />
-        <select id="us-compare-group" onchange="compareUsGroupChanged()"
-                     style="min-width:180px;padding:6px 10px;font:inherit;
-                                    border:1px solid #cfd9eb;border-radius:5px">
-            <option value="">-- or pick a group --</option>
-            <option value="AAPL, MSFT, NVDA, GOOGL">Mega-cap tech</option>
-            <option value="NVDA, AVGO, AMD, INTC">Semiconductors</option>
-            <option value="MSFT, ORCL, CRM, ADBE">Software</option>
-            <option value="SPY, QQQ, DIA, IWM">US ETFs</option>
+               placeholder="e.g. AAPL, MSFT, NVDA, GOOGL"
+               style="flex:1;min-width:280px;padding:6px 10px;font:inherit;
+                      border:1px solid #cfd9eb;border-radius:5px;
+                      text-transform:uppercase"
+               onkeydown="if(event.key==='Enter'){compareUsNow();}" />
+        <select id="us-compare-sector"
+                style="padding:6px 10px;font:inherit;
+                       border:1px solid #cfd9eb;border-radius:5px">
+            <option value="">&mdash; or pick a sector &mdash;</option>
         </select>
-        <button class="action" onclick="compareUsStocks()">Compare</button>
+        <button class="action" onclick="compareUsNow()">Compare</button>
         <button class="action alt" onclick="compareUsClear()"
-                        style="padding:5px 10px;font-size:12px">Clear</button>
+                style="padding:5px 10px;font-size:12px">Clear</button>
     </div>
+    <p class="muted" style="font-size:11px;margin:0 0 10px 0">
+        Sector dropdown loads top-4 from the curated US sector map
+        (e.g. SEMICONDUCTORS gives NVDA, AVGO, AMD, QCOM). You can
+        edit the input afterwards before clicking Compare.
+    </p>
     <div id="us-compare-result-host"></div>
 </div>
 """
@@ -1724,96 +1756,182 @@ function _renderUsAnalysis(row) {
 }
 
 /* ── Compare up to 4 US stocks ────────────────────────────── */
-function compareUsClear() {
-    var input = document.getElementById('us-compare-symbols');
-    var group = document.getElementById('us-compare-group');
+/* ── Compare up to 4 US stocks (mirrors swing /api/swing/compare)
+ *
+ * 2026-05-19 rewrite. The previous version had a hard-coded
+ * "group" dropdown, fired N parallel /api/us/analyse calls
+ * client-side, and rendered its own table without winner
+ * highlighting. The user wanted EXACTLY the same UX as /swing
+ * compare, so we now:
+ *
+ *   1. Load sector keys from /api/us/sectors on DOMContentLoaded.
+ *   2. When the sector dropdown changes, /api/us/compare?sector=X
+ *      returns the top-4 list AND a fully-built winner-tagged
+ *      result matrix in one call (auto-fills the input + renders).
+ *   3. The "Compare" button calls /api/us/compare?symbols=A,B,C,D
+ *      for free-text inputs.
+ *   4. _renderCompareResult() is the same renderer that /swing
+ *      uses — winning cells highlighted in green, headline tally
+ *      "<symbol> wins most metrics", etc.
+ */
+window.addEventListener('DOMContentLoaded', function () {
+    var sel = document.getElementById('us-compare-sector');
+    if (!sel) return;
+    fetch('/api/us/sectors')
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            var sectors = (j && j.sectors) || [];
+            sectors.forEach(function (s) {
+                var opt = document.createElement('option');
+                opt.value = s;
+                // Pretty-print: MEGACAP_TECH -> Megacap Tech
+                opt.textContent = s.toLowerCase().replace(/_/g, ' ')
+                    .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+                sel.appendChild(opt);
+            });
+        })
+        .catch(function () { /* silent — dropdown stays minimal */ });
+    sel.addEventListener('change', function () {
+        var sector = sel.value;
+        if (!sector) return;
+        var host = document.getElementById('us-compare-result-host');
+        if (host) host.innerHTML =
+            '<p class="muted"><span class="spinner"></span> ' +
+            'Fetching ' + _esc(sector) + ' top-4 ' +
+            '(this can take 5-15 seconds for 4 names)...</p>';
+        fetch('/api/us/compare?sector=' + encodeURIComponent(sector))
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                if (j && j.symbols) {
+                    var inp = document.getElementById('us-compare-symbols');
+                    if (inp) inp.value = j.symbols.join(', ');
+                    _renderUsCompareResult(host, j);
+                }
+            })
+            .catch(function () { /* silent */ });
+    });
+});
+
+function compareUsNow() {
+    var inp = document.getElementById('us-compare-symbols');
+    var sel = document.getElementById('us-compare-sector');
     var host = document.getElementById('us-compare-result-host');
-    if (input) input.value = '';
-    if (group) group.value = '';
-    if (host) host.innerHTML = '';
-}
-function compareUsGroupChanged() {
-    var group = document.getElementById('us-compare-group');
-    var input = document.getElementById('us-compare-symbols');
-    if (group && input && group.value) input.value = group.value;
-}
-function compareUsStocks() {
-    var input = document.getElementById('us-compare-symbols');
-    var host = document.getElementById('us-compare-result-host');
-    if (!input || !host) return;
-    var symbols = String(input.value || '').split(',')
-        .map(function(s) { return s.trim().toUpperCase(); })
-        .filter(function(s, idx, arr) { return s && arr.indexOf(s) === idx; })
-        .slice(0, 4);
-    if (!symbols.length) {
-        alert('Enter 1-4 US tickers to compare');
+    if (!host) return;
+    var syms = (inp && inp.value || '').trim();
+    var sector = (sel && sel.value || '').trim();
+    if (!syms && !sector) {
+        host.innerHTML = '<div class="banner warn">' +
+            'Type tickers OR pick a sector first.</div>';
         return;
     }
-    input.value = symbols.join(', ');
-    var ticket = _usTicketAmount();
-    if (ticket === null) return;
-    host.innerHTML = '<p class="muted"><span class="spinner"></span>Comparing ' +
-        _esc(symbols.join(', ')) + '\u2026</p>';
-    Promise.all(symbols.map(function(sym) {
-        return fetch('/api/us/analyse?symbol=' + encodeURIComponent(sym) +
-                     '&ticket=' + encodeURIComponent(ticket) + '&ai=0&force=0')
-            .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j, symbol: sym}; }); })
-            .catch(function(e) { return {ok: false, body: {error: String(e)}, symbol: sym}; });
-    })).then(function(results) {
-        var rows = results.filter(function(r) { return r.ok && r.body && r.body.ok; })
-                          .map(function(r) { return r.body; });
-        var failures = results.filter(function(r) { return !r.ok || !(r.body && r.body.ok); });
-        if (!rows.length) {
-            host.innerHTML = '<div class="banner error">No compare rows could be analysed.</div>';
-            return;
-        }
-        host.innerHTML = _renderUsCompareTable(rows, failures);
-        _applyCurrencyToAll();
-    });
+    var url = syms
+        ? '/api/us/compare?symbols=' + encodeURIComponent(syms)
+        : '/api/us/compare?sector=' + encodeURIComponent(sector);
+    host.innerHTML = '<p class="muted"><span class="spinner"></span> ' +
+        'Fetching candles + computing comparison ' +
+        '(this can take 5-15 seconds for 4 names)...</p>';
+    fetch(url)
+        .then(function (r) { return r.json().then(function (j) {
+            return {ok: r.ok, body: j}; }); })
+        .then(function (res) {
+            if (!res.ok || !res.body.ok) {
+                host.innerHTML = '<div class="banner warn">' +
+                    'Compare failed: ' +
+                    (res.body && res.body.error || 'unknown') + '</div>';
+                return;
+            }
+            _renderUsCompareResult(host, res.body);
+        })
+        .catch(function (e) {
+            host.innerHTML = '<div class="banner warn">Network error: ' +
+                e + '</div>';
+        });
 }
-function _renderUsCompareTable(rows, failures) {
-    var metrics = [
-        ['Action', function(r) { return _actionLabel(r.action); }],
-        ['Setup', function(r) { return _esc(r.setup_type || 'NONE'); }],
-        ['Score', function(r) { return Number(r.score || 0).toFixed(2); }, true],
-        ['Price', function(r) { return _moneyHtml(r.current_price); }],
-        ['Entry', function(r) { return _moneyHtml(r.entry_price); }],
-        ['Stop', function(r) { return _moneyHtml(r.stop_price); }],
-        ['Target', function(r) { return _moneyHtml(r.target_price); }],
-        ['Qty', function(r) { return String(r.suggested_qty || 0); }],
-        ['R:R', function(r) { return Number(r.rr_ratio || 0).toFixed(2) + 'x'; }, true],
-        ['RSI', function(r) { return Number((r.indicators || {}).rsi || 0).toFixed(1); }],
-        ['52W Gap', function(r) { return Number((r.indicators || {}).dip_from_52w_high_pct || 0).toFixed(2) + '%'; }],
-        ['RS vs SPY', function(r) { return Number((r.indicators || {}).relative_strength || 0).toFixed(2) + '%'; }, true]
-    ];
-    var html = '<table class="holdings"><tr><th>Metric</th>';
-    rows.forEach(function(r) {
-        html += '<th>' + _esc(r.symbol) + '<br><span class="small">' +
-                _esc(r.stock_name || '') + '</span></th>';
+
+function compareUsClear() {
+    var inp = document.getElementById('us-compare-symbols');
+    var sel = document.getElementById('us-compare-sector');
+    var host = document.getElementById('us-compare-result-host');
+    if (inp) inp.value = '';
+    if (sel) sel.value = '';
+    if (host) host.innerHTML = '';
+}
+
+/* Renderer is functionally identical to the swing
+ * `_renderCompareResult` in `swing_page.py`. Kept inline here
+ * because the two pages don't share a JS bundle. */
+function _renderUsCompareResult(host, data) {
+    if (!host) return;
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+        });
+    }
+    var syms = data.symbols || [];
+    if (!syms.length) {
+        host.innerHTML = '<div class="banner warn">No data.</div>';
+        return;
+    }
+    var winnerCounts = data.win_counts || [];
+    var headOverall = data.winner_overall;
+    var html = '';
+    if (headOverall) {
+        html += '<div style="margin:6px 0 10px 0;font-size:13px">';
+        html += '<strong>' + esc(headOverall) + '</strong> wins ' +
+                'most metrics. Tally: ';
+        var bits = [];
+        for (var i = 0; i < syms.length; i++) {
+            bits.push('<span style="font-weight:' +
+                      (syms[i] === headOverall ? '600' : '400') + '">' +
+                      esc(syms[i]) + ' ' + winnerCounts[i] + '</span>');
+        }
+        html += bits.join(' &middot; ');
+        html += '</div>';
+    }
+    if (data.sector) {
+        html += '<div class="muted" style="font-size:11px;margin-bottom:6px">' +
+                'Sector: <strong>' + esc(data.sector) + '</strong> &middot; ' +
+                'top ' + syms.length + ' from the curated US sector map.</div>';
+    }
+    html += '<div style="overflow-x:auto"><table class="holdings" ' +
+            'style="font-size:12.5px"><thead><tr>';
+    html += '<th style="text-align:left;min-width:180px">Metric</th>';
+    syms.forEach(function (s) {
+        html += '<th style="text-align:center;min-width:120px">' +
+                '<a href="/us/' + encodeURIComponent(s) + '" ' +
+                'style="color:var(--fg);font-weight:600">' +
+                esc(s) + '</a></th>';
     });
-    html += '</tr>';
-    metrics.forEach(function(m) {
-        html += '<tr><td><strong>' + _esc(m[0]) + '</strong></td>';
-        rows.forEach(function(r) { html += '<td>' + m[1](r) + '</td>'; });
+    html += '</tr></thead><tbody>';
+    (data.rows || []).forEach(function (row) {
+        html += '<tr>';
+        var lbl = esc(row.label);
+        if (row.explain) {
+            lbl = '<span title="' + esc(row.explain) + '" ' +
+                  'style="border-bottom:1px dotted #cfd9eb;cursor:help">' +
+                  lbl + '</span>';
+        }
+        html += '<td style="text-align:left">' + lbl + '</td>';
+        (row.values || []).forEach(function (v, i) {
+            var wins = row.winners_idx;
+            var winning = false;
+            if (Array.isArray(wins) && wins.length) {
+                winning = wins.indexOf(i) !== -1;
+            } else {
+                winning = (row.winner_idx === i);
+            }
+            var bg = winning ? 'background:#e6f4ea;font-weight:600' : '';
+            html += '<td style="text-align:center;' + bg + '">' +
+                    esc(v) + '</td>';
+        });
         html += '</tr>';
     });
-    html += '<tr><td><strong>Actions</strong></td>';
-    rows.forEach(function(r) {
-        var payload = _esc(JSON.stringify(_usActionPayload(r)));
-        html += '<td><select class="add-dropdown" data-row="' + payload + '" ' +
-                'onchange="addUsCandidate(this)" style="padding:4px 6px;font-size:12px">' +
-                '<option value="">Add+</option><option value="watch">Watch</option>' +
-                '<option value="buy">I Bought It</option></select> ' +
-                '<a href="/us/' + encodeURIComponent(r.symbol || '') + '" ' +
-                'style="font-size:12px;color:var(--fg);font-weight:600">Detail</a></td>';
-    });
-    html += '</tr></table>';
-    if (failures.length) {
-        html += '<div class="banner warn" style="margin-top:8px">Skipped: ' +
-                failures.map(function(f) { return _esc(f.symbol + ': ' + ((f.body && f.body.error) || 'failed')); }).join('<br>') +
-                '</div>';
+    html += '</tbody></table></div>';
+    if (data.notes && data.notes.length) {
+        html += '<div class="muted" style="font-size:11px;margin-top:8px">' +
+                data.notes.map(esc).join('<br>') + '</div>';
     }
-    return html;
+    host.innerHTML = html;
 }
 
 /* ── AI per-stock (detail page) ───────────────────────────── */
