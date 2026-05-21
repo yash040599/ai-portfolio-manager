@@ -382,10 +382,13 @@ def _render_pnl_card(
                     f'<span class="{pnl_cls}">{_money_span(pnl.get("net_pnl", 0), signed=True)}</span>'))
     out.append(_kv("Closed Trades", str(int(pnl.get("count", 0)))))
     out.append(_kv("Open Positions", str(len(positions))))
-    out.append(_kv("Book Amount", _money_span(invested)))
-    out.append(_kv("Current Amount", _money_span(current_value)))
+    out.append(_kv("Book Amount",
+                   _money_span(invested, element_id="us-open-book-amount")))
+    out.append(_kv("Current Amount",
+                   _money_span(current_value, element_id="us-open-current-amount")))
     out.append(_kv("Unrealised P&amp;L",
-                   f'<span class="{upnl_cls}">{_money_span(unrealised, signed=True)}</span>'))
+                   f'<span id="us-open-unrealised-wrap" class="{upnl_cls}">'
+                   f'{_money_span(unrealised, signed=True, element_id="us-open-unrealised-pnl")}</span>'))
     out.append('</table></div>')
     return "".join(out)
 
@@ -772,7 +775,8 @@ def _render_positions(positions: list[SwingPosition],
             f'<tr data-live-symbol="{html.escape(p.symbol)}" '
             f'data-live-tier="open" '
             f'data-entry-price="{p.entry_price}" '
-            f'data-managed-qty="{p.managed_qty}">'
+            f'data-managed-qty="{p.managed_qty}" '
+            f'data-live-price="{lprice}">'
             f'<td><a href="/us/{html.escape(p.symbol)}" class="ticker">'
             f'{html.escape(p.symbol)}</a><br>'
             f'<span class="small muted">{html.escape(p.exchange)}</span></td>'
@@ -832,7 +836,7 @@ def _filter_pnl_for_us(pnl: dict) -> dict:
     return out
 
 
-def _money_span(value, signed: bool = False) -> str:
+def _money_span(value, signed: bool = False, element_id: str | None = None) -> str:
     """Render a USD value as a <span class="money" data-usd="..."> so
     the client-side currency toggle can re-render in INR on demand."""
     try:
@@ -841,7 +845,8 @@ def _money_span(value, signed: bool = False) -> str:
         v = 0.0
     text = (f"${'+' if v >= 0 else '-'}{abs(v):,.2f}" if signed
             else f"${v:,.2f}")
-    return (f'<span class="money" data-usd="{v}" '
+    id_attr = f' id="{html.escape(element_id)}"' if element_id else ''
+    return (f'<span{id_attr} class="money" data-usd="{v}" '
             f'data-signed="{1 if signed else 0}">{text}</span>')
 
 
@@ -1227,6 +1232,7 @@ function _usApplyQuotesToNodes(nodes, quotes) {
         var q = quotes[sym];
         if (!q || !q.price) continue;
         var price = Number(q.price || 0);
+        row.setAttribute('data-live-price', String(price));
         var change = Number(q.change_pct || 0);
         _updateLiveCell(row, 'price', price, false);
         _updateLiveCell(row, 'price_with_change', price, false, change);
@@ -1250,6 +1256,47 @@ function _usApplyQuotesToNodes(nodes, quotes) {
             var vp = (price / watchAdded - 1) * 100;
             _updateWatchVpnl(row, v, vp);
         }
+    }
+    _refreshUsOpenBookSummary();
+}
+
+function _refreshUsOpenBookSummary() {
+    var rows = document.querySelectorAll(
+        'tr[data-live-tier="open"][data-entry-price][data-managed-qty]');
+    var invested = 0;
+    var current = 0;
+    for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        var entry = Number(row.getAttribute('data-entry-price'));
+        var qty = Number(row.getAttribute('data-managed-qty'));
+        if (!(isFinite(entry) && isFinite(qty) && entry > 0 && qty > 0)) continue;
+        var live = Number(row.getAttribute('data-live-price'));
+        if (!(isFinite(live) && live > 0)) live = entry;
+        invested += (entry * qty);
+        current += (live * qty);
+    }
+    var unreal = current - invested;
+
+    var book = document.getElementById('us-open-book-amount');
+    var cur = document.getElementById('us-open-current-amount');
+    var upnl = document.getElementById('us-open-unrealised-pnl');
+    var upnlWrap = document.getElementById('us-open-unrealised-wrap');
+    if (book) {
+        book.setAttribute('data-usd', String(invested));
+        _renderMoney(book);
+    }
+    if (cur) {
+        cur.setAttribute('data-usd', String(current));
+        _renderMoney(cur);
+    }
+    if (upnl) {
+        upnl.setAttribute('data-usd', String(unreal));
+        upnl.setAttribute('data-signed', '1');
+        _renderMoney(upnl);
+    }
+    if (upnlWrap) {
+        upnlWrap.classList.remove('pos', 'neg');
+        upnlWrap.classList.add(unreal >= 0 ? 'pos' : 'neg');
     }
 }
 
@@ -1380,6 +1427,7 @@ function _usPollFx() {
 
 window.addEventListener('DOMContentLoaded', function() {
     _applyCurrencyToAll();
+    _refreshUsOpenBookSummary();
     _syncUsLiveToggle();
     var btn = document.getElementById('us-live-toggle');
     if (btn) btn.addEventListener('click', function() {

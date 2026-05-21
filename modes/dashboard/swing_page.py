@@ -288,10 +288,12 @@ def render_swing_page() -> str:
                      f'<span class="{pnl_cls}">Rs.{pnl["net_pnl"]:+,.2f}</span>'))
     body.append(_kv("Closed trades", str(pnl["count"])))
     body.append(_kv("Open Positions", str(len(positions))))
-    body.append(_kv("Book Amount", f'Rs.{invested:,.2f}'))
-    body.append(_kv("Current Amount", f'Rs.{current_value:,.2f}'))
+    body.append(_kv("Book Amount",
+                    f'<span id="swing-open-book-amount">Rs.{invested:,.2f}</span>'))
+    body.append(_kv("Current Amount",
+                    f'<span id="swing-open-current-amount">Rs.{current_value:,.2f}</span>'))
     body.append(_kv("Unrealised P&amp;L",
-                    f'<span class="{upnl_cls}">Rs.{unrealised:+,.2f}</span>'))
+                    f'<span id="swing-open-unrealised-pnl" class="{upnl_cls}">Rs.{unrealised:+,.2f}</span>'))
     body.append('</table></div>')
 
     # ── Scan controls ──────────────────────────────────────────
@@ -703,7 +705,8 @@ def render_swing_page() -> str:
             body.append(
                 f'<tr data-live-symbol="{html.escape(p.symbol)}" '
                 f'data-entry-price="{entry_price_str}" '
-                f'data-managed-qty="{qty_str}">'
+                f'data-managed-qty="{qty_str}" '
+                f'data-live-price="{lprice}">'
                 f'<td><strong>{html.escape(p.symbol)}</strong></td>'
                 f'<td><span style="font-size:11px;color:var(--muted)">'
                 f'{html.escape(stock_name)}</span></td>'
@@ -2003,6 +2006,7 @@ function _swingPollLivePrices() {
                 var q = quotes[sym] || {};
                 var price = Number(q.price);
                 if (!isFinite(price) || price <= 0) return;
+                row.setAttribute('data-live-price', String(price));
                 var change = Number(q.change_pct) || 0;
                 var chgCls = change >= 0 ? 'pos' : 'neg';
                 // Update each marked cell within this row.
@@ -2059,8 +2063,57 @@ function _swingPollLivePrices() {
                     }
                 });
             });
+            _refreshSwingOpenBookSummary();
         })
         .catch(function () { /* silent — keep stale values */ });
+}
+
+function _refreshSwingOpenBookSummary() {
+    var rows = document.querySelectorAll(
+        'tr[data-entry-price][data-managed-qty]'
+    );
+    var invested = 0;
+    var current = 0;
+
+    rows.forEach(function (row) {
+        var entry = Number(row.getAttribute('data-entry-price'));
+        var qty = Number(row.getAttribute('data-managed-qty'));
+        if (!(isFinite(entry) && isFinite(qty) && entry > 0 && qty > 0)) return;
+
+        var live = Number(row.getAttribute('data-live-price'));
+        if (!(isFinite(live) && live > 0)) {
+            live = entry;
+        }
+
+        invested += (entry * qty);
+        current += (live * qty);
+    });
+
+    var unreal = current - invested;
+    var bookEl = document.getElementById('swing-open-book-amount');
+    var curEl = document.getElementById('swing-open-current-amount');
+    var upnlEl = document.getElementById('swing-open-unrealised-pnl');
+
+    if (bookEl) {
+        bookEl.textContent = 'Rs.' + invested.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+    }
+    if (curEl) {
+        curEl.textContent = 'Rs.' + current.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+    }
+    if (upnlEl) {
+        upnlEl.classList.remove('pos', 'neg');
+        upnlEl.classList.add(unreal >= 0 ? 'pos' : 'neg');
+        upnlEl.textContent = 'Rs.' + (unreal >= 0 ? '+' : '') + unreal.toLocaleString('en-IN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+    }
 }
 
 function _swingLiveEnabled() {
@@ -2089,6 +2142,7 @@ function _syncSwingLiveToggle() {
 // prices; hidden tabs do not poll.
 window.addEventListener('DOMContentLoaded', function () {
     _syncSwingLiveToggle();
+    _refreshSwingOpenBookSummary();
     var btn = document.getElementById('swing-live-toggle');
     if (btn) btn.addEventListener('click', function () {
         _setSwingLiveEnabled(!_swingLiveEnabled());
