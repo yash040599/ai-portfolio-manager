@@ -267,6 +267,15 @@ def render_swing_page() -> str:
     body.append('<div class="sub">' + '<br>'.join(freshness_parts) + '</div>')
 
     # ── P&L summary ────────────────────────────────────────────
+    invested = sum(p.managed_qty * p.entry_price for p in positions)
+    current_value = 0.0
+    for p in positions:
+        lq = live.get(p.symbol, {})
+        lprice = lq.get("price", 0) or p.entry_price
+        current_value += p.managed_qty * float(lprice)
+    unrealised = current_value - invested
+    upnl_cls = "pos" if unrealised >= 0 else "neg"
+
     body.append('<div class="card">')
     body.append('<h2>Realised Swing P&amp;L</h2>')
     body.append('<table class="kvtable">')
@@ -278,6 +287,11 @@ def render_swing_page() -> str:
     body.append(_kv("Net P&amp;L",
                      f'<span class="{pnl_cls}">Rs.{pnl["net_pnl"]:+,.2f}</span>'))
     body.append(_kv("Closed trades", str(pnl["count"])))
+    body.append(_kv("Open Positions", str(len(positions))))
+    body.append(_kv("Book Amount", f'Rs.{invested:,.2f}'))
+    body.append(_kv("Current Amount", f'Rs.{current_value:,.2f}'))
+    body.append(_kv("Unrealised P&amp;L",
+                    f'<span class="{upnl_cls}">Rs.{unrealised:+,.2f}</span>'))
     body.append('</table></div>')
 
     # ── Scan controls ──────────────────────────────────────────

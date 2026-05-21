@@ -46,6 +46,7 @@ def render_us_page() -> str:
     fx = cached_usd_inr_rate()
     pnl = realised_pnl_summary(exchange=None)  # filter to US below
     pnl = _filter_pnl_for_us(pnl)
+    live_positions = cached_us_live_quotes([p.symbol for p in positions]) if positions else {}
 
     # Symbols that can opt into live polling after the first paint.
     live_syms = sorted({p.symbol for p in positions}
@@ -61,7 +62,7 @@ def render_us_page() -> str:
     body.append(_render_freshness(latest_scan, bool(live_syms), fx))
 
     # P&L summary card (mirrors swing's "Realised Swing P&L").
-    body.append(_render_pnl_card(pnl, positions))
+    body.append(_render_pnl_card(pnl, positions, live_positions))
 
     # Daily Scan card.
     body.append(_render_scan_card(default_ticket, latest_scan))
@@ -355,9 +356,19 @@ def _render_freshness(latest_scan: dict, has_live: bool,
     return '<div class="sub">' + '<br>'.join(parts) + '</div>'
 
 
-def _render_pnl_card(pnl: dict, positions: list[SwingPosition]) -> str:
+def _render_pnl_card(
+    pnl: dict,
+    positions: list[SwingPosition],
+    live_by_symbol: dict[str, dict],
+) -> str:
     invested = sum(p.managed_qty * p.entry_price for p in positions)
-    shares = sum(p.managed_qty for p in positions)
+    current_value = 0.0
+    for p in positions:
+        lq = live_by_symbol.get(p.symbol, {})
+        lprice = float(lq.get("price") or p.entry_price)
+        current_value += p.managed_qty * lprice
+    unrealised = current_value - invested
+    upnl_cls = "pos" if unrealised >= 0 else "neg"
     pnl_cls = "pos" if pnl.get("net_pnl", 0) >= 0 else "neg"
     out: list[str] = []
     out.append('<div class="card">')
@@ -371,8 +382,10 @@ def _render_pnl_card(pnl: dict, positions: list[SwingPosition]) -> str:
                     f'<span class="{pnl_cls}">{_money_span(pnl.get("net_pnl", 0), signed=True)}</span>'))
     out.append(_kv("Closed Trades", str(int(pnl.get("count", 0)))))
     out.append(_kv("Open Positions", str(len(positions))))
-    out.append(_kv("Total Shares", f'{shares:,}'))
-    out.append(_kv("Book Cost", _money_span(invested)))
+    out.append(_kv("Book Amount", _money_span(invested)))
+    out.append(_kv("Current Amount", _money_span(current_value)))
+    out.append(_kv("Unrealised P&amp;L",
+                   f'<span class="{upnl_cls}">{_money_span(unrealised, signed=True)}</span>'))
     out.append('</table></div>')
     return "".join(out)
 
