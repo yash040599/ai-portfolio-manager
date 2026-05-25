@@ -1,7 +1,7 @@
 # Backtest Results: Strategy 3 -- EMA Pullback Momentum
 
 **Date run**: 2026-05-25
-**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](TRADE_REVAMP_STRATEGIES.md#strategy-3-ema-pullback-momentum)
+**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](../TRADE_REVAMP_STRATEGIES.md#strategy-3-ema-pullback-momentum)
 
 ---
 
@@ -130,3 +130,26 @@ positive returns with a Sharpe > 4, but has important caveats.
 ---
 
 *Raw trade data: `reports/backtest/ema_pullback_intraday_trades.json`*
+
+---
+
+## Code Review
+
+**Status: CONFIG FLAG ONLY — NO IMPLEMENTATION (pending cost validation)**
+
+| Check | Result |
+|-------|--------|
+| Config flag | `STRATEGY_EMA_PULLBACK_ENABLED: bool = False` (config.py line 187) |
+| Daily cap | `STRATEGY_EMA_PULLBACK_MAX_PER_STOCK_PER_DAY: int = 1` (config.py line 188) |
+| Trade mode code | NOT implemented — flag exists but no scanner/entry code reads it |
+| Verdict | **DISABLED** — promising (PF 1.07 raw) but thin edge may not survive costs |
+
+**TODO**: If after-cost analysis in Layer 4 (exit logic optimization)
+shows the edge survives, implement the EMA Pullback signal as an
+additional scoring path in `modes/trade/stock_scanner.py`:
+1. Add `_scan_noai_ema_pullback()` method computing EMA(9/21) +
+   MACD + ADX on rolling multi-day 15-min candles
+2. Add pullback detection logic (prev bar touches EMA9, current
+   bar bounces back above)
+3. Cap at 1 trade per stock per day via the config param
+4. Integrate with existing sector/direction allocation

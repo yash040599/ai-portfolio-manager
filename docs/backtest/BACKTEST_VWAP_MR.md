@@ -1,7 +1,7 @@
 # Backtest Results: Strategy 1 — VWAP Mean-Reversion
 
 **Date run**: 2026-05-25
-**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](TRADE_REVAMP_STRATEGIES.md#strategy-1-vwap-mean-reversion-rubber-band)
+**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](../TRADE_REVAMP_STRATEGIES.md#strategy-1-vwap-mean-reversion-rubber-band)
 
 ---
 
@@ -122,3 +122,18 @@ from 20-day average typical price only fires on large-range days.
 
 *Raw trade data: `reports/backtest/vwap_mr_intraday_trades.json` and
 `reports/backtest/vwap_mr_daily_trades.json`*
+
+---
+
+## Code Review
+
+**Status: CONFIG FLAG ONLY — NO IMPLEMENTATION (by design)**
+
+| Check | Result |
+|-------|--------|
+| Config flag | `STRATEGY_VWAP_MR_ENABLED: bool = False` (config.py line 177) |
+| Trade mode code | NOT implemented — flag exists but no scanner/entry code reads it |
+| Verdict | **PERMANENTLY DISABLED** — backtest proves it loses money |
+
+No implementation will be written. The flag serves as documentation
+that this strategy was evaluated and rejected.

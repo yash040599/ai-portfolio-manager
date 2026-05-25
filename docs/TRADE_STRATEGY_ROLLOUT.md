@@ -20,9 +20,9 @@
 
 | Strategy | Result | Win Rate | CAGR | Sharpe | Details |
 |----------|--------|----------|------|--------|---------|
-| VWAP Mean-Reversion | **FAIL** | 23.1% | -39.1% | -2.95 | [Report](BACKTEST_VWAP_MR.md) |
-| ORB-15 Breakout | **MARGINAL** | 55.7% | -1.4% | -0.15 | [Report](BACKTEST_ORB15.md) |
-| EMA Pullback Momentum | **PROMISING** | 42.8% | +151.5% | 4.03 | [Report](BACKTEST_EMA_PULLBACK.md) |
+| VWAP Mean-Reversion | **FAIL** | 23.1% | -39.1% | -2.95 | [Report](backtest/BACKTEST_VWAP_MR.md) |
+| ORB-15 Breakout | **MARGINAL** | 55.7% | -1.4% | -0.15 | [Report](backtest/BACKTEST_ORB15.md) |
+| EMA Pullback Momentum | **PROMISING** | 42.8% | +151.5% | 4.03 | [Report](backtest/BACKTEST_EMA_PULLBACK.md) |
 
 ## Gate Optimization
 

@@ -1,7 +1,7 @@
 # Backtest Results: Strategy 2 -- ORB-15 Breakout
 
 **Date run**: 2026-05-25
-**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](TRADE_REVAMP_STRATEGIES.md#strategy-2-opening-range-breakout-orb-15)
+**Strategy doc**: [TRADE_REVAMP_STRATEGIES.md](../TRADE_REVAMP_STRATEGIES.md#strategy-2-opening-range-breakout-orb-15)
 
 ---
 
@@ -130,3 +130,19 @@ doesn't generate consistent profit after costs.**
 
 *Raw trade data: `reports/backtest/orb15_intraday_trades.json` and
 `reports/backtest/orb15_daily_trades.json`*
+
+---
+
+## Code Review
+
+**Status: CONFIG FLAG ONLY — NO IMPLEMENTATION**
+
+| Check | Result |
+|-------|--------|
+| Config flag | `STRATEGY_ORB15_ENABLED: bool = False` (config.py line 182) |
+| Trade mode code | NOT implemented — flag exists but no scanner/entry code reads it |
+| Verdict | **DISABLED** — near break-even, not profitable after costs |
+
+**TODO**: If R:R is fixed (tighter SL) and re-backtest shows PF > 1.15
+after costs, implement the ORB-15 scanning logic in
+`modes/trade/stock_scanner.py` as an alternative signal source.

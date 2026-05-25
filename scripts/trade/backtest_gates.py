@@ -321,6 +321,7 @@ def simulate_trades(
     gate_stagnant_minutes: int = 0,      # 0 = disabled
     gate_daily_loss_stop_pct: float = 0, # 0 = disabled
     gate_max_trades_per_day: int = 0,    # 0 = unlimited
+    gate_charge_multiple: float = 0,     # 0 = disabled, e.g. 2.0 or 3.0
 ) -> list[dict]:
     """Run the full scoring + simulation pipeline for one symbol.
     Uses a rolling multi-day window for indicator computation."""
@@ -514,6 +515,21 @@ def simulate_trades(
                 if actual_rr < rr_floor:
                     continue
 
+            # ── Charge-aware target gate (E5) ─────────────────
+            if gate_charge_multiple > 0:
+                trade_value = 15_000
+                qty_est = max(1, int(trade_value / price))
+                gross_profit = target_dist * qty_est
+                if this_side == "BUY":
+                    buy_val = price * qty_est
+                    sell_val = (price + target_dist) * qty_est
+                else:
+                    buy_val = (price - target_dist) * qty_est
+                    sell_val = price * qty_est
+                charges = compute_charges(buy_val, sell_val)
+                if gross_profit < charges * gate_charge_multiple:
+                    continue
+
             entry_price = price
             side = this_side
             entry_ts = c["ts"]
@@ -682,7 +698,7 @@ def main():
             }
     print(f"  Loaded {len(all_data)} symbols with data\n")
 
-    def run_config(label: str, **kwargs) -> dict:
+    def run_config(label: str, *, portfolio_daily_cap: int = 0, **kwargs) -> dict:
         all_trades = []
         for sym, data in all_data.items():
             trades = simulate_trades(
@@ -691,6 +707,24 @@ def main():
             )
             all_trades.extend(trades)
         all_trades.sort(key=lambda t: t["entry_ts"])
+
+        # Portfolio-level daily cap: keep only top N trades per day
+        # ranked by entry time (first N signals of the day — no hindsight)
+        # NOTE: We do NOT sort by PnL (that would be lookahead bias).
+        # In live trading, we take the first N signals that pass filters.
+        if portfolio_daily_cap > 0 and all_trades:
+            filtered = []
+            by_day = defaultdict(list)
+            for t in all_trades:
+                day = t["entry_ts"][:10]
+                by_day[day].append(t)
+            for day in sorted(by_day):
+                day_trades = by_day[day]
+                # Keep first N trades by entry time (chronological order)
+                day_trades.sort(key=lambda t: t["entry_ts"])
+                filtered.extend(day_trades[:portfolio_daily_cap])
+            all_trades = sorted(filtered, key=lambda t: t["entry_ts"])
+
         return compute_metrics(all_trades, label, args.with_costs)
 
     results = []
@@ -746,6 +780,9 @@ def main():
             elif gate == "E3":
                 kwargs["rr_floor"] = val
                 label = f"E3: RR_FLOOR = {val}"
+            elif gate == "E5":
+                kwargs["gate_charge_multiple"] = val
+                label = f"E5: CHARGE_MULT = {val}x"
             elif gate == "G1":
                 kwargs["gate_rsi_buy_ceiling"] = val
                 label = f"G1: RSI_BUY_CEIL = {val}"
@@ -768,8 +805,12 @@ def main():
                 kwargs["gate_daily_loss_stop_pct"] = val
                 label = f"C2: DAILY_LOSS_STOP = {val}%"
             elif gate == "K1":
-                kwargs["gate_max_trades_per_day"] = int(val)
-                label = f"K1: MAX_TRADES/DAY = {int(val)}"
+                label = f"K1: PORTFOLIO_CAP/DAY = {int(val)}"
+                m = run_config(label, portfolio_daily_cap=int(val),
+                               min_score=2.0, atr_multiplier=1.5,
+                               rr_ratio=1.5, rr_floor=0)
+                results.append(m)
+                continue
             else:
                 print(f"  Unknown gate: {gate}")
                 return

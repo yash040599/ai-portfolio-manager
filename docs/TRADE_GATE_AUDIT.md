@@ -12,20 +12,80 @@ backtest evidence showing it improves after-cost profitability.
 
 ## Testing Plan
 
-### Dependency Order
+### Testing Order (by expected P&L impact)
 
-Gates are tested in signal-chain order — each layer depends on
-the prior layer being settled first:
+As a quant PM, the order is driven by what moves the needle most,
+not by category labels. Our core problem: PF 0.71 after costs,
+37,777 trades with 0.013% edge vs 0.07% cost per trade.
 
-| Layer | Category | Gates | Why this order |
-|-------|----------|-------|----------------|
-| 1 | **Signal Generation** | M1-M4, N1-N3 | Defines what trade ideas exist | **M1 done** |
-| 2 | **Entry Filters** | G1-G8, H1-H3, D2-D5 | Filters bad ideas before entry |
-| 3 | **Position Sizing** | E1-E5, F1-F5 | Determines risk per trade |
-| 4 | **Exit Logic** | L1-L11 | Determines P&L per trade |
-| 5 | **Day-Level Risk** | C1-C4, K1, K6 | Controls daily loss exposure |
-| 6 | **Time Gates** | B1-B3, I1-I4, K2-K3 | Time-of-day filters |
-| 7 | **Multi-Day Pauses** | A2-A3, J1-J3 | Cross-session decisions |
+**Phase 1: Stop the bleeding (reduce trades + improve per-trade edge)**
+
+These gates directly address the #1 problem — too many trades
+eating costs with too thin an edge.
+
+| Order | Gate | Why first | Status |
+|-------|------|-----------|--------|
+| 1 | K1: Daily Trade Cap | Directly caps trade count. If 5 trades/day is better than 75, this alone could flip PF. | **DONE** -- cap=2 best, PF 0.71->0.81 |
+| 2 | E1: ATR SL/Target | Determines every trade's P&L range. Wrong ATR mult = SL too tight (whipsawed) or too wide (big losses). | **DONE** -- ATR=2.0 + RR=2.5 optimal |
+| 3 | E3: R:R Floor | Rejects trades where reward doesn't justify risk. Interacts with E1. | **DONE** -- keep 1.3, safety net only |
+| 4 | E5: Charge-Aware Target | Rejects trades where expected profit < N x charges. Directly fights the cost problem. | **DONE** -- keep disabled, ineffective with ATR targets |
+| 5 | D5: RVOL Floor | Filters low-volume noise trades that have bad fills and worse signals. | **DONE** -- keep 0.7, already optimal |
+| 6 | L10: Loser-Exit Late | Cuts losers before EOD instead of bleeding to SL. Quick win on exit side. | **DONE** -- keep 14:45, harmful standalone (churn), re-test with K1 |
+
+**Phase 2: Signal quality filters (individually, then overlapping pairs)**
+
+| Order | Gate | Why | Status |
+|-------|------|-----|--------|
+| 7 | G1+G2: RSI Ceilings | Block chasing overbought/oversold extremes | Pending |
+| 8 | G6+G7: VWAP filters (together) | Both VWAP-based, must test interaction | Pending |
+| 9 | H1: ADX min | Block choppy low-conviction entries | Pending |
+| 10 | M4: NIFTY Trend | Macro alignment — don't buy in a bearish market | Pending |
+| 11 | M2: Tape-Breadth | Market-wide direction filter | Pending |
+| 12 | M1 re-test | Re-sweep MIN_SCORE with all Phase 1+2 gates active | Pending |
+
+**Phase 3: Exit optimization (competing philosophies tested head-to-head)**
+
+| Order | Gate | Why | Status |
+|-------|------|-----|--------|
+| 13 | L3+L4: Trail + Partial (together) | Both modify the same exit path | Pending |
+| 14 | L5+L6 vs L7+L8 | Stagnant exits vs signal exits — pick one philosophy | Pending |
+| 15 | L11: Square-off time | Is 15:10 optimal or should we close earlier? | Pending |
+
+**Phase 4: Day-level risk management**
+
+| Order | Gate | Why | Status |
+|-------|------|-----|--------|
+| 16 | C2+C3: Soft stop + Peak DD (together) | Both brake the day — test interaction | Pending |
+| 17 | C4: Loss-Streak Guard | Pause after N consecutive SLs | Pending |
+| 18 | C1: Circuit Breaker | Hard daily loss cap | Pending |
+
+**Phase 5: Time gates + intraday pauses**
+
+| Order | Gate | Why | Status |
+|-------|------|-----|--------|
+| 19 | I1: Lunch-Lull | Skip 11:30-12:15 low-conviction window | Pending |
+| 20 | I2: Late-Entry Tightening | Raise score bar after 10:00 | Pending |
+| 21 | B1: Entry-Burst Cap | Cap rapid-fire entries | Pending |
+| 22 | B2: Choppy-Morning | Pause on low-ADX morning | Pending |
+| 23 | K2+K3: Observation + Hard Floor | Entry delay optimization | Pending |
+
+**Phase 6: Re-entry + multi-day + remaining**
+
+| Order | Gate | Why | Status |
+|-------|------|-----|--------|
+| 24 | J1-J3: Re-entry guards | Prevent chasing the same stock | Pending |
+| 25 | A2+A3: Multi-day pauses | Pause after bad streaks | Pending |
+| 26 | Remaining gates | D1-D4, E2, E4, E6, F1-F5, G3-G5, G8, H2-H3, I3-I4, K4-K6, B3, L1-L2, L9, M3 | Pending |
+
+**Phase 7: Final combined backtest**
+
+| Order | What | Why | Status |
+|-------|------|-----|--------|
+| 27 | All enabled gates together | Confirm combined config is profitable after costs | Pending |
+| 28 | L10 re-test with K1 active | L10 was harmful standalone (churn) but K1 cap blocks re-entry — may become beneficial | Pending |
+| 29 | M1 final re-test | Set MIN_SCORE with everything else locked in | Pending |
+| 30 | Stress test | Run on worst months, high-VIX periods, crash periods | Pending |
+| 31 | N3 re-evaluate | Re-test EMA Pullback with optimized gates to see if edge survives costs | Pending |
 
 ### Overlap Combinations to Test
 
@@ -49,8 +109,26 @@ For each gate:
 4. **After-cost check**: Apply regulatory charges (STT, brokerage, GST)
 5. **Verdict**: ENABLE (with optimal value) or DISABLE (with reason)
 6. **Update this doc**: Fill in the Backtest Verdict column
+7. **Code review** (if ENABLED):
+   - Verify the gate logic in the actual codebase matches backtest
+   - Check edge cases: what happens with missing data, zero values,
+     division by zero, None fields
+   - Confirm graceful failure: gate must log a warning and skip
+     (never crash the trading loop)
+   - Confirm logging: every rejection must log the gate name, the
+     value that triggered it, and the threshold
+   - Confirm config: the gate must read from Config, not hardcode
+   - Update config.py comments with the backtest verdict + optimal
+     value and reasoning
+8. **Set config value**: Update config.py to the optimal value
+   determined by backtest
 
 ### Cost Model (per round-trip)
+
+All backtests use:
+- **Capital**: Rs.50,000
+- **Per-trade value**: Rs.15,000 (50K / 3 max positions)
+- **Qty**: Rs.15,000 / entry price
 
 All backtest P&L is computed after these NSE intraday charges:
 
@@ -70,24 +148,14 @@ All backtest P&L is computed after these NSE intraday charges:
 
 - [x] Chan framework removed (A1, A4, A5, A6)
 - [x] 3 new strategies backtested and added as disabled config flags
-- [ ] Baseline backtester built (1/1)
-- [ ] Gate-by-gate testing (1/55 — M1 done)
+- [x] Baseline backtester built (1/1) -- [Results](backtest/BACKTEST_BASELINE.md)
+- [ ] Gate-by-gate testing (1/55 -- M1 done) -- [M1 Results](backtest/BACKTEST_GATE_M1.md)
 - [ ] Final combined backtest with optimal config
 
-### Baseline Results (2026-05-25)
+### Baseline Results
 
-| Metric | Raw (no costs) | With NSE intraday costs |
-|--------|---------------|------------------------|
-| Trades (2 years) | 37,777 | 37,777 |
-| Win Rate | 46.8% | 40.5% |
-| Profit Factor | **1.05** | **0.71** |
-| Expectancy | +0.013% | -0.094% |
-| Total Return | +493.87% | -3,553.58% |
-
-**Key insight**: Raw signal has a tiny edge (PF 1.05) that is destroyed
-by ~0.07% per-trade costs at 37,777 trades. The path to profitability
-requires: (1) fewer, higher-conviction trades, (2) cost-aware gates,
-(3) better scoring that produces wider per-trade edge.
+PF 1.05 raw, **PF 0.71 after costs** (37,777 trades). Raw signal
+edge destroyed by costs. [Full analysis](backtest/BACKTEST_BASELINE.md).
 
 ---
 
@@ -135,17 +203,17 @@ Status legend:
 | D2 | Circuit-Limit Guard | `CIRCUIT_LIMIT_GUARD_ENABLED` | False | OFF | Pending | |
 | D3 | Bid-Ask Spread | `MAX_SPREAD_PCT` | 0.3% | ON | Pending | |
 | D4 | Impact-Cost | `MAX_IMPACT_COST_PCT` | 0.2% | ON | Pending | |
-| D5 | Relative Volume Floor | `RVOL_FLOOR` | 0.7 | ON | Pending | |
+| D5 | Relative Volume Floor | `RVOL_FLOOR` | 0.7 | ON | **DONE** -- [Results](backtest/BACKTEST_GATE_D5.md) | KEEP 0.7 (optimal). Fixed: was hardcoded, now config-driven. |
 
 ### E. Stop-Loss & Risk
 
 | # | Gate | Config | Value | Status | Backtest Verdict | Why |
 |---|------|--------|-------|--------|-----------------|-----|
-| E1 | ATR SL/Target | `ATR_MULTIPLIER`=1.5, `RR_TARGET_RATIO`=1.5 | ON | ON | Pending | |
+| E1 | ATR SL/Target | `ATR_MULTIPLIER`=2.0, `RR_TARGET_RATIO`=1.8 | ON | ON | **DONE** -- [Results](backtest/BACKTEST_GATE_E1.md) | ATR 1.5->2.0, RR 1.5->1.8. RR=2.5 unrealistic intraday (needs 2.5% move). |
 | E2 | ATR Sizing | `ATR_SIZING_ENABLED` | False | OFF | Pending | |
-| E3 | R:R Floor | `RR_HARD_FLOOR` | 1.3 | ON | Pending | |
+| E3 | R:R Floor | `RR_HARD_FLOOR` | 1.3 | ON | **DONE** -- [Results](backtest/BACKTEST_GATE_E3.md) | KEEP 1.3. Safety net only — never blocks ATR trades (R:R always = RR_TARGET_RATIO). |
 | E4 | Min Expected Profit | `MIN_EXPECTED_PROFIT` | 0.0 | OFF | Pending | |
-| E5 | Charge-Aware Target | `MIN_PROFIT_CHARGE_MULTIPLE` | 0.0 | OFF | Pending | |
+| E5 | Charge-Aware Target | `MIN_PROFIT_CHARGE_MULTIPLE` | 0.0 | OFF | **DONE** -- [Results](backtest/BACKTEST_GATE_E5.md) | KEEP DISABLED. Target profit already 6-10x charges naturally; gate only catches edge cases. |
 | E6 | Slippage Simulation | `SLIPPAGE_PCT` | 0.15% | DRY-RUN | Pending | |
 
 ### F. Budget & Position Limits
@@ -200,7 +268,7 @@ Status legend:
 
 | # | Gate | Config | Value | Status | Backtest Verdict | Why |
 |---|------|--------|-------|--------|-----------------|-----|
-| K1 | Daily Trade Cap | `MAX_TRADES_PER_DAY` | 0 (unlimited) | OFF | Pending | |
+| K1 | Daily Trade Cap | `MAX_TRADES_PER_DAY` | 0 (unlimited) | OFF | **DONE** -- [Results](backtest/BACKTEST_GATE_K1.md) | ENABLE at 2/day (portfolio-level). PF 0.71->0.81. Needs manager.py implementation (currently per-stock only). |
 | K2 | Observation Period | `ENTRY_DELAY_MINUTES`=5, `ENTRY_MIN_MOVE_PCT`=0.3% | ON | ON | Pending | |
 | K3 | Hard Floor Time | `ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN`=15 | ON | ON | Pending | |
 | K4 | Stale-Score Guard | `FRESH_ENTRY_RECHECK_ENABLED` | False | OFF | Pending | |
@@ -220,14 +288,14 @@ Status legend:
 | L7 | Signal-Reversal Exit | `SIGNAL_REVERSAL_EXIT_ENABLED` | False | OFF | Pending | |
 | L8 | Signal-Decay Exit | `SIGNAL_DECAY_EXIT_ENABLED` | False | OFF | Pending | |
 | L9 | Sector-Cascade Exit | `SECTOR_CASCADE_EXIT_ENABLED` | False | OFF | Pending | |
-| L10 | Loser-Exit Late | `LOSER_EXIT_HOUR` | 14:45 | ON | Pending | |
+| L10 | Loser-Exit Late | `LOSER_EXIT_HOUR` | 14:45 | ON | **DONE** -- [Results](backtest/BACKTEST_GATE_L10.md) | KEEP 14:45. Harmful standalone (churn). Re-test with K1 in Phase 7. |
 | L11 | Square-Off | `SQUARE_OFF_HOUR:MINUTE` | 15:10 | ON | Pending | |
 
 ### M. Scoring & Selection (Scanner)
 
 | # | Gate | Config | Value | Status | Backtest Verdict | Why |
 |---|------|--------|-------|--------|-----------------|-----|
-| M1 | MIN_SCORE threshold | `V2_MIN_SCORE` | 2.0 | ON | **DONE** | Sweep 2-7: PF 0.70-0.80 after costs (all negative). Higher scores (6.0+) improve quality (WR 43% vs 40%) but don't create profitable edge with simplified scorer. Need real scanner scoring for accurate test. Keep at 2.0 for now. |
+| M1 | MIN_SCORE threshold | `V2_MIN_SCORE` | 2.0 | ON | **DONE** -- [Results](backtest/BACKTEST_GATE_M1.md) | Keep 2.0 now; raise to 5-6 after scorer improvement |
 | M2 | Tape-Breadth Penalty | hardcoded | — | ON | Pending | |
 | M3 | Sector Diversity Cap | `MAX_PER_SECTOR` | 2 | ON | Pending | |
 | M4 | NIFTY Trend Hard Filter | hardcoded | — | ON | Pending | |
@@ -236,9 +304,9 @@ Status legend:
 
 | # | Strategy | Config | Backtest Result | Status | Verdict |
 |---|----------|--------|----------------|--------|---------|
-| N1 | VWAP Mean-Reversion | `STRATEGY_VWAP_MR_ENABLED` | **FAIL** (-62.6%, WR 23%, PF 0.80) | **DONE** | **DISABLED** — loses money consistently |
-| N2 | ORB-15 Breakout | `STRATEGY_ORB15_ENABLED` | **MARGINAL** (-2.8%, WR 55.7%, PF 0.97) | **DONE** | **DISABLED** — near break-even, avg loss > avg win |
-| N3 | EMA Pullback Momentum | `STRATEGY_EMA_PULLBACK_ENABLED` | **PROMISING** (+522%, WR 42.8%, PF 1.07) | **DONE** | **DISABLED** pending cost validation + daily trade cap |
+| N1 | VWAP Mean-Reversion | `STRATEGY_VWAP_MR_ENABLED` | **FAIL** | **DONE** -- [Results](backtest/BACKTEST_VWAP_MR.md) | **DISABLED** — loses money consistently |
+| N2 | ORB-15 Breakout | `STRATEGY_ORB15_ENABLED` | **MARGINAL** | **DONE** -- [Results](backtest/BACKTEST_ORB15.md) | **DISABLED** — near break-even, avg loss > avg win |
+| N3 | EMA Pullback Momentum | `STRATEGY_EMA_PULLBACK_ENABLED` | **PROMISING** | **DONE** -- [Results](backtest/BACKTEST_EMA_PULLBACK.md) | **DISABLED** pending cost validation + daily trade cap |
 
 All three are in config.py as disabled flags. N1 and N2 will NOT be
 enabled — their code implementation is permanently skipped. N3 may be
@@ -255,21 +323,20 @@ stays disabled, no code is written (avoids dead code).
 
 ## Backtest Audit Progress
 
-| Layer | Gates | Completed | Status |
-|-------|-------|-----------|--------|
-| Chan cleanup | A1, A4, A5, A6 | 4/4 | **DONE** |
-| New strategies | N1, N2, N3 | 3/3 | **DONE** |
-| 1. Signal Generation | M1-M4 | 0/4 | **NEXT** |
-| 2. Entry Filters | G1-G8, H1-H3, D2-D5 | 0/15 | Pending |
-| 3. Position Sizing | E1-E5, F1-F5 | 0/10 | Pending |
-| 4. Exit Logic | L1-L11 | 0/11 | Pending |
-| 5. Day-Level Risk | C1-C4, K1, K6 | 0/6 | Pending |
-| 6. Time Gates | B1-B3, I1-I4, K2-K3 | 0/9 | Pending |
-| 7. Multi-Day Pauses | A2-A3, J1-J3 | 0/5 | Pending |
-| **Total** | | **7/62** | |
+| Phase | Focus | Gates | Done | Status |
+|-------|-------|-------|------|--------|
+| 0 | Chan cleanup + new strategies | A1,A4-A6, N1-N3 | 7/7 | **DONE** |
+| 0 | Baseline + M1 sweep | Baseline, M1 | 2/2 | **DONE** |
+| 1 | Stop the bleeding | K1, E1, E3, E5, D5, L10 | 6/6 | **DONE** |
+| 2 | Signal quality | G1-G2, G6-G7, H1, M4, M2, M1 re-test | 0/7 | Pending |
+| 3 | Exit optimization | L3-L4, L5-L8, L11 | 0/5 | Pending |
+| 4 | Day-level risk | C2-C3, C4, C1 | 0/3 | Pending |
+| 5 | Time + pauses | I1, I2, B1, B2, K2-K3 | 0/6 | Pending |
+| 6 | Re-entry + multi-day + remaining | J1-J3, A2-A3, + remaining | 0/8 | Pending |
+| 7 | Final combined + stress | All together, L10+K1, M1 final, stress, N3 re-eval | 0/5 | Pending |
+| **Total** | | | **9/48** | |
 
-**Next step**: Build baseline backtester, then start Layer 1 (Signal
-Generation) with gate M1 (MIN_SCORE threshold sweep).
+**Current**: Phase 1, Order #1 — K1 (re-testing with fixed portfolio cap, no lookahead bias).
 
 ---
 

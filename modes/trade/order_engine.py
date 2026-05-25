@@ -2197,11 +2197,11 @@ class OrderEngine:
             # midday and under-rejects opens/closes. Scale 0.7\u00d7 floor by
             # the hour bucket. Falls back to 1.0\u00d7 outside table or when
             # disabled.
-            rvol_floor = 0.7
+            rvol_floor = float(getattr(self.cfg, "RVOL_FLOOR", 0.7))
             if self.cfg.RVOL_TIME_NORMALIZATION_ENABLED:
                 hour_now = now_ist().hour
                 bucket = self.cfg.RVOL_FLOOR_BY_HOUR.get(hour_now, 1.0)
-                rvol_floor = round(0.7 * bucket, 2)
+                rvol_floor = round(rvol_floor * bucket, 2)
             quote_data = live_quotes.get(f"{exchange}:{symbol}", {})
             live_volume = quote_data.get("volume", 0)
             avg_volume = quote_data.get("average_volume", 0)

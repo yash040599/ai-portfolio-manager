@@ -403,10 +403,14 @@ class Config:
     MAX_LOSS_PER_DAY_PCT:  float = 3.0
 
     # ATR_MULTIPLIER: multiplier for ATR to compute dynamic stop-loss.
-    #   SL = entry - (ATR_MULTIPLIER × ATR) for longs.
-    #   Target = entry + (ATR_MULTIPLIER × RR_TARGET_RATIO × ATR).
+    #   SL = entry - (ATR_MULTIPLIER * ATR) for longs.
+    #   Target = entry + (ATR_MULTIPLIER * RR_TARGET_RATIO * ATR).
     #   Falls back to DEFAULT_STOP_LOSS_PCT if historical data is unavailable.
-    ATR_MULTIPLIER: float = 1.5
+    #
+    #   BACKTEST (2026-05-25): Swept 0.5-3.0. Wider SL = better PF.
+    #   ATR 2.0 has best per-trade expectancy (-0.092%). Tight SL (0.5)
+    #   causes whipsaw churn (75K trades, PF 0.46). See BACKTEST_GATE_E1.md.
+    ATR_MULTIPLIER: float = 2.0
     ATR_PERIOD:     int   = 14    # number of candles for ATR calculation
     ATR_INTERVAL:   str   = "15minute"  # candle interval: "15minute" for intraday
     MAX_INTRADAY_SL_PCT: float = 2.5  # hard cap: SL never wider than 2.5% for intraday
@@ -432,7 +436,13 @@ class Config:
     #
     # KEPT: RR_GIVEUP_AFTER_FAILS — after N zero-entry scans we stop
     # trading entirely ("today is not a trading day" signal).
-    RR_TARGET_RATIO:       float = 1.5   # base R:R from ATR (target = SL × this)
+    #   BACKTEST (2026-05-25): Swept 1.0-3.0. Higher RR = better PF.
+    #   RR 2.5 has best PF but requires 2.5% intraday move — unrealistic
+    #   for most NIFTY 50 stocks (typical daily range 1.5-2.5%).
+    #   RR 1.8 is the practical optimum: target needs ~1.8% move which
+    #   is achievable on trending days. PF 0.73 vs baseline 0.71.
+    #   See BACKTEST_GATE_E1.md.
+    RR_TARGET_RATIO:       float = 1.8   # base R:R from ATR (target = SL * this)
     RR_HARD_FLOOR:         float = 1.3   # always-on R:R floor (uniform all day)
     RR_GIVEUP_AFTER_FAILS: int   = 5     # zero-entry scans before stopping for the day
 
@@ -725,8 +735,12 @@ class Config:
     # ── Daily Trade Cap ─────────────────────────────────────────
     # Prevents overtrading churn. Each exit+entry cycle costs ~Rs.36
     # in fixed charges. Set to 0 for unlimited.
-    # Stage S0_PURE_MR: per-day cap disabled (=0 → unlimited; budget caps still apply).
-    MAX_TRADES_PER_DAY: int = 0
+    # Portfolio-level: counts ALL positions (open+closed) across all stocks.
+    #
+    #   BACKTEST (2026-05-25): Swept 2-20. Cap=2 is optimal: PF 0.81
+    #   vs baseline 0.71. Reduces trades from ~75/day to ~2/day.
+    #   First N signals by entry time (no hindsight). See BACKTEST_GATE_K1.md.
+    MAX_TRADES_PER_DAY: int = 2
 
     # ══════════════════════════════════════════════════════════════
     # V2 — CANDLE STRATEGY SETTINGS (default strategy)
@@ -1404,7 +1418,16 @@ class Config:
     # morning/close volume. The 0.7× entry floor was calibrated on full-day
     # average and rejects valid trades during the lunch trough.
     #
-    # Approach: scale the 0.7 floor by an hour-bucket multiplier.
+    # RVOL_FLOOR: base relative volume floor. Stocks with intraday
+    # volume below this fraction of their average are rejected.
+    # 0.7 = reject if today's volume is below 70% of typical.
+    #
+    #   BACKTEST (2026-05-26): Swept 0-2.0. RVOL 0.7 has best
+    #   per-trade expectancy (-0.091%). Higher values (1.3+) improve
+    #   PF slightly but worse per-trade. See BACKTEST_GATE_D5.md.
+    RVOL_FLOOR: float = 0.7
+
+    # Approach: scale the RVOL_FLOOR by an hour-bucket multiplier.
     # E.g. at 12:00 the multiplier is 0.7 → effective floor 0.49,
     # so a 0.5× RVol observed at noon now passes (it would have
     # been mid-pack relative to typical noon volume).
