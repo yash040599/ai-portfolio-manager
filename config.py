@@ -147,54 +147,51 @@ class Config:
     # Do NOT edit this here — use: python main.py --mode trade --dryrun
     DRY_RUN: bool = False
 
-    # ── Chan Research Reset (Stage 0) ────────────────────────────
-    # Operational status only. These fields label runtime/report/
-    # dashboard output and pause accidental live trading while the
-    # Chan-method replay process is being built. They are deliberately
-    # excluded from STRATEGY_CONFIG_KEYS because they do not change
-    # entry, exit, sizing, or risk rules.
-    TRADE_RESEARCH_STAGE: str = "Stage 0"
-    TRADE_RESEARCH_PHASE_LABEL: str = "Chan Research Reset"
-    TRADE_RESEARCH_PHASE_NOTE: str = (
-        "Live trading paused; use local evidence, replay, and dry-run only "
-        "until a staged Chan-method strategy passes promotion gates."
-    )
-    TRADE_LIVE_TRADING_PAUSED: bool = True
-    TRADE_ANALYSIS_DB_PATH: str = os.path.join("data", "trade_analysis.db")
+    # ── Live Trading ─────────────────────────────────────────────
+    # Set to False for live trading, True to block real orders.
+    # Use --dryrun CLI flag for simulation instead of editing this.
+    TRADE_LIVE_TRADING_PAUSED: bool = False
 
-    # ── Strategy Isolation Profile (Chan reset) ──────────────────
-    # This is the alpha-selection profile for NoAI trade mode. Safety,
-    # execution, cost, and risk gates remain active either way.
-    #
-    # NOAI_SIMPLE_MR_BASELINE: tomorrow's supported dry-run profile.
-    #   Uses only a VWAP-stretch + RSI-exhaustion mean-reversion idea
-    #   for stock selection. Pattern/momentum/ORB/sector/breadth score
-    #   blending is not used as alpha.
-    # NOAI_LEGACY_FULL: old all-in-one blended score, kept for replay
-    #   comparison/control only.
-    TRADE_STRATEGY_PROFILE_ALLOWED: tuple[str, ...] = (
-        "NOAI_SIMPLE_MR_BASELINE",
-        "NOAI_LEGACY_FULL",
-    )
-    TRADE_STRATEGY_PROFILE: str = "NOAI_SIMPLE_MR_BASELINE"
-    SIMPLE_MR_MIN_SCORE: float = 3.0
-    SIMPLE_MR_MIN_VWAP_DEV_PCT: float = 0.35
-    SIMPLE_MR_RSI_BUY_MAX: float = 40.0
-    SIMPLE_MR_RSI_SELL_MIN: float = 60.0
-    SIMPLE_MR_REQUIRE_VWAP_BAND: bool = True
-    SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES: bool = True
-    SIMPLE_MR_KEEP_RESEARCH_SCANS_AFTER_ZERO_ENTRY: bool = True
+    # ── Strategy Profile ─────────────────────────────────────────
+    # Controls which alpha-selection logic runs in NoAI mode.
+    # NOAI_LEGACY_FULL: blended score from all indicators (default)
+    TRADE_STRATEGY_PROFILE: str = "NOAI_LEGACY_FULL"
 
-    # ── Stage ladder (docs/TRADE_STRATEGY_ROLLOUT.md) ─────────────
-    # TRADE_STAGE_NAME is the unique short name of the active rung on
-    # the strategy rollout ladder. It is stamped into every trading
-    # report, dry-run ledger row, and Chan evidence file so we can
-    # always tell which gates were active when the rows were produced.
+    # ── Alpha Strategies (backtested 2026-05-25) ─────────────────
+    # Each can be enabled/disabled independently. When multiple are
+    # enabled, signals are combined (a candidate must pass at least
+    # one enabled strategy). All are disabled by default pending
+    # gate-by-gate backtest optimization.
     #
-    # Current rung: S0_PURE_MR — Simple MR alpha only, no vetoes, no
-    # mid-life exits, no sizing modifiers. See the rollout doc for the
-    # full ladder.
-    TRADE_STAGE_NAME: str = "S0_PURE_MR"
+    # See docs/TRADE_REVAMP_STRATEGIES.md for full specs.
+    # See docs/BACKTEST_*.md for backtest results.
+    #
+    # NOTE: Only config flags exist. Scanning/entry code is NOT
+    # implemented for these strategies yet. Code will be written
+    # only if the strategy is enabled after the full gate audit.
+    # If it stays False, no code is written (avoids dead code).
+
+    # Strategy N1: VWAP Mean-Reversion
+    # Backtest result: FAIL (WR 23%, CAGR -39%, PF 0.80)
+    # Verdict: DO NOT ENABLE — loses money consistently.
+    STRATEGY_VWAP_MR_ENABLED: bool = False
+
+    # Strategy N2: ORB-15 Breakout
+    # Backtest result: MARGINAL (WR 55.7%, CAGR -1.4%, PF 0.97)
+    # Verdict: DISABLED — near break-even, avg loss > avg win.
+    # Could become profitable with tighter SL (not yet tested).
+    STRATEGY_ORB15_ENABLED: bool = False
+
+    # Strategy N3: EMA Pullback Momentum
+    # Backtest result: PROMISING (WR 42.8%, CAGR +151%, PF 1.07)
+    # Verdict: DISABLED pending cost validation — thin edge may
+    # not survive slippage + brokerage. Needs daily trade cap.
+    STRATEGY_EMA_PULLBACK_ENABLED: bool = False
+    STRATEGY_EMA_PULLBACK_MAX_PER_STOCK_PER_DAY: int = 1
+
+    # ── Strategy Stage ────────────────────────────────────────────
+    # Stamped into reports for audit trail. No longer gates behavior.
+    TRADE_STAGE_NAME: str = "BACKTEST_OPTIMIZED"
 
     # LOG_DISABLED_GATES is the single override that allows disabled
     # gates to still log a one-line "would have rejected" message.
@@ -291,7 +288,7 @@ class Config:
     # For Rs.10K budget, NIFTY50 is recommended — most liquid, lowest
     # impact cost, tightest bid-ask spreads for intraday.
     # Override per-run with: --nifty 50 | --nifty 100 | --nifty 150 | --nifty 200
-    SCAN_UNIVERSE: str = "NIFTY100"
+    SCAN_UNIVERSE: str = "NIFTY50"
 
     # Only used when SCAN_UNIVERSE = "CUSTOM".
     # Add NSE symbols you want the bot to consider.

@@ -200,8 +200,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_portfolio_drilldown(symbol)
             elif url.path == "/trading" or url.path == "/trading/":
                 self._serve_shell()
-            elif url.path == "/chan" or url.path == "/chan/":
-                self._serve_chan()
             elif url.path == "/login" or url.path == "/login/":
                 self._serve_login()
             elif url.path == "/api/run_status":
@@ -408,16 +406,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         ok = bool(qs.get("ok"))
         err = (qs.get("err") or [""])[0]
         body = render_login_page(ok=ok, err=err).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _serve_chan(self) -> None:
-        from modes.dashboard.chan_page import render_chan_page
-        body = render_chan_page().encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

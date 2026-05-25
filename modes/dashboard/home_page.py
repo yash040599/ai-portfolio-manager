@@ -17,7 +17,6 @@ _PAGES = [
     ("Swing", "/swing", "Indian swing scan, watchlist, and open book."),
     ("US", "/us", "US swing scan, watchlist, FX toggle, and open book."),
     ("Trading", "/trading", "Live intraday P&L dashboard."),
-    ("Chan", "/chan", "Chan framework diagnostics."),
     ("Tax", "/tax", "Tax and realised P&L views."),
     ("Theory", "/theory/statistics", "Strategy notes and statistics."),
 ]

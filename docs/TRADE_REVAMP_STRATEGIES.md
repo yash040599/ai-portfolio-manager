@@ -201,13 +201,23 @@ rejection below.
 | **Time window** | 10:00–14:00 | 9:30–10:15 | 10:00–14:30 |
 | **Complexity** | Medium | Low | Medium |
 | **Existing code** | VWAP+bands, RSI, ADX ✅ | ORB, SuperTrend ✅ | EMA, MACD, StochRSI ✅ |
+| **Backtest result** | [FAIL](BACKTEST_VWAP_MR.md) | [MARGINAL](BACKTEST_ORB15.md) | [PROMISING](BACKTEST_EMA_PULLBACK.md) |
+
+---
+
+## Backtest Results
+
+| Strategy | Result | Win Rate | CAGR | Sharpe | Max DD | Details |
+|----------|--------|----------|------|--------|--------|---------|
+| 1. VWAP Mean-Reversion | **FAIL** | 23.1% | -39.1% | -2.95 | 69.2% | [Full report](BACKTEST_VWAP_MR.md) |
+| 2. ORB-15 Breakout | **MARGINAL** | 55.7% | -1.4% | -0.15 | 16.7% | [Full report](BACKTEST_ORB15.md) |
+| 3. EMA Pullback Momentum | **PROMISING** | 42.8% | +151.5% | 4.03 | 60.6% | [Full report](BACKTEST_EMA_PULLBACK.md) |
 
 ---
 
 ## Next Steps
 
-1. **Backtest each strategy** against `data/candle_cache.db` (40MB of
-   15-min + daily candles for NIFTY 50/100 stocks)
+1. ~~Backtest each strategy against historical data~~ (in progress)
 2. Compare: win rate, profit factor, max drawdown, Sharpe ratio
 3. Pick the best 1–2 strategies for the revamped trade mode
 4. Implement in `modes/trade/` with clean entry/exit/risk rules
