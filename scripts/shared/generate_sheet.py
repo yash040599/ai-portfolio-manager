@@ -21,18 +21,14 @@ import json
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-import anthropic
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 from config import Config  # noqa: E402  (after sys.path tweak)
-
-# Roadmap #170: single source of truth for Claude model. Reads the
-# active plan's Sonnet alias used by the live analyser, so model
-# upgrades happen in config.py only.
-CLAUDE_MODEL = Config.claude()["model"]
+from core.llm_client import LLMClient  # noqa: E402
+from core.logger import Logger  # noqa: E402
 
 
 def parse_target_range(target_str: str) -> tuple[str, str]:
@@ -143,19 +139,12 @@ def main():
             a["stock"] = stock_lookup.get(a["symbol"], {})
 
     print(f"📊 Found {len(analyses)} stocks in {json_path}")
-    print(f"🤖 Calling Claude to extract structured fields (1 API call)...")
+    ai_label = Config.ai_display_label()
+    print(f"\U0001f916 Calling {ai_label} to extract structured fields (1 API call)...")
 
-    # Single Claude API call
-    client = anthropic.Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+    llm = LLMClient(Config, Logger("GenerateSheet"))
     prompt = build_claude_prompt(analyses)
-
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    raw_response = response.content[0].text.strip()
+    raw_response = llm.call(prompt).strip()
 
     # Parse JSON response
     try:

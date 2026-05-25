@@ -268,6 +268,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_api(parse_qs(url.query))
             elif url.path == "/api/day":
                 self._serve_day(parse_qs(url.query))
+            elif url.path == "/api/ai/status":
+                self._serve_ai_status()
             else:
                 self.send_error(404, "Not found")
         except (ConnectionAbortedError, ConnectionResetError,
@@ -369,6 +371,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_ai_analyse_single(url.path)
             elif url.path == "/api/swing/analyse_one":
                 self._serve_swing_analyse_one(parse_qs(url.query))
+            elif url.path == "/api/ai/switch":
+                self._serve_ai_switch()
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001
@@ -1651,10 +1655,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             claude = ClaudeClient(Config, log)
         except Exception as exc:
             from core.error_sink import record_external_error
-            record_external_error("claude", exc, log=log)
+            record_external_error("ai", exc, log=log)
             err = json.dumps({
                 "ok": False,
-                "error": f"Claude client init failed: {exc}",
+                "error": f"AI client init failed: {exc}",
             }).encode("utf-8")
             self.send_response(502)
             self.send_header("Content-Type", "application/json")
@@ -1685,7 +1689,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             payload = {}
         if payload.get("error"):
             from core.error_sink import record_external_error
-            record_external_error("claude", payload["error"], log=log)
+            record_external_error("ai", payload["error"], log=log)
 
         body = json.dumps({
             "ok": not payload.get("error"),
@@ -1803,9 +1807,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 except Exception:
                     ai_overlay_payload = {"error": "invalid AI overlay JSON"}
                 if ai_overlay_payload.get("error"):
-                    record_external_error("claude", ai_overlay_payload["error"], log=log)
+                    record_external_error("ai", ai_overlay_payload["error"], log=log)
             except Exception as exc:
-                record_external_error("claude", exc, log=log)
+                record_external_error("ai", exc, log=log)
                 ai_overlay_payload = {"error": str(exc)[:200]}
 
         # AI overlay carry-forward (S48, 2026-05-14): when the user
@@ -1892,6 +1896,95 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             "ai_overlay": ai_overlay_payload,
             "run_id": run_id,
         }, default=str).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_ai_status(self) -> None:
+        """GET /api/ai/status — returns current AI provider config."""
+        import json as _json
+        ai_plan = Config.ai()
+        body = _json.dumps({
+            "provider": Config.AI_PROVIDER,
+            "plan": Config.AI_PLAN,
+            "model": ai_plan["model"],
+            "cost": ai_plan["cost_inr_approx"],
+            "note": ai_plan["note"],
+            "free_tier": ai_plan.get("free_tier"),
+            "all_options": Config.ai_providers_summary(),
+        }).encode()
+        self._write_json(body)
+
+    def _serve_ai_switch(self) -> None:
+        """POST /api/ai/switch — switch AI provider and/or plan at runtime.
+
+        Body (JSON): {"provider": "gemini"|"gpt"|"claude", "plan": "free"|"pro"|"max"}
+        Both fields are optional; omitted fields keep current value.
+        Returns the new active config as JSON.
+        """
+        import json as _json
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        try:
+            data = _json.loads(raw) if raw.strip() else {}
+        except _json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+            return
+
+        valid_providers = list(Config._AI_PROVIDER_TABLE)
+        valid_plans = ["basic", "detailed", "full"]
+
+        new_provider = data.get("provider", "").lower().strip()
+        new_plan = data.get("plan", "").lower().strip()
+
+        if new_provider and new_provider not in valid_providers:
+            body = _json.dumps({"ok": False, "error": f"Invalid provider: {new_provider}. Valid: {valid_providers}"}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if new_plan and new_plan not in valid_plans:
+            body = _json.dumps({"ok": False, "error": f"Invalid plan: {new_plan}. Valid: {valid_plans}"}).encode()
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if new_provider:
+            Config.AI_PROVIDER = new_provider
+        if new_plan:
+            Config.AI_PLAN = new_plan
+            Config.CLAUDE_PLAN = new_plan  # keep legacy alias in sync
+
+        # Build a cost warning if switching TO a paid provider
+        ai_plan = Config.ai()
+        cost_warning = None
+        has_free = bool(ai_plan.get("free_tier"))
+        if not has_free:
+            cost_warning = (
+                f"⚠ {Config.AI_PROVIDER.upper()} is a PAID provider. "
+                f"Estimated cost: {ai_plan['cost_inr_approx']}. "
+                f"Make sure you have credits loaded."
+            )
+        body = _json.dumps({
+            "ok": True,
+            "provider": Config.AI_PROVIDER,
+            "plan": Config.AI_PLAN,
+            "model": ai_plan["model"],
+            "cost": ai_plan["cost_inr_approx"],
+            "note": ai_plan["note"],
+            "free_tier": ai_plan.get("free_tier"),
+            "cost_warning": cost_warning,
+            "all_options": Config.ai_providers_summary(),
+        }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

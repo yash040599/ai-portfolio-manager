@@ -1,4 +1,6 @@
 anthropic
+google-genai
+openai
 kiteconnect>=5.1.0
 python-dotenv
 openpyxl

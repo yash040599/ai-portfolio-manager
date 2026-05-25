@@ -3,9 +3,9 @@
 # ================================================================
 # Single source of truth for every plan-related decision.
 #
-# TO UPGRADE PLANS: edit CLAUDE_PLAN or ZERODHA_PLAN below.
+# TO UPGRADE PLANS: edit AI_PROVIDER, AI_PLAN, or ZERODHA_PLAN below.
 # Nothing else in the codebase needs to change — every class
-# reads from Config.claude() and Config.zerodha().
+# reads from Config.ai() and Config.zerodha().
 #
 # PHASE 2 SETTINGS are at the bottom of this file.
 # They control the intraday trading bot: budget, timing, polling
@@ -68,10 +68,17 @@ class Config:
     #    long-form rationale belongs in docs/TRADE_EVOLUTION.md or the
     #    relevant audit file under docs/audit/.
 
-    # ── Edit these two lines when you upgrade plans ───────────────
+    # ── Edit these lines when you upgrade plans ──────────────────
 
-    # Options: "free" | "pro" | "max"
-    CLAUDE_PLAN: str  = "pro"
+    # Options: "gemini" | "gpt" | "claude"
+    # Controls which LLM provider is used for ALL AI features.
+    AI_PROVIDER: str = "gemini"
+
+    # Options: "basic" | "detailed" | "full"  (scales prompt depth + max_tokens)
+    AI_PLAN: str = "basic"
+
+    # Legacy alias — still read by report-writer/display code.
+    CLAUDE_PLAN: str = "basic"
 
     # Options: "personal_free" | "connect_paid"
     ZERODHA_PLAN: str = "connect_paid"
@@ -114,6 +121,8 @@ class Config:
     ZERODHA_API_KEY:    str = os.getenv("ZERODHA_API_KEY",    "")
     ZERODHA_API_SECRET: str = os.getenv("ZERODHA_API_SECRET", "")
     CLAUDE_API_KEY:     str = os.getenv("CLAUDE_API_KEY",     "")
+    GEMINI_API_KEY:     str = os.getenv("GEMINI_API_KEY",     "")
+    OPENAI_API_KEY:     str = os.getenv("OPENAI_API_KEY",     "")
 
     # ── Programmatic Kite login (optional) ───────────────────────
     # If KITE_USER_ID + KITE_PASSWORD are set, the bot tries the
@@ -1865,27 +1874,137 @@ class Config:
     # ── Plan rule tables ──────────────────────────────────────────
     # Maps plan names → capabilities. Read via claude() / zerodha().
 
+    # ── Provider-specific model tables ─────────────────────────
+    # Each provider maps plan → {model, max_tokens, ...}.
+    # The active combo is AI_PROVIDER × AI_PLAN.
+    #
+    # Fields per entry:
+    #   model            — API model identifier
+    #   max_tokens       — max output tokens per call
+    #   analysis_depth   — controls prompt complexity (basic/detailed/full)
+    #   include_pe_ratios— whether PE/valuation data is injected
+    #   input_cost_per_m — cost in USD per 1M input tokens
+    #   output_cost_per_m— cost in USD per 1M output tokens
+    #   cost_inr_approx  — approximate Rs. per typical run (scan+review)
+    #   note             — human-readable one-liner for console/dashboard
+    #   free_tier        — (Gemini only) free-tier limits, None if N/A
+
+    # ── Gemini free-tier limits (Google AI Studio) ───────────
+    # As of May 2026 the free tier for gemini-2.5-flash gives:
+    #   • 500 requests/day  (resets midnight PT)
+    #   • 1 million tokens/minute
+    #   • No credit card required
+    # Well within typical trading-bot usage (~50-100 calls/day).
+    GEMINI_FREE_TIER_INFO: str = (
+        "Free tier: 500 req/day, 1M tok/min (Google AI Studio). "
+        "No credit card required. Sufficient for typical bot usage."
+    )
+
+    _GEMINI_RULES = {
+        "basic": {
+            "analysis_depth":    "basic",
+            "include_pe_ratios": False,
+            "model":             "gemini-2.5-flash",
+            "max_tokens":        1200,
+            "input_cost_per_m":  0.15,
+            "output_cost_per_m": 0.60,
+            "cost_inr_approx":   "FREE (within daily limit)",
+            "note":              "Gemini 2.5 Flash · basic · FREE tier",
+            "free_tier":         "500 req/day · 1M tok/min",
+        },
+        "detailed": {
+            "analysis_depth":    "detailed",
+            "include_pe_ratios": True,
+            "model":             "gemini-2.5-flash",
+            "max_tokens":        2000,
+            "input_cost_per_m":  0.15,
+            "output_cost_per_m": 0.60,
+            "cost_inr_approx":   "~Rs.0.5/run (or FREE within limit)",
+            "note":              "Gemini 2.5 Flash · detailed · ~Rs.0.5/run",
+            "free_tier":         "500 req/day · 1M tok/min",
+        },
+        "full": {
+            "analysis_depth":    "full",
+            "include_pe_ratios": True,
+            "model":             "gemini-2.5-flash",
+            "max_tokens":        3000,
+            "input_cost_per_m":  0.15,
+            "output_cost_per_m": 0.60,
+            "cost_inr_approx":   "~Rs.1/run (or FREE within limit)",
+            "note":              "Gemini 2.5 Flash · full · ~Rs.1/run",
+            "free_tier":         "500 req/day · 1M tok/min",
+        },
+    }
+
+    _GPT_RULES = {
+        "basic": {
+            "analysis_depth":    "basic",
+            "include_pe_ratios": False,
+            "model":             "gpt-4.1-nano",
+            "max_tokens":        1200,
+            "input_cost_per_m":  0.10,
+            "output_cost_per_m": 0.40,
+            "cost_inr_approx":   "~Rs.0.3/run",
+            "note":              "GPT-4.1 Nano · basic · ~Rs.0.3/run",
+            "free_tier":         None,
+        },
+        "detailed": {
+            "analysis_depth":    "detailed",
+            "include_pe_ratios": True,
+            "model":             "gpt-4.1-mini",
+            "max_tokens":        2000,
+            "input_cost_per_m":  0.40,
+            "output_cost_per_m": 1.60,
+            "cost_inr_approx":   "~Rs.1.5/run",
+            "note":              "GPT-4.1 Mini · detailed · ~Rs.1.5/run",
+            "free_tier":         None,
+        },
+        "full": {
+            "analysis_depth":    "full",
+            "include_pe_ratios": True,
+            "model":             "gpt-4.1-mini",
+            "max_tokens":        3000,
+            "input_cost_per_m":  0.40,
+            "output_cost_per_m": 1.60,
+            "cost_inr_approx":   "~Rs.2/run",
+            "note":              "GPT-4.1 Mini · full · ~Rs.2/run",
+            "free_tier":         None,
+        },
+    }
+
     _CLAUDE_RULES = {
-        "free": {
+        "basic": {
             "analysis_depth":    "basic",
             "include_pe_ratios": False,
             "model":             "claude-haiku-4-5-20251001",
             "max_tokens":        1200,
-            "note":              "Haiku model · basic analysis · ~Rs.1/run",
+            "input_cost_per_m":  0.80,
+            "output_cost_per_m": 4.00,
+            "cost_inr_approx":   "~Rs.1/run",
+            "note":              "Claude Haiku · basic · ~Rs.1/run",
+            "free_tier":         None,
         },
-        "pro": {
+        "detailed": {
             "analysis_depth":    "detailed",
             "include_pe_ratios": True,
             "model":             "claude-sonnet-4-6",
             "max_tokens":        2000,
-            "note":              "Sonnet model · detailed analysis · ~Rs.5/run",
+            "input_cost_per_m":  3.00,
+            "output_cost_per_m": 15.00,
+            "cost_inr_approx":   "~Rs.5/run",
+            "note":              "Claude Sonnet · detailed · ~Rs.5/run",
+            "free_tier":         None,
         },
-        "max": {
+        "full": {
             "analysis_depth":    "full",
             "include_pe_ratios": True,
             "model":             "claude-sonnet-4-6",
             "max_tokens":        3000,
-            "note":              "Sonnet model · full analysis · ~Rs.8/run",
+            "input_cost_per_m":  3.00,
+            "output_cost_per_m": 15.00,
+            "cost_inr_approx":   "~Rs.8/run",
+            "note":              "Claude Sonnet · full · ~Rs.8/run",
+            "free_tier":         None,
         },
     }
 
@@ -1908,10 +2027,70 @@ class Config:
 
     # ── Derived properties ────────────────────────────────────────
 
+    _AI_PROVIDER_TABLE = {
+        "gemini": "_GEMINI_RULES",
+        "gpt":    "_GPT_RULES",
+        "claude": "_CLAUDE_RULES",
+    }
+
+    @classmethod
+    def ai(cls) -> dict:
+        """Returns the resolved AI plan settings dict for the active provider."""
+        table_attr = cls._AI_PROVIDER_TABLE.get(cls.AI_PROVIDER)
+        if not table_attr:
+            raise ValueError(f"Unknown AI_PROVIDER: {cls.AI_PROVIDER!r}. "
+                             f"Valid: {list(cls._AI_PROVIDER_TABLE)}")
+        rules = getattr(cls, table_attr)
+        plan = cls.AI_PLAN
+        if plan not in rules:
+            raise ValueError(f"Unknown AI_PLAN: {plan!r}. Valid: {list(rules)}")
+        return rules[plan]
+
+    @classmethod
+    def ai_display_label(cls) -> str:
+        """One-line label: 'GEMINI / gemini-2.5-flash (pro) · ~Rs.0.5/run'"""
+        plan = cls.ai()
+        provider = cls.AI_PROVIDER.upper()
+        return f"{provider} / {plan['model']} ({cls.AI_PLAN}) · {plan['cost_inr_approx']}"
+
+    @classmethod
+    def ai_display_block(cls) -> str:
+        """Multi-line block for console startup banners."""
+        plan = cls.ai()
+        provider = cls.AI_PROVIDER.upper()
+        lines = [
+            f"AI provider    : {provider}",
+            f"AI model       : {plan['model']}",
+            f"AI plan        : {cls.AI_PLAN.upper()}  ({plan['note']})",
+            f"Estimated cost : {plan['cost_inr_approx']}",
+        ]
+        if plan.get("free_tier"):
+            lines.append(f"Free-tier limit: {plan['free_tier']}")
+        return "\n".join(lines)
+
+    @classmethod
+    def ai_providers_summary(cls) -> list[dict]:
+        """Returns a list of all providers with their plans for dashboard display."""
+        result = []
+        for provider, attr in cls._AI_PROVIDER_TABLE.items():
+            rules = getattr(cls, attr)
+            for plan_name, plan in rules.items():
+                result.append({
+                    "provider":     provider,
+                    "plan":         plan_name,
+                    "model":        plan["model"],
+                    "cost":         plan["cost_inr_approx"],
+                    "note":         plan["note"],
+                    "free_tier":    plan.get("free_tier"),
+                    "active":       provider == cls.AI_PROVIDER and plan_name == cls.AI_PLAN,
+                })
+        return result
+
     @classmethod
     def claude(cls) -> dict:
-        """Returns the resolved Claude plan settings dict."""
-        return cls._CLAUDE_RULES[cls.CLAUDE_PLAN]
+        """Returns the resolved AI plan settings dict.
+        Legacy alias — delegates to ai() for the active provider."""
+        return cls.ai()
 
     @classmethod
     def zerodha(cls) -> dict:
@@ -2084,8 +2263,14 @@ class Config:
         missing = []
         if not cls.ZERODHA_API_KEY:    missing.append("ZERODHA_API_KEY")
         if not cls.ZERODHA_API_SECRET: missing.append("ZERODHA_API_SECRET")
-        if require_claude and not cls.CLAUDE_API_KEY:
-            missing.append("CLAUDE_API_KEY")
+        if require_claude:
+            # Check the key for whichever AI provider is active
+            if cls.AI_PROVIDER == "gemini" and not cls.GEMINI_API_KEY:
+                missing.append("GEMINI_API_KEY")
+            elif cls.AI_PROVIDER == "gpt" and not cls.OPENAI_API_KEY:
+                missing.append("OPENAI_API_KEY")
+            elif cls.AI_PROVIDER == "claude" and not cls.CLAUDE_API_KEY:
+                missing.append("CLAUDE_API_KEY")
         return missing
 
     @classmethod

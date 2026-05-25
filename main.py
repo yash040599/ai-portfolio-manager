@@ -5,10 +5,10 @@
 #
 # Usage:
 #   python main.py --mode analyze                 ← long-term portfolio analysis (NoAI default)
-#   python main.py --mode analyze --ai            ← analyse + Claude qualitative overlay
+#   python main.py --mode analyze --ai            ← analyse + AI qualitative overlay
 #   python main.py --mode trade                   ← NoAI intraday trading (default)
 #   python main.py --mode trade --noai            ← same as default (explicit NoAI)
-#   python main.py --mode trade --ai              ← with Claude AI selection
+#   python main.py --mode trade --ai              ← with AI selection (Gemini/GPT/Claude)
 #   python main.py --mode trade --test            ← show NoAI strategy analysis (no cost)
 #   python main.py --mode trade --ai --test       ← show AI strategy analysis (no cost)
 #   python main.py --mode trade --dryrun          ← full NoAI run, no real orders placed
@@ -16,7 +16,7 @@
 #   python main.py --mode trade --max 30000       ← limit today's budget to Rs.30,000
 #   python main.py --mode trade --nifty 50|100|150|200  ← override scan universe
 #   python main.py --mode swing                   ← NoAI swing scan (after market close)
-#   python main.py --mode swing --ai               ← swing scan + Claude qualitative overlay
+#   python main.py --mode swing --ai               ← swing scan + AI qualitative overlay
 #   python main.py --mode swing --actions           ← list pending swing actions
 #   python main.py --mode swing --positions         ← list open swing book
 #   python main.py --mode swing --confirm <ID> --qty N --price P  ← confirm a pending action
@@ -28,15 +28,16 @@
 #   python main.py --mode login                   ← test Zerodha login only
 #   python main.py --mode dashboard               ← launch the web dashboard
 #
-# --test   shows the strategy analysis pipeline without Claude or trades.
+# --test   shows the strategy analysis pipeline without AI calls or trades.
 #          Useful for seeing how the bot analyses stocks, what scores
 #          they get, and what the bot would do. No cost, no risk.
 #
 # --dryrun runs the FULL trading strategy (position monitoring, etc.)
 #          but doesn't place real orders on Zerodha.
 #
-# Default mode is NoAI (pure technical signals, zero Claude API calls).
-# Use --ai to enable Claude for stock selection and position reviews.
+# Default mode is NoAI (pure technical signals, zero AI API calls).
+# Use --ai to enable AI for stock selection and position reviews.
+# AI provider is set by AI_PROVIDER in config.py (default: gemini).
 #
 # To change plans or budget:
 #   Edit config.py — nothing else needs to change.
@@ -123,12 +124,12 @@ def main():
         print("Usage: python main.py --mode [analyze|trade|swing|login|dashboard] [flags]")
         print()
         print("  analyze                       — long-term portfolio analysis (NoAI, default)")
-        print("  analyze --ai                  — analyse + Claude qualitative overlay")
+        print("  analyze --ai                  — analyse + AI qualitative overlay")
         print()
         print("  trade                         — NoAI intraday trading (default)")
         print("  trade --dryrun                — full strategy, no real orders")
         print("  trade --test                  — show NoAI strategy analysis (no cost)")
-        print("  trade --ai                    — with Claude AI selection")
+        print("  trade --ai                    — with AI selection")
         print("  trade --ai --dryrun           — AI run, no real orders")
         print("  trade --ai --test             — show AI strategy analysis (no cost)")
         print("  trade --noai                  — same as default (explicit NoAI)")
@@ -136,7 +137,7 @@ def main():
         print("  trade --nifty 50|100|150|200  — override scan universe")
         print()
         print("  swing                         — NoAI swing scan (after market close)")
-        print("  swing --ai                    — swing scan + Claude overlay")
+        print("  swing --ai                    — swing scan + AI overlay")
         print("  swing --actions               — list pending swing actions")
         print("  swing --positions             — list open swing book")
         print("  swing --confirm <ID> --qty N --price P  — confirm action")
@@ -147,8 +148,8 @@ def main():
         sys.exit(1)
 
     if mode == "analyze":
-        # Default flow is NoAI (zero Claude cost). --ai opts in to the
-        # Claude qualitative overlay on top of the same NoAI base.
+        # Default flow is NoAI (zero AI cost). --ai opts in to the
+        # AI qualitative overlay on top of the same NoAI base.
         runner = PortfolioAnalyser(Config, use_ai=use_ai)
         runner.run()
 
@@ -168,7 +169,7 @@ def main():
             print(f"  Scan universe set to {nifty_universe} (via --nifty)\n")
 
         # Single trading entry point. Default mode is NoAI (pure rules,
-        # zero Claude API calls). Use --ai for Claude selection + reviews.
+        # zero AI API calls). Use --ai for AI selection + reviews.
         runner = PortfolioManager(Config)
         if use_ai:
             if use_test:

@@ -153,7 +153,12 @@ class AnalysisQueue:
         Returns: (analyses, skipped_symbols, failed_log)
         """
         total = len(self._queue)
-        self.log.section(f"CLAUDE ANALYSIS — {total} stocks  [{self.cfg.claude()['model']}]")
+        ai = self.cfg.ai()
+        self.log.section(
+            f"AI ANALYSIS — {total} stocks  "
+            f"[{self.cfg.AI_PROVIDER.upper()} / {ai['model']}]  "
+            f"({ai['cost_inr_approx']})"
+        )
 
         self._run_pass1(total)
 

@@ -2,8 +2,8 @@
 
 Automated intraday trading bot for the **Indian stock market (NSE)**. Uses
 technical indicators + candlestick patterns for stock selection, **Zerodha
-Kite** for data and execution, and optionally **Claude AI** for selection
-and reviews via `--ai`.
+Kite** for data and execution, and optionally **AI** (Gemini / GPT / Claude)
+for selection and reviews via `--ai`.
 
 
 <!-- ══════════════════════════════════════════════════════════════
@@ -62,9 +62,10 @@ Three surfaces, one CLI. Pick a mode at the CLI.
   reference files (sector map, dividends, fundamentals seed). Every
   field carries `source` + `as_of` so you know exactly how stale each
   number is.
-- `--ai` adds a Claude overlay on top of the same NoAI base — long-term
+- `--ai` adds an AI overlay on top of the same NoAI base — long-term
   thesis, qualitative risks, peer comparison, news context — without
-  regenerating any of the deterministic numbers.
+  regenerating any of the deterministic numbers. Provider controlled
+  by `AI_PROVIDER` in config.py (default: Gemini).
 - Per-stock recommendation (HOLD / BUY MORE / AVERAGE DOWN /
   PARTIAL EXIT / FULL EXIT) plus a portfolio-wide review with sector
   gaps, AMFI market-cap tier (LARGE / MID / SMALL / ETF) breakdown,
@@ -75,7 +76,7 @@ Three surfaces, one CLI. Pick a mode at the CLI.
 
 ```
 python main.py --mode analyze         # NoAI (default)
-python main.py --mode analyze --ai    # with Claude
+python main.py --mode analyze --ai    # with AI (Gemini by default)
 ```
 
 Full plan: [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) (P1-P7
@@ -83,8 +84,9 @@ foundation in flight; D24-D29 dashboard surface in flight).
 
 ### Phase 2 — Intraday trading (V2, default)
 
-Fully automated NSE intraday loop. **NoAI is the default** (zero Claude
-calls, pure indicators); add `--ai` to put Claude in the selection loop.
+Fully automated NSE intraday loop. **NoAI is the default** (zero AI API
+calls, pure indicators); add `--ai` to put the active AI provider in the
+selection loop.
 
 Loop, in plain English:
 
@@ -107,7 +109,7 @@ Loop, in plain English:
 
 ```
 python main.py --mode trade           # NoAI (default)
-python main.py --mode trade --ai      # with Claude
+python main.py --mode trade --ai      # with AI
 ```
 
 ### Phase 3 — Dashboard (tool-wide operator surface)
@@ -211,7 +213,7 @@ What ships today:
   with full health-check + AI overlay panel + per-stock "Analyse with
   AI" button (~Rs.3 per call), and a single-stock search box +
   side-by-side compare-up-to-4 card with auto-populate by sector.
-- **Optional Claude AI overlay** — capped at 15 candidates per scan
+- **Optional AI overlay** — capped at 15 candidates per scan
   (~Rs.45 max on Pro plan); responses sticky for 7 days via
   carry-forward so a one-stock Rs.3 spend doesn't get lost when you
   re-scan tomorrow. AI prompt asks for VERDICT / THESIS / RECENT
@@ -230,7 +232,7 @@ What ships today:
 
 ```
 python main.py --mode swing                       # daily NoAI scan
-python main.py --mode swing --ai                  # + Claude overlay (capped)
+python main.py --mode swing --ai                  # + AI overlay (capped)
 python main.py --mode swing --compare A,B,C,D     # side-by-side
 python main.py --mode swing --compare-sector BANKING
 python main.py --mode swing --actions             # list pending
@@ -294,8 +296,9 @@ their content.
   mode for SSH-only setups).
 - **Zerodha account** with [Kite Connect](https://developers.kite.trade)
   subscription (Rs.500/month).
-- **Claude API key** from [Anthropic](https://console.anthropic.com) —
-  only needed for `--ai` and `--mode analyze`.
+- **AI API key** — only needed for `--ai` mode. Default provider is
+  **Gemini** (free tier: 500 req/day). Alternatively GPT (OpenAI) or
+  Claude (Anthropic). Set `AI_PROVIDER` in config.py.
 
 ---
 
@@ -310,7 +313,9 @@ pip install -r requirements.txt
 
 | Package | Purpose |
 |---------|---------|
-| `anthropic` | Claude API client |
+| `google-genai` | Gemini API client (default AI provider) |
+| `openai` | OpenAI GPT API client (optional provider) |
+| `anthropic` | Claude API client (optional provider) |
 | `kiteconnect` | Zerodha Kite trading API (≥ 5.1.0 required for `market_protection`) |
 | `python-dotenv` | Loads keys from `.env` |
 | `openpyxl` | Reads Zerodha Tax P&L xlsx files |
@@ -325,7 +330,12 @@ Create `.env` in the project root:
 # Required
 ZERODHA_API_KEY=...
 ZERODHA_API_SECRET=...
-CLAUDE_API_KEY=...
+
+# AI provider keys — only ONE is needed, matching AI_PROVIDER in config.py.
+# Default provider is Gemini (free tier: 500 req/day, no credit card).
+GEMINI_API_KEY=...              # https://aistudio.google.com/apikey
+# OPENAI_API_KEY=...            # https://platform.openai.com/api-keys (if using GPT)
+# CLAUDE_API_KEY=...            # https://console.anthropic.com (if using Claude)
 
 # Optional — enable streamlined login (§5.4)
 KITE_USER_ID=AB1234              # your Zerodha client id
@@ -347,11 +357,31 @@ KITE_TOTP_SECRET=JBSWY3DPEHPK...  # base32 TOTP seed (§5.4)
 5. Tokens expire daily at midnight; the bot re-prompts. On SSH-only VMs
    pick **manual mode** (paste the redirect URL from your phone).
 
-#### Claude API (Anthropic)
+#### AI Provider API Keys
+
+Set `AI_PROVIDER` in config.py (default: `gemini`). Only the key for
+your chosen provider is required.
+
+**Gemini (recommended — has free tier)**
+
+1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+2. Sign in with your Google account → Create API Key.
+3. Add `GEMINI_API_KEY=...` to `.env`.
+4. Free tier: **500 requests/day**, 1M tokens/min. No credit card needed.
+   Well within typical bot usage (~50-100 calls/day).
+
+**GPT (OpenAI) — optional alternative**
+
+1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
+2. Create key, add credits ($5-10 is plenty to start; ~Rs.1-2/run).
+3. Add `OPENAI_API_KEY=...` to `.env`, set `AI_PROVIDER = "gpt"` in config.py.
+
+**Claude (Anthropic) — optional alternative**
 
 1. Sign up at [console.anthropic.com](https://console.anthropic.com).
-2. Settings → Billing → add credits (Rs.500–1000 to start; ~Rs.50–100/day on Pro).
-3. Settings → API Keys → Create Key (shown only once).
+2. Settings → Billing → add credits (Rs.500–1000; ~Rs.5-8/run on Pro).
+3. Settings → API Keys → Create Key.
+4. Add `CLAUDE_API_KEY=...` to `.env`, set `AI_PROVIDER = "claude"` in config.py.
 
 ### 5.3 Configure
 
@@ -363,7 +393,8 @@ Open [config.py](config.py). Common settings:
 | `SCAN_UNIVERSE` | NIFTY100 | Stock pool (overridable per-run with `--nifty 50/100/150/200`) |
 | `MAX_POSITIONS` | 3 | Simultaneous trades |
 | `DRY_RUN` | False | Simulate without real orders (or use `--dryrun`) |
-| `CLAUDE_PLAN` | pro | Claude tier: `free`, `pro`, `max` |
+| `AI_PROVIDER` | gemini | AI backend: `gemini`, `gpt`, `claude` |
+| `AI_PLAN` | basic | Depth: `basic`, `detailed`, `full` (scales prompt depth + tokens) |
 | `RR_TARGET_RATIO` | 1.5 | Base R:R from ATR |
 | `RR_HARD_FLOOR` | 1.3 | Always-on R:R floor — uniform across the trading day (collapsed from the deprecated time-tiered floors by #243) |
 
@@ -536,17 +567,17 @@ Full migration notes are mirrored in [copilot/machine-migration.md](copilot/mach
 
 | Command | What it does |
 |---------|--------------|
-| `python main.py --mode analyze` | Phase 1 — long-term portfolio analyser, NoAI default (no Claude cost) |
-| `python main.py --mode analyze --ai` | Phase 1 + Claude qualitative overlay (thesis/risks/news) |
+| `python main.py --mode analyze` | Phase 1 — long-term portfolio analyser, NoAI default (no AI cost) |
+| `python main.py --mode analyze --ai` | Phase 1 + AI qualitative overlay (thesis/risks/news) |
 | `python main.py --mode trade` | Phase 2 NoAI (default) |
-| `python main.py --mode trade --ai` | Phase 2 with Claude |
+| `python main.py --mode trade --ai` | Phase 2 with AI |
 | `python main.py --mode trade --noai` | Same as default; explicit |
 | `python main.py --mode trade --dryrun` | Full strategy, no real orders |
-| `python main.py --mode trade --test` | See pipeline only (no Claude, no trades, no cost) |
+| `python main.py --mode trade --test` | See pipeline only (no AI, no trades, no cost) |
 | `python main.py --mode trade --max 30000` | Cap today's capital at Rs.30,000 |
 | `python main.py --mode trade --nifty 150` | Override scan universe |
 | `python main.py --mode swing` | Phase 4 — swing scan (NoAI). Report-only by permanent design — see SWING_ROADMAP. Best run after market close (3:30 PM IST). |
-| `python main.py --mode swing --ai` | Same scan + Claude qualitative overlay (~Rs.45 capped). See [Swing CLI reference](#swing-cli-reference) below for the full sub-command list. |
+| `python main.py --mode swing --ai` | Same scan + AI qualitative overlay (capped). See [Swing CLI reference](#swing-cli-reference) below for the full sub-command list. |
 | `python main.py --mode login` | Test Zerodha login only |
 | `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) |
 
@@ -569,7 +600,7 @@ the terminal too. (Same service layer powers both surfaces.)
 | Command | What it does |
 |---------|--------------|
 | `python main.py --mode swing` | Run today's NoAI swing scan. Prints accepted candidates + open swing book. Refuses to scan before market close (uses yesterday's completed daily candle when run pre-close). |
-| `python main.py --mode swing --ai` | Same scan + Claude AI overlay capped at the top `SWING_AI_MAX_CANDIDATES` (default 15) accepted candidates by `priority_rank`. Pre-AI snapshot is written first so a Ctrl+C still leaves a usable report. |
+| `python main.py --mode swing --ai` | Same scan + AI overlay capped at the top `SWING_AI_MAX_CANDIDATES` (default 15) accepted candidates by `priority_rank`. Pre-AI snapshot is written first so a Ctrl+C still leaves a usable report. |
 | `python main.py --mode swing --nifty 100` | Override the scan universe (`50` / `100` / `150` / `200`). |
 | `python main.py --mode swing --actions` | List all PENDING swing actions (entry recommendations not yet confirmed/skipped). Prints action_id, symbol, qty, suggested entry/stop. |
 | `python main.py --mode swing --positions` | List all OPEN swing positions (entries you've confirmed via Done). Prints position_id, symbol, managed_qty, entry, stop, entry date. |
@@ -622,7 +653,8 @@ ai-portfolio-manager/
 ├── requirements.txt
 ├── .env                             # API keys (gitignored)
 ├── core/                            # shared infrastructure
-│   ├── claude_client.py             # Claude wrapper + error classification
+│   ├── claude_client.py             # backward-compat shim → llm_client.py
+│   ├── llm_client.py                # unified AI client (Gemini / GPT / Claude)
 │   ├── zerodha_client.py            # Kite wrapper
 │   └── logger.py                    # coloured terminal + rotating file log
 ├── shared/                          # cross-mode services
@@ -636,7 +668,7 @@ ai-portfolio-manager/
 │   │   ├── analyser.py              # 8-step orchestrator (NoAI default; --ai overlay)
 │   │   ├── types.py                 # Field[T] + StockAnalysis + PortfolioMetrics + GapAnalysis + PortfolioSnapshot
 │   │   ├── enrich_noai.py           # deterministic Zerodha + cache + reference-seed enrichment
-│   │   ├── enrich_ai.py             # Claude qualitative overlay (only ai_* slots)
+│   │   ├── enrich_ai.py             # AI qualitative overlay (only ai_* slots)
 │   │   ├── recommendation_rules.py  # 7-branch deterministic action engine
 │   │   ├── metrics.py               # HHI / top-5 / Sharpe / vol / max-DD / CAGR / cash drag / mcap tier
 │   │   ├── gaps.py                  # what's-missing engine + suggested additions
@@ -648,7 +680,7 @@ ai-portfolio-manager/
 │   │   ├── order_engine.py          # 44-check entry pipeline + monitoring
 │   │   ├── performance_tracker.py   # SQLite trades + analyses
 │   │   ├── report_writer.py         # txt + json reports
-│   │   ├── analysis_queue.py        # per-stock Claude analysis (--ai)
+│   │   ├── analysis_queue.py        # per-stock AI analysis (--ai)
 │   │   ├── candidate_telemetry.py   # `intraday_candidates` writer
 │   │   └── volume_baseline.py       # per-symbol intraday RVol baselines
 │   └── dashboard/                   # `--mode dashboard` (read-only, tool-wide)
@@ -705,7 +737,7 @@ pip install -r requirements.txt
 cat > .env <<'EOF'
 ZERODHA_API_KEY=...
 ZERODHA_API_SECRET=...
-CLAUDE_API_KEY=...
+GEMINI_API_KEY=...     # default provider; or use OPENAI_API_KEY / CLAUDE_API_KEY
 # Optional but recommended on a VM — enables ASSISTED login so you only
 # type a 6-digit code once a day (vs pasting the full redirect URL).
 KITE_USER_ID=AB1234
@@ -981,7 +1013,8 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 | Cost | Amount | Frequency |
 |------|--------|-----------|
 | Zerodha Kite Connect | Rs.500 | Monthly |
-| Claude API (Pro) | ~Rs.50–100 | Per trading day (`--ai` only; NoAI = Rs.0) |
+| AI API (Gemini free tier) | Rs.0 | Per trading day (`--ai` only; NoAI = Rs.0) |
+| AI API (GPT / Claude paid) | ~Rs.10–100 | Per trading day (if using paid provider) |
 | Brokerage + charges | ~0.05–0.15% of turnover | Per trade |
 
 ### Safety features

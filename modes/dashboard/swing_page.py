@@ -334,12 +334,8 @@ def render_swing_page() -> str:
     body.append('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">')
     body.append('<button class="action" onclick="runSwingScan()">'
                 'Run Scan</button>')
-    body.append('<label class="ai-toggle" '
-                'title="Toggle to add Claude qualitative overlay">' 
-                '<input type="checkbox" id="swing-ai-toggle">'
-                '<span class="lbl">Use Claude AI overlay</span>'
-                '<span class="hint">(NoAI is default; AI adds thesis + risks + news)</span>'
-                '</label>')
+    from modes.dashboard.ai_widget import ai_toggle_label
+    body.append(ai_toggle_label("swing-ai-toggle"))
 
     if latest_run_row:
         mode_badge = latest_run_row.get("mode", "NOAI")
@@ -354,9 +350,23 @@ def render_swing_page() -> str:
     # for several minutes before being Ctrl+C'd. The dashboard now
     # shows the worst-case cost and the per-run cap up-front so
     # there's no surprise.
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    per_call_raw = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    ai_plan = Config.ai()
+    # Estimate per-call cost from token pricing
+    input_m = ai_plan.get("input_cost_per_m", 0)
+    output_m = ai_plan.get("output_cost_per_m", 0)
+    per_call = (2000 * input_m + ai_plan["max_tokens"] * output_m) / 1_000_000 * 85
+    if per_call < 0.1:
+        per_call = per_call_raw  # fallback to legacy config
     ai_cap = int(getattr(Config, "SWING_AI_MAX_CANDIDATES", 15))
     capped_cost = ai_cap * per_call
+    provider_label = f'{Config.AI_PROVIDER.upper()} / {ai_plan["model"]}'
+    free_tier_note = ""
+    if ai_plan.get("free_tier"):
+        free_tier_note = (
+            f'<br>&bull; <strong>Free tier</strong>: {ai_plan["free_tier"]} '
+            f'&mdash; no charge within daily limits.'
+        )
     # Reasonable worst-case for a NIFTY 100 scan that triggers many
     # ATH-dips after a market correction — ~50 accepted candidates.
     worst_case_n = 50
@@ -364,16 +374,18 @@ def render_swing_page() -> str:
     body.append(
         '<div class="muted" style="font-size:12px;margin-top:8px;'
         'border-left:3px solid #e0a800;padding-left:8px">'
-        f'<strong>AI cost preview</strong> (Rs.{per_call:.0f}/stock at the '
-        f'<code>{getattr(Config, "CLAUDE_PLAN", "pro").upper()}</code> plan):<br>'
+        f'<strong>AI cost preview</strong> (Rs.{per_call:.1f}/stock via '
+        f'<code>{provider_label}</code>, '
+        f'{Config.AI_PLAN.upper()} plan):<br>'
         f'&bull; <strong>Single stock</strong> &mdash; click "Analyse this stock" '
-        f'on a swing detail page: <strong>~Rs.{per_call:.0f}</strong> per call.<br>'
+        f'on a swing detail page: <strong>~Rs.{per_call:.1f}</strong> per call.<br>'
         f'&bull; <strong>Full scan with AI overlay</strong>: capped at '
         f'<strong>Rs.{capped_cost:.0f}</strong> '
         f'({ai_cap} top-priority candidates) via '
         f'<code>SWING_AI_MAX_CANDIDATES</code>. Without this cap a wide '
         f'NIFTY 100 scan could process up to ~{worst_case_n} candidates and '
-        f'cost ~Rs.{worst_case_cost:.0f}.<br>'
+        f'cost ~Rs.{worst_case_cost:.0f}.'
+        f'{free_tier_note}<br>'
         f'&bull; A confirm dialog appears before the AI scan starts; if '
         f'you Ctrl+C mid-scan the pre-AI snapshot is still saved so the '
         f'report and dashboard table never end up empty.'
@@ -411,7 +423,8 @@ def render_swing_page() -> str:
     # user evaluate any NSE name on demand without re-running the
     # full universe scan; result card supports the same Done / Skip
     # controls and (optionally) the per-stock AI overlay.
-    per_call_one = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    ai_plan = Config.ai()
+    ai_cost = ai_plan["cost_inr_approx"]
     body.append('<div class="card">')
     body.append('<h2>Analyse a Single Stock</h2>')
     body.append(
@@ -419,10 +432,11 @@ def render_swing_page() -> str:
         'Type any NSE symbol (e.g. SBIN, RELIANCE, TCS) and click '
         '<em>Analyse</em>. The full per-stock pipeline runs on '
         f'just that name, then surfaces the result below with the '
-        f'same Done / Skip controls. Tick the AI box to add Claude '
-        f'colour (~Rs.{per_call_one:.0f} per call).'
+        f'same Done / Skip controls. Tick the AI box to add AI '
+        f'colour ({ai_cost} per call).'
         '</p>'
     )
+    from modes.dashboard.ai_widget import ai_toggle_label
     body.append(
         '<div style="display:flex;gap:8px;align-items:center;'
         'flex-wrap:wrap;margin-bottom:10px">'
@@ -432,12 +446,7 @@ def render_swing_page() -> str:
         'border:1px solid #cfd9eb;border-radius:5px;text-transform:uppercase" '
         'onkeydown="if(event.key===\'Enter\'){analyseOne();}" />'
         '<button class="action" onclick="analyseOne()">Analyse</button>'
-        '<label class="ai-toggle" '
-        'title="Add Claude qualitative overlay (~Rs.' + f'{per_call_one:.0f}'
-        ') for this single stock">'
-        '<input type="checkbox" id="single-ai-toggle">'
-        '<span class="lbl">Use Claude AI overlay</span>'
-        '</label>'
+        + ai_toggle_label("single-ai-toggle") +
         '</div>'
     )
     body.append('<div id="single-result-host"></div>')
@@ -1129,18 +1138,48 @@ def render_swing_detail(symbol: str) -> str:
     # (~Rs.{CLAUDE_COST_PER_CALL}). Sits ABOVE the AI section so the
     # user can populate or refresh just this one symbol without
     # paying for the full top-K cap.
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    ai_plan = Config.ai()
+    ai_cost = ai_plan["cost_inr_approx"]
+    ai_provider = Config.AI_PROVIDER.upper()
+    ai_depth = ai_plan["analysis_depth"]
     body.append('<div class="card">')
     body.append('<h2>AI Analysis</h2>')
+    # Tier info note
+    tier_note = ""
+    if ai_depth == "basic":
+        tier_note = (
+            '<div class="muted" style="font-size:11px;margin-bottom:8px;'
+            'border-left:3px solid #d0d7de;padding-left:8px">'
+            '<strong>Basic tier</strong> — short verdict + key risk only '
+            '(~1200 tokens). Switch to <strong>Detailed</strong> or '
+            '<strong>Full</strong> in the AI Model banner above for '
+            'the complete 10-point analysis (thesis, peers, catalysts, '
+            'red flags).</div>'
+        )
+    elif ai_depth == "detailed":
+        tier_note = (
+            '<div class="muted" style="font-size:11px;margin-bottom:8px;'
+            'border-left:3px solid #0a8;padding-left:8px">'
+            '<strong>Detailed tier</strong> — full 10-point analysis '
+            'including thesis, risks, peers, catalysts.</div>'
+        )
+    else:
+        tier_note = (
+            '<div class="muted" style="font-size:11px;margin-bottom:8px;'
+            'border-left:3px solid #1a7f37;padding-left:8px">'
+            '<strong>Full tier</strong> — deepest analysis with extended '
+            'context and longer responses.</div>'
+        )
+    body.append(tier_note)
     body.append(
         '<div style="display:flex;gap:8px;align-items:center;'
         'margin-bottom:10px;flex-wrap:wrap">'
         f'<button class="action" id="ai-analyse-btn" '
         f'onclick="aiAnalyseSingle(\'{html.escape(sym)}\')" '
         f'style="padding:6px 12px;font-size:13px">'
-        f'Analyse with AI (~Rs.{per_call:.0f})</button>'
+        f'Analyse with AI ({ai_cost})</button>'
         f'<span class="muted" style="font-size:12px">'
-        f'One Claude call for this stock only. Replaces the existing '
+        f'One {ai_provider} call for this stock only. Replaces the existing '
         f'AI analysis below if any.</span>'
         '</div>'
     )
@@ -1216,9 +1255,10 @@ def render_swing_detail(symbol: str) -> str:
         var btn = document.getElementById('ai-analyse-btn');
         var host = document.getElementById('ai-overlay-host');
         if (!btn || !host) return;
-        var perCall = ''' + f'{per_call:.0f}' + ''';
-        if (!confirm('Spend ~Rs.' + perCall + ' on a Claude call for ' +
-                     sym + '?\\nThis runs the swing AI overlay on ' +
+        var aiLabel = document.getElementById('ai-label');
+        var modelInfo = aiLabel ? aiLabel.textContent : 'AI';
+        if (!confirm('Run AI call (' + modelInfo + ') for ' +
+                     sym + '?\\nThis runs the AI overlay on ' +
                      'this one stock and replaces any existing AI ' +
                      'analysis below.')) {
             return;
@@ -1228,7 +1268,7 @@ def render_swing_detail(symbol: str) -> str:
         btn.textContent = 'Analysing...';
         host.innerHTML =
             '<p class="muted"><span class="spinner"></span> ' +
-            'Calling Claude (typically 5-15 s)...</p>';
+            'Calling AI (typically 5-15 s)...</p>';
         fetch('/api/swing/ai_analyse/' + encodeURIComponent(sym),
               {method: 'POST'})
             .then(function (r) {
@@ -1608,6 +1648,7 @@ var _aiMdToHtml = window._aiMdToHtml;
 
 def _wrap(title: str, body_parts: list[str]) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
+    from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1616,7 +1657,9 @@ def _wrap(title: str, body_parts: list[str]) -> str:
 </head><body>
 {error_toast_html()}
 {_ai_md_js()}
+{ai_banner_html()}
 {"".join(body_parts)}
+{ai_banner_script()}
 {error_toast_script()}
 </body></html>"""
 
@@ -1648,7 +1691,9 @@ function runSwingScan() {
         var perCall = window._swingAiPerCall || 3.0;
         var cap = window._swingAiCap || 15;
         var maxCost = (perCall * cap).toFixed(0);
-        if (!confirm('Claude AI overlay will be added on top of the NoAI scan.\\n\\n' +
+        var aiLabel = document.getElementById('ai-label');
+        var modelInfo = aiLabel ? aiLabel.textContent : 'AI';
+        if (!confirm('AI overlay (' + modelInfo + ') will be added on top of the NoAI scan.\\n\\n' +
                      'Cost cap: ~Rs.' + maxCost + ' for up to ' + cap +
                      ' top-priority candidates (Rs.' + perCall.toFixed(0) +
                      '/stock).\\n\\nProceed?')) {

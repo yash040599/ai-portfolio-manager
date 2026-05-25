@@ -303,17 +303,20 @@ class PortfolioAnalyser:
     # ── Display ─────────────────────────────────────────────────
 
     def _print_banner(self) -> None:
-        plan = self.cfg.claude()
+        ai_plan = self.cfg.ai()
         zrd  = self.cfg.zerodha()
         mode_label = "AI" if self.use_ai else "NOAI"
         print(f"\n{'='*64}")
         print("  AI PORTFOLIO MANAGER — ANALYSE MODE")
         print(f"{'='*64}")
         print(f"  Run mode       : {mode_label}  "
-              f"({'Claude overlay enabled' if self.use_ai else 'deterministic only — no Claude calls'})")
+              f"({'AI overlay enabled' if self.use_ai else 'deterministic only — no AI calls'})")
         if self.use_ai:
-            print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}  "
-                  f"(model {plan['model']})")
+            print(f"  AI provider    : {self.cfg.AI_PROVIDER.upper()}")
+            print(f"  AI model       : {ai_plan['model']}  ({self.cfg.AI_PLAN.upper()})")
+            print(f"  Estimated cost : {ai_plan['cost_inr_approx']}")
+            if ai_plan.get("free_tier"):
+                print(f"  Free-tier limit: {ai_plan['free_tier']}")
         print(f"  Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}  "
               f"(price source {zrd['price_source']})")
         print(f"{'='*64}\n")

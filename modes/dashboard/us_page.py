@@ -308,7 +308,7 @@ def render_us_detail(symbol: str) -> str:
         f'style="padding:6px 12px;font-size:13px">'
         'Analyse with AI</button>'
         '<span class="muted" style="font-size:12px">'
-        'One Claude call for this stock only.</span>'
+        'One AI call for this stock only.</span>'
         '</div>'
     )
     body.append('<div id="ai-overlay-host">')
@@ -436,12 +436,8 @@ def _render_scan_card(default_ticket: float,
     out.append('</div>')
     out.append('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">')
     out.append('<button class="action" onclick="runUsScan()">Run Scan</button>')
-    out.append('<label class="ai-toggle" '
-               'title="Toggle to add Claude qualitative overlay">'
-               '<input type="checkbox" id="us-ai-toggle">'
-               '<span class="lbl">Use Claude AI overlay</span>'
-               '<span class="hint">(NoAI is default)</span>'
-               '</label>')
+    from modes.dashboard.ai_widget import ai_toggle_label
+    out.append(ai_toggle_label("us-ai-toggle"))
     out.append('</div>')
     out.append('<div class="muted" style="font-size:12px;margin-top:8px">'
                'Scans are manual-only from this dashboard. US data uses cached daily candles first, then refreshes only when you run a scan.'
@@ -464,7 +460,7 @@ def _render_single_stock_card(default_ticket: float) -> str:
                   text-transform:uppercase"
            onkeydown="if(event.key==='Enter'){{analyseUsStock();}}" />
     <button class="action" onclick="analyseUsStock()">Analyse</button>
-        <label class="ai-toggle" title="Run Claude overlay for this one stock">
+        <label class="ai-toggle" title="Run AI overlay for this one stock">
       <input type="checkbox" id="us-single-ai-toggle">
             <span class="lbl">Use AI</span>
             <span class="hint">(one-stock overlay)</span>
@@ -904,6 +900,7 @@ def _topnav(here: str, fx: dict) -> str:
 # ── Page chrome ───────────────────────────────────────────────
 
 def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
+    from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
     rate = float(fx.get("rate") or 0.0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -912,7 +909,9 @@ def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
 <style>{_STYLE}</style>
 <script>window._usdInrRate = {rate};</script>
 </head><body>
+{ai_banner_html()}
 {''.join(body_parts)}
+{ai_banner_script()}
 </body></html>"""
 
 
@@ -1598,7 +1597,7 @@ function runUsScan() {
     var universeEl = document.getElementById('us-scan-universe');
     var universe = universeEl ? universeEl.value : 'US100';
     var useAi = document.getElementById('us-ai-toggle') && document.getElementById('us-ai-toggle').checked;
-    if (useAi && !confirm('Run ' + universe + ' scan with Claude AI overlay for top candidates?')) return;
+    if (useAi && !confirm('Run ' + universe + ' scan with AI overlay for top candidates?')) return;
     _scanBanner('Running ' + (useAi ? 'AI' : 'NoAI') + ' ' + universe + ' scan. This can take 1-2 minutes...', 'info');
     fetch('/api/us/run?mode=' + (useAi ? 'AI' : 'NOAI') +
           '&ticket=' + encodeURIComponent(ticket) +

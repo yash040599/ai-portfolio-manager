@@ -269,13 +269,14 @@ def render_portfolio_page() -> str:
 
 
 def _empty_state() -> str:
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    ai_plan = Config.ai()
+    cost = ai_plan["cost_inr_approx"]
     return f"""
 <div class="card">
   <h2>No analysis on file yet</h2>
   <p>Click below to run your first portfolio analysis. NoAI is the
-  default and free (no Claude calls). Toggle <em>Use Claude AI overlay</em>
-  to add qualitative thesis / risks / news context (~Rs.{per_call:.0f} per
+  default and free (no AI calls). Toggle <em>Use AI overlay</em>
+  to add qualitative thesis / risks / news context ({cost} per
   stock).</p>
   <p>
     {_ai_toggle_html()}
@@ -848,7 +849,7 @@ def _render_drilldown_header(sym: str, s: StockAnalysis | None, *,
   this stock</em> below to fetch a deterministic snapshot (live
   price, 52-week range, beta vs NIFTY, sector, market-cap tier,
   P/E, dividend yield, RSI / SMA-50 / SMA-200) — and optionally
-  add the Claude AI overlay (long-term thesis, risks, peer
+  add the AI overlay (long-term thesis, risks, peer
   comparison, recent news).</p>
 </div>
 """
@@ -1365,7 +1366,7 @@ function runAnalysis(scope) {
     var per = parseFloat(document.body.getAttribute('data-ai-per-call') || '3');
     var cost = (hold > 0 ? hold * per : per);
     var msg = (scope === 'all'
-      ? 'Estimated Claude cost ~Rs.' + cost.toFixed(0) + ' for ' + hold + ' holdings. Proceed?'
+      ? 'Estimated AI cost ~Rs.' + cost.toFixed(0) + ' for ' + hold + ' holdings. Proceed?'
       : 'AI overlay for one stock will use ~Rs.' + per.toFixed(0) + '. Proceed?');
     if (!confirm(msg)) { return; }
   }
@@ -1533,41 +1534,49 @@ def _ai_toggle_html() -> str:
     upgrade (free → pro → max) is reflected without a code change.
     """
     per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
-    return (f'<label class="ai-toggle" '
-            f'title="Toggle to add Claude qualitative overlay '
-            f'(~Rs.{per_call:.0f}/stock)">'
-            f'<input type="checkbox" id="ai-toggle-input">'
-            f'<span class="lbl">Use Claude AI overlay</span>'
-            f'<span class="hint">(NoAI is the default; AI adds '
-            f'thesis + risks + news. Cost: ~Rs.{per_call:.0f}/stock '
-            f'\u2014 a single-stock click is Rs.{per_call:.0f}, a '
-            f'full-portfolio re-analyse is holdings &times; Rs.{per_call:.0f}.)'
-            f'</span>'
-            f'</label>')
+    from modes.dashboard.ai_widget import ai_toggle_label
+    return ai_toggle_label("ai-toggle-input")
 
 
 def _ai_cost_card(holdings_count: int) -> str:
-    """Yellow-tinted info card showing the explicit AI cost map.
+    """Yellow-tinted info card showing the explicit AI cost map."""
+    ai_plan = Config.ai()
+    provider = Config.AI_PROVIDER.upper()
+    model = ai_plan["model"]
+    cost_label = ai_plan["cost_inr_approx"]
+    free_tier = ai_plan.get("free_tier")
+    plan_label = Config.AI_PLAN.upper()
 
-    Origin (2026-05-14): user reported a swing AI scan ran "no stop"
-    until cancelled. We now surface the per-action cost up-front on
-    every analyse surface so the click never feels open-ended.
-    """
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    # Estimate per-call cost in Rs.
+    # Rough heuristic: 2K input tokens + max_tokens output per call
+    input_m = ai_plan.get("input_cost_per_m", 0)
+    output_m = ai_plan.get("output_cost_per_m", 0)
+    per_call = (2000 * input_m + ai_plan["max_tokens"] * output_m) / 1_000_000 * 85  # USD→INR ~85
+    if per_call < 0.1:
+        per_call = 0.0  # effectively free
     full_cost = per_call * max(holdings_count, 1)
-    plan = str(getattr(Config, "CLAUDE_PLAN", "pro")).upper()
+
+    free_note = ""
+    if free_tier:
+        free_note = (
+            f'<br>&bull; <strong>Free tier</strong>: {html.escape(free_tier)} '
+            f'&mdash; no charge within daily limits.'
+        )
+
     return (
         '<div class="muted" style="font-size:12px;margin-top:8px;'
         'border-left:3px solid #e0a800;padding-left:8px">'
         f'<strong>AI cost preview</strong> '
-        f'(plan <code>{html.escape(plan)}</code>, '
-        f'~Rs.{per_call:.0f}/Claude call):<br>'
-        f'&bull; <strong>Single stock</strong> &mdash; click "Analyse '
-        f'this stock" on the drilldown page: <strong>~Rs.{per_call:.0f}</strong>.<br>'
-        f'&bull; <strong>Full portfolio</strong> &mdash; "Analyse all" with '
-        f'{holdings_count} holdings: <strong>~Rs.{full_cost:.0f}</strong> '
-        f'(holdings &times; Rs.{per_call:.0f}). A confirm dialog with the '
-        f'exact number appears before the run starts.'
+        f'(<code>{html.escape(provider)}</code> / '
+        f'<code>{html.escape(model)}</code> / '
+        f'{html.escape(plan_label)} plan, '
+        f'{html.escape(cost_label)}):<br>'
+        f'&bull; <strong>Single stock</strong>: '
+        f'<strong>~Rs.{per_call:.1f}</strong>.<br>'
+        f'&bull; <strong>Full portfolio</strong> '
+        f'({holdings_count} holdings): '
+        f'<strong>~Rs.{full_cost:.1f}</strong>.'
+        f'{free_note}'
         '</div>'
     )
 
@@ -1577,7 +1586,13 @@ def _ai_cost_card(holdings_count: int) -> str:
 def _wrap(title: str, here: str, body: str,
           *, holdings_count: int = 0) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
+    ai_plan = Config.ai()
+    input_m = ai_plan.get("input_cost_per_m", 0)
+    output_m = ai_plan.get("output_cost_per_m", 0)
+    per_call = (2000 * input_m + ai_plan["max_tokens"] * output_m) / 1_000_000 * 85
+    if per_call < 0.1:
+        per_call = 0.0
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -1590,12 +1605,14 @@ def _wrap(title: str, here: str, body: str,
 {error_toast_html()}
 <div class="wrap">
   {_topnav(here)}
+  {ai_banner_html()}
   {body}
   <footer>
     AI Portfolio Manager · read-only dashboard · data persisted to
     <code>data/portfolio_analyses.db</code>
   </footer>
 </div>
+{ai_banner_script()}
 {error_toast_script()}
 </body>
 </html>"""

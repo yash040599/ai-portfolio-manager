@@ -2553,7 +2553,7 @@ class PortfolioManager:
 
     def _print_banner(self):
         """Shows V2 configuration."""
-        plan = self.cfg.claude()
+        ai_plan = self.cfg.ai()
         zrd  = self.cfg.zerodha()
         print(f"\n{'='*58}")
         strategy_profile = str(getattr(self.cfg, "TRADE_STRATEGY_PROFILE", ""))
@@ -2564,16 +2564,18 @@ class PortfolioManager:
             print("  AI PORTFOLIO MANAGER — TRADE MODE ? Candle strategy")
         print(f"{'='*58}")
         if not self._noai:
-            print(f"  Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}")
-            print(f"  → {plan['note']}")
+            print(f"  AI provider    : {self.cfg.AI_PROVIDER.upper()}")
+            print(f"  AI model       : {ai_plan['model']}")
+            print(f"  AI plan        : {self.cfg.AI_PLAN.upper()}  ({ai_plan['note']})")
+            print(f"  Estimated cost : {ai_plan['cost_inr_approx']}")
+            if ai_plan.get("free_tier"):
+                print(f"  Free-tier limit: {ai_plan['free_tier']}")
             print()
         print(f"  Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}")
         print(f"  → {zrd['note']}")
         print()
-        if not self._noai:
-            print(f"  Claude model   : {plan['model']}")
-        else:
-            print(f"  Claude model   : NONE (pure technical signals)")
+        if self._noai:
+            print(f"  AI model       : NONE (pure technical signals)")
         print(f"  Price source   : {zrd['price_source'].upper()}")
         stage, label, _note, paused = self._research_phase_status()
         if label:
@@ -3076,7 +3078,7 @@ class PortfolioManager:
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
         self.log.info(f"Budget: Rs.{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
-        self.log.info("Selection: pure technical signals (no Claude calls)")
+        self.log.info("Selection: pure technical signals (no AI calls)")
 
         universe = self.scanner.get_universe()
         self.log.info(f"Scanning {len(universe)} stocks...")
