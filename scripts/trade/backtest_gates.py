@@ -66,10 +66,10 @@ OUT_DIR = os.path.join(PROJECT_ROOT, "reports", "backtest")
 # ── Defaults ──────────────────────────────────────────────────
 CAPITAL = 50_000
 ENTRY_START_HOUR = 10
-ENTRY_END_HOUR = 14
+ENTRY_END_HOUR = 13
 ENTRY_END_MINUTE = 30
-SQUARE_OFF_HOUR = 15
-SQUARE_OFF_MINUTE = 10
+SQUARE_OFF_HOUR = 14
+SQUARE_OFF_MINUTE = 0
 
 
 # ── Indicator helpers ─────────────────────────────────────────
@@ -316,12 +316,18 @@ def simulate_trades(
     gate_adx_min: float = 0,             # 0 = disabled, e.g. 18
     gate_rvol_floor: float = 0,          # 0 = disabled, e.g. 0.7
     gate_loser_exit_hour: int = 0,       # 0 = disabled, e.g. 14
-    gate_trailing_sl: bool = False,
-    gate_partial_profit: bool = False,
+    gate_trailing_sl: float = 0,         # 0 = disabled, e.g. 1.0 = trail after 1x risk
+    gate_trail_step_pct: float = 50.0,   # % of profit to lock in (50 = midpoint)
     gate_stagnant_minutes: int = 0,      # 0 = disabled
     gate_daily_loss_stop_pct: float = 0, # 0 = disabled
     gate_max_trades_per_day: int = 0,    # 0 = unlimited
     gate_charge_multiple: float = 0,     # 0 = disabled, e.g. 2.0 or 3.0
+    gate_square_off_hour: int = 0,       # 0 = use default 15:10
+    gate_square_off_minute: int = 0,
+    gate_lunch_lull: bool = False,        # skip entries 11:30-12:15
+    gate_rsi_buy_floor: float = 0,       # 0 = disabled, e.g. 30
+    gate_rsi_sell_floor: float = 0,      # 0 = disabled, e.g. 25
+    gate_max_reentries: int = 0,         # 0 = unlimited, e.g. 2
 ) -> list[dict]:
     """Run the full scoring + simulation pipeline for one symbol.
     Uses a rolling multi-day window for indicator computation."""
@@ -365,7 +371,9 @@ def simulate_trades(
             li = gi - start_idx  # local index within day
 
             # ── Square off ────────────────────────────────────
-            if hour >= SQUARE_OFF_HOUR or (hour == SQUARE_OFF_HOUR - 1 and minute >= SQUARE_OFF_MINUTE):
+            sq_h = gate_square_off_hour if gate_square_off_hour > 0 else SQUARE_OFF_HOUR
+            sq_m = gate_square_off_minute if gate_square_off_hour > 0 else SQUARE_OFF_MINUTE
+            if hour * 60 + minute >= sq_h * 60 + sq_m:
                 if in_trade:
                     pnl_pct = _pnl(side, entry_price, c["close"])
                     t = _make_trade(symbol, entry_ts, c["ts"], side, entry_price,
@@ -403,10 +411,12 @@ def simulate_trades(
                         day_pnl += pnl_pct
                         in_trade = False
                         continue
-                    if gate_trailing_sl:
-                        atr_val = _atr(all_candles[max(0,gi-14):gi+1])
-                        if atr_val > 0 and c["close"] >= entry_price + atr_val:
-                            new_sl = c["close"] - atr_val * 0.5
+                    if gate_trailing_sl > 0:
+                        initial_risk = entry_price - sl_price if sl_price < entry_price else entry_price * 0.01
+                        profit = c["close"] - entry_price
+                        if initial_risk > 0 and profit >= initial_risk * gate_trailing_sl:
+                            step = gate_trail_step_pct / 100.0
+                            new_sl = entry_price + profit * step
                             if new_sl > sl_price:
                                 sl_price = new_sl
                 else:  # SELL
@@ -434,10 +444,12 @@ def simulate_trades(
                         day_pnl += pnl_pct
                         in_trade = False
                         continue
-                    if gate_trailing_sl:
-                        atr_val = _atr(all_candles[max(0,gi-14):gi+1])
-                        if atr_val > 0 and c["close"] <= entry_price - atr_val:
-                            new_sl = c["close"] + atr_val * 0.5
+                    if gate_trailing_sl > 0:
+                        initial_risk = sl_price - entry_price if sl_price > entry_price else entry_price * 0.01
+                        profit = entry_price - c["close"]
+                        if initial_risk > 0 and profit >= initial_risk * gate_trailing_sl:
+                            step = gate_trail_step_pct / 100.0
+                            new_sl = entry_price - profit * step
                             if new_sl < sl_price:
                                 sl_price = new_sl
                 continue
@@ -447,6 +459,10 @@ def simulate_trades(
                 continue
             if hour > ENTRY_END_HOUR or (hour == ENTRY_END_HOUR and minute > ENTRY_END_MINUTE):
                 continue
+            if gate_lunch_lull:
+                t_min = hour * 60 + minute
+                if 11 * 60 + 30 <= t_min < 12 * 60 + 15:
+                    continue
             if gate_daily_loss_stop_pct > 0 and day_pnl <= -gate_daily_loss_stop_pct:
                 continue
             if gate_max_trades_per_day > 0 and day_trade_count >= gate_max_trades_per_day:
@@ -479,6 +495,12 @@ def simulate_trades(
             if gate_rsi_buy_ceiling > 0 and this_side == "BUY" and rsi_val > gate_rsi_buy_ceiling:
                 rejected = True
             if gate_rsi_sell_ceiling > 0 and this_side == "SELL" and rsi_val > gate_rsi_sell_ceiling:
+                rejected = True
+            if gate_rsi_buy_floor > 0 and this_side == "BUY" and rsi_val < gate_rsi_buy_floor:
+                rejected = True
+            if gate_rsi_sell_floor > 0 and this_side == "SELL" and rsi_val < gate_rsi_sell_floor:
+                rejected = True
+            if gate_max_reentries > 0 and day_trade_count >= gate_max_reentries:
                 rejected = True
             if gate_vwap_trend_fight > 0 and vwap_val > 0:
                 dev_pct = (price - vwap_val) / vwap_val * 100
@@ -679,6 +701,8 @@ def main():
                         help="Include regulatory costs in P&L")
     parser.add_argument("--symbol", default=None)
     parser.add_argument("--universe", default="NIFTY50")
+    parser.add_argument("--start-date", default=None, help="Filter start date YYYY-MM-DD")
+    parser.add_argument("--end-date", default=None, help="Filter end date YYYY-MM-DD")
     args = parser.parse_args()
 
     symbols = [args.symbol.upper()] if args.symbol else get_universe(args.universe)
@@ -692,10 +716,17 @@ def main():
         candles = load_15m(INTRADAY_DB, sym)
         daily = load_daily(DAILY_DB, sym)
         if candles:
-            all_data[sym] = {
-                "days": group_by_day(candles),
-                "daily": daily,
-            }
+            days = group_by_day(candles)
+            # Date filtering
+            if args.start_date:
+                days = {d: v for d, v in days.items() if d >= args.start_date}
+            if args.end_date:
+                days = {d: v for d, v in days.items() if d <= args.end_date}
+            if days:
+                all_data[sym] = {
+                    "days": days,
+                    "daily": daily,
+                }
     print(f"  Loaded {len(all_data)} symbols with data\n")
 
     def run_config(label: str, *, portfolio_daily_cap: int = 0, **kwargs) -> dict:
@@ -744,8 +775,8 @@ def main():
             for sym, data in all_data.items():
                 trades = simulate_trades(
                     data["days"], data["daily"], sym,
-                    with_costs=True, min_score=2.0, atr_multiplier=1.5,
-                    rr_ratio=1.5, rr_floor=0,
+                    with_costs=True, min_score=2.0, atr_multiplier=2.0,
+                    rr_ratio=1.8, rr_floor=1.3,
                 )
                 all_trades_c.extend(trades)
             all_trades_c.sort(key=lambda t: t["entry_ts"])
@@ -761,12 +792,16 @@ def main():
 
         # Always include baseline for comparison
         m_base = run_config("Baseline (gate OFF)", min_score=2.0,
-                           atr_multiplier=1.5, rr_ratio=1.5, rr_floor=0)
+                           atr_multiplier=2.0, rr_ratio=1.8, rr_floor=1.3,
+                           portfolio_daily_cap=2,
+                           gate_loser_exit_hour=13)
         results.append(m_base)
 
         for val in values:
-            kwargs = {"min_score": 2.0, "atr_multiplier": 1.5,
-                      "rr_ratio": 1.5, "rr_floor": 0}
+            kwargs = {"min_score": 2.0, "atr_multiplier": 2.0,
+                      "rr_ratio": 1.8, "rr_floor": 1.3,
+                      "portfolio_daily_cap": 2,
+                      "gate_loser_exit_hour": 13}
 
             if gate == "M1":
                 kwargs["min_score"] = val
@@ -786,6 +821,9 @@ def main():
             elif gate == "G1":
                 kwargs["gate_rsi_buy_ceiling"] = val
                 label = f"G1: RSI_BUY_CEIL = {val}"
+            elif gate == "G2":
+                kwargs["gate_rsi_sell_ceiling"] = val
+                label = f"G2: RSI_SELL_CEIL = {val}"
             elif gate == "G6":
                 kwargs["gate_vwap_trend_fight"] = val
                 label = f"G6: VWAP_FIGHT = {val}%"
@@ -807,10 +845,36 @@ def main():
             elif gate == "K1":
                 label = f"K1: PORTFOLIO_CAP/DAY = {int(val)}"
                 m = run_config(label, portfolio_daily_cap=int(val),
-                               min_score=2.0, atr_multiplier=1.5,
-                               rr_ratio=1.5, rr_floor=0)
+                               min_score=2.0, atr_multiplier=2.0,
+                               rr_ratio=1.8, rr_floor=1.3)
                 results.append(m)
                 continue
+            elif gate == "L3":
+                kwargs["gate_trailing_sl"] = val
+                label = f"L3: TRAIL_AFTER = {val}x risk"
+            elif gate == "L3_STEP":
+                kwargs["gate_trailing_sl"] = 1.0  # enable trail
+                kwargs["gate_trail_step_pct"] = val
+                label = f"L3_STEP: TRAIL_PCT = {val}%"
+            elif gate == "L11":
+                # Accept decimal hours: 14.5 = 14:30, 15.17 = 15:10
+                h = int(val)
+                m = int(round((val - h) * 60))
+                kwargs["gate_square_off_hour"] = h
+                kwargs["gate_square_off_minute"] = m
+                label = f"L11: SQUARE_OFF = {h}:{m:02d}"
+            elif gate == "I1":
+                kwargs["gate_lunch_lull"] = bool(val)
+                label = f"I1: LUNCH_LULL = {'ON' if val else 'OFF'}"
+            elif gate == "G3":
+                kwargs["gate_rsi_buy_floor"] = val
+                label = f"G3: RSI_BUY_FLOOR = {val}"
+            elif gate == "G4":
+                kwargs["gate_rsi_sell_floor"] = val
+                label = f"G4: RSI_SELL_FLOOR = {val}"
+            elif gate == "J1":
+                kwargs["gate_max_reentries"] = int(val)
+                label = f"J1: MAX_REENTRIES = {int(val)}"
             else:
                 print(f"  Unknown gate: {gate}")
                 return

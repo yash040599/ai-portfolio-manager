@@ -58,8 +58,8 @@ ORB_MAX_RANGE_PCT = 1.5          # skip if ORB range > 1.5% (risk too big)
 TARGET1_MULT = 1.5               # first target = 1.5x ORB range
 TARGET2_MULT = 2.5               # second target = 2.5x ORB range
 PARTIAL_EXIT_PCT = 0.5           # exit 50% at T1
-SQUARE_OFF_HOUR = 15
-SQUARE_OFF_MINUTE = 5
+SQUARE_OFF_HOUR = 14
+SQUARE_OFF_MINUTE = 0
 CAPITAL = 50_000
 RISK_PCT = 0.01
 
@@ -224,7 +224,7 @@ def simulate_orb15(candles_by_day: dict[str, list[dict]],
             minute = c["ts"].minute
 
             # Square off time
-            if hour >= SQUARE_OFF_HOUR or (hour == SQUARE_OFF_HOUR - 1 and minute >= SQUARE_OFF_MINUTE):
+            if hour * 60 + minute >= SQUARE_OFF_HOUR * 60 + SQUARE_OFF_MINUTE:
                 if in_trade:
                     pnl_pct = _pnl(side, entry_price, c["close"]) * entry_qty_factor
                     trades.append(_trade(symbol, entry_ts, c["ts"], side, entry_price,

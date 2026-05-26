@@ -36,9 +36,9 @@ class Config:
     #
     # 1. The rollout plan is the source of truth for which gates run
     #    at which stage: docs/TRADE_STRATEGY_ROLLOUT.md.
-    #    The active rung is `TRADE_STAGE_NAME` (currently `S0_PURE_MR`).
-    #    At S0 only the Simple MR alpha + structural execution checks
-    #    fire; everything else MUST be off.
+    #    The active rung is `TRADE_STAGE_NAME` (currently `BACKTEST_OPTIMIZED`).
+    #    Gates are enabled/disabled based on backtest evidence.
+    #    See docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md.
     #
     # 2. ONE disable mechanism per gate. Pick exactly one of:
     #       a) bool `<NAME>_ENABLED: bool = False`  AND code path
@@ -75,10 +75,10 @@ class Config:
     AI_PROVIDER: str = "gemini"
 
     # Options: "basic" | "detailed" | "full"  (scales prompt depth + max_tokens)
-    AI_PLAN: str = "basic"
+    AI_PLAN: str = "detailed"
 
     # Legacy alias — still read by report-writer/display code.
-    CLAUDE_PLAN: str = "basic"
+    CLAUDE_PLAN: str = "detailed"
 
     # Options: "personal_free" | "connect_paid"
     ZERODHA_PLAN: str = "connect_paid"
@@ -147,6 +147,9 @@ class Config:
     # Do NOT edit this here — use: python main.py --mode trade --dryrun
     DRY_RUN: bool = False
 
+    # Path to the dry-run analysis database (separate from live trades.db).
+    TRADE_ANALYSIS_DB_PATH: str = os.path.join("data", "trade_analysis.db")
+
     # ── Live Trading ─────────────────────────────────────────────
     # Set to False for live trading, True to block real orders.
     # Use --dryrun CLI flag for simulation instead of editing this.
@@ -183,9 +186,10 @@ class Config:
     STRATEGY_ORB15_ENABLED: bool = False
 
     # Strategy N3: EMA Pullback Momentum
-    # Backtest result: PROMISING (WR 42.8%, CAGR +151%, PF 1.07)
-    # Verdict: DISABLED pending cost validation — thin edge may
-    # not survive slippage + brokerage. Needs daily trade cap.
+    # Original backtest: PROMISING (WR 42.8%, CAGR +151%, PF 1.07)
+    # Re-validation (2026-05-26) with optimized config (RR 1.8, K1=2,
+    # sq-off 14:00): PF 0.99 raw, PF 0.65 after costs. Edge does NOT
+    # survive. Worse than main scorer (PF 0.86). DO NOT ENABLE.
     STRATEGY_EMA_PULLBACK_ENABLED: bool = False
     STRATEGY_EMA_PULLBACK_MAX_PER_STOCK_PER_DAY: int = 1
 
@@ -205,8 +209,14 @@ class Config:
     # SQUARE_OFF_HOUR:SQUARE_OFF_MINUTE and stops monitoring.
     #
     # Indian market hours: 9:15 AM – 3:30 PM IST.
-    # Square-off is set to 3:10 PM to avoid last-minute illiquidity.
-    # Pre-market scan happens 15 min before open (at 9:00 AM).
+    # Square-off originally set to 3:10 PM to avoid illiquidity.
+    #
+    #   BACKTEST L11 (2026-05-26): Swept 13:30–15:10. Every metric
+    #   degrades monotonically with later square-off. 14:00 is optimal
+    #   (PF 0.85, Sharpe -1.29). 15:10 (was current) gives PF 0.79.
+    #   Last 75 min of NSE introduces closing volatility, institutional
+    #   rebalancing and profit-taking that hurts intraday positions.
+    #   See docs/backtest/BACKTEST_GATE_L11.md.
     #
     # Changing these:
     #   - Moving MARKET_OPEN earlier → bot enters trades sooner
@@ -215,8 +225,8 @@ class Config:
     #     (risky, Zerodha auto-squares MIS at 3:25 with penalty)
     MARKET_OPEN_HOUR:   int = 9
     MARKET_OPEN_MINUTE: int = 15
-    SQUARE_OFF_HOUR:    int = 15
-    SQUARE_OFF_MINUTE:  int = 10
+    SQUARE_OFF_HOUR:    int = 14
+    SQUARE_OFF_MINUTE:  int = 0
     PRE_MARKET_MINUTES_BEFORE: int = 15   # scan starts this many min before open
     CUTOFF_MINUTES_BEFORE_CLOSE: int = 30   # skip trading if less than this many min to square-off
 
@@ -372,7 +382,7 @@ class Config:
     #   out-of-sample fallback when factor confidence is low
     #   (DeMiguel/Garlappi/Uppal 2009). Re-enable trigger logged as
     #   Roadmap #258R (Awaiting-Data).
-    # Stage S0_PURE_MR: equal sizing only.
+    # Backtest audit (2026-05-26): equal sizing only.
     SCORE_WEIGHTED_SIZING_ENABLED: bool = False
 
     # MAX_REENTRIES_PER_STOCK: max number of times the bot can enter
@@ -470,7 +480,7 @@ class Config:
     #     OPTIMAL RANGE: 40-60%. Below 40% risks giving back too much;
     #       above 60% chops out of winners on normal volatility.
     #       Backtest on ≥50 trades before changing this value.
-    # Stage S0_PURE_MR: trailing-stop / partial-profit disabled.
+    # Backtest audit (2026-05-26): trailing-stop / partial-profit disabled.
     TRAIL_AFTER_RISK_MULTIPLE: float = 0.0
     TRAIL_STEP_PCT:            float = 50.0
 
@@ -528,7 +538,7 @@ class Config:
     #
     # Set VWAP_DRIFT_CHECK_ENABLED = False to silence the check
     # entirely if the WARN volume becomes noise post-shipping.
-    # Stage S0_PURE_MR: VWAP drift check disabled (observability only).
+    # Backtest audit (2026-05-26): VWAP drift check disabled (observability only).
     VWAP_DRIFT_CHECK_ENABLED: bool = False
     VWAP_DRIFT_WARN_PCT: float = 0.30
 
@@ -544,7 +554,7 @@ class Config:
     # After TARGET_DECAY_AFTER_HOUR (24h format), reduce open position
     # targets by TARGET_DECAY_PCT% to account for less time remaining.
     # e.g. After 2:00 PM, a Rs.100 → Rs.106 target becomes Rs.100 → Rs.103.60
-    # Stage S0_PURE_MR: target decay disabled (TARGET_DECAY_AFTER_HOUR=24 → never trips).
+    # Backtest audit (2026-05-26): target decay disabled (TARGET_DECAY_AFTER_HOUR=24 → never trips).
     TARGET_DECAY_AFTER_HOUR: int   = 24     # disabled at S0; was 14 (2 PM IST)
     TARGET_DECAY_PCT:        float = 25.0
 
@@ -564,8 +574,12 @@ class Config:
     # Breakeven positions get SL tightened to entry ± 0.1%.
     # NOTE: This is NOT the full square-off (SQUARE_OFF_HOUR:MINUTE).
     #   Winners with active trails keep running until square-off.
-    LOSER_EXIT_HOUR:   int = 14   # 2:45 PM IST
-    LOSER_EXIT_MINUTE: int = 45
+    #
+    #   BACKTEST L10 Phase 7 (2026-05-26): With K1=2, L10=13:00 is
+    #   marginally beneficial. PF flat, Exp +6%, Sharpe +5%, MaxDD -6%.
+    #   K1 blocks re-entry so no churn. Cuts losers 1h before close.
+    LOSER_EXIT_HOUR:   int = 13
+    LOSER_EXIT_MINUTE: int = 0
 
     # ── Late Entry Target Compression — REMOVED (Roadmap #242) ────
     # Removed 2026-04-27: with always-on RR_HARD_FLOOR=1.3 (#225),
@@ -580,7 +594,7 @@ class Config:
     #   this hour. Short delivery if cover fails is very expensive
     #   (Rs.500-5000+ penalties). Earlier cutoff gives more time to
     #   handle order failures before Zerodha's 3:25 PM auto-square.
-    # Stage S0_PURE_MR: short cutoff disabled (=16 → never trips before square-off).
+    # Backtest audit (2026-05-26): short cutoff disabled (=16 → never trips before square-off).
     SHORT_ENTRY_CUTOFF_HOUR: int = 16   # disabled at S0; was 13 (1 PM)
 
     # ── Thursday Expiry Adjustments ───────────────────────────────
@@ -602,7 +616,7 @@ class Config:
     #   exit+entry cycle costs ~Rs.36 in charges).
     # EXPIRY_MIN_SL_DISTANCE_PCT: overrides MIN_SL_DISTANCE_PCT —
     #   wider floor on expiry accommodates bigger option-driven swings.
-    # Stage S0_PURE_MR: expiry score/ATR/trade-cap adjustments disabled (=0).
+    # Backtest audit (2026-05-26): expiry score/ATR/trade-cap adjustments disabled (=0).
     # Expiry DATE detection (HOLIDAY_SHIFTED_EXPIRY_ENABLED) stays on.
     EXPIRY_ATR_BUMP:                      float = 0.0
     EXPIRY_POSITION_REDUCTION:            int   = 0
@@ -617,26 +631,54 @@ class Config:
     # ── Entry Filter — RSI Contradiction (symmetric) ─────────────
     # Blocks trades that fight or chase extreme RSI readings.
     # Applies EVERY day (not expiry-specific).
-    #   SELL blocked when RSI > RSI_SELL_BLOCK_THRESHOLD (default 70)
+    #   SELL blocked when RSI > RSI_SELL_BLOCK_THRESHOLD
     #     → shorting into strong buying pressure
-    #   BUY blocked when RSI > RSI_BUY_BLOCK_THRESHOLD (default 75)
+    #   BUY blocked when RSI > RSI_BUY_BLOCK_THRESHOLD
     #     → buying an already-extended overbought move
-    #   BUY  blocked when RSI < 30 (hardcoded)  → oversold, wait for reversal
-    #   SELL blocked when RSI < 25 (hardcoded)  → selling an extended low
-    RSI_SELL_BLOCK_THRESHOLD: float = 70.0
-    RSI_BUY_BLOCK_THRESHOLD:  float = 75.0
+    #   BUY  blocked when RSI < RSI_BUY_FLOOR_THRESHOLD
+    #     → oversold, wait for reversal (DISABLED by backtest G3)
+    #   SELL blocked when RSI < RSI_SELL_FLOOR_THRESHOLD
+    #     → selling an extended low (DISABLED by backtest G4)
+    RSI_SELL_BLOCK_THRESHOLD: float = 100.0
+    #   BACKTEST G2 (2026-05-26): Swept 0-85. Gate is inert — removes
+    #   <1% of trades, PF identical at 0.71 at every level. Scorer
+    #   already avoids shorting into high RSI. DISABLED (100).
+    #   See docs/backtest/BACKTEST_GATE_G2.md.
+    #   BACKTEST G1 (2026-05-26): Swept 0-85. All ceiling values make
+    #   PF WORSE (0.69-0.70 vs baseline 0.71). Removes profitable
+    #   momentum trades. RSI>70 intraday = strong uptrend not a sell
+    #   signal. Scorer already penalizes high RSI. DISABLED (100).
+    #   See docs/backtest/BACKTEST_GATE_G1.md.
+    RSI_BUY_BLOCK_THRESHOLD:  float = 100.0
+
+    #   BACKTEST G3 (2026-05-26): Swept 0-40. Inert at 0-25 (no BUY
+    #   signals at RSI<25). At 30 (was hardcoded) marginal -1 PF tick.
+    #   At 40, slightly worse. DISABLED (0). Oversold BUYs are profitable
+    #   intraday (bounce entries). Scorer already penalizes low RSI.
+    RSI_BUY_FLOOR_THRESHOLD:  float = 0.0
+    #   BACKTEST G4 (2026-05-26): Swept 0-35. SEVERELY HARMFUL.
+    #   Current hardcoded 25 drops PF 0.86→0.77 (-10%). Blocking
+    #   shorts at low RSI removes profitable downtrend entries.
+    #   Intraday low RSI = strong selling = short works. DISABLED (0).
+    RSI_SELL_FLOOR_THRESHOLD: float = 0.0
 
     # ── Entry Filter — VWAP Trend + Extension ────────────────────
     # Two-sided VWAP guard (every day, activates after 10:15 AM when
     # VWAP has enough candles to be stable):
-    #   1. Trend-fight block: BUY if price > 0.3% BELOW VWAP, or
-    #      SELL if price > 0.3% ABOVE VWAP. Fighting institutional flow.
+    #   1. Trend-fight block: BUY if price > VWAP_TREND_FIGHT_PCT% BELOW
+    #      VWAP, or SELL if above. Fighting institutional flow.
     #   2. Extension-chase block: BUY if price > VWAP_EXTENSION_BLOCK_PCT
-    #      ABOVE VWAP, or SELL if price > that BELOW VWAP. Move has
-    #      already happened, mean-reversion risk high.
-    # Extension block is overridden when |score| >= VWAP_EXT_SCORE_OVERRIDE
-    # (a very strong signal justifies chasing).
-    VWAP_EXTENSION_BLOCK_PCT: float = 0.8
+    #      ABOVE VWAP, or SELL if below. Mean-reversion risk.
+    # Extension block is overridden when |score| >= VWAP_EXT_SCORE_OVERRIDE.
+    #
+    #   BACKTEST G6 (2026-05-26): Swept 0-1.0%. Gate is inert — PF
+    #   stays 0.71, WR 40.5% at every level. Removes <3% of trades.
+    #   DISABLED (99.0). See docs/backtest/BACKTEST_GATE_G6G7.md.
+    VWAP_TREND_FIGHT_PCT:     float = 99.0
+    #   BACKTEST G7 (2026-05-26): Swept 0-2.0%. ALL values make PF
+    #   WORSE (0.66-0.69 vs 0.71). Removes profitable momentum trades.
+    #   At 0.8% (was current) drops PF to 0.67. DISABLED (99.0).
+    VWAP_EXTENSION_BLOCK_PCT: float = 99.0
     VWAP_EXT_SCORE_OVERRIDE:  float = 6.0
 
     # ── Entry Filter — Fresh Reversal Guard ──────────────────────
@@ -664,7 +706,7 @@ class Config:
     #   lunch-lull floor (+6.0). Stopped out at 13:26 for Rs.-155, then
     #   the very next scanner tick scored it -10.0 STRONG_SELL with
     #   EVENING_STAR + BEARISH_HARAMI. Gap direction was the early tell.
-    # Stage S0_PURE_MR: gap-coherence gate disabled.
+    # Backtest audit (2026-05-26): gap-coherence gate disabled.
     GAP_COHERENCE_GATE_ENABLED:  bool  = False
     GAP_COHERENCE_OVERRIDE_SCORE: float = 7.5
 
@@ -693,7 +735,7 @@ class Config:
     #
     # Buffer of 1.0% leaves ~50 paise of room on a Rs.500 stock for
     # normal noise without admitting a near-freeze entry.
-    # Stage S0_PURE_MR: circuit-limit guard disabled.
+    # Backtest audit (2026-05-26): circuit-limit guard disabled.
     CIRCUIT_LIMIT_GUARD_ENABLED: bool  = False
     CIRCUIT_LIMIT_BUFFER_PCT:    float = 1.0
 
@@ -710,7 +752,7 @@ class Config:
     # under <!-- REJECTION_AUDIT_BEGIN/END --> markers (idempotent
     # — re-running the audit replaces the old block, never duplicates).
     # This is purely a review aid; never changes positions.
-    # Stage S0_PURE_MR: rejection audit disabled (review aid only).
+    # Backtest audit (2026-05-26): rejection audit disabled (review aid only).
     REJECTION_AUDIT_ENABLED:     bool  = False
 
     # Dashboard cumulative-P&L chart overlays a thin vertical line
@@ -802,7 +844,7 @@ class Config:
     # instead of reading this constant directly — the helper combines
     # this absolute floor with BUDGET_MIN_PROFIT_DELTA so larger
     # accounts (where charges grow with slot value) raise the bar.
-    # Stage S0_PURE_MR: charge-aware min profit floor disabled (=0).
+    # Backtest audit (2026-05-26): charge-aware min profit floor disabled (=0).
     MIN_EXPECTED_PROFIT: float = 0.0
 
     # MIN_SCORE: minimum absolute technical score for a stock to
@@ -867,7 +909,7 @@ class Config:
     #       field entirely (was kept as a "backwards compat" no-op for
     #       3 days but read by nothing). Added second-tier hard-max
     #       check (#172) — see block below.
-    # Stage S0_PURE_MR: stagnant exit disabled (=0).
+    # Backtest audit (2026-05-26): stagnant exit disabled (=0).
     STAGNANT_EXIT_MINUTES:      int   = 0
     STAGNANT_ADVERSE_PCT:       float = 0.2
     STAGNANT_DEAD_FLAT_PCT:     float = 0.1
@@ -878,7 +920,7 @@ class Config:
     # directional check by sitting just outside the dead-flat band on
     # the snapshot tick. See STAGNANT_EXIT_MINUTES decision history
     # (entry dated 2026-04-20) for the UNITDSPR motivating case.
-    # Stage S0_PURE_MR: stagnant hard-max disabled.
+    # Backtest audit (2026-05-26): stagnant hard-max disabled.
     STAGNANT_HARD_MAX_ENABLED:    bool  = False
     STAGNANT_HARD_MAX_MINUTES:    int   = 90
     # If progress_pct toward target is below this after HARD_MAX_MINUTES,
@@ -930,8 +972,12 @@ class Config:
     #   (13:27) scored it -10.0 STRONG_SELL with EVENING_STAR +
     #   BEARISH_HARAMI. Held positions weren't being rescored at all;
     #   the bearish patterns were forming for ~30 min before the SL hit.
-    # Stage S0_PURE_MR: signal-reversal exit disabled.
-    SIGNAL_REVERSAL_EXIT_ENABLED:    bool  = False
+    # Backtest audit (2026-05-26): signal-reversal exit disabled.
+    #   GATE AUDIT (2026-05-26): Cannot backtest (needs live score/pattern
+    #   tracking). ENABLED by pro decision — cutting losses on thesis
+    #   invalidation is institutional best practice. Conservative trigger
+    #   (score>=7 AND pattern AND skip winners). HDFCBANK case validates.
+    SIGNAL_REVERSAL_EXIT_ENABLED:    bool  = True
     SIGNAL_REVERSAL_SCORE:           float = 7.0
     SIGNAL_REVERSAL_REQUIRE_PATTERN: bool  = True
 
@@ -955,7 +1001,7 @@ class Config:
     # sat 5h in slow-positive then exited LOSER_EXIT). Sign-flip
     # path added 2026-04-28 after a soft +10→-3 flip slipped past
     # both #174 (no pattern) and the prior same-sign-only #188.
-    # Stage S0_PURE_MR: signal-decay exit disabled.
+    # Backtest audit (2026-05-26): signal-decay exit disabled.
     SIGNAL_DECAY_EXIT_ENABLED:          bool  = False
     SIGNAL_DECAY_FRACTION:              float = 0.4
     SIGNAL_DECAY_MIN_ENTRY_SCORE:       float = 7.0
@@ -983,7 +1029,7 @@ class Config:
     # (default 5 — skip on near-zero waits where no new candle has closed).
     # Requires the active scanner to expose `_analyse_stock(symbol, exchange)`
     # — Scanner does, V1 (frozen) does not, so V1 path is unaffected.
-    # Stage S0_PURE_MR: post-observation score recheck disabled.
+    # Backtest audit (2026-05-26): post-observation score recheck disabled.
     FRESH_ENTRY_RECHECK_ENABLED:        bool  = False
     FRESH_ENTRY_DECAY_FRACTION:         float = 0.6
     FRESH_ENTRY_RECHECK_MIN_WAIT_MINUTES: int = 5
@@ -1011,7 +1057,7 @@ class Config:
     # ADX_OVERRIDE_SCORE: |combined_score| threshold that overrides
     #   the ADX gate. A very strong signal can override a weak ADX
     #   reading — trend may be *about* to emerge.
-    # Stage S0_PURE_MR: ADX entry gate disabled.
+    # Backtest audit (2026-05-26): ADX entry gate disabled.
     ADX_ENTRY_GATE_ENABLED:  bool  = False
     ADX_MIN_THRESHOLD:       float = 18.0
     ADX_OVERRIDE_SCORE:      float = 7.0
@@ -1027,7 +1073,7 @@ class Config:
     #   risk_qty    = risk_rupees / sl_distance   (sl_distance = |entry − sl|)
     #   Final qty   = min(price-based cap, risk_qty) — never exceeds the
     #   existing per-position budget cap, only reduces it.
-    # Stage S0_PURE_MR: ATR-based sizing disabled (use equal sizing).
+    # Backtest audit (2026-05-26): ATR-based sizing disabled (use equal sizing).
     ATR_SIZING_ENABLED:      bool  = False
     RISK_PER_TRADE_PCT:      float = 0.5
 
@@ -1039,7 +1085,7 @@ class Config:
     #   Opposite direction is still allowed (reversal setups).
     # RE_ENTRY_COOLDOWN_MINUTES: block window after any exit.
     # RE_ENTRY_SCORE_OVERRIDE: very strong score overrides cooldown.
-    # Stage S0_PURE_MR: re-entry cooldown disabled.
+    # Backtest audit (2026-05-26): re-entry cooldown disabled.
     RE_ENTRY_COOLDOWN_ENABLED:  bool  = False
     RE_ENTRY_COOLDOWN_MINUTES:  int   = 30
     RE_ENTRY_SCORE_OVERRIDE:    float = 7.0
@@ -1059,7 +1105,7 @@ class Config:
     # the marginal trades that are the bulk of loss days at small
     # budgets.
     # Kill-switch: MIN_PROFIT_CHARGE_MULTIPLE <= 0 disables.
-    # Stage S0_PURE_MR: charge-aware R:R veto disabled (<=0 → off).
+    # Backtest audit (2026-05-26): charge-aware R:R veto disabled (<=0 → off).
     MIN_PROFIT_CHARGE_MULTIPLE: float = 0.0
 
     # ── Daily Loss Soft-Stop Hysteresis (Roadmap #163) ────────────
@@ -1070,7 +1116,7 @@ class Config:
     #   → open another loser" pattern, but doesn't force exits that
     #   might recover in a green afternoon.
     # Set to 0 to disable (no soft stop, only hard CB).
-    # Stage S0_PURE_MR: disabled — only MAX_LOSS_PER_DAY_PCT hard CB runs.
+    # Backtest audit (2026-05-26): disabled — only MAX_LOSS_PER_DAY_PCT hard CB runs.
     DAILY_LOSS_SOFT_STOP_PCT: float = 0.0
 
     # ── Intraday Equity-Peak Drawdown Stop (Roadmap #168) ───────
@@ -1093,7 +1139,7 @@ class Config:
     #   budget). Prevents triggering on tiny early-morning swings
     #   when peak is essentially noise.
     # Set PEAK_DRAWDOWN_STOP_PCT <= 0 to disable.
-    # Stage S0_PURE_MR: disabled.
+    # Backtest audit (2026-05-26): disabled.
     PEAK_DRAWDOWN_STOP_PCT:     float = 0.0
     PEAK_DRAWDOWN_MIN_PEAK_PCT: float = 0.5
 
@@ -1116,7 +1162,7 @@ class Config:
     # window signals (5.5–5.7 range) while admitting the
     # borderline-but-profitable 5.7+ band the audit said we were
     # missing. Conservative tweak — not disabling the gate.
-    # Stage S0_PURE_MR: lunch-lull skip disabled.
+    # Backtest audit (2026-05-26): lunch-lull skip disabled.
     LUNCH_LULL_ENABLED:         bool  = False
     LUNCH_LULL_START_HOUR:      int   = 11
     LUNCH_LULL_START_MINUTE:    int   = 30
@@ -1134,7 +1180,7 @@ class Config:
     # of CHOPPY_PAUSE_MINUTES on NEW entries. Existing positions
     # are managed normally. Pause re-arms after expiry, so a chop
     # morning can pause multiple times.
-    # Stage S0_PURE_MR: choppy-morning pause disabled.
+    # Backtest audit (2026-05-26): choppy-morning pause disabled.
     CHOPPY_MORNING_PAUSE_ENABLED:                 bool  = False
     CHOPPY_PAUSE_ADX_THRESHOLD:                   float = 16.0
     CHOPPY_PAUSE_MIN_CONSECUTIVE_SCANS:           int   = 3
@@ -1163,7 +1209,7 @@ class Config:
     # Threshold tuning: VIX_SPIKE_PCT (10.0) is the existing
     # `_check_vix_spike()` constant; reused so the engine and manager
     # cannot disagree.
-    # Stage S0_PURE_MR: VIX-spike entry pause disabled.
+    # Backtest audit (2026-05-26): VIX-spike entry pause disabled.
     VIX_SPIKE_ENTRY_PAUSE_ENABLED:                bool  = False
 
     # ── Tape-Breadth Filter (Roadmap #212) ────────────────────────
@@ -1183,7 +1229,7 @@ class Config:
     # BREADTH_MIN_CANDIDATES: skip the filter when the post-V2_MIN
     #     set is too small to be statistically meaningful.
     # Kill-switch: BREADTH_FILTER_ENABLED.
-    # Stage S0_PURE_MR: tape-breadth filter disabled.
+    # Backtest audit (2026-05-26): tape-breadth filter disabled.
     BREADTH_FILTER_ENABLED:        bool  = False
     BREADTH_BEARISH_BUY_RATIO:     float = 0.30
     BREADTH_BULLISH_SELL_RATIO:    float = 0.30
@@ -1208,7 +1254,7 @@ class Config:
     #     this many distinct sectors with ≥1 candidate (sample too
     #     small for a meaningful ranking).
     # Kill-switch: SECTOR_RANK_BIAS_ENABLED.
-    # Stage S0_PURE_MR: sector-rank directional bias disabled.
+    # Backtest audit (2026-05-26): sector-rank directional bias disabled.
     SECTOR_RANK_BIAS_ENABLED:      bool  = False
     SECTOR_RANK_BIAS_STEP:         float = 0.1
     SECTOR_RANK_BIAS_MAX:          float = 0.6
@@ -1243,7 +1289,7 @@ class Config:
     # SECTOR_CASCADE_MIN_OPEN: only fire when we have at least this
     #     many open positions in the cascading sector.
     # Kill-switch: SECTOR_CASCADE_EXIT_ENABLED.
-    # Stage S0_PURE_MR: sector-cascade exit disabled.
+    # Backtest audit (2026-05-26): sector-cascade exit disabled.
     SECTOR_CASCADE_EXIT_ENABLED:   bool  = False
     SECTOR_CASCADE_DROP_THRESHOLD: float = 2.0
     SECTOR_CASCADE_OPPOSITE_FLOOR: float = 1.5
@@ -1256,7 +1302,7 @@ class Config:
     # bleeding -1.5% MTM = -7.5% real exposure but no SL has fired
     # yet" pattern. Engine keeps its own quote cache populated by the
     # monitor loop — enabling/disabling is purely a flag flip.
-    # Stage S0_PURE_MR: MTM-aware circuit-breaker disabled (closed-only CB runs).
+    # Backtest audit (2026-05-26): MTM-aware circuit-breaker disabled (closed-only CB runs).
     MTM_AWARE_CB_ENABLED:        bool  = False
 
     # ── Strong-Gap ADX Threshold Boost (Roadmap #194) ─────────────
@@ -1265,7 +1311,7 @@ class Config:
     # the ADX entry threshold and override score for the rest of the
     # day. Levels the field for fade-the-gap setups whose intraday
     # hit-rate sits below 40%. Reverts at session end.
-    # Stage S0_PURE_MR: strong-gap ADX boost disabled.
+    # Backtest audit (2026-05-26): strong-gap ADX boost disabled.
     STRONG_GAP_ADX_BOOST_ENABLED: bool  = False
     STRONG_GAP_ADX_DELTA:         float = 1.0
     STRONG_GAP_OVERRIDE_DELTA:    float = 0.5
@@ -1279,7 +1325,7 @@ class Config:
     # or SIGNAL_DECAY AND the prior exit was within
     # AVG_DOWN_LOOKBACK_MINUTES. Override at |score| ≥
     # AVG_DOWN_OVERRIDE_SCORE (real reversal-strength signal).
-    # Stage S0_PURE_MR: average-down prevention disabled.
+    # Backtest audit (2026-05-26): average-down prevention disabled.
     AVG_DOWN_PREVENTION_ENABLED:    bool  = False
     AVG_DOWN_SCORE_DELTA:           float = 1.0
     AVG_DOWN_LOOKBACK_MINUTES:      int   = 120
@@ -1294,7 +1340,7 @@ class Config:
     # 2026-04-21 entered at +6 with BEARISH_ENGULFING, both stagnated.
     # Gate: opposite-side reversal pattern AND |score| < OVERRIDE_SCORE
     # → skip entry. Override allows high-conviction break-outs through.
-    # Stage S0_PURE_MR: pattern-direction entry veto disabled.
+    # Backtest audit (2026-05-26): pattern-direction entry veto disabled.
     PATTERN_VETO_ENABLED:        bool  = False
     PATTERN_VETO_OVERRIDE_SCORE: float = 8.0
 
@@ -1311,7 +1357,7 @@ class Config:
     #       see the de-risked score.
     # Apply after pattern+tech sum, clamp so |score| can't flip sign.
     # Penalties stack: DOJI + BEARISH_ENGULFING on a BUY = -2.5.
-    # Stage S0_PURE_MR: pattern/tech contradiction penalty disabled.
+    # Backtest audit (2026-05-26): pattern/tech contradiction penalty disabled.
     PATTERN_CONTRADICTION_PENALTY_ENABLED: bool  = False
     PATTERN_CONTRADICTION_PENALTY:         float = 2.0
     PATTERN_INDECISION_PENALTY:            float = 0.5
@@ -1330,7 +1376,7 @@ class Config:
     # Override at |score| ≥ VWAP_BAND_OVERRIDE_SCORE — high-conviction
     # break-out entries can still chase the band.
     # Kill-switch: VWAP_BAND_GATE_ENABLED.
-    # Stage S0_PURE_MR: VWAP-band entry gate disabled.
+    # Backtest audit (2026-05-26): VWAP-band entry gate disabled.
     VWAP_BAND_GATE_ENABLED:    bool  = False
     VWAP_BAND_OVERRIDE_SCORE:  float = 7.0
 
@@ -1355,7 +1401,7 @@ class Config:
     # all day — the late-only cap was budget-disproportionate and
     # rarely bound in practice (most days fill 2-4 of 5-7 slots total).
     # Kill-switch: LATE_ENTRY_TIGHTENING_ENABLED.
-    # Stage S0_PURE_MR: late-entry tightening disabled.
+    # Backtest audit (2026-05-26): late-entry tightening disabled.
     LATE_ENTRY_TIGHTENING_ENABLED: bool  = False
     LATE_ENTRY_HOUR:               int   = 10    # 10:00 IST and later
     # #239 (analyst pass, 2026-04-27): 0.5 → 1.0. The 2026-04-27
@@ -1384,7 +1430,7 @@ class Config:
     # Tuning: grace=180s after 2026-04-27 prod evidence (1-min
     # progress test was killing on sub-spread micro-moves);
     # MIN_ADVERSE_PCT=0.40 = ~4× typical NSE intraday spread.
-    # Stage S0_PURE_MR: post-entry momentum kill disabled.
+    # Backtest audit (2026-05-26): post-entry momentum kill disabled.
     MOMENTUM_KILL_ENABLED:           bool  = False
     MOMENTUM_KILL_GRACE_SECONDS:     int   = 180  # 3-min settlement window (industry std)
     MOMENTUM_KILL_WINDOW_MINUTES:    int   = 5
@@ -1432,7 +1478,7 @@ class Config:
     # so a 0.5× RVol observed at noon now passes (it would have
     # been mid-pack relative to typical noon volume).
     # Buckets cover 09-15. Hours outside fall back to 1.0 (no scaling).
-    # Stage S0_PURE_MR: RVol time normalisation disabled.
+    # Backtest audit (2026-05-26): RVol time normalisation disabled.
     RVOL_TIME_NORMALIZATION_ENABLED: bool = False
     RVOL_FLOOR_BY_HOUR: dict[int, float] = {
         9:  1.00,  # opening surge — keep strict
@@ -1484,7 +1530,7 @@ class Config:
     #
     # BUDGET_REGIME_ENABLED: master kill-switch. When False, all
     #   regime-adjusted gates fall back to the base cfg value.
-    # Stage S0_PURE_MR: budget-regime deltas disabled (no silent
+    # Backtest audit (2026-05-26): budget-regime deltas disabled (no silent
     # MIN_SCORE / ADX / trade-cap / spread / profit bumps).
     BUDGET_REGIME_ENABLED: bool = False
     BUDGET_TIER_SMALL:     float = 30_000.0
@@ -1534,7 +1580,7 @@ class Config:
     #   losses, preventing full-size re-entry after SL hits.
     #   Live mode already gets this from Zerodha's margin API.
     #   This mainly helps dry-run mode stay realistic.
-    # Stage S0_PURE_MR: loss-adjusted sizing disabled.
+    # Backtest audit (2026-05-26): loss-adjusted sizing disabled.
     LOSS_SIZING_ENABLED: bool = False
 
     # ── Circuit Breaker Cooldown ──────────────────────────────────
@@ -1564,8 +1610,12 @@ class Config:
     # (prop-firm risk frameworks) is to count *any* losing exit, not just
     # hard-SL hits. Kill-switch `LOSS_STREAK_INCLUDE_NON_SL_LOSSES`
     # below; flip to False for one-line revert to STOP_LOSS-only behaviour.
-    # Stage S0_PURE_MR: consecutive-loss pause disabled (=0).
-    CONSECUTIVE_SL_PAUSE_COUNT: int = 0
+    # Backtest audit (2026-05-26): consecutive-loss pause disabled (=0).
+    #   GATE AUDIT (2026-05-26): Cannot backtest (portfolio-level
+    #   cross-day streaks). ENABLED by pro decision — standard
+    #   prop-firm practice. With K1=2, 3 consecutive SLs = 2+ bad
+    #   days = regime detection signal. 30-min pause is conservative.
+    CONSECUTIVE_SL_PAUSE_COUNT: int = 3
     CONSECUTIVE_SL_PAUSE_MINUTES: int = 30
 
     # When True, MOMENTUM_KILL / STAGNANT_EXIT / SIGNAL_DECAY / LOSER_EXIT
@@ -1582,7 +1632,7 @@ class Config:
     #   were losers). Cap-2 means the third-and-later burst entry is
     #   skipped with a logged BURST_CAP rejection.
     #   Set to 0 to disable (no cap).
-    # Stage S0_PURE_MR: entry-burst cap disabled.
+    # Backtest audit (2026-05-26): entry-burst cap disabled.
     ENTRY_BURST_CAP_ENABLED: bool = False
     ENTRY_BURST_CAP_MAX_ENTRIES_PER_60S: int = 2
     # Roadmap #179a (2026-05-06): per-budget delta on the base cap.
@@ -1605,7 +1655,7 @@ class Config:
     # days across BEARISH/NEUTRAL/BULLISH regimes — not a
     # regime-classifier bug, a structural scoring/scanner-side bias.
     # The pause clears at next session start when conditions recover.
-    # Stage S0_PURE_MR: directional auto-pause disabled.
+    # Backtest audit (2026-05-26): directional auto-pause disabled.
     DIRECTIONAL_PAUSE_ENABLED: bool = False
     DIRECTIONAL_PAUSE_LOOKBACK_DAYS: int = 7
     DIRECTIONAL_PAUSE_MIN_TRADES: int = 10        # need ≥ N trades on the side in lookback to act
@@ -1668,7 +1718,7 @@ class Config:
     # LOSS_SCORE_BUMP_PCT: day loss threshold (as % of budget)
     #   that triggers a higher MIN_SCORE.
     # LOSS_SCORE_BUMP_AMOUNT: extra score points added to MIN_SCORE.
-    # Stage S0_PURE_MR: dynamic post-loss score bump disabled (=0).
+    # Backtest audit (2026-05-26): dynamic post-loss score bump disabled (=0).
     LOSS_SCORE_BUMP_PCT: float = 0.0
     LOSS_SCORE_BUMP_AMOUNT: float = 1.5
 
@@ -1694,7 +1744,7 @@ class Config:
     VIX_HIGH_THRESHOLD: float = 20.0
     VIX_LOW_THRESHOLD:  float = 12.0
     VIX_SPIKE_PCT:      float = 10.0
-    # Stage S0_PURE_MR: VIX-driven position reduction / score bump disabled.
+    # Backtest audit (2026-05-26): VIX-driven position reduction / score bump disabled.
     VIX_HIGH_POSITION_REDUCTION: int   = 0
     VIX_HIGH_SCORE_BUMP:         float = 0.0
 
@@ -1883,7 +1933,7 @@ class Config:
     # no blackout that day.
     #
     # Kill-switch: EARNINGS_BLACKOUT_ENABLED.
-    # Stage S0_PURE_MR: earnings-day blackout disabled (calendar data preserved).
+    # Backtest audit (2026-05-26): earnings-day blackout disabled (calendar data preserved).
     EARNINGS_BLACKOUT_ENABLED: bool = False
     EARNINGS_BLACKOUT_SYMBOLS_2026: dict[str, list[str]] = {
         # Example entries (commented):
@@ -2341,42 +2391,10 @@ class Config:
                 f"SCORE_WEIGHTED_SIZING_ENABLED must be bool "
                 f"(got {cls.SCORE_WEIGHTED_SIZING_ENABLED!r})"
             )
-        if not isinstance(cls.TRADE_RESEARCH_STAGE, str) or not cls.TRADE_RESEARCH_STAGE:
-            errors.append(
-                f"TRADE_RESEARCH_STAGE must be a non-empty str "
-                f"(got {cls.TRADE_RESEARCH_STAGE!r})"
-            )
-        if not isinstance(cls.TRADE_RESEARCH_PHASE_LABEL, str) or not cls.TRADE_RESEARCH_PHASE_LABEL:
-            errors.append(
-                f"TRADE_RESEARCH_PHASE_LABEL must be a non-empty str "
-                f"(got {cls.TRADE_RESEARCH_PHASE_LABEL!r})"
-            )
-        if not isinstance(cls.TRADE_RESEARCH_PHASE_NOTE, str):
-            errors.append(
-                f"TRADE_RESEARCH_PHASE_NOTE must be str "
-                f"(got {cls.TRADE_RESEARCH_PHASE_NOTE!r})"
-            )
         if not isinstance(cls.TRADE_LIVE_TRADING_PAUSED, bool):
             errors.append(
                 f"TRADE_LIVE_TRADING_PAUSED must be bool "
                 f"(got {cls.TRADE_LIVE_TRADING_PAUSED!r})"
-            )
-        if cls.TRADE_STRATEGY_PROFILE not in cls.TRADE_STRATEGY_PROFILE_ALLOWED:
-            errors.append(
-                f"TRADE_STRATEGY_PROFILE must be one of "
-                f"{cls.TRADE_STRATEGY_PROFILE_ALLOWED!r} "
-                f"(got {cls.TRADE_STRATEGY_PROFILE!r})"
-            )
-        _pos("SIMPLE_MR_MIN_SCORE", cls.SIMPLE_MR_MIN_SCORE)
-        _pct("SIMPLE_MR_MIN_VWAP_DEV_PCT", cls.SIMPLE_MR_MIN_VWAP_DEV_PCT, 10)
-        _pct("SIMPLE_MR_RSI_BUY_MAX", cls.SIMPLE_MR_RSI_BUY_MAX)
-        _pct("SIMPLE_MR_RSI_SELL_MIN", cls.SIMPLE_MR_RSI_SELL_MIN)
-        if cls.SIMPLE_MR_RSI_BUY_MAX >= cls.SIMPLE_MR_RSI_SELL_MIN:
-            errors.append("SIMPLE_MR_RSI_BUY_MAX must be < SIMPLE_MR_RSI_SELL_MIN")
-        if not isinstance(cls.SIMPLE_MR_REQUIRE_VWAP_BAND, bool):
-            errors.append(
-                f"SIMPLE_MR_REQUIRE_VWAP_BAND must be bool "
-                f"(got {cls.SIMPLE_MR_REQUIRE_VWAP_BAND!r})"
             )
 
         # SL / target / R:R
@@ -2428,7 +2446,7 @@ class Config:
         # Entry filters
         _pct("RSI_BUY_BLOCK_THRESHOLD",  cls.RSI_BUY_BLOCK_THRESHOLD)
         _pct("RSI_SELL_BLOCK_THRESHOLD", cls.RSI_SELL_BLOCK_THRESHOLD)
-        _pct("VWAP_EXTENSION_BLOCK_PCT", cls.VWAP_EXTENSION_BLOCK_PCT, 10)
+        _pct("VWAP_EXTENSION_BLOCK_PCT", cls.VWAP_EXTENSION_BLOCK_PCT)
         _pos("VWAP_EXT_SCORE_OVERRIDE",  cls.VWAP_EXT_SCORE_OVERRIDE)
         _pos("FRESH_REVERSAL_DELTA_THRESHOLD", cls.FRESH_REVERSAL_DELTA_THRESHOLD)
         _pos("GAP_COHERENCE_OVERRIDE_SCORE", cls.GAP_COHERENCE_OVERRIDE_SCORE)
@@ -2809,7 +2827,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v1.3-2026-05-19-S0"
+    STRATEGY_CONFIG_VERSION: str = "v2.0-2026-05-26-BACKTEST_OPTIMIZED"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Stage ladder (rollout doc)
@@ -2835,11 +2853,7 @@ class Config:
         "TARGET_DECAY_AFTER_HOUR", "TARGET_DECAY_PCT",
         "MIN_MINUTES_FOR_ENTRY",
         # Scanner / score floors
-        "TRADE_STRATEGY_PROFILE", "SIMPLE_MR_MIN_SCORE",
-        "SIMPLE_MR_MIN_VWAP_DEV_PCT", "SIMPLE_MR_RSI_BUY_MAX",
-        "SIMPLE_MR_RSI_SELL_MIN", "SIMPLE_MR_REQUIRE_VWAP_BAND",
-        "SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES",
-        "SIMPLE_MR_KEEP_RESEARCH_SCANS_AFTER_ZERO_ENTRY",
+        "TRADE_STRATEGY_PROFILE",
         "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",

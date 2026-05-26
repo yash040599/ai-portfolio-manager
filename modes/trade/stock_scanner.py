@@ -720,7 +720,8 @@ RESPONSE FORMAT — STRICTLY FOLLOW:
 ══════════════════════════════════════════════════════════
 One block per trade. No text before or after.
 If no trades pass ALL rejection filters, respond with exactly: NO_TRADES_TODAY
-Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
+Prefer FEWER high-conviction trades (1-2) over many mediocre ones.
+The system enforces MAX 2 TRADES PER DAY. Return at most 2.
 
 TRADE 1:
 SYMBOL: [NSE stock symbol e.g. RELIANCE]
@@ -2742,11 +2743,17 @@ Each stock shows real-time indicators — use them for precise, evidence-based d
 
 YOUR ROLE: RANK and VETO from these pre-filtered candidates.
 The system has already computed technical scores, ATR-based SL/targets, and indicators.
+You are the QUALITY GATE. The bot will take MAX 2 TRADES TODAY (hard cap).
+This means YOU pick the absolute best 2 from ~50 NIFTY50 stocks.
+Think of it as: "If I could only bet on 2 horses today, which 2?"
+
 Focus on what you are BEST at:
-  1. SELECTING the 2-3 highest-conviction setups from the indicator data
+  1. SELECTING the 2 highest-conviction setups — the ones with the most indicator confluence AND cleanest risk/reward
   2. VETOING stocks that look technically valid but have narrative risk (sector events, extended moves, concentration)
   3. Setting SL at STRUCTURAL levels visible in the data (VWAP, SuperTrend, PrevDay S&R, Fib levels) — NOT arbitrary percentages
+  4. DIVERSIFYING — pick from DIFFERENT sectors. If both top picks are banking, drop the weaker one and find the best non-banking setup.
 Do NOT fabricate price targets from nothing. Use the indicator levels shown (VWAP, pivot, Fib) as anchors.
+With only 2 trades, EVERY pick must be a conviction play. If you see fewer than 2 high-quality setups, respond with 1 or NO_TRADES_TODAY. Never pad.
 
 ══════════════════════════════════════════════════════════
 INDICATOR INTERPRETATION:
@@ -2922,13 +2929,10 @@ RESPONSE FORMAT — STRICTLY FOLLOW:
 ══════════════════════════════════════════════════════════
 One block per trade. No text before or after.
 If no trades pass ALL hard rejection filters, respond with exactly: NO_TRADES_TODAY
-Prefer FEWER high-conviction trades (2-3) over many mediocre ones.
+Prefer FEWER high-conviction trades (1-2) over many mediocre ones.
+The system enforces MAX 2 TRADES PER DAY. Return at most 2.
 
 TRADE 1:
-SYMBOL: [NSE stock symbol]
-SIDE: [BUY or SELL]
-ENTRY_PRICE: [realistic entry price near current price]
-STOP_LOSS: [price based on structural level — state which: VWAP/SuperTrend/pivot/Fib/swing]
 TARGET: [target price — at least {self.cfg.RR_TARGET_RATIO}× SL distance from entry]
 QTY: [number of shares within budget constraints]
 RATIONALE: [2-3 sentences: (1) confluence count X/13 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]

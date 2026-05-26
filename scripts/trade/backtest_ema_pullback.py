@@ -64,14 +64,15 @@ STOCH_RSI_OVERSOLD = 30
 ADX_PERIOD = 14
 ADX_MIN = 20              # must be trending
 ATR_PERIOD = 14
-TARGET_ATR_MULT = 1.5     # target = 1.5x ATR from entry
+TARGET_ATR_MULT = 1.8     # target = 1.8x ATR from entry (optimized RR)
 TRAIL_ATR_MULT = 1.0      # trail after +1x ATR profit
 ENTRY_START_HOUR = 10
-ENTRY_END_HOUR = 14
+ENTRY_END_HOUR = 13
 ENTRY_END_MINUTE = 30
-SQUARE_OFF_HOUR = 15
-SQUARE_OFF_MINUTE = 5
+SQUARE_OFF_HOUR = 14
+SQUARE_OFF_MINUTE = 0
 CAPITAL = 50_000
+PORTFOLIO_DAILY_CAP = 2   # K1=2
 
 
 # -- Indicator helpers ------------------------------------------
@@ -272,7 +273,7 @@ def simulate_ema_pullback(candles_by_day: dict[str, list[dict]],
         today = c["ts"].date().isoformat()
 
         # Square off: close any open trade at EOD
-        if hour >= SQUARE_OFF_HOUR or (hour == SQUARE_OFF_HOUR - 1 and minute >= SQUARE_OFF_MINUTE):
+        if hour * 60 + minute >= SQUARE_OFF_HOUR * 60 + SQUARE_OFF_MINUTE:
             if in_trade:
                 pnl = _pnl(side, entry_price, c["close"])
                 trades.append(_trade(symbol, entry_ts, c["ts"], side, entry_price,
@@ -643,8 +644,38 @@ def main():
                 print(f"    [{i+1}/{len(symbols)}] processed, {len(all_trades)} trades so far")
 
         all_trades.sort(key=lambda t: t["entry_ts"])
-        m = compute_metrics(all_trades, "15-min Intraday (2 years)")
+
+        # Apply K1 portfolio daily cap
+        if PORTFOLIO_DAILY_CAP > 0:
+            by_day = defaultdict(list)
+            for t in all_trades:
+                day = t["entry_ts"][:10]
+                by_day[day].append(t)
+            filtered = []
+            for day in sorted(by_day):
+                day_trades = sorted(by_day[day], key=lambda t: t["entry_ts"])
+                filtered.extend(day_trades[:PORTFOLIO_DAILY_CAP])
+            all_trades = sorted(filtered, key=lambda t: t["entry_ts"])
+            print(f"  K1={PORTFOLIO_DAILY_CAP} cap applied: {len(filtered)} trades retained")
+
+        # Add costs to each trade
+        for t in all_trades:
+            entry_val = t.get("entry_price", 0) * (CAPITAL / 3 / max(t.get("entry_price", 1), 1))
+            turnover = entry_val * 2  # buy + sell
+            cost_pct = 0.10  # ~0.10% round-trip for NSE intraday
+            t["cost_pct"] = cost_pct
+            t["net_pnl_pct"] = round(t["pnl_pct"] - cost_pct, 4)
+
+        m = compute_metrics(all_trades, "15-min Intraday (OPTIMIZED)")
+        print(f"\n  --- RAW (before costs) ---")
         print_summary(m)
+
+        # Re-compute with costs
+        for t in all_trades:
+            t["pnl_pct"] = t["net_pnl_pct"]
+        m_costs = compute_metrics(all_trades, "15-min Intraday (WITH COSTS)")
+        print(f"\n  --- AFTER COSTS (~0.10% round-trip) ---")
+        print_summary(m_costs)
 
         out_path = os.path.join(OUT_DIR, "ema_pullback_intraday_trades.json")
         with open(out_path, "w") as f:

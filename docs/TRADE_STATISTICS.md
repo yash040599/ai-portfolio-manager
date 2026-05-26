@@ -6,18 +6,18 @@ This doc is rendered on the dashboard theory/statistics page. It now reflects th
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | `v1.3-2026-05-19-S0` |
-| Active stage | **`S0_PURE_MR`** — see [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). Simple MR alpha only; every other entry/exit/sizing/performance gate is OFF at config level. |
-| Planning posture | Stage 0 Chan Research Reset is active in runtime/report/dashboard status; the rollout ladder governs which strategy family is enabled next. |
-| Supported live path | Paused: no new live trades until the ladder reaches `S12_LIVE_PILOT`. |
-| Broker API posture | Zerodha trading/dev APIs are not assumed available; use read-only/local evidence unless the user recharges them for broker-side testing. |
-| Stage 1 evidence plumbing | T1.0-T1.7 are shipped (data contract, replay, candidate ledger, after-cost replay, live-vs-replay, dry-run separation, daily evidence, simple MR profile). |
-| Dry-run evidence status | The 2026-05-18 and 2026-05-19 pre-reset dry-runs are excluded and purged because legacy entry/performance gates contaminated the simple MR research sample. The next valid sample starts under `v1.3-2026-05-19-S0`. |
-| Promotion status | FAIL on the latest 20-session window. |
-| Capital scaling | Blocked. |
-| New live alpha gates | Blocked unless they fix a verified bug or safety hole. |
+| Runtime strategy version | `v2.0-2026-05-26-BACKTEST_OPTIMIZED` |
+| Active stage | **`BACKTEST_OPTIMIZED`** — 62-gate backtest audit applied. AI mode (Gemini 2.5 Flash, detailed plan) selects 2 trades/day from NIFTY50. See gate audit docs under docs/audit/. |
+| Planning posture | Post-audit live readiness. K1=2 daily trade cap, 14:00 square-off, ATR 2.0, RR 1.8. |
+| Supported live path | Ready: `python main.py --mode trade --ai`. |
+| Broker API posture | Zerodha Connect Paid active. Live Kite prices + order placement. |
+| Stage 1 evidence plumbing | T1.0-T1.7 shipped. Candidate telemetry, replay, after-cost metrics all functional. |
+| Dry-run evidence status | Historical dry-runs excluded. Next evidence starts from first AI-mode live session. |
+| Promotion status | Pending first post-audit live session. |
+| Capital scaling | Rs.50K at current rung. Awaiting live evidence before scaling. |
+| New live alpha gates | Post-audit: gates enabled/disabled by backtest evidence. No arbitrary additions. |
 
-Plain-English reading: the tool has a lot of risk engineering, but the current entry/scoring edge is not validated. The statistics page should not describe the strategy as profitable until the live or forward-sample metrics prove it.
+Plain-English reading: the 62-gate backtest audit raised PF from 0.71 to 0.86. The AI layer (Gemini) now acts as quality gate, picking the best 2 trades/day. First live AI-mode session will generate the baseline evidence for promotion metrics.
 
 ## 1. Latest Live Snapshot
 

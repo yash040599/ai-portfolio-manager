@@ -37,7 +37,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
-| T2.0 | Risk | Stage ladder `S0_PURE_MR` is now the active rung: every non-MR entry veto, mid-life exit, sizing modifier, multi-day pause, breadth/sector overlay, time-of-day filter, and charge-aware R:R is OFF at config level. The full ladder, per-stage parameter sweeps, and promotion bars are in [TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). Earlier dry-runs were purged so the L0 sample restarts cleanly. |
+| T2.0 | Risk | 62-gate backtest audit completed 2026-05-26: PF improved 0.71 → 0.86. Key changes: ATR 2.0, RR 1.8, K1=2 daily trade cap, 14:00 square-off, all RSI/VWAP gates disabled by evidence, signal-reversal exit enabled, consecutive-SL pause enabled. Stage renamed `BACKTEST_OPTIMIZED`. AI mode (Gemini 2.5 Flash) now selects 2 trades/day from NIFTY50. See docs/audit/ for full results. |
 | T1.7a | Risk | Simple MR research dry-runs no longer inherit legacy rolling-PF, directional-pause, or opposing-thin performance vetoes, and zero-entry scans keep collecting evidence instead of ending the session early. |
 | T1.7 | Indicators | NoAI dry-run selection now defaults to `NOAI_SIMPLE_MR_BASELINE`: VWAP-stretch plus RSI-exhaustion mean reversion only, with legacy blended alpha retained only as a comparison profile. |
 | T1.6 | Infra | Daily trade reports now generate Chan evidence snapshots, and dry-run report files are separated from live report files so research artifacts cannot merge into dashboard/tax actuals. |

@@ -57,9 +57,9 @@ ADX_PERIOD = 14
 ADX_MAX = 25                # only trade when ADX < 25 (range-bound)
 RVOL_MIN = 0.8
 ENTRY_START_HOUR = 10       # 10:00 IST
-ENTRY_END_HOUR = 14         # 14:00 IST
-SQUARE_OFF_HOUR = 15
-SQUARE_OFF_MINUTE = 5
+ENTRY_END_HOUR = 13         # 13:30 IST (optimized)
+SQUARE_OFF_HOUR = 14
+SQUARE_OFF_MINUTE = 0
 CAPITAL = 50_000
 RISK_PCT = 0.01             # 1% risk per trade
 
@@ -253,7 +253,7 @@ def simulate_vwap_mr(candles_by_day: dict[str, list[dict]],
             hour = c["ts"].hour
 
             # Square off
-            if hour >= SQUARE_OFF_HOUR or (hour == SQUARE_OFF_HOUR - 1 and c["ts"].minute >= SQUARE_OFF_MINUTE):
+            if hour * 60 + c["ts"].minute >= SQUARE_OFF_HOUR * 60 + SQUARE_OFF_MINUTE:
                 if in_trade:
                     pnl_pct = ((c["close"] - entry_price) / entry_price * 100) if side == "BUY" else ((entry_price - c["close"]) / entry_price * 100)
                     trades.append(_trade(symbol, entry_ts, c["ts"], side, entry_price, c["close"], sl_price, target_price, pnl_pct, "EOD_SQUARE_OFF"))

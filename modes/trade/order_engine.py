@@ -2555,15 +2555,15 @@ class OrderEngine:
                     f"extended overbought move. Skipping."
                 )
                 return False
-            if side == "BUY" and entry_rsi < 30 and not simple_mr_entry:
+            if side == "BUY" and entry_rsi < self.cfg.RSI_BUY_FLOOR_THRESHOLD and not simple_mr_entry:
                 self.log.warning(
-                    f"{symbol}: RSI {entry_rsi:.0f} < 30 — too oversold to "
+                    f"{symbol}: RSI {entry_rsi:.0f} < {self.cfg.RSI_BUY_FLOOR_THRESHOLD:.0f} — too oversold to "
                     f"buy (strong selling pressure). Skipping."
                 )
                 return False
-            if side == "SELL" and entry_rsi < 25:
+            if side == "SELL" and entry_rsi < self.cfg.RSI_SELL_FLOOR_THRESHOLD:
                 self.log.warning(
-                    f"{symbol}: RSI {entry_rsi:.0f} < 25 — SELL chasing "
+                    f"{symbol}: RSI {entry_rsi:.0f} < {self.cfg.RSI_SELL_FLOOR_THRESHOLD:.0f} — SELL chasing "
                     f"extended oversold move. Skipping."
                 )
                 return False
@@ -2800,13 +2800,14 @@ class OrderEngine:
                     ext_override = self.cfg.VWAP_EXT_SCORE_OVERRIDE
                     if vwap_dev != 0:
                         # 1. Trend-fight
-                        if side == "BUY" and vwap_dev < -0.3:
+                        fight_pct = self.cfg.VWAP_TREND_FIGHT_PCT
+                        if side == "BUY" and vwap_dev < -fight_pct:
                             self.log.warning(
                                 f"{symbol}: price {vwap_dev:+.1f}% below VWAP — "
                                 f"BUY fights institutional selling pressure. Skipping."
                             )
                             return False
-                        if side == "SELL" and vwap_dev > 0.3:
+                        if side == "SELL" and vwap_dev > fight_pct:
                             self.log.warning(
                                 f"{symbol}: price {vwap_dev:+.1f}% above VWAP — "
                                 f"SELL fights institutional buying pressure. Skipping."
@@ -4611,7 +4612,7 @@ class OrderEngine:
         run 5-8 morning slots aren't single-threaded by the SMALL-cohort
         audit value.
         """
-        if not getattr(self.cfg, "ENTRY_BURST_CAP_ENABLED", True):
+        if not getattr(self.cfg, "ENTRY_BURST_CAP_ENABLED", False):
             return False
         cap = self.effective_burst_cap()
         if cap <= 0:

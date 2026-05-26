@@ -9,14 +9,14 @@ The staged rollout (every gate on/off, every stage's parameter sweep, every prom
 
 | Area | Status |
 |---|---|
-| Stage on the ladder | **`S0_PURE_MR`** (Simple MR alpha only; every other gate is OFF at config level). See [docs/TRADE_STRATEGY_ROLLOUT.md](TRADE_STRATEGY_ROLLOUT.md). |
-| Supported live mode | Paused. No new live trades until the ladder reaches `S12_LIVE_PILOT`. |
-| Runtime reset status | `Stage 0 - Chan Research Reset` is surfaced in startup logs, reports, and dashboard status; live order placement is guarded by `TRADE_LIVE_TRADING_PAUSED = True`. |
-| Capital scaling | Blocked. |
-| Latest promotion check | FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
+| Stage on the ladder | **`BACKTEST_OPTIMIZED`** (62-gate backtest audit applied 2026-05-26; AI mode with Gemini selects 2 trades/day from NIFTY50). |
+| Supported live mode | Ready: `python main.py --mode trade --ai`. |
+| Runtime reset status | `BACKTEST_OPTIMIZED` stage; `TRADE_LIVE_TRADING_PAUSED = False`. |
+| Capital scaling | Rs.50K budget at current rung. |
+| Latest promotion check | Pending first AI-mode live session. |
 | Current FY intraday result | About Rs.-3,928.68 net after charges, 184 tax-ledger rows. |
-| Strategy version in config | `v1.3-2026-05-19-S0`; `TRADE_STAGE_NAME = S0_PURE_MR`; active NoAI dry-run profile is `NOAI_SIMPLE_MR_BASELINE`. |
-| Dry-run evidence status | Earlier dry-run sessions (including 2026-05-19) were generated with non-MR gates active and have been excluded/purged. The L0 sample restarts at zero from the next dry-run session under the new `v1.3-2026-05-19-S0` config hash. |
+| Strategy version in config | `v2.0-2026-05-26-BACKTEST_OPTIMIZED`; `TRADE_STAGE_NAME = BACKTEST_OPTIMIZED`; AI mode: Gemini 2.5 Flash (detailed). |
+| Dry-run evidence status | Historical dry-runs excluded. Next evidence starts from first AI-mode live session under `v2.0-2026-05-26-BACKTEST_OPTIMIZED` config hash. |
 
 ## Ground Rules
 
