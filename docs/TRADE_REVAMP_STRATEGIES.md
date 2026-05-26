@@ -211,19 +211,23 @@ rejection below.
 |----------|--------|----------|------|--------|--------|---------|
 | 1. VWAP Mean-Reversion | **FAIL** | 23.1% | -39.1% | -2.95 | 69.2% | [Full report](backtest/BACKTEST_VWAP_MR.md) |
 | 2. ORB-15 Breakout | **MARGINAL** | 55.7% | -1.4% | -0.15 | 16.7% | [Full report](backtest/BACKTEST_ORB15.md) |
-| 3. EMA Pullback Momentum | **PROMISING** | 42.8% | +151.5% | 4.03 | 60.6% | [Full report](backtest/BACKTEST_EMA_PULLBACK.md) |
+| 3. EMA Pullback Momentum | **FAIL** | 42.8% | +151.5% | 4.03 | 60.6% | [Full report](backtest/BACKTEST_EMA_PULLBACK.md) |
+
+> **EMA Pullback re-validation (2026-05-26)**: With optimized config (RR 1.8, K1=2,
+> sq-off 14:00): PF 0.99 raw, PF 0.65 after costs. Edge does NOT survive transaction
+> costs. Worse than main scorer (PF 0.86). Verdict changed from PROMISING to **FAIL**.
 
 ---
 
-## Next Steps
+## Verdict (2026-05-26)
 
-1. ~~Backtest each strategy against historical data~~ (in progress)
-2. Compare: win rate, profit factor, max drawdown, Sharpe ratio
-3. Pick the best 1–2 strategies for the revamped trade mode
-4. Implement in `modes/trade/` with clean entry/exit/risk rules
-5. Paper-trade for 2 weeks before going live
+All three candidate strategies failed to beat the existing blended scorer (PF 0.86)
+after the 62-gate backtest audit. The current approach — blended technical scoring +
+AI quality gate (Gemini picking 2 trades/day) — remains the production strategy.
+
+No new alpha strategy code will be written until a candidate demonstrably beats
+PF 0.86 after costs in backtest.
 
 ---
 
-*Generated 2026-05-25. To be validated by backtesting before any live
-deployment.*
+*Initial backtest: 2026-05-25. Re-validated: 2026-05-26.*

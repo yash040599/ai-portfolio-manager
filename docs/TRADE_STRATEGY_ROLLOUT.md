@@ -11,10 +11,11 @@
 
 ## Current State
 
-- **Live trading**: ENABLED (was paused by Chan framework, now unpaused)
-- **Strategy profile**: `NOAI_LEGACY_FULL` (blended score from all indicators)
+- **Live trading**: ENABLED
+- **Mode**: AI (Gemini 2.5 Flash, detailed plan) — selects 2 trades/day from NIFTY50
+- **Strategy profile**: `NOAI_LEGACY_FULL` (blended score feeds AI pre-filter)
 - **Stage name**: `BACKTEST_OPTIMIZED` (gates set by backtest evidence)
-- **Chan framework**: REMOVED (2026-05-25)
+- **Config version**: `v2.0-2026-05-26-BACKTEST_OPTIMIZED`
 
 ## New Strategy Candidates (Backtested 2026-05-25)
 

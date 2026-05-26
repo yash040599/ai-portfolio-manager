@@ -901,6 +901,7 @@ def _topnav(here: str, fx: dict) -> str:
 
 def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
     from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
+    from modes.dashboard.swing_page import _ai_md_js
     rate = float(fx.get("rate") or 0.0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -909,6 +910,7 @@ def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
 <style>{_STYLE}</style>
 <script>window._usdInrRate = {rate};</script>
 </head><body>
+{_ai_md_js()}
 {ai_banner_html()}
 {''.join(body_parts)}
 {ai_banner_script()}
@@ -2016,7 +2018,7 @@ function aiAnalyseUsSingle(symbol) {
             }
             var ai = res.body.ai_overlay || {};
             if (ai.raw_response) {
-                host.innerHTML = '<div class="banner">' + _esc(ai.raw_response).replace(/\n/g, '<br>') + '</div>';
+                host.innerHTML = (window._aiMdToHtml ? _aiMdToHtml(ai.raw_response) : '<div class="banner">' + _esc(ai.raw_response).replace(/\n/g, '<br>') + '</div>');
             } else if (ai.error) {
                 host.innerHTML = '<div class="banner error">' + _esc(ai.error) + '</div>';
             } else {

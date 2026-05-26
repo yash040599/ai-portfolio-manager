@@ -274,10 +274,10 @@ their content.
 | Doc | What it covers |
 |-----|----------------|
 | [docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md) | Complete Trade strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
-| [docs/TRADE_STRATEGY_ROLLOUT.md](docs/TRADE_STRATEGY_ROLLOUT.md) | **Active stage ladder** — which gates are ON/OFF, per-stage parameter sweeps, promotion bars. Current stage: `S0_PURE_MR` (Simple MR alpha only). |
-| [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Higher-level operating posture (live paused, capital scaling blocked, ground rules); per-gate inventory now lives in `TRADE_STRATEGY_ROLLOUT.md` |
+| [docs/TRADE_STRATEGY_ROLLOUT.md](docs/TRADE_STRATEGY_ROLLOUT.md) | Gate optimization approach — backtest-driven gate enable/disable decisions. |
+| [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Operating plan, current posture, next steps, promotion gate, deferred work |
 | [docs/TRADE_EVOLUTION.md](docs/TRADE_EVOLUTION.md) | Chronological one-line history of every shipped strategy item (auto-regenerated from the Roadmap) |
-| [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Theoretical edge math + live snapshot. §2.5 holds the per-item ΔEV / ΔMDD verdict every shipped strategy item must carry. Rendered live at the dashboard's `/theory/statistics` page. |
+| [docs/TRADE_STATISTICS.md](docs/TRADE_STATISTICS.md) | Current backtest results, active config, break-even math, promotion metrics. Rendered at the dashboard's `/theory/statistics` page. |
 | [docs/ANALYZE_STRATEGY.md](docs/ANALYZE_STRATEGY.md) | Complete Portfolio-Analyser reference — what every field on a stock card means, how rule-based actions are chosen, what the AI overlay adds, the report layout, the persistence schema |
 | [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) | **P1-P9 shipped** — Portfolio-Analyser foundation: typed `StockAnalysis` with per-field `source`/`as_of`, NoAI + AI enrichment split, persistence DB, industry-standard metrics (HHI, Sharpe, vol, max-DD, CAGR, cash drag, AMFI mcap-tier breakdown), "what's missing" engine |
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
@@ -557,8 +557,8 @@ After restore, run read-only smoke checks:
 .\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
 ```
 
-`promotion_check.py` is expected to fail while the Chan reset is paused;
-that means the ledger is readable, not that live trading should resume.
+`promotion_check.py` runs the codified PASS/FAIL gate for capital scaling;
+it reads the last N trading sessions and tests PF, expectancy, WR, and drawdown.
 Full migration notes are mirrored in [copilot/machine-migration.md](copilot/machine-migration.md).
 
 ---
@@ -915,7 +915,7 @@ commands in one place.
 
 ### Backtest/replay data sync (private repo)
 
-Stage 1 of the Chan reset uses a separate private repository for
+The backtest audit uses a separate private repository for
 normalized historical replay data:
 `https://github.com/yash040599/ai-portfolio-backtest-data`.
 

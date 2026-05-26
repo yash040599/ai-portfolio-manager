@@ -6,11 +6,10 @@
 > **Active stage (2026-05-26):** `BACKTEST_OPTIMIZED` — Full 62-gate backtest audit applied.
 > Gates are enabled/disabled based on backtest evidence from the 2026-05-26 audit.
 > AI mode (Gemini 2.5 Flash) selects the best 2 trades per day from NIFTY50.
-> Treat this doc as the *reference for what each gate does when enabled*, not as a description of
-> what the bot is doing today. The single source of truth for which gates are live today is
-> `Config.TRADE_STAGE_NAME` and the gate audit at docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md.
-
-> **Current operating status (2026-05-15):** intraday live trading is paused under `Stage 0 - Chan Research Reset`. This document describes the existing mechanics for audit, replay, and future staged research; it is not approval to place new live trades. New live trades resume only after the Chan-method staged process produces replay/forward evidence and promotion gates pass.
+> This doc is the *technical reference for what each gate does when enabled*.
+> The single source of truth for which gates are live today is `config.py`.
+> See [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for current results and
+> [TRADE_ROADMAP.md](TRADE_ROADMAP.md) for the operating plan.
 
 
 ---

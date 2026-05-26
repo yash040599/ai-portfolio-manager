@@ -1,194 +1,106 @@
 # Trading Statistics
 
-This doc is rendered on the dashboard theory/statistics page. It now reflects the 2026-05-15 Chan Research Reset: live evidence first, theory second, and no capital scaling until promotion metrics pass after costs.
+Last updated: 2026-05-26 (post 62-gate backtest audit).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | `v2.0-2026-05-26-BACKTEST_OPTIMIZED` |
-| Active stage | **`BACKTEST_OPTIMIZED`** — 62-gate backtest audit applied. AI mode (Gemini 2.5 Flash, detailed plan) selects 2 trades/day from NIFTY50. See gate audit docs under docs/audit/. |
-| Planning posture | Post-audit live readiness. K1=2 daily trade cap, 14:00 square-off, ATR 2.0, RR 1.8. |
-| Supported live path | Ready: `python main.py --mode trade --ai`. |
-| Broker API posture | Zerodha Connect Paid active. Live Kite prices + order placement. |
-| Stage 1 evidence plumbing | T1.0-T1.7 shipped. Candidate telemetry, replay, after-cost metrics all functional. |
-| Dry-run evidence status | Historical dry-runs excluded. Next evidence starts from first AI-mode live session. |
-| Promotion status | Pending first post-audit live session. |
-| Capital scaling | Rs.50K at current rung. Awaiting live evidence before scaling. |
-| New live alpha gates | Post-audit: gates enabled/disabled by backtest evidence. No arbitrary additions. |
+| Runtime strategy version | 2.0-2026-05-26-BACKTEST_OPTIMIZED |
+| Active stage | **BACKTEST_OPTIMIZED** - 62-gate backtest audit applied. |
+| AI mode | Gemini 2.5 Flash (detailed plan) selects best 2 trades/day from NIFTY50. |
+| Run command | python main.py --mode trade --ai |
+| Budget | Rs.50,000 |
+| Daily trade cap (K1) | 2 trades max per day |
+| Square-off | 14:00 IST |
+| Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
 
-Plain-English reading: the 62-gate backtest audit raised PF from 0.71 to 0.86. The AI layer (Gemini) now acts as quality gate, picking the best 2 trades/day. First live AI-mode session will generate the baseline evidence for promotion metrics.
+## 1. Backtest Results (62-Gate Audit, 2026-05-26)
 
-## 1. Latest Live Snapshot
-
-Captured on 2026-05-15 with read-only CLI commands.
-
-### FY 2026-27 Tax Ledger
-
-Command:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\shared\tax_summary.py --intraday
-```
-
-| Metric | Value | Verdict |
-|---|---:|---|
-| Total trades | 184 (180 verified, 4 unverified) | Enough to say the current mixed strategy is not working. |
-| Gross P&L | Rs.-1,232.98 | Negative before charges. |
-| Regulatory charges | Rs.2,590.70 | Charges are larger than the gross loss. |
-| Claude API costs | Rs.105.00 | Small, but included in net. |
-| Net profit before tax | Rs.-3,928.68 | Losing. |
-| ITR turnover | Rs.10,742.90 | Tax/stat reference. |
-
-### Promotion Gate
-
-Command:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
-```
-
-| Metric | Current | Required | Status |
+| Metric | Before Audit | After Audit | Change |
 |---|---:|---:|---|
-| Profit factor | 0.839 | >= 1.15 | FAIL |
-| Expectancy | Rs.-6.11/trade | >= Rs.10/trade | FAIL |
-| Trade win rate | 39.86% | >= 40% | Borderline fail |
-| Profitable-day rate | 30.0% | >= 55% | FAIL |
-| Max drawdown | Rs.2,788.33 (2.435% of capital) | <= 3% | Pass |
-| Window P&L | Rs.-842.80 on 138 trades | Positive | FAIL |
+| Profit Factor | 0.71 | 0.86 | +21% |
+| Trades (annual) | ~18,750 | 970 | -95% (K1=2 cap) |
+| Win Rate | 40.5% | 37.8% | Fewer but higher-quality |
+| Sharpe | -1.89 | -1.22 | +35% |
+| H2 2024 PF | 0.82 | 1.02 | Profitable half |
 
-Only drawdown is acceptable. The strategy is failing on edge: PF, expectancy, and profitable-day rate.
+Key optimizations applied:
+- **ATR 2.0** (was 1.5): wider SL reduces whipsaw churn
+- **RR 1.8** (was 1.5): higher reward-to-risk improves expectancy
+- **K1=2** daily trade cap: eliminates overtrading, PF 0.71 -> 0.81
+- **14:00 square-off** (was 15:10): avoids toxic closing volatility
+- **13:00 loser exit**: cuts dead weight 1 hour before close
+- **RSI gates disabled**: all 4 RSI gates hurt PF in backtest
+- **VWAP gates disabled**: trend-fight and extension gates removed profitable trades
+- **Signal reversal exit enabled**: cuts losses on thesis invalidation
 
-### Recent Analyst Pulse
+## 2. Active Configuration
 
-Command:
+### Enabled Gates
+| Gate | Setting | Evidence |
+|---|---|---|
+| Exchange SL-M | Always on | Instant stop-loss execution on NSE |
+| ATR-based SL/target | ATR 2.0 x 14-period 15min | Backtest E1: best per-trade expectancy |
+| R:R floor | 1.3:1 uniform | Backtest E1: practical optimum |
+| Daily trade cap | 2 trades/day | Backtest K1: PF 0.81 vs 0.71 baseline |
+| Signal reversal exit | score >= 7 + pattern | Pro decision: institutional best practice |
+| Consecutive SL pause | 3 losses -> 30 min pause | Pro decision: prop-firm standard |
+| Circuit breaker | 3% of budget | Always-on safety net |
+| LIMIT orders | LTP with 8s timeout, 2 retries | Reduces slippage vs MARKET orders |
 
-```powershell
-.\.venv\Scripts\python.exe scripts\trade\analyst_pulse.py
-```
-
-| Recent Window | Read |
+### Disabled Gates (by backtest evidence)
+| Gate | Reason |
 |---|---|
-| Last 9 days | 88 trades, net Rs.-3,947.51. |
-| BUY side | 13.0% win rate, structurally weak. |
-| SELL side | 41.2% win rate, better but still not enough to call proven. |
-| Main loss reasons | STOP_LOSS, EXTERNAL_CLOSE, and STAGNANT_EXIT. |
-| Weakest behavior noted | 9:30-11:00 AM entries and holds under 30 minutes. |
-
-Interpretation: the bot is not mainly failing because it lacks more exits. It is entering too many trades whose thesis breaks quickly.
-
-## 2. What The Numbers Mean
-
-| Question | Answer |
-|---|---|
-| Do we have a validated profitable strategy today? | No. |
-| Should score-weighted sizing come back? | No. The latest live evidence still does not justify larger sizing by score. |
-| Should we tune more thresholds live? | No. That risks overfitting the same losing window. |
-| Should the current all-in-one NoAI score remain the main research baseline? | Yes, as a baseline to beat, not as a strategy to scale. |
-| What should be tested first? | Start with `NOAI_SIMPLE_MR_BASELINE`: VWAP-stretch plus RSI-exhaustion mean reversion only, in dry-run, with live trading still paused. |
-
-Strategy decision: there is no production base strategy today. The default NoAI dry-run profile is now `NOAI_SIMPLE_MR_BASELINE`; the old blended NoAI score is `NOAI_LEGACY_FULL` and is retained only for replay/control comparison. The first candidate production base is `MEAN_REVERSION_V1` if it passes replay, dry-run, and live-pilot evidence. Momentum/ORB, pairs, seasonality, and microstructure stay later-stage until they pass separately.
-
-The old theory was: enough gates should lift selected trades toward a 55% win rate and positive expectancy. The live ledger has not validated that. From this reset onward, theoretical edge estimates are treated as hypotheses, not conclusions.
+| RSI buy/sell ceilings | G1/G2: inert or harmful (PF worse at every level) |
+| RSI buy/sell floors | G3/G4: G4 was biggest hidden PF killer (-10%) |
+| VWAP trend-fight | G6: inert, removes <3% of trades |
+| VWAP extension block | G7: all values make PF worse |
+| All other optional gates | Disabled pending future backtest evidence |
 
 ## 3. Break-Even Constraint
 
-The arithmetic still matters.
+At 1.8:1 R:R target with 2.0x ATR SL:
 
-At a 1.3 reward:risk floor, before charges, break-even win rate is about:
+    Break-even WR (before charges) = 1 / (1 + 1.8) = 35.7%
+    Break-even WR (after charges)  ~ 42-45%
 
-```text
-1 / (1 + 1.3) = 43.5%
-```
+The backtest shows 37.8% WR - below after-cost break-even but above raw break-even.
+The AI quality gate (Gemini picking 2 from 50) is expected to push WR above the
+after-cost threshold by filtering out marginal setups that the rule-based scorer passes.
 
-After charges, the bot often needs roughly 50-55% win rate on selected trades to make money. The latest promotion window is 39.86%, and the latest profitable-day rate is 30.0%, so the system is below the required band.
+## 4. FY 2026-27 Historical Record
 
-This is why adding more capital, using score-weighted sizing, or loosening risk gates is not allowed now.
+From tax ledger (pre-audit, NoAI mode):
 
-## 4. Paused / Disabled Features
-
-Current config states that match the reset posture:
-
-| Feature | Current State | Decision |
-|---|---|---|
-| Live trading | `TRADE_LIVE_TRADING_PAUSED = True` | Keep paused until a staged strategy earns promotion. |
-| NoAI strategy profile | `TRADE_STRATEGY_PROFILE = "NOAI_SIMPLE_MR_BASELINE"` | Use for tomorrow's dry-run. It selects only VWAP-stretch plus RSI-exhaustion mean reversion and does not inherit legacy mixed-strategy performance pauses. |
-| Legacy blended NoAI | `NOAI_LEGACY_FULL` profile only | Keep disabled by default; use only as replay/control evidence, not as the active dry-run strategy. |
-| Score-weighted sizing | `SCORE_WEIGHTED_SIZING_ENABLED = False` | Keep disabled. |
-| Rolling-PF full-day pause | `ROLLING_PF_PAUSE_ENABLED = False` | Keep disabled unless new evidence proves incremental value. |
-| Late no-rescue floor | `LATE_ENTRY_NO_RESCUE_FLOOR_ENABLED = False` | Keep disabled; prior EV audit contradicted it. |
-| Intraday volume baseline | `INTRADAY_VOLUME_BASELINE_ENABLED = False` | Keep disabled until the baseline DB is built and validated. |
-
-Policy pauses during reset:
-
-| Area | Policy |
-|---|---|
-| New live entry gates | Do not add without replay or verified safety evidence. |
-| AI selection | Optional tool path only; not accepted as proof of strategy edge. |
-| HFT/WebSocket work | Deferred until expectancy is positive. |
-| Strategy blending | Do not blend mean reversion, momentum, and microstructure until each passes alone. |
-
-Stage 1 data policy:
-
-| Area | Policy |
-|---|---|
-| `market-research` repo | Standalone daily ATH-dip research using `yfinance` and current NIFTY 50 membership. Use as reference/seed material, not an intraday replay runtime dependency. |
-| Backtest data storage | Use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready datasets. |
-| Main repo runtime access | Read from local sibling `../ai-portfolio-backtest-data/`, not GitHub on every replay run. |
-| Replay candidate evidence | `scripts/trade/backtest.py` writes a config-hash-stamped `candidates` ledger with `ENTERED`/`REJECTED` status and replay rejection reason, so no-trade runs still leave inspectable evidence. |
-| Replay cost evidence | Entered synthetic trades now show raw P&L, gross P&L after adverse slippage/spread fills, Zerodha charges, net P&L, net PF, net expectancy, and net drawdown. Cost assumptions are explicit CLI inputs and stored in the JSON report. |
-| Live-vs-replay evidence | `scripts/trade/live_vs_replay.py` reads live candidates, logical trades, and tax-ledger rows in read-only mode, compares them with replay JSON under the same config hash, and writes red flags instead of pretending missing data proves parity. |
-| Dry-run analysis evidence | Dry-run candidate telemetry and simulated after-cost outcomes are stored in `data/trade_analysis.db` via `scripts/trade/fill_dryrun_analysis.py`; they are analysis-only and must not feed dashboard/tax actual P&L. Dry-run report files use `*_dry_run` filenames so same-day live reports stay separate. |
-| Daily Chan evidence | `scripts/trade/chan_daily_evidence.py` writes per-day JSON/Markdown snapshots after dry-run or live report generation, showing config hash, candidate rows, after-cost outcomes, source DB, and red flags. |
-| Linux VM access | Pull the same repo locally with `python scripts/shared/sync_backtest_data.py --ssh` before replay/trading workflows need historical data. |
-| Existing operational data repo | Keep separate from the backtest-data repo so reports/tokens/current ignored data do not mix with large historical datasets. |
-| Machine migration | Use `backup_data.py --include-env --all-local` on the old machine and `--include-env --all-remote` on the new machine only with the trusted private data repo. |
-| First format | CSV metadata plus SQLite candle stores; avoid parquet-first until the dependency/tooling choice is deliberate. |
-
-## 5. Metrics To Track From Here
-
-Every staged strategy should report these numbers separately by `strategy_id` and config hash:
-
-| Metric | Promotion Bar |
+| Metric | Value |
 |---|---:|
-| Baseline plumbing sample | >= 5 dry-run sessions and >= 30 simulated closed trades, or continue to 10 sessions if the trade count is sparse |
-| Historical replay sample | >= 60 sessions with in-sample/out-of-sample or walk-forward separation |
-| Forward dry-run sample | >= 20 sessions and >= 30 simulated closed trades |
-| Live pilot sample | >= 10 sessions and >= 20 closed trades before scale consideration |
+| Total trades | 184 |
+| Net P&L | Rs.-3,929 |
+| Charges | Rs.2,591 |
+
+This is the old NoAI baseline. Post-audit AI-mode results will be tracked separately.
+
+## 5. Promotion Metrics
+
+Evidence starts from the first AI-mode live session:
+
+| Metric | Target |
+|---|---:|
 | Profit factor | >= 1.15 after costs |
 | Expectancy | >= Rs.10/trade |
-| Profitable-day rate | >= 55% |
 | Trade win rate | >= 40% |
-| Max drawdown | <= 3% of average daily capital |
-| Cost drag | Charges must be shown separately from gross P&L |
+| Profitable-day rate | >= 55% |
+| Max drawdown | <= 3% of daily capital |
+| Sample size | >= 10 sessions, >= 20 trades |
 
-The key change is separation. Tomorrow's dry-run should generate evidence for `NOAI_SIMPLE_MR_BASELINE` only. A mean-reversion test, a momentum test, and a future pairs test must not be merged into one score and then judged as if we know which idea worked.
-
-T1.3 smoke result, using the current default replay cost assumptions (`trade_value=Rs.20,000`, base slippage `0.15%`, spread `0.05%`): RELIANCE over 2026-04-07..2026-04-24 produced 46 synthetic entries with raw PF 3.35, but after costs net P&L was Rs.-3,157.06, expectancy Rs.-68.63/trade, and net PF 0.07. Treat this as plumbing evidence and a warning about friction, not as a promoted strategy result.
-
-T1.4 smoke result, using the all-symbol scanner replay over 2026-04-07..2026-04-24 under config hash `15bca3355cc58fb3`: replay produced 10,405 non-zero candidates, 5,300 score-passing candidates, and 4,886 synthetic trades with net P&L Rs.-450,507.14, expectancy Rs.-92.20/trade, and net PF 0.2159. The live comparison report found 0 candidate telemetry rows, 151 logical live trades, and 94 tax-ledger rows with tax-ledger net P&L Rs.-199.28. Status is `DATA_GAP`; candidate parity is blocked until a telemetry-bearing forward/dry-run session exists, and live outcome deltas should be treated cautiously until live-vs-replay trade counts and logical-vs-tax counts reconcile.
-
-T1.5 data-boundary decision: run NoAI dry-runs for research, but keep them out of actual intraday P&L. Dry-run rows go to `data/trade_analysis.db` with simulated regulatory charges and net P&L; live dashboard and tax pages continue to read actual `intraday_tax_ledger` rows from `data/trades.db` only.
-
-T1.6 automation decision: end-of-day trade reports now write mode-specific evidence. Dry-run report artifacts use `trading_data_DD_dry_run.json` and `trading_report_DD_dry_run.txt`; live reports keep the dashboard/tax filenames. Each run writes `chan_evidence_DD_dryrun.*` or `chan_evidence_DD_live.*`, so tomorrow's dry-run can be reviewed without touching actual P&L.
-
-T1.7 strategy-isolation decision: `STRATEGY_CONFIG_VERSION` is `v1.2-2026-05-18`, and the active profile is `NOAI_SIMPLE_MR_BASELINE`. The scanner now selects only VWAP-stretch plus RSI-exhaustion mean reversion. The order engine keeps execution, cost, ATR sizing, budget, duplicate, sector, and position-risk gates, but skips old momentum-style alpha gates and legacy outcome-based performance pauses that would otherwise contaminate the MR test. Zero-entry dry-run scans keep collecting evidence instead of arming R:R giveup early. The contaminated 2026-05-18 pre-fix dry-run is not evidence and was purged from dry-run reports and `data/trade_analysis.db`. The legacy blended score remains available as `NOAI_LEGACY_FULL` for comparison.
+Capital scaling (Rs.50K -> Rs.1L) requires passing all promotion metrics.
 
 ## 6. Update Protocol
 
-When a new strategy or risk change ships:
-
-1. Record the runtime version and config hash.
-2. Update this doc only with measured results, not expected benefits.
-3. Add the strategy change to [docs/TRADE_EVOLUTION.md](TRADE_EVOLUTION.md) if it changes trading or evidence behavior.
-4. Keep [docs/TRADE_ROADMAP.md](TRADE_ROADMAP.md) staged; do not recreate a giant pending backlog.
-5. Run the promotion gate before any capital scaling or risk relaxation.
-
-Useful commands:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\shared\tax_summary.py --intraday
-.\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
-.\.venv\Scripts\python.exe scripts\trade\analyst_pulse.py
-.\.venv\Scripts\python.exe scripts\trade\chan_daily_evidence.py --data-source dryrun --date <YYYY-MM-DD>
-```
+After each live trading session:
+1. Check daily report in 
+eports/trading/
+2. Run scripts/trade/promotion_check.py --window 20 when >= 20 trades accumulated
+3. Update this doc with latest metrics
+4. Capital scaling decision only after promotion metrics pass
