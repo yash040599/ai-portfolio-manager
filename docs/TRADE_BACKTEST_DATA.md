@@ -37,6 +37,38 @@ After a data-build script writes or updates files inside `../ai-portfolio-backte
 
 This script does not merge SQLite rows. If two machines edit the same dataset, fix it in the data repo as a Git conflict. The expected flow is one writer for dataset builds and many readers for replay/trading machines.
 
+## Git LFS (required)
+
+The candle stores are large — `candles/intraday_15m.sqlite` is ~220 MB, well past GitHub's 100 MB per-file limit. The data repo therefore tracks every `*.sqlite` file through **Git LFS**. The `.gitattributes` in the data repo contains:
+
+```text
+*.sqlite filter=lfs diff=lfs merge=lfs -text
+```
+
+`git-lfs` must be installed on every machine that clones or pulls the repo, otherwise the working tree only gets small text pointer files instead of the real databases:
+
+```bash
+# one-time, per machine
+git lfs install
+# Windows:        winget install GitHub.GitLFS
+# Debian/Ubuntu:  sudo apt-get install git-lfs
+# macOS:          brew install git-lfs
+```
+
+`scripts/shared/sync_backtest_data.py` is LFS-aware:
+
+- It fails early with install instructions if `git-lfs` is missing.
+- It runs `git lfs install --local` + `git lfs pull` after clone, and `git lfs pull` after each `--pull`, so the binaries are always materialized.
+- Its 100 MB guard exempts LFS-tracked files; it only blocks a large file that is *not* yet tracked by LFS, telling you to `git lfs track` the pattern first.
+
+If you cloned the repo manually and see tiny `*.sqlite` files, run `git -C ../ai-portfolio-backtest-data lfs pull`. To add a new large file type, track it in the data repo before committing:
+
+```bash
+git -C ../ai-portfolio-backtest-data lfs track "*.parquet"
+git -C ../ai-portfolio-backtest-data add .gitattributes
+git -C ../ai-portfolio-backtest-data commit -m "track parquet via LFS"
+```
+
 ## Seed Export
 
 The first local seed dataset comes from the existing `data/candle_cache.db`. This is not enough to validate a strategy by itself because the 15-minute cache currently covers only the recent live window, but it gives Stage 1 a real local dataset with the same shape the Linux VM will consume.
@@ -139,12 +171,13 @@ SQLite tables should use a unique key on `(symbol, interval, ts_ist, source)` so
 
 ## Linux VM Rule
 
-The VM should never fetch individual candles from GitHub during trading or replay. It should pull the repo once before a run, then read local files from `../ai-portfolio-backtest-data/`. That keeps replay deterministic, avoids network/runtime surprises, and makes the dev machine and VM use the same dataset version.
+The VM should never fetch individual candles from GitHub during trading or replay. It should pull the repo once before a run, then read local files from `../ai-portfolio-backtest-data/`. That keeps replay deterministic, avoids network/runtime surprises, and makes the dev machine and VM use the same dataset version. The VM must have `git-lfs` installed (see the Git LFS section) or the `*.sqlite` candle stores arrive as empty pointer files.
 
 ## Stage 1 Acceptance
 
 T1.0 is complete when:
 
+- `git-lfs` is installed on both machines and the `*.sqlite` candle stores materialize as real databases (not LFS pointer files).
 - `../ai-portfolio-backtest-data/` is a clone of the private data repo on both machines.
 - `manifest.json` exists and names the dataset version/source/date range.
 - `scripts/trade/export_backtest_data.py` can seed the contract from the local candle cache without broker/network calls.

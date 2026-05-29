@@ -508,6 +508,12 @@ runbooks, and replay datasets without manually copying folders.
 | `.env` | [scripts/shared/backup_data.py](scripts/shared/backup_data.py) with `--include-env` | project root |
 | Replay/backtest datasets | [scripts/shared/sync_backtest_data.py](scripts/shared/sync_backtest_data.py) | `../ai-portfolio-backtest-data/` |
 
+> The replay dataset repo uses **Git LFS** for its `*.sqlite` candle
+> stores. Install `git-lfs` on the new machine *before* the first sync
+> (`git lfs install`; on Windows `winget install GitHub.GitLFS`, on the
+> Linux VM `sudo apt-get install git-lfs`). `sync_backtest_data.py` will
+> refuse to run without it. See [Backtest/replay data sync](#backtestreplay-data-sync-private-repo).
+
 On the old laptop, do the final private-data push first:
 
 ```powershell
@@ -829,6 +835,8 @@ gitignored except `candle_cache.db` (public market data is committed).
 | `scripts/trade/view_candidates.py [--date YYYY-MM-DD] [--since YYYY-MM-DD] [--symbol STK] [--side BUY/SELL] [--status STATUS] [--summary] [--hash]` | Read-only viewer for the `intraday_candidates` telemetry table (Roadmap #259). Filters by date / symbol / side / status (`SCORED`, `ENTERED`, `REJECTED`); `--summary` totals; `--hash` lists distinct config hashes seen in the window. |
 | `scripts/trade/build_volume_baseline.py [--lookback N] [--universe UNIV] [--symbol STK] [--dry-run]` | Rebuilds `data/volume_baseline.db` from the trailing N trading days of 15-min candles in `data/candle_cache.db` (Roadmap #260). Computes per-symbol, per-hour mean cumulative-volume share. After build, set `Config.INTRADAY_VOLUME_BASELINE_ENABLED = True` to switch the scanner's RVol denominator from linear pro-rating to baseline-aware. |
 | `scripts/trade/backtest.py --from YYYY-MM-DD --to YYYY-MM-DD [--symbol STK] [--min-score N] [--max-trades-per-day N]` | Offline replay harness (Roadmap #24). Walks 15-min cached candles, applies a simplified directional score (EMA-cross + RSI + 1h momentum), and simulates synthetic trades using ATR-derived SL / target geometry and `Config.SQUARE_OFF_*`. Output: per-trade JSON in `reports/backtest/` plus a stdout summary (WR / PF / expectancy / max-DD), each row stamped with `Config.snapshot_hash()` for replay-vs-live comparison. **Do not read absolute P&L as a forecast** — see the script docstring "Scoring fidelity" note. |
+| `scripts/trade/walk_forward.py [--window {FULL,TRAIN,TEST}]` | Out-of-sample / walk-forward validator over the 2-year `../ai-portfolio-backtest-data` candle store (Phase 0). Runs the frozen audit config net-of-cost across FULL, TRAIN (year 1), TEST (year 2 OOS) and half-year slices, then prints a TRAIN-vs-TEST promotion verdict. Used to prove an edge holds out-of-sample **before** any live/dry deployment. |
+| `scripts/trade/regime_analysis.py [--universe NIFTY50] [--window {FULL,TRAIN,TEST}]` | Phase 1 regime classifier + per-regime PF breakdown. Builds a synthetic equal-weight market proxy (no index/VIX exists in the data), labels each day TREND / RANGE / VOLATILE from **morning-only** features (no lookahead), tags trades by entry-day regime, and prints per-regime metrics plus routing scenarios (Trade ALL / Skip RANGE / VOLATILE-only). |
 | `scripts/trade/promotion_check.py [--window N] [--json]` | Codified PASS / FAIL gate for capital scale-ups. Reads the last N (default 20) trading sessions from `data/trades.db` and tests profit factor, expectancy, day-WR, trade-WR and max-drawdown against fixed thresholds. Exit codes: `0` = PASS, `1` = FAIL, `2` = INSUFFICIENT_DATA. Run BEFORE any major risk-knob relax or capital scale; the script is the single source of truth on whether the live edge is positive enough to justify the change. |
 
 All scripts support `--help`.
@@ -927,6 +935,25 @@ Windows dev machine and the Linux trading VM. The old in-checkout
 `backtest_data/` path is still supported only when `BACKTEST_DATA_PATH`
 or `--path` points there.
 
+> **Git LFS required.** The candle stores in this repo (notably
+> `candles/intraday_15m.sqlite`, ~220 MB) exceed GitHub's 100 MB file
+> limit, so all `*.sqlite` files are stored via **Git LFS**. You must
+> have `git-lfs` installed before cloning/pulling, otherwise you only get
+> small text pointer files instead of the real databases.
+>
+> ```bash
+> # one-time, per machine
+> git lfs install
+> # Windows:        winget install GitHub.GitLFS
+> # Debian/Ubuntu:  sudo apt-get install git-lfs
+> # macOS:          brew install git-lfs
+> ```
+>
+> `sync_backtest_data.py` checks for `git-lfs` and runs `git lfs pull`
+> automatically on clone/pull, so the script is the recommended way to
+> fetch the data. If you cloned manually and see tiny `*.sqlite` files,
+> run `git -C ../ai-portfolio-backtest-data lfs pull`.
+
 Set these in `.env`:
 
 ```bash
@@ -960,8 +987,21 @@ Full contract: [docs/TRADE_BACKTEST_DATA.md](docs/TRADE_BACKTEST_DATA.md).
 
 **GitHub 100 MB file limit**
 
-GitHub rejects any single file > 100 MB on push. The sync script will
-fail with a clear error from `git push` if this happens. Two protections
+GitHub rejects any single file > 100 MB on push.
+
+For the **backtest-data repo**, the candle stores are tracked with **Git
+LFS** (see the LFS callout above), so large `*.sqlite` files push fine.
+`sync_backtest_data.py` only blocks a large file if it is *not* yet
+LFS-tracked — fix that by adding the pattern in the data repo:
+
+```bash
+git -C ../ai-portfolio-backtest-data lfs track "*.sqlite"
+git -C ../ai-portfolio-backtest-data add .gitattributes
+git -C ../ai-portfolio-backtest-data commit -m "track sqlite via LFS"
+```
+
+For the **operational data repo** (no LFS), the sync script will fail
+with a clear error from `git push` if a file is too big. Two protections
 are in place:
 
 - **Dedup key uses null-safe `IS` comparison** so the `trades` table

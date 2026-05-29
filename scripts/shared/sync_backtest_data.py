@@ -106,6 +106,26 @@ def _data_path(args: argparse.Namespace) -> Path:
     return DEFAULT_DATA_PATH
 
 
+def _ensure_git_lfs() -> None:
+    """Fail early with a clear message if git-lfs is not installed.
+
+    The backtest-data repo stores its SQLite candle stores (notably the
+    >200 MB intraday_15m.sqlite, which exceeds GitHub's 100 MB file limit) via
+    Git LFS. Without git-lfs the clone only fetches text pointer files.
+    """
+    result = subprocess.run(
+        ["git", "lfs", "version"], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            "git-lfs is required for the backtest-data repo but was not found.\n"
+            "Install it (https://git-lfs.com) then run 'git lfs install', e.g.:\n"
+            "  Windows:  winget install GitHub.GitLFS\n"
+            "  Debian/Ubuntu:  sudo apt-get install git-lfs\n"
+            "  macOS:  brew install git-lfs"
+        )
+
+
 def _ensure_repo(data_path: Path, repo_url: str, *, dry_run: bool) -> None:
     if data_path.exists() and not (data_path / ".git").is_dir():
         raise SystemExit(
@@ -116,8 +136,13 @@ def _ensure_repo(data_path: Path, repo_url: str, *, dry_run: bool) -> None:
     if (data_path / ".git").is_dir():
         return
 
+    _ensure_git_lfs()
     data_path.parent.mkdir(parents=True, exist_ok=True)
     _run(["git", "clone", repo_url, str(data_path)], dry_run=dry_run)
+    # Make LFS hooks/filters active for this clone and pull the binary objects
+    # (clone fetches them by default, but be explicit for older git-lfs setups).
+    _run(["git", "lfs", "install", "--local"], cwd=data_path, dry_run=dry_run)
+    _run(["git", "lfs", "pull"], cwd=data_path, dry_run=dry_run)
 
 
 def _remote_has_heads(data_path: Path) -> bool:
@@ -139,6 +164,8 @@ def _pull(data_path: Path, *, dry_run: bool) -> None:
         return
 
     _run(["git", "pull", "--ff-only"], cwd=data_path)
+    # Ensure large LFS-tracked candle stores are materialized after the pull.
+    _run(["git", "lfs", "pull"], cwd=data_path, check=False)
 
 
 def _print_status(data_path: Path, *, dry_run: bool) -> None:
@@ -152,13 +179,47 @@ def _print_status(data_path: Path, *, dry_run: bool) -> None:
         print(result.stdout.rstrip())
 
 
+def _lfs_tracked_paths(data_path: Path) -> set[str]:
+    """Return repo-relative paths that Git LFS is configured to track.
+
+    Files routed through LFS are exempt from GitHub's 100 MB file limit, so the
+    oversized guard must not block them.
+    """
+    result = subprocess.run(
+        ["git", "lfs", "ls-files", "--name-only"],
+        cwd=data_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _is_lfs_tracked(data_path: Path, rel_path: str) -> bool:
+    """True if .gitattributes routes rel_path through the LFS filter."""
+    result = subprocess.run(
+        ["git", "check-attr", "filter", "--", rel_path],
+        cwd=data_path,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0 and result.stdout.strip().endswith(": filter: lfs")
+
+
 def _oversized_files(data_path: Path) -> list[Path]:
+    lfs_tracked = _lfs_tracked_paths(data_path)
     oversized: list[Path] = []
     for candidate in data_path.rglob("*"):
         if ".git" in candidate.parts:
             continue
-        if candidate.is_file() and candidate.stat().st_size >= MAX_GITHUB_FILE_BYTES:
-            oversized.append(candidate)
+        if not (candidate.is_file() and candidate.stat().st_size >= MAX_GITHUB_FILE_BYTES):
+            continue
+        rel_path = candidate.relative_to(data_path).as_posix()
+        # LFS-tracked files bypass GitHub's 100 MB limit.
+        if rel_path in lfs_tracked or _is_lfs_tracked(data_path, rel_path):
+            continue
+        oversized.append(candidate)
     return oversized
 
 
@@ -178,6 +239,11 @@ def _commit_if_needed(data_path: Path, message: str, *, dry_run: bool) -> None:
         for path in oversized:
             size_mb = path.stat().st_size / (1024 * 1024)
             print(f"  {path.relative_to(data_path)} ({size_mb:.1f} MB)")
+        print(
+            "These files are not tracked by Git LFS. Track the pattern with "
+            "'git lfs track' in the data repo (e.g. '*.sqlite') and commit the "
+            ".gitattributes change, or shrink the file before syncing."
+        )
         raise SystemExit(1)
 
     if dry_run:
