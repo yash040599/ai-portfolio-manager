@@ -234,15 +234,19 @@ def _compute_score(candles_15m: list[dict], candles_day: list[dict]) -> dict:
 # ── Cost model ────────────────────────────────────────────────
 
 def compute_charges(buy_value: float, sell_value: float) -> float:
-    """NSE intraday charges (approximate). Returns total charges in Rs."""
-    turnover = buy_value + sell_value
-    brokerage = min(40, turnover * 0.0003)  # Rs.20 per leg or 0.03%
-    stt = sell_value * 0.00025              # 0.025% sell side
-    exchange = turnover * 0.0000345         # 0.00345%
-    gst = (brokerage + exchange) * 0.18     # 18% GST
-    sebi = turnover * 0.000001              # 0.0001%
-    stamp = buy_value * 0.00003            # 0.003% buy side
-    return round(brokerage + stt + exchange + gst + sebi + stamp, 2)
+    """NSE intraday round-trip charges in Rs.
+
+    Delegates to ``Config.calculate_charges`` so the backtest uses the
+    *exact same* cost model as the live engine and reporting — a single
+    source of truth (Phase 0.1 reconciliation, 2026-05-26). An intraday
+    round trip is 2 executed orders (1 entry + 1 exit).
+    """
+    charges = Config.calculate_charges(
+        total_buy_turnover=buy_value,
+        total_sell_turnover=sell_value,
+        num_orders=2,
+    )
+    return charges["total_tax_and_charges"]
 
 
 # ── Data loading ──────────────────────────────────────────────

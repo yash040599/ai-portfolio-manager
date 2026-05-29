@@ -33,7 +33,7 @@
    - [Exchange SL-M Orders](#exchange-sl-m-orders-use_exchange_sl--true)
    - [Trailing Stop-Loss](#trailing-stop-loss)
    - [Time-Decay Target Reduction](#time-decay-target-reduction)
-   - [Late-Day Loser Exit](#late-day-loser-exit-245-pm)
+   - [Late-Day Loser Exit](#late-day-loser-exit-100-pm)
    - [Circuit Breaker](#circuit-breaker)
    - [Whipsaw Guard](#whipsaw-guard)
    - [Loss-Adjusted Budget](#loss-adjusted-budget)
@@ -73,7 +73,7 @@ Think of the bot as an automated day-trader for the Indian stock market. Every m
     - Exits at a pre-set loss price (stop-loss) so no trade can hurt too much.
     - Takes partial profit once a trade is nicely in the green, and slides the stop-loss up so you keep most of the gain even if the price reverses.
     - Re-checks every 15 minutes whether the setup that triggered the trade still looks good, and tightens the stop-loss if the chart flips against you.
-4. **Before close (3:10 PM)** it closes every position, writes a report with full profit/loss and tax breakdown, and shuts down. All trades are **intraday** — the bot never holds a stock overnight.
+4. **Before close (2:00 PM, `SQUARE_OFF_HOUR=14`)** it closes every position, writes a report with full profit/loss and tax breakdown, and shuts down. All trades are **intraday** — the bot never holds a stock overnight. (The 2:00 PM square-off was set by the 2026-05-26 backtest audit — gate L11 — which found earlier closes avoid toxic late-session volatility.)
 
 Nothing is hand-entered. Your only job is to set a budget and decide whether you want AI (Claude) involved in picking (slower + costs a little) or pure math picking (free + instant).
 
@@ -114,7 +114,7 @@ This is the single place to look up any unfamiliar term used in the rest of the 
 | **MIS** | Margin Intraday Square-off. Zerodha's product type for intraday trades (lower margin, auto-closed end of day). | Bot places all orders as `product=MIS`. |
 | **Long** | Buy now, sell later at a higher price to profit. | When composite score is **positive**, bot goes long ("BUY"). |
 | **Short** | Sell first (borrowed shares), buy back later at a lower price to profit. Only allowed in MIS intraday. | When composite score is **negative**, bot goes short ("SELL"). |
-| **Square-off** | Closing an open position (reverse trade). | Bot auto-squares all positions at 3:10 PM (`SQUARE_OFF_HOUR`). |
+| **Square-off** | Closing an open position (reverse trade). | Bot auto-squares all positions at 2:00 PM (`SQUARE_OFF_HOUR = 14`). |
 | **F&O expiry** | Futures & Options contracts expire every Thursday in India. Causes extra volatility. | Thursday triggers special rules (wider SL, fewer trades, longer observation). |
 
 ### 2. Price & Volume
@@ -285,7 +285,7 @@ For each candidate, the bot asks these questions. **The first "no" rejects the t
 > **Sizing & target gates:**
 >
 > - **Compute ATR SL/target.** If ATR available: SL = entry ± 1.5·ATR, target = entry ± 1.5·ATR·R:R. Otherwise fall back to config defaults. SL is then clamped to `MIN_SL_DISTANCE_PCT` (0.8%) floor so tight SLs don't wick on noise.
-> - **R:R floor check.** Always-on `RR_HARD_FLOOR = 1.3` (#225) — uniform across the trading day. Time-of-day floors (`RR_FLOOR_MORNING/AFTERNOON/LATE`) all pinned to 1.3 since #242; the labels remain in logs (`morning/afternoon/late/relaxed/hard-floor`) only for traceability. The earlier auto-target compression after 1 PM / 2 PM was removed by #242 — pre-shrinking entry targets while the hard floor rejected the resulting R:R was a self-defeating loop. Drift on open positions is owned by stagnant-exit (#172), momentum kill (#198/#233), open-position time-decay (`TARGET_DECAY_PCT`), and the 3:10 PM hard square-off.
+> - **R:R floor check.** Always-on `RR_HARD_FLOOR = 1.3` (#225) — uniform across the trading day. Time-of-day floors (`RR_FLOOR_MORNING/AFTERNOON/LATE`) all pinned to 1.3 since #242; the labels remain in logs (`morning/afternoon/late/relaxed/hard-floor`) only for traceability. The earlier auto-target compression after 1 PM / 2 PM was removed by #242 — pre-shrinking entry targets while the hard floor rejected the resulting R:R was a self-defeating loop. Drift on open positions is owned by stagnant-exit (#172), momentum kill (#198/#233), open-position time-decay (`TARGET_DECAY_PCT`), and the 2:00 PM hard square-off.
 > - **Min profit.** `|target − entry| × qty ≥ effective_min_profit()` (Rs.135 on TINY/SMALL, Rs.200 NORMAL, Rs.400 LARGE — #237).
 >
 > **Portfolio-state gates:**
@@ -346,13 +346,13 @@ Every 10 seconds (5s when price is near SL/target), for each open position, the 
 20. **Circuit breaker** (hard). Day P&L < -3% of budget (measured since last baseline reset) → close ALL positions, pause 30 min, resume with loss-adjusted budget. Max 2 trips/day.
 21. **Whipsaw pause.** 3 consecutive losing exits (STOP_LOSS, MOMENTUM_KILL, STAGNANT_EXIT, SIGNAL_DECAY, or LOSER_EXIT with `pnl < 0`; EOD/operator/external closes excluded) → pause new entries for 30 min. Pre-#244 only counted STOP_LOSS hits, which missed today's MOMENTUM_KILL streak.
 
-#### 🕝 2:45 PM — Late-day loser exit
+#### � 1:00 PM — Late-day loser exit
 
-22. **Loser exit.** Any open position with P&L < 0 → exit at market. Breakeven positions get SL tightened to entry ±0.1%. Winners with active trails keep running.
+22. **Loser exit.** Any open position with P&L < 0 → exit at market. Breakeven positions get SL tightened to entry ±0.1%. Winners with active trails keep running. (`LOSER_EXIT_HOUR = 13`.)
 
-#### 🕒 3:10 PM — Forced square off
+#### 🕑 2:00 PM — Forced square off
 
-23. **Square off all.** Cancel any pending SL-M, exit every remaining position at MARKET.
+23. **Square off all.** Cancel any pending SL-M, exit every remaining position at MARKET. (`SQUARE_OFF_HOUR = 14`.)
 
 #### 🕓 3:20 PM onward — Reports
 
@@ -448,7 +448,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 7. Fetch actual fill price — scale SL/target proportionally around fill
 8. Place SL-M counter-order on exchange (if `USE_EXCHANGE_SL = True`)
 
-### Phase 4 — Monitor Loop (9:30 AM – 3:10 PM, 9:45 start on expiry Thursdays)
+### Phase 4 — Monitor Loop (9:30 AM – 2:00 PM, 9:45 start on expiry Thursdays)
 
 | Interval | Action | Cost |
 |----------|--------|------|
@@ -467,7 +467,7 @@ Identical in both modes. The entry loop processes candidates in score order (pri
 ### Phase 5 — Square Off & Report
 
 - **2:45 PM (loser exit):** Exit losing positions at market. Tighten breakeven SL to entry ±0.1%. Winners with active trails keep running.
-- **3:10 PM (square off):** Close all remaining positions.
+- **2:00 PM (square off):** Close all remaining positions.
 - Generate `trading_data_{date}.json` + `trading_report_{date}.txt`
 - Record trades to `data/trades.db` (for Claude learning context)
 - Fill intraday tax ledger via `fill_intraday_ledger.py`
@@ -593,16 +593,16 @@ Every trade must pass these 44 checks in order. If any fails, the trade is rejec
 | 11 | **Short cutoff** | `SHORT_ENTRY_CUTOFF_HOUR = 13` | No new shorts after 1 PM. Post-cutoff SELL slots reallocated to BUY (if BUY candidates with score ≥4.0 exist) |
 | 12 | **Max re-entries** | `MAX_REENTRIES_PER_STOCK = 2` | Per stock per day |
 | 13 | **Declining re-entry block** | — | If re-entering a stock on the SAME SIDE already traded today, block when new \|score\| < previous \|score\| (setup weakening). Opposite-side re-entries (a real reversal) bypass this gate AND the per-symbol cooldown (16a, keyed by SYMBOL_SIDE); they are protected by the standard entry gates — ADX, RSI, VWAP, gap-coherence (#185) |
-| 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 70`, `RSI_BUY_BLOCK_THRESHOLD = 75` | Block SELL when RSI > 70 (buying pressure). Block BUY when RSI > 75 (overbought extension). Block BUY when RSI < 30. Block SELL when RSI < 25 (oversold extension) |
+| 14 | **RSI contradiction filter (symmetric)** | `RSI_SELL_BLOCK_THRESHOLD = 100`, `RSI_BUY_BLOCK_THRESHOLD = 100` | **⚠️ DISABLED by 2026-05-26 audit (gates G1–G4).** Thresholds set to 100 (ceilings) / 0 (floors) so nothing is blocked. When enabled it blocked SELL when RSI > ceiling (buying pressure), BUY when RSI > ceiling (overbought) and the symmetric floors. The SELL floor (G4) was the single biggest hidden PF killer (−10%). |
 | 14b | **Pattern-direction entry veto** (#190) | `PATTERN_VETO_ENABLED = True`, override `PATTERN_VETO_OVERRIDE_SCORE = 8.0` | Mirror of SIGNAL_REVERSAL exit (#174) at ENTRY. If entry-tick patterns include an opposite-side reversal (BUY with `BEARISH_ENGULFING`/`EVENING_STAR`/`BEARISH_HARAMI`/`SHOOTING_STAR`/`HANGING_MAN`/`THREE_BLACK_CROWS`, mirror set for SELL) AND `\|score\| < 8.0`, skip. Catches PNB/TRENT-style 2026-04-22 stagnant losers where score absorbed pattern weight but the chart was printing a flip pattern |
 | 14c | **Pattern↔tech contradiction penalty** (#200, scanner-side) | `PATTERN_CONTRADICTION_PENALTY_ENABLED = True`, `PATTERN_CONTRADICTION_PENALTY = 2.0`, `PATTERN_INDECISION_PENALTY = 0.5` | Applied at scanner combine before any entry gates run. Subtracts 2.0 from `\|combined_score\|` when patterns include an opposite-side reversal (e.g. BUY candidate showing `BEARISH_*`) and 0.5 when patterns include indecision (`DOJI`). Penalties stack and are clamped at 0 (sign never flips). Operates on magnitude so symmetric for BUY/SELL. Same-direction patterns are not boosted (zero is the floor). Closes the gap where high tech score outvoted contradicting visual structure |
 | 14d | **Tape-breadth filter** (#212, scanner-side) | `BREADTH_FILTER_ENABLED = True`, `BREADTH_BEARISH_BUY_RATIO = 0.30`, `BREADTH_BULLISH_SELL_RATIO = 0.30`, `BREADTH_PENALTY = 0.5`, `BREADTH_MIN_CANDIDATES = 5` | After the MIN_SCORE filter, count BUYs vs SELLs in `passed_score`. If `buy_ratio ≤ 0.30` (bearish tape), subtract 0.5 from `\|combined_score\|` of every remaining BUY (mirror for bullish tape and SELLs). Operates on magnitude so sign is preserved. Re-applies the score floor afterwards so penalised-below-floor candidates drop out naturally before the entry pipeline ever sees them. Skipped when `len(passed_score) < 5`. Closes the FII-heavy-sell day pattern where individual scores look fine but the broader tape is one-directional |
-| 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 12` (regime-adjusted) | Prevent overtrading churn. Expiry: capped at `EXPIRY_MAX_TRADES_PER_DAY = 5`. Budget-regime deltas (#165): TINY -4, SMALL -2, NORMAL 0, LARGE +3 |
+| 15 | **Daily trade cap** | `MAX_TRADES_PER_DAY = 2` (portfolio-level; was 12) | **CHANGED by 2026-05-26 audit (gate K1): 12 → 2.** Counts open + closed + external positions, enforced in `order_engine.enter_trade()` via `effective_trade_cap()`. PF 0.71 → 0.81. Regime deltas exist (`BUDGET_TRADE_CAP_DELTA`) but `BUDGET_REGIME_ENABLED = False`, so the live cap is a flat 2. Expiry can tighten further via `EXPIRY_MAX_TRADES_PER_DAY`. |
 | 16 | **Stagnant churn guard** | — | If a stock+direction was exited as stagnant today, don't re-enter it |
 | 16a | **Per-symbol re-entry cooldown** (#161) | `RE_ENTRY_COOLDOWN_MINUTES = 30` | Block re-entry of same SYMBOL_SIDE within 30 min after ANY exit (SL / target / stagnant / external). Opposite direction still allowed. Override at \|score\| ≥ `RE_ENTRY_SCORE_OVERRIDE` (7.0) |
 | 16b | **Average-down prevention** (#195) | `AVG_DOWN_PREVENTION_ENABLED = True`, `AVG_DOWN_SCORE_DELTA = 1.0`, `AVG_DOWN_LOOKBACK_MINUTES = 120`, override `AVG_DOWN_OVERRIDE_SCORE = 8.0` | Runs AFTER cooldown 16a. When the prior exit of the same SYMBOL_SIDE was `STAGNANT_EXIT` or `SIGNAL_DECAY` within the last 120 min AND `\|new_score - last_exit_score\| ≤ 1.0`, reject the re-entry as same-magnitude false signal. Override at `\|score\| ≥ 8.0` for genuine reversal-strength signals. SIGNAL_DECAY callers stamp `pos['_exit_score'] = fresh_score` so the gate compares against the decayed score; STAGNANT_EXIT falls back to `_entry_score` |
-| 17 | **VWAP trend block** | ±0.3% deviation | After 10:15 AM only (VWAP needs ≥1 hour of candles for stability). Block BUY when price > 0.3% below VWAP. Block SELL when price > 0.3% above VWAP (fighting institutional flow) |
-| 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 0.8`, override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | Block BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move). Override allowed when \|score\| ≥ 6.0 |
+| 17 | **VWAP trend block** | `VWAP_TREND_FIGHT_PCT = 99` (disabled) | **⚠️ DISABLED by 2026-05-26 audit (gate G6) — inert, removed <3% of trades.** When enabled (was ±0.3% after 10:15 AM) it blocked BUY when price > 0.3% below VWAP and SELL when > 0.3% above VWAP (fighting institutional flow). |
+| 17b | **VWAP extension block** | `VWAP_EXTENSION_BLOCK_PCT = 99` (disabled), override `VWAP_EXT_SCORE_OVERRIDE = 6.0` | **⚠️ DISABLED by 2026-05-26 audit (gate G7) — every level made PF worse.** When enabled (was 0.8%) it blocked BUY when price > +0.8% above VWAP / SELL when > 0.8% below VWAP (chasing extended move), with override at \|score\| ≥ 6.0. |
 | 17d | **VWAP statistical-band gate** (#201) | `VWAP_BAND_GATE_ENABLED = True`, override `VWAP_BAND_OVERRIDE_SCORE = 7.0` | Reads `vwap_band` classification (`AT_UPPER_2SD` / `AT_UPPER_1SD` / `INSIDE` / `AT_LOWER_1SD` / `AT_LOWER_2SD`) from the entry-tick indicator snapshot. Block BUY when price sits at upper 1σ/2σ band and SELL when at lower 1σ/2σ. Stricter than 17b's % distance check because bands adapt to today's realised volatility; complementary defence (both can act). Override at \|score\| ≥ 7.0 (intentionally above 17b's 6.0 — only the strongest convictions justify chasing a statistical extension). Fails open if snapshot/band field missing |
 | 17c | **Fresh reversal guard** | `FRESH_REVERSAL_DELTA_THRESHOLD = 8.0` | If \|score_delta since last scan\| ≥ 8, wait one more cycle for confirmation. Avoids trading the first bar of a violent reversal |
 | 18 | **Net-of-charges R:R** | Net R:R ≥ 1.0:1 | Computes round-trip charges; ensures profit after costs ≥ risk after costs |
@@ -669,9 +669,9 @@ Only active when `USE_EXCHANGE_SL=True` AND `DRY_RUN=False`.
 
 ### Time-Decay Target Reduction
 
-After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`) of entry-to-target distance. Applied once per position. Skipped if late-entry reduction was already applied (prevents stacking).
+**⚠️ Currently DISABLED** (`TARGET_DECAY_AFTER_HOUR = 24`, never reached). When enabled, after 2 PM it reduced the target by 25% (`TARGET_DECAY_PCT`) of entry-to-target distance, applied once per position, skipped if late-entry reduction was already applied (prevents stacking). With the post-audit 2:00 PM square-off this overlaps the close, so it was turned off.
 
-### Late-Day Loser Exit (2:45 PM)
+### Late-Day Loser Exit (1:00 PM)
 
 | Position State | Action |
 |---------------|--------|
@@ -679,7 +679,7 @@ After 2 PM (`TARGET_DECAY_AFTER_HOUR`), reduce target by 25% (`TARGET_DECAY_PCT`
 | Near breakeven | Tighten SL to entry ±0.1% |
 | Winning with trail | Trail stop handles it — keep running until square-off |
 
-**Note:** This is NOT the full square-off. Renamed from `EOD_EXIT` to `LOSER_EXIT` because it only exits losers. Real square-off is at 3:10 PM (`SQUARE_OFF_HOUR:SQUARE_OFF_MINUTE`).
+**Note:** This is NOT the full square-off. Renamed from `EOD_EXIT` to `LOSER_EXIT` because it only exits losers. Real square-off is at 2:00 PM (`SQUARE_OFF_HOUR:SQUARE_OFF_MINUTE` = 14:00). Loser exit now fires at 1:00 PM (`LOSER_EXIT_HOUR = 13`), one hour before square-off, per the 2026-05-26 audit (gate L10).
 
 ### Adoption Grace Window
 
@@ -861,7 +861,7 @@ On weekly F&O expiry Thursdays, NIFTY stocks see wider swings due to options set
 | Score bump | `EXPIRY_SCORE_BUMP = 1.0` | Added to MIN_SCORE → demand stronger signals |
 | Stagnant timer | `EXPIRY_STAGNANT_EXTRA_MINUTES = 15` | Extends stagnant exit timer to reduce churn on fewer slots |
 | Entry delay | `EXPIRY_ENTRY_DELAY_MINUTES = 30` | Wait until 9:45 AM on market-open starts (ORB candle complete, F&O settlement calmed). Late-start smart reduction floors at `EXPIRY_ENTRY_DELAY_LATE_FLOOR = 15` min |
-| Trade cap | `EXPIRY_MAX_TRADES_PER_DAY = 5` | Caps total trades on expiry to prevent churn (each cycle costs ~Rs.36) |
+| Trade cap | `EXPIRY_MAX_TRADES_PER_DAY = 0` (disabled) | Disabled by the 2026-05-26 audit — expiry days now fall back to the base `MAX_TRADES_PER_DAY = 2` cap (each cycle costs ~Rs.36) |
 
 ---
 
@@ -1057,7 +1057,7 @@ This only applies in NoAI mode. In `--ai` mode, Claude adjusts risk appetite via
 | `EXPIRY_STAGNANT_EXTRA_MINUTES` | 15 | Extend stagnant timer on expiry days |
 | `EXPIRY_ENTRY_DELAY_MINUTES` | 30 | Wait until 9:45 on expiry (ORB complete) |
 | `EXPIRY_ENTRY_DELAY_LATE_FLOOR` | 15 | Late-start floor on expiry |
-| `EXPIRY_MAX_TRADES_PER_DAY` | 5 | Cap trades on expiry |
+| `EXPIRY_MAX_TRADES_PER_DAY` | 0 | Disabled (audit 2026-05-26); expiry falls back to base cap of 2 |
 | `EXPIRY_MIN_SL_DISTANCE_PCT` | 1.0% | Override MIN_SL floor on expiry |
 | `FII_DII_ENABLED` | True | Fetch FII/DII flow data |
 | `PREOPEN_ENABLED` | True | Fetch pre-open auction data |

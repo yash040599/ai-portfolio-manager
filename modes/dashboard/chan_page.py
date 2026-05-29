@@ -533,7 +533,6 @@ def render_chan_page() -> str:
 
 <section class="status-strip">
   <div><span>Stage</span><strong>{html.escape(str(getattr(Config, 'TRADE_STAGE_NAME', '-')))}</strong></div>
-  <div><span>Phase</span><strong>{html.escape(str(getattr(Config, 'TRADE_RESEARCH_STAGE', '-')))} - {html.escape(str(getattr(Config, 'TRADE_RESEARCH_PHASE_LABEL', '-')))}</strong></div>
   <div><span>Profile</span><strong>{html.escape(profile)}</strong></div>
   <div><span>Config</span><strong>{html.escape(version)} / {html.escape(config_hash)}</strong></div>
   <div><span>Live trading</span><strong>{'Paused' if getattr(Config, 'TRADE_LIVE_TRADING_PAUSED', False) else 'Enabled'}</strong></div>

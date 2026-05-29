@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import time
+
 from config      import Config
 from core.logger import Logger
 
@@ -22,6 +24,14 @@ from core.logger import Logger
 # in-memory counter resets on every process restart, which is
 # misleading).
 GEMINI_FREE_DAILY_LIMIT: int = 500
+
+# Retry config for transient errors (503, rate-limit, timeout).
+MAX_RETRIES: int = 3
+RETRY_BACKOFF_SECONDS: list[float] = [2.0, 5.0, 10.0]
+
+# Fallback chain: order of providers to try after primary fails.
+# Only providers with a configured API key are eligible.
+FALLBACK_CHAIN: list[str] = ["gemini", "gpt", "claude"]
 
 
 class LLMClient:
@@ -40,16 +50,21 @@ class LLMClient:
     def call(self, prompt: str) -> str:
         """
         Sends a prompt to the active AI provider and returns the
-        response text.  Raises on failure — callers handle retry.
+        response text.
 
-        On quota/credit exhaustion: prints a provider-specific top-up
-        guide to the console and log, then re-raises.  The code NEVER
-        auto-switches to a different (potentially paid) provider.
+        Retry policy (built-in):
+          1. Try primary provider up to MAX_RETRIES with exponential
+             backoff on transient errors (503, rate-limit, timeout).
+          2. If all retries fail AND the error is retryable, offer
+             the user an interactive fallback to the next provider
+             in FALLBACK_CHAIN that has a configured API key.
+          3. Fallback to a PAID provider requires explicit user
+             approval via terminal prompt (never auto-charges).
+          4. Quota/credit exhaustion is NOT retried — shows top-up
+             guide and re-raises immediately.
         """
         provider = self.cfg.AI_PROVIDER
         plan     = self.cfg.ai()
-
-        # Build log line
         cost_info = plan['cost_inr_approx']
 
         self.log.info(
@@ -57,25 +72,114 @@ class LLMClient:
             f"({self.cfg.AI_PLAN}) — {cost_info}"
         )
 
+        # ── Phase 1: retry primary provider with backoff ──
+        last_exc = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return self._dispatch(provider, plan, prompt)
+            except Exception as exc:
+                last_exc = exc
+                err_msg = self.classify_error(exc)
+
+                if self._is_quota_error(exc):
+                    # Quota = permanent, don't retry
+                    guide = self.topup_guide(provider)
+                    print(guide)
+                    self.log.error(
+                        f"[AI] {provider.upper()} quota/credit exhausted. "
+                        f"Add funds or switch provider (see console output)."
+                    )
+                    raise
+
+                if not self.is_retryable(err_msg):
+                    self.log.error(f"[AI] Non-retryable error: {err_msg}")
+                    raise
+
+                if attempt < MAX_RETRIES - 1:
+                    wait = RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    self.log.warning(
+                        f"[AI] {provider.upper()} attempt {attempt + 1}/{MAX_RETRIES} "
+                        f"failed: {err_msg}. Retrying in {wait}s..."
+                    )
+                    time.sleep(wait)
+                else:
+                    self.log.error(
+                        f"[AI] {provider.upper()} failed after {MAX_RETRIES} attempts: {err_msg}"
+                    )
+
+        # ── Phase 2: interactive fallback to another provider ──
+        fallback_provider = self._find_fallback(provider)
+        if fallback_provider is None:
+            self.log.error("[AI] No fallback provider available (no other API keys configured).")
+            raise last_exc  # type: ignore[misc]
+
+        fallback_plan = self._get_provider_plan(fallback_provider)
+        is_paid = fallback_plan.get("free_tier") is None
+        cost_label = fallback_plan["cost_inr_approx"]
+
+        # Ask user for approval (especially for paid providers)
+        print(f"\n  ⚠  {provider.upper()} is unavailable after {MAX_RETRIES} retries.")
+        print(f"  →  Fallback available: {fallback_provider.upper()} / {fallback_plan['model']}")
+        if is_paid:
+            print(f"  💰 This is a PAID provider. Estimated cost: {cost_label}")
+        else:
+            print(f"  🆓 This is a FREE-tier provider. Cost: {cost_label}")
+
         try:
-            if provider == "gemini":
-                return self._call_gemini(plan, prompt)
-            elif provider == "gpt":
-                return self._call_gpt(plan, prompt)
-            elif provider == "claude":
-                return self._call_claude(plan, prompt)
-            else:
-                raise ValueError(f"Unknown AI_PROVIDER: {provider!r}")
-        except Exception as exc:
-            if self._is_quota_error(exc):
-                guide = self.topup_guide(provider)
-                # Print to console so the user sees it immediately
-                print(guide)
-                self.log.error(
-                    f"[AI] {provider.upper()} quota/credit exhausted. "
-                    f"Add funds or switch provider (see console output)."
-                )
-            raise
+            answer = input("  Approve fallback? [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+
+        if answer != "y":
+            self.log.info("[AI] User declined fallback. Raising original error.")
+            raise last_exc  # type: ignore[misc]
+
+        self.log.info(
+            f"[AI] User approved fallback → {fallback_provider.upper()} / "
+            f"{fallback_plan['model']} ({cost_label})"
+        )
+
+        # Single attempt on fallback (no retry chain of chains)
+        return self._dispatch(fallback_provider, fallback_plan, prompt)
+
+    # ================================================================
+    # DISPATCH (routes to provider-specific method)
+    # ================================================================
+
+    def _dispatch(self, provider: str, plan: dict, prompt: str) -> str:
+        """Route to the correct provider call method."""
+        if provider == "gemini":
+            return self._call_gemini(plan, prompt)
+        elif provider == "gpt":
+            return self._call_gpt(plan, prompt)
+        elif provider == "claude":
+            return self._call_claude(plan, prompt)
+        else:
+            raise ValueError(f"Unknown AI_PROVIDER: {provider!r}")
+
+    def _find_fallback(self, failed_provider: str) -> str | None:
+        """Find the next provider in FALLBACK_CHAIN with a valid API key."""
+        key_map = {
+            "gemini": self.cfg.GEMINI_API_KEY,
+            "gpt":    self.cfg.OPENAI_API_KEY,
+            "claude": self.cfg.CLAUDE_API_KEY,
+        }
+        for p in FALLBACK_CHAIN:
+            if p != failed_provider and key_map.get(p):
+                return p
+        return None
+
+    def _get_provider_plan(self, provider: str) -> dict:
+        """Get the plan dict for a specific provider at current AI_PLAN level."""
+        table_attr = self.cfg._AI_PROVIDER_TABLE.get(provider)
+        if not table_attr:
+            raise ValueError(f"Unknown provider: {provider!r}")
+        rules = getattr(self.cfg, table_attr)
+        # Try current plan level, fall back to "basic" if not available
+        plan_name = self.cfg.AI_PLAN
+        if plan_name not in rules:
+            plan_name = "basic"
+        return rules[plan_name]
 
     # ================================================================
     # GEMINI

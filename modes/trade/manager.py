@@ -2503,34 +2503,30 @@ class PortfolioManager:
     # OVERRIDE: BANNER
     # ================================================================
 
-    def _research_phase_status(self) -> tuple[str, str, str, bool]:
-        """Return Stage 0 status fields without affecting strategy config hash."""
-        stage = getattr(self.cfg, "TRADE_RESEARCH_STAGE", "").strip()
-        label = getattr(self.cfg, "TRADE_RESEARCH_PHASE_LABEL", "").strip()
-        note = getattr(self.cfg, "TRADE_RESEARCH_PHASE_NOTE", "").strip()
-        paused = bool(getattr(self.cfg, "TRADE_LIVE_TRADING_PAUSED", False))
-        return stage, label, note, paused
+    def _live_trading_paused(self) -> bool:
+        """True when config pauses live order placement.
+
+        The Chan research-phase stage/label/note attributes were removed
+        by the 2026-05-26 audit; `TRADE_LIVE_TRADING_PAUSED` is now the
+        single switch that gates live order placement.
+        """
+        return bool(getattr(self.cfg, "TRADE_LIVE_TRADING_PAUSED", False))
 
     def _should_abort_live_trading_for_reset(self) -> bool:
-        _stage, label, _note, paused = self._research_phase_status()
-        return bool(label and paused and not self.cfg.DRY_RUN)
+        # Abort a *live* run when trading is paused by config. Dry-run is
+        # always allowed (read-only simulation).
+        return self._live_trading_paused() and not self.cfg.DRY_RUN
 
     def _log_research_reset_status(self):
-        stage, label, note, paused = self._research_phase_status()
-        if not label:
+        if not self._live_trading_paused():
             return
 
-        title = f"{stage} - {label}" if stage else label
-        self.log.section(title.upper())
-        if note:
-            self.log.info(note)
-        if paused:
-            self.log.warning(
-                "Live order placement is paused by reset policy. "
-                "Use local evidence, replay, or --dryrun until promotion gates pass."
-            )
-        else:
-            self.log.info("Live order placement is enabled by config.")
+        self.log.section("LIVE TRADING PAUSED")
+        self.log.warning(
+            "Live order placement is paused by config "
+            "(TRADE_LIVE_TRADING_PAUSED=True). Use local evidence, replay, "
+            "or --dryrun until promotion gates pass."
+        )
 
         tele = getattr(getattr(self, "scanner", None), "telemetry", None)
         if tele is None:
@@ -2577,12 +2573,8 @@ class PortfolioManager:
         if self._noai:
             print(f"  AI model       : NONE (pure technical signals)")
         print(f"  Price source   : {zrd['price_source'].upper()}")
-        stage, label, _note, paused = self._research_phase_status()
-        if label:
-            phase = f"{stage} - {label}" if stage else label
-            print(f"  Research phase : {phase}")
-            if paused:
-                print(f"  Live trading   : PAUSED by reset policy")
+        if self._live_trading_paused():
+            print(f"  Live trading   : PAUSED (TRADE_LIVE_TRADING_PAUSED=True)")
         print()
         print(f"  \033[96m★ Trade Strategy\033[0m : {strategy_profile or 'Candle patterns + Technical indicators'}")
         if stage_name:

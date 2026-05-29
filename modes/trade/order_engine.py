@@ -2688,9 +2688,7 @@ class OrderEngine:
         # trades on Zerodha still use slots and add to daily churn.
         # Regime-adjusted (Roadmap #165): tighter for small accounts,
         # looser for large ones.
-        max_daily = self.effective_trade_cap()
-        if getattr(self.cfg, '_expiry_applied', False):
-            max_daily = min(max_daily, self.cfg.EXPIRY_MAX_TRADES_PER_DAY)
+        max_daily = self._effective_daily_trade_cap()
         if max_daily > 0:
             total_trades = len(self.positions)  # open + closed + external
             if total_trades >= max_daily:
@@ -5048,6 +5046,23 @@ class OrderEngine:
             return base
         delta = self.cfg.BUDGET_TRADE_CAP_DELTA.get(self.budget_regime(), 0)
         return max(1, base + int(delta))
+
+    def _effective_daily_trade_cap(self) -> int:
+        """Daily trade cap after expiry tightening. 0 means "no cap".
+
+        Expiry tightening is a *further* cap, not a disable switch.
+        `EXPIRY_MAX_TRADES_PER_DAY == 0` means "no expiry-specific
+        tightening" (audit 2026-05-26 default), so we fall back to the
+        base cap. We only apply `min()` when the expiry cap is a real
+        positive value — otherwise `min(base, 0)` would silently disable
+        the K1 daily cap on expiry Thursday, the most volatile and
+        expensive day of the week.
+        """
+        max_daily = self.effective_trade_cap()
+        expiry_cap = int(self.cfg.EXPIRY_MAX_TRADES_PER_DAY)
+        if getattr(self.cfg, "_expiry_applied", False) and expiry_cap > 0:
+            max_daily = min(max_daily, expiry_cap)
+        return max_daily
 
     def effective_min_score(self) -> float:
         """MIN_SCORE with regime delta applied."""

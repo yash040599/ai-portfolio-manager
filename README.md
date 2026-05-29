@@ -1037,7 +1037,7 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 - **Charge-aware target (retuned by #238)** — gross target ≥ 3× round-trip charges (was 2×), so every trade carries 2× charges of slippage cushion.
 - **Budget-adaptive minimum profit (#237)** — `effective_min_profit()` floor: Rs.135 on TINY/SMALL (3× typical round-trip charges), Rs.200 NORMAL, Rs.400 LARGE. Auto-scales when you raise `--max`.
 - **Budget-adaptive spread cap (#236)** — `effective_max_spread()`: 0.20% on TINY/SMALL, 0.30% NORMAL/LARGE. Tighter cap on small budgets where spread eats a large share of the per-trade charge hurdle.
-- **Budget-regime trade cap** — `MAX_TRADES_PER_DAY` is regime-tightened: 8 on TINY/SMALL (#240), 12 NORMAL, 15 LARGE. Forces fewer-and-better trades at small budgets where charge hurdle is high.
+- **Budget-regime trade cap** — `MAX_TRADES_PER_DAY` can be regime-tightened via `BUDGET_TRADE_CAP_DELTA`, but `BUDGET_REGIME_ENABLED = False` post-2026-05-26 audit, so the live cap is a flat **2 trades/day** (gate K1). Forces fewer-and-better trades where the per-trade charge hurdle is high.
 - **Budget-regime gates** — ADX, score floor, and trade-cap auto-tighten on TINY/SMALL accounts (#165).
 - **Loss-adjusted sizing** — shrinks position size after losses.
 - **ATR-based SL/target** — pure ATR with structural-level cap.
