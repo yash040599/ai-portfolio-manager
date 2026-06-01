@@ -1,12 +1,12 @@
 # Trading Roadmap
 
-Last updated: 2026-06-01 (Phase 1.4 + Phase 2 done — best achievable OOS PF 1.10; 5-min/ORB-5 a dead end; still below the 1.15 gate).
+Last updated: 2026-06-01 (Phases 1–6 done — momentum levers top out at OOS PF 1.10; intraday pairs trading rejected (wrong horizon). No intraday edge demonstrated; market-neutral edge, if any, belongs in the SWING tool).
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PHASE 1+2 DONE — best OOS PF 1.10 (VOLATILE-only regime gate), still < 1.15.** 5-min entries (OOS 0.70) and ORB-5 (OOS 0.66) are worse than 15-min; tighter timeframe adds no edge. Next lever: a *different entry signal* to stack on the regime gate (Phase 3+/6), not finer timing |
+| Stage | **PHASES 1–6 DONE — best OOS PF 1.10 (VOLATILE-only regime gate, FIXED target), still < 1.15.** Momentum levers exhausted: 5-min entries (OOS 0.70), ORB-5 (0.66), VWAP-trail (VOLATILE 1.10→0.78) all fail. **Intraday pairs trading (Phase 6) REJECTED** — OOS PF 0.48–0.69, negative in-sample too: sector spreads mean-revert over ~10–40 *days* (OU half-life 270–3000×15-min bars), so intraday EOD square-off exits before convergence while paying two-leg costs daily = structural bleed. **Conclusion: no intraday edge found across any hypothesis.** The market-neutral idea is sound but horizon-mismatched — it belongs in the SWING tool, not the intraday trade tool. |
 | Mode | AI mode: Gemini 2.5 Flash selects 2 trades/day from NIFTY50 |
 | Run command | python main.py --mode trade --ai (use --dry-run only — not for real capital) |
 | Live trading | **DO NOT GO LIVE** — Phase 0 walk-forward (2026-05-29) confirmed negative out-of-sample expectancy. Going live is expected to lose money. |
@@ -14,7 +14,7 @@ Last updated: 2026-06-01 (Phase 1.4 + Phase 2 done — best achievable OOS PF 1.
 | Config version | 2.0-2026-05-26-BACKTEST_OPTIMIZED |
 | FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
 
-> **Where we are → where next (plain English):** The system has no edge yet (best honest out-of-sample PF is 1.10, target is 1.15). We proved two things: (1) *which market regime* you trade matters a lot — trading only VOLATILE days lifts PF from 0.82 to 1.10; (2) trading on a *faster clock* (5-min) does **not** help — it's worse. Conclusion: we don't need a faster timeframe, we need a **genuinely different entry signal** to stack on the regime gate. **Next = Phase 3 (VWAP-trailing-stop on trend days)**, then Phase 6 pairs trading if still short. No real money until a stacked system clears 1.15 out-of-sample.
+> **Where we are → where next (plain English):** The intraday trade tool has **no demonstrable edge**. We tested every reasonable lever on the momentum signal — *which days* to trade (regime), *how fast* (5-min vs 15-min), *how to exit* (VWAP trail) — and the best honest out-of-sample result is PF 1.10, short of the 1.15 needed to cover costs with margin. We then tested a genuinely different, market-neutral idea, **pairs trading**, and it failed too (PF 0.48–0.69 OOS) — but for a *diagnosable* reason: the price spreads between paired stocks only snap back over **weeks**, not within a day, so an intraday tool that must close every position by 3:15 PM pays double costs and exits before the trade works. **Decision (PM call): do NOT deploy capital to the intraday trade tool.** The one promising thread — market-neutral pairs trading — should be rebuilt in the **SWING (multi-day) tool**, where the ~10–40 day mean-reversion horizon actually fits. The intraday tool stays paused.
 
 > **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
@@ -206,16 +206,30 @@ ORB-5 collapses out-of-sample (TRAIN 1.02 → TEST 0.66) — classic overfit, an
 
 ### Phase 3: VWAP-as-Trailing-Stop (Trend Days Only)
 **Goal**: Test VWAP twist — use VWAP as trailing stop on trend trades instead of MR target.
-**Trigger**: After Phase 2 verdict. **← THIS IS THE ACTIVE NEXT STEP (2026-06-01).** Phase 1+2 proved the regime gate is the only working lever so far (OOS PF 1.10) and that finer timeframes are a dead end — so the next move is a *different exit/entry signal*, not more timing. VWAP-trail is the cheapest such signal (data already on hand, no new deps), tested specifically on the TREND/VOLATILE regimes where the scorer already holds up.
+**Trigger**: After Phase 2 verdict. **DONE — REJECTED (2026-06-01).** VWAP-trail was the cheapest different-exit signal (data on hand, no new deps); it tightens the loss distribution but clips the fat winners on volatile days, so it does not clear the gate (see results below). The active next step is now **Phase 6 (pairs trading)**.
 
 | Step | Action | Rationale | Done? |
 |---|---|---|---|
-| 3.1 | Backtest: on TREND-regime days, replace fixed ATR target with VWAP trail | FIIs anchor to VWAP; price holding above VWAP post-10AM has strong follow-through on NSE | |
-| 3.2 | Compare PF, avg winner size, avg hold time vs fixed target | |
-| 3.3 | If better: dry-run for 5 sessions | |
-| 3.4 | Verdict: keep/reject | |
+| 3.1 | Backtest: on TREND-regime days, replace fixed ATR target with VWAP trail | FIIs anchor to VWAP; price holding above VWAP post-10AM has strong follow-through on NSE | ✅ |
+| 3.2 | Compare PF, avg winner size, avg hold time vs fixed target | | ✅ |
+| 3.3 | If better: dry-run for 5 sessions | | ➖ n/a (did not beat gate) |
+| 3.4 | Verdict: keep/reject | | ✅ REJECT |
 
 **Exit criteria**: VWAP trail verdict on trend-day trades.
+
+#### Phase 3 Results (2026-06-01) — REJECTED
+`scripts/trade/backtest_vwap_trail.py` (adds `gate_vwap_trail` to `simulate_trades`); frozen config, same regime labels + 2-trade/day cap as Phase 1; TRAIN vs TEST(OOS), net of cost.
+
+| Regime keep-set | Mode | TEST PF | TEST Exp% | AvgW% | AvgL% | HoldMin |
+|---|---|---|---|---|---|---|
+| TREND only | FIXED | 0.92 | -0.030 | 0.815 | -0.616 | 175 |
+| TREND only | **VWAP trail** | **0.94** | -0.018 | 0.900 | -0.448 | 133 |
+| VOLATILE only | FIXED | **1.10** | +0.039 | 1.015 | -0.724 | 184 |
+| VOLATILE only | **VWAP trail** | **0.78** | -0.089 | 0.921 | -0.625 | 141 |
+| TREND+VOLATILE | FIXED | 0.99 | -0.004 | 0.892 | -0.655 | 178 |
+| TREND+VOLATILE | **VWAP trail** | **0.87** | -0.044 | 0.908 | -0.512 | 136 |
+
+**Verdict: REJECT.** The VWAP trail *tightens the P&L distribution* — it cuts the average loser (e.g. -0.616 → -0.448 on TREND) and shortens holds (~175 → ~135 min), which nudges the weak TREND regime up a hair (0.92 → 0.94). **But it does the opposite of what's needed on the one regime that works:** VOLATILE-only collapses from **PF 1.10 → 0.78** because the trail clips the *fat right tail* (the few big winners) that volatile days exist to capture. Net: **no regime keep-set clears PF 1.15 OOS**, and the best honest configuration is unchanged — **FIXED target on VOLATILE-only, PF 1.10**. Lesson: on high-variance days, *let winners run* (fixed RR or wider) beats *trail tight*; the edge gap is still the entry **signal/selection**, not the exit mechanic. Next lever must be a genuinely *different, lower-correlation* source of edge → **Phase 6 pairs trading** (market-neutral) is now the highest-priority candidate, with Phase 4 order-flow as the fallback.
 
 ---
 
@@ -253,7 +267,7 @@ ORB-5 collapses out-of-sample (TRAIN 1.02 → TEST 0.66) — classic overfit, an
 
 ### Phase 6: New Strategy (Only if PF still < 1.15)
 **Goal**: Add a second strategy to the system (market-neutral or options-based).
-**Trigger**: Only if Phases 1-5 have not achieved promotion-gate PF.
+**Trigger**: Only if Phases 1-5 have not achieved promotion-gate PF. **← NOW THE ACTIVE NEXT STEP (2026-06-01)** — Phases 1–3 exhausted the regime/timeframe/exit-mechanic levers on the existing momentum signal (best OOS PF 1.10 < 1.15). A genuinely *different, lower-correlation* edge is required. **Pairs trading is the highest-priority candidate** (market-neutral, sheds the directional-beta drag that sinks every long/short momentum variant).
 
 | Candidate | Prerequisites |
 |---|---|
@@ -262,6 +276,25 @@ ORB-5 collapses out-of-sample (TRAIN 1.02 → TEST 0.66) — classic overfit, an
 | Intraday momentum (first-half → last-half) | Simple; can backtest on existing candle data |
 
 **Decision on which candidate**: Made after Phase 5 based on what the data shows.
+
+#### Phase 6 Results (2026-06-01) — Pairs trading REJECTED (intraday); REDIRECT to swing
+`scripts/trade/backtest_pairs.py`. Market-neutral stat-arb on NIFTY50 same-sector pairs (`SECTOR_MAP`). Strict no-lookahead: hedge ratio β = OLS on TRAIN log-prices (frozen); pair selection (correlation ≥ floor, OU half-life band) on TRAIN only; traded OOS on TEST with a causal trailing-window z-score; **costs charged on both legs** via `Config.calculate_charges`; intraday MIS with 15:15 square-off.
+
+**The killer finding is in pair selection, not the P&L:** the OU **half-life of every viable sector spread is 270–3000+ 15-min bars** (÷ ~25 bars/day = **~10–120 trading days**). The spreads mean-revert over *weeks*, so an intraday tool that must flatten by 15:15 exits long before convergence while paying two-leg costs every day.
+
+| Run (15 / 10 pairs, net of 2-leg cost) | TRAIN PF | TEST(OOS) PF | OOS Exp% | OOS net |
+|---|---|---|---|---|
+| entry-z 2.0, roll 26 (15 pairs) | 0.57 | **0.48** | -0.079 | -Rs.82,349 |
+| entry-z 3.0, roll 26 (10 pairs, extremes only) | 0.72 | **0.69** | -0.051 | -Rs.12,885 |
+
+Raising the entry threshold cuts trade count (cost drag) and lifts PF 0.48 → 0.69, but it is **negative in-sample too** (0.57 / 0.72) and only 1 of 10 pairs is marginally positive OOS (noise). **Verdict: REJECT for the intraday tool.** This is *not* a parameter-tuning miss — it is a horizon mismatch: the mean-reversion edge is real but multi-day. **Redirect: rebuild pairs trading in the SWING tool** (multi-day holds, where the ~10–40 day half-life fits and two-leg cost is amortised over a much larger move). Options-selling and intraday-momentum candidates remain untested and lower-priority.
+
+| Candidate | Prerequisites |
+|---|---|
+| ~~Pairs trading (intraday)~~ | ❌ REJECTED 2026-06-01 — spread half-life 10–40 days ≫ intraday horizon |
+| **Pairs trading (SWING / multi-day)** | Move to swing tool; daily-candle spread + overnight-risk + financing model |
+| Expiry-day options selling (Thursday NIFTY/BANKNIFTY) | Options infra, Sensibull/Opstra integration |
+| Intraday momentum (first-half → last-half) | Simple; can backtest on existing candle data |
 
 ---
 

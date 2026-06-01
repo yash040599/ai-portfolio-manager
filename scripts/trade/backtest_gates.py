@@ -332,6 +332,7 @@ def simulate_trades(
     gate_rsi_buy_floor: float = 0,       # 0 = disabled, e.g. 30
     gate_rsi_sell_floor: float = 0,      # 0 = disabled, e.g. 25
     gate_max_reentries: int = 0,         # 0 = unlimited, e.g. 2
+    gate_vwap_trail: bool = False,       # Phase 3: VWAP-as-trailing-stop
 ) -> list[dict]:
     """Run the full scoring + simulation pipeline for one symbol.
     Uses a rolling multi-day window for indicator computation."""
@@ -367,12 +368,22 @@ def simulate_trades(
         sl_price = 0.0
         target_price = 0.0
         entry_ts = None
+        vwap_armed = False           # Phase 3: trail only arms once price clears VWAP
+        cum_pv = 0.0                 # running typical-price*volume (intraday VWAP)
+        cum_vol = 0.0
 
         for gi in range(start_idx, end_idx):
             c = all_candles[gi]
             hour = c["ts"].hour
             minute = c["ts"].minute
             li = gi - start_idx  # local index within day
+
+            # ── Running intraday VWAP (Phase 3 trail) ─────────
+            _tp = (c["high"] + c["low"] + c["close"]) / 3
+            _v = c["volume"] or 1
+            cum_pv += _tp * _v
+            cum_vol += _v
+            vwap_run = cum_pv / cum_vol if cum_vol else c["close"]
 
             # ── Square off ────────────────────────────────────
             sq_h = gate_square_off_hour if gate_square_off_hour > 0 else SQUARE_OFF_HOUR
@@ -399,7 +410,20 @@ def simulate_trades(
                         day_pnl += pnl_pct
                         in_trade = False
                         continue
-                    if c["high"] >= target_price:
+                    if gate_vwap_trail:
+                        # Arm once a bar closes above VWAP; then exit when a
+                        # bar closes back below VWAP (let winners run, no fixed target).
+                        if not vwap_armed and c["close"] > vwap_run:
+                            vwap_armed = True
+                        if vwap_armed and c["close"] < vwap_run:
+                            pnl_pct = _pnl("BUY", entry_price, c["close"])
+                            trades.append(_make_trade(symbol, entry_ts, c["ts"], side,
+                                entry_price, c["close"], sl_price, target_price, pnl_pct,
+                                "VWAP_TRAIL", with_costs))
+                            day_pnl += pnl_pct
+                            in_trade = False
+                            continue
+                    elif c["high"] >= target_price:
                         pnl_pct = _pnl("BUY", entry_price, target_price)
                         trades.append(_make_trade(symbol, entry_ts, c["ts"], side,
                             entry_price, target_price, sl_price, target_price, pnl_pct,
@@ -432,7 +456,18 @@ def simulate_trades(
                         day_pnl += pnl_pct
                         in_trade = False
                         continue
-                    if c["low"] <= target_price:
+                    if gate_vwap_trail:
+                        if not vwap_armed and c["close"] < vwap_run:
+                            vwap_armed = True
+                        if vwap_armed and c["close"] > vwap_run:
+                            pnl_pct = _pnl("SELL", entry_price, c["close"])
+                            trades.append(_make_trade(symbol, entry_ts, c["ts"], side,
+                                entry_price, c["close"], sl_price, target_price, pnl_pct,
+                                "VWAP_TRAIL", with_costs))
+                            day_pnl += pnl_pct
+                            in_trade = False
+                            continue
+                    elif c["low"] <= target_price:
                         pnl_pct = _pnl("SELL", entry_price, target_price)
                         trades.append(_make_trade(symbol, entry_ts, c["ts"], side,
                             entry_price, target_price, sl_price, target_price, pnl_pct,
@@ -560,6 +595,7 @@ def simulate_trades(
             side = this_side
             entry_ts = c["ts"]
             in_trade = True
+            vwap_armed = False
             day_trade_count += 1
 
     return trades
