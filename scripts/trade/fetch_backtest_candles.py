@@ -1,14 +1,15 @@
 """
 scripts/trade/fetch_backtest_candles.py
 ================================================================
-Bulk-fetch 15-minute intraday candles from Zerodha for backtesting.
+Bulk-fetch intraday candles from Zerodha for backtesting.
 
-Fetches as far back as Zerodha allows (~2 years for 15-min) for
+Fetches as far back as Zerodha allows (~2 years for intraday) for
 all NIFTY 50/100 stocks and stores them in the backtest-data repo's
-SQLite format (candles/intraday_15m.sqlite).
+SQLite format (candles/intraday_<interval>.sqlite).
 
 Usage:
     python scripts/trade/fetch_backtest_candles.py
+    python scripts/trade/fetch_backtest_candles.py --interval 5minute
     python scripts/trade/fetch_backtest_candles.py --universe NIFTY50
     python scripts/trade/fetch_backtest_candles.py --symbol RELIANCE
     python scripts/trade/fetch_backtest_candles.py --from 2024-06-01 --dry-run
@@ -45,14 +46,35 @@ from shared.nifty_universe import get_universe  # noqa: E402
 DEFAULT_OUT_DIR = os.path.join(
     os.path.dirname(PROJECT_ROOT), "ai-portfolio-backtest-data", "candles"
 )
-OUT_DB_15M = "intraday_15m.sqlite"
 
-# Zerodha allows ~2 years of 15-min candles.
+# Map a Zerodha interval to its backtest-data SQLite filename.
+INTERVAL_DB_FILES = {
+    "minute": "intraday_1m.sqlite",
+    "3minute": "intraday_3m.sqlite",
+    "5minute": "intraday_5m.sqlite",
+    "10minute": "intraday_10m.sqlite",
+    "15minute": "intraday_15m.sqlite",
+    "30minute": "intraday_30m.sqlite",
+    "60minute": "intraday_60m.sqlite",
+}
+
+# Zerodha allows ~2 years of intraday candles.
 # We chunk in 55-day windows (their per-request limit).
 CHUNK_DAYS = 55
 MAX_HISTORY_DAYS = 730  # ~2 years
 
 log = Logger("FetchCandles")
+
+
+def db_file_for_interval(interval: str) -> str:
+    """Return the SQLite filename for a given Zerodha interval."""
+    try:
+        return INTERVAL_DB_FILES[interval]
+    except KeyError:
+        raise SystemExit(
+            f"Unsupported interval '{interval}'. "
+            f"Choose one of: {', '.join(INTERVAL_DB_FILES)}"
+        )
 
 
 def ensure_db(db_path: str) -> None:
@@ -80,15 +102,15 @@ def ensure_db(db_path: str) -> None:
         """)
 
 
-def existing_range(db_path: str, symbol: str) -> tuple[str | None, str | None]:
-    """Return (min_ts, max_ts) for a symbol's 15-min candles, or (None, None)."""
+def existing_range(db_path: str, symbol: str, interval: str) -> tuple[str | None, str | None]:
+    """Return (min_ts, max_ts) for a symbol's candles at this interval, or (None, None)."""
     if not os.path.isfile(db_path):
         return None, None
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             "SELECT MIN(ts_ist), MAX(ts_ist) FROM candles "
-            "WHERE symbol=? AND exchange='NSE' AND interval='15minute'",
-            (symbol,)
+            "WHERE symbol=? AND exchange='NSE' AND interval=?",
+            (symbol, interval)
         ).fetchone()
     if row and row[0]:
         return row[0], row[1]
@@ -101,9 +123,10 @@ def fetch_symbol(
     from_date: datetime.date,
     to_date: datetime.date,
     db_path: str,
+    interval: str = "15minute",
     dry_run: bool = False,
 ) -> int:
-    """Fetch 15-min candles for one symbol and insert into DB.
+    """Fetch candles for one symbol at the given interval and insert into DB.
     Returns number of new rows inserted."""
 
     total_inserted = 0
@@ -123,7 +146,7 @@ def fetch_symbol(
                 exchange="NSE",
                 from_date=chunk_start,
                 to_date=chunk_end,
-                interval="15minute",
+                interval=interval,
             )
         except Exception as exc:
             log.warning(f"  {symbol} {chunk_start}->{chunk_end}: {exc}")
@@ -139,7 +162,7 @@ def fetch_symbol(
                     continue
                 ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
                 rows.append((
-                    symbol, None, "NSE", ts_str, "15minute",
+                    symbol, None, "NSE", ts_str, interval,
                     float(c["open"]), float(c["high"]),
                     float(c["low"]), float(c["close"]),
                     int(c.get("volume", 0)),
@@ -167,8 +190,11 @@ def fetch_symbol(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Bulk-fetch 15-min candles from Zerodha for backtesting."
+        description="Bulk-fetch intraday candles from Zerodha for backtesting."
     )
+    parser.add_argument("--interval", default="15minute",
+                        choices=list(INTERVAL_DB_FILES.keys()),
+                        help="Candle interval (default: 15minute)")
     parser.add_argument("--universe", default="NIFTY50",
                         help="NIFTY50, NIFTY100, NIFTY150, NIFTY200 (default: NIFTY50)")
     parser.add_argument("--symbol", default=None,
@@ -201,9 +227,9 @@ def main():
             print(f"No symbols found for universe {args.universe}")
             sys.exit(1)
 
-    db_path = os.path.join(args.out_dir, OUT_DB_15M)
+    db_path = os.path.join(args.out_dir, db_file_for_interval(args.interval))
 
-    print(f"\n  Fetch 15-min candles: {start} to {end}")
+    print(f"\n  Fetch {args.interval} candles: {start} to {end}")
     print(f"  Universe: {args.universe} ({len(symbols)} symbols)")
     print(f"  Output: {db_path}")
     print(f"  Mode: {'DRY RUN' if args.dry_run else 'LIVE FETCH'}")
@@ -224,7 +250,7 @@ def main():
     grand_total = 0
     for i, sym in enumerate(symbols, 1):
         # Check what we already have
-        min_ts, max_ts = existing_range(db_path, sym) if not args.dry_run else (None, None)
+        min_ts, max_ts = existing_range(db_path, sym, args.interval) if not args.dry_run else (None, None)
 
         # Build list of (fetch_start, fetch_end) ranges to fill gaps
         ranges_to_fetch = []
@@ -249,9 +275,11 @@ def main():
         for fetch_start, fetch_end in ranges_to_fetch:
             print(f"  [{i}/{len(symbols)}] {sym}: {fetch_start} -> {fetch_end}")
             if args.dry_run:
-                fetch_symbol(None, sym, fetch_start, fetch_end, db_path, dry_run=True)
+                fetch_symbol(None, sym, fetch_start, fetch_end, db_path,
+                             interval=args.interval, dry_run=True)
             else:
-                n = fetch_symbol(zerodha, sym, fetch_start, fetch_end, db_path)
+                n = fetch_symbol(zerodha, sym, fetch_start, fetch_end, db_path,
+                                 interval=args.interval)
                 grand_total += n
 
     print(f"\n  Done. Total new rows: {grand_total:,}")
@@ -260,7 +288,7 @@ def main():
         with sqlite3.connect(db_path) as conn:
             row = conn.execute(
                 "SELECT MIN(ts_ist), MAX(ts_ist), COUNT(*), COUNT(DISTINCT symbol) "
-                "FROM candles WHERE interval='15minute'"
+                "FROM candles WHERE interval=?", (args.interval,)
             ).fetchone()
             print(f"  DB range: {row[0]} -> {row[1]}")
             print(f"  Total rows: {row[2]:,}, symbols: {row[3]}")
