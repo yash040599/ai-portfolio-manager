@@ -304,7 +304,15 @@ class PortfolioManager:
                 if self._scan_failed:
                     self.log.error("Scan failed — could not fetch market data. Exiting.")
                 else:
-                    self.log.warning("No trades recommended by Claude. Nothing to do today.")
+                    if self._noai:
+                        self.log.warning("No trades passed the rule-based filters. Nothing to do today.")
+                    else:
+                        provider = self.cfg.AI_PROVIDER.upper()
+                        reason = getattr(self.scanner, "last_scan_rationale", "") or "no reason given"
+                        self.log.warning(
+                            f"No trades recommended by {provider}. Nothing to do today."
+                        )
+                        self.log.info(f"  {provider} rationale: {reason}")
                 self._generate_report()
                 return
 
@@ -399,7 +407,81 @@ class PortfolioManager:
         if self._noai:
             self._run_noai_scan(session_context)
         else:
-            super()._run_pre_market_scan(session_context)
+            self._run_ai_scan(session_context)
+
+    def _run_ai_scan(self, session_context: str = ""):
+        """
+        Pre-market scan with AI. Runs the math pre-filter, then lets the
+        configured AI provider (Gemini / GPT / Claude per
+        Config.AI_PROVIDER) pick the best intraday candidates from the
+        enriched candle/indicator snapshot.
+        """
+        provider = self.cfg.AI_PROVIDER.upper()
+        model = self.cfg.ai().get("model", provider.lower())
+        now = now_ist()
+        market_open = now.replace(
+            hour=self.cfg.MARKET_OPEN_HOUR,
+            minute=self.cfg.MARKET_OPEN_MINUTE,
+            second=0, microsecond=0,
+        )
+
+        if now < market_open:
+            self.log.section(f"PRE-MARKET SCAN ({provider})")
+        else:
+            self.log.section(f"MARKET SCAN ({provider} — joined late)")
+            self.log.info(f"Started at {now.strftime('%I:%M %p')} — picking stocks at current prices")
+
+        self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
+        self.log.info(f"Budget: Rs.{self._budget:,.2f}")
+        self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
+        self.log.info(f"Selection: math pre-filter → {provider} ({model})")
+
+        universe = self.scanner.get_universe()
+        self.log.info(f"Scanning {len(universe)} stocks...")
+
+        # Fetch live quotes for the universe
+        stocks = [{"symbol": s, "exchange": "NSE"} for s in universe]
+        quotes = self.zerodha.get_quotes_safe(stocks)
+        if quotes is None:
+            self.log.error("Could not fetch market data. Aborting scan.")
+            self._scan_failed = True
+            return
+
+        if not quotes:
+            self.log.warning("No quotes returned — market may not be open yet")
+            # In pre-market, previous close data is still available —
+            # proceed anyway, the AI can work with available data.
+
+        # Fetch NIFTY 50 index for trend context + market condition
+        nifty_context = self._build_nifty_context()
+
+        # Get historical performance context for the AI prompt
+        perf_context = self.tracker.get_claude_prompt_context()
+
+        # Ask the configured AI provider to pick trades
+        self.engine.claude_calls += 1
+        self._trade_plans = self.scanner.scan(
+            quotes, nifty_context, perf_context, session_context
+        )
+
+        # Forward scanner's tape-breadth snapshot to the engine for the
+        # directional-pause breadth-divergence bypass — same risk hook
+        # the NoAI path uses. None on small-sample scans so the engine
+        # never bypasses on stale data.
+        self.engine.set_tape_breadth(
+            getattr(self.scanner, "last_tape_breadth", None)
+        )
+
+        if self._trade_plans:
+            self.log.section(f"TRADE PLAN ({provider})")
+            for i, t in enumerate(self._trade_plans, 1):
+                self.log.info(
+                    f"  Trade {i}: {t['side']} {t['qty']}x {t['symbol']} "
+                    f"@ Rs.{t['entry_price']:.2f} | "
+                    f"SL: Rs.{t['stop_loss']:.2f} | "
+                    f"Target: Rs.{t['target_price']:.2f}"
+                )
+                self.log.info(f"           {t.get('rationale', '')}")
 
     # ================================================================
     # ENTER POSITIONS
@@ -1031,13 +1113,13 @@ class PortfolioManager:
         if self._noai:
             self.log.info(
                 f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
-                f"Claude review: DISABLED (noai) | "
+                f"AI review: DISABLED (noai) | "
                 f"Candle rescan: every {self.cfg.CANDLE_RESCAN_MINUTES}min"
             )
         else:
             self.log.info(
                 f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
-                f"Claude review: every {self.cfg.POSITION_REVIEW_MINUTES}min | "
+                f"{self.cfg.AI_PROVIDER.upper()} review: every {self.cfg.POSITION_REVIEW_MINUTES}min | "
                 f"Candle rescan: every {self.cfg.CANDLE_RESCAN_MINUTES}min"
             )
 
@@ -1500,11 +1582,18 @@ class PortfolioManager:
             time.sleep(poll)
 
     def _run_claude_review(self, quotes: dict):
-        """Skip Claude review in noai mode (called by V1 run() on resume)."""
+        """
+        On-resume AI review of open positions.
+
+        Delegates to the candle-aware V2 review so a resumed session
+        follows the exact same methodology as the live monitor loop
+        (real-time candle patterns per position, provider-agnostic).
+        Skipped entirely in NoAI mode.
+        """
         if self._noai:
-            self.log.info("NoAI mode: skipping Claude review (rule-based only)")
+            self.log.info("NoAI mode: skipping AI review (rule-based only)")
             return
-        super()._run_claude_review(quotes)
+        self._run_claude_review_v2(quotes)
 
     # ================================================================
     # SQUARE OFF
@@ -2688,9 +2777,6 @@ class PortfolioManager:
         print(f"    ────────────────────────────")
         print(f"    Total tax+chrg : Rs.{charges['total_tax_and_charges']:,.2f}")
         print(f"{'─'*58}")
-        print(f"  CLAUDE API COST:")
-        print(f"    Claude API     : Rs.{charges['claude_api_cost']:,.2f} ({self.engine.claude_calls} calls)")
-        print(f"{'─'*58}")
         print(f"  Total all costs  : Rs.{charges['total_costs']:,.2f}")
         print(f"{'='*58}")
         print(f"  {color}NET PROFIT       : Rs.{pnl['net_profit']:+,.2f}{reset}")
@@ -2699,6 +2785,12 @@ class PortfolioManager:
             returns_pct = pnl["net_profit"] / self._budget * 100
             color2 = "\033[92m" if returns_pct >= 0 else "\033[91m"
             print(f"  Day returns      : {color2}{returns_pct:+.2f}%{reset} on Rs.{self._budget:,.0f} budget")
+        if not self._noai and charges.get("claude_api_cost", 0) > 0:
+            provider = self.cfg.AI_PROVIDER.upper()
+            print(
+                f"  FYI: {provider} API est: Rs.{charges['claude_api_cost']:,.2f} "
+                f"({self.engine.claude_calls} calls, not deducted above)"
+            )
         print(f"  FYI: Zerodha Kite Connect: Rs.{charges['zerodha_monthly_fyi']:,.0f}/month (not deducted above)")
         print()
 
@@ -3005,9 +3097,9 @@ class PortfolioManager:
         else:
             snapshot = self.scanner._build_enriched_snapshot(top, quotes)
             if snapshot:
-                self.log.section("STEP 5: ENRICHED SNAPSHOT (would be sent to Claude)")
+                self.log.section(f"STEP 5: ENRICHED SNAPSHOT (would be sent to {self.cfg.AI_PROVIDER.upper()})")
                 print(snapshot)
-                print(f"\n  ℹ️  In live V2 mode, Claude would analyse this data and")
+                print(f"\n  ℹ️  In live V2 mode, {self.cfg.AI_PROVIDER.upper()} would analyse this data and")
                 print(f"      pick the best {self.cfg.MAX_POSITIONS} trades with specific entry/SL/target.")
 
         # ── Summary ───────────────────────────────────────────────
@@ -3138,7 +3230,7 @@ class PortfolioManager:
         Enhanced Claude review that includes real-time candle pattern
         analysis for each open position.
         """
-        self.log.section("CLAUDE V2 REVIEW — with candle analysis")
+        self.log.section(f"{self.cfg.AI_PROVIDER.upper()} V2 REVIEW — with candle analysis")
         self.engine.claude_calls += 1
 
         nifty_context = self._build_nifty_context()

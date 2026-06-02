@@ -192,18 +192,45 @@ class LLMClient:
             self._client = genai.Client(api_key=self.cfg.GEMINI_API_KEY)
             self._active_provider = "gemini"
 
+        # gemini-2.5-* are "thinking" models: by default they spend
+        # internal reasoning tokens that count against max_output_tokens.
+        # For structured trade-block extraction from a pre-filtered list
+        # that reasoning is unnecessary and starves the visible output,
+        # causing mid-response truncation. Disable it (budget=0) so the
+        # full token budget goes to the answer. Guarded for models /
+        # SDKs that don't support the flag.
+        gen_kwargs = {"max_output_tokens": plan["max_tokens"]}
+        try:
+            gen_kwargs["thinking_config"] = genai.types.ThinkingConfig(
+                thinking_budget=0
+            )
+        except Exception:
+            pass
+
         response = self._client.models.generate_content(
             model=plan["model"],
             contents=prompt,
-            config=genai.types.GenerateContentConfig(
-                max_output_tokens=plan["max_tokens"],
-            ),
+            config=genai.types.GenerateContentConfig(**gen_kwargs),
         )
 
-        if not response.text:
+        text = response.text
+
+        # Detect truncation (hit the output-token ceiling) so a cut-off
+        # reply is surfaced clearly rather than silently parsing to zero.
+        try:
+            finish = str(response.candidates[0].finish_reason)
+            if "MAX_TOKENS" in finish.upper():
+                self.log.warning(
+                    f"[AI] GEMINI response hit max_output_tokens "
+                    f"({plan['max_tokens']}) — reply may be truncated."
+                )
+        except (AttributeError, IndexError, TypeError):
+            pass
+
+        if not text:
             raise RuntimeError("Gemini returned empty response")
 
-        return response.text
+        return text
 
     # ================================================================
     # GPT (OpenAI)

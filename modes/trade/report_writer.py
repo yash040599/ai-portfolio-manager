@@ -662,7 +662,8 @@ class ReportWriter:
             # ── Configuration ─────────────────────────────────────
             f.write("CONFIGURATION\n")
             f.write(f"{self.SEP_MINOR}\n")
-            f.write(f"Claude plan     : {self.cfg.CLAUDE_PLAN.upper()}\n")
+            f.write(f"AI provider     : {self.cfg.AI_PROVIDER.upper()}  ({self.cfg.ai().get('model', '')})\n")
+            f.write(f"AI plan         : {self.cfg.AI_PLAN.upper()}\n")
             f.write(f"Budget          : Rs.{budget:,.2f} (from Zerodha funds)\n")
             f.write(f"Universe        : {self.cfg.SCAN_UNIVERSE}\n")
             if strategy_profile:
@@ -745,8 +746,6 @@ class ReportWriter:
             f.write(f"  {'─' * 40}\n")
             f.write(f"  Total tax & charges   : Rs.{charges['total_tax_and_charges']:,.2f}\n\n")
 
-            f.write("CLAUDE API COST:\n")
-            f.write(f"  Claude API usage      : Rs.{charges['claude_api_cost']:,.2f}  (est. Rs.{self.cfg.CLAUDE_COST_PER_CALL}/call × actual calls)\n")
             f.write(f"  {'─' * 40}\n")
             f.write(f"  Total all costs       : Rs.{charges['total_costs']:,.2f}\n\n")
 
@@ -758,6 +757,12 @@ class ReportWriter:
             if budget > 0:
                 returns_pct = pnl["net_profit"] / budget * 100
                 f.write(f"  Day returns           : {returns_pct:+.2f}% on Rs.{budget:,.0f} budget\n")
+            # AI API spend is informational only — NOT deducted from net.
+            if charges.get("claude_api_cost", 0) > 0:
+                f.write(
+                    f"  FYI: {self.cfg.AI_PROVIDER.upper()} API est : "
+                    f"Rs.{charges['claude_api_cost']:,.2f} (not deducted above)\n"
+                )
             f.write("\n")
 
             # ── Estimated Income Tax ──────────────────────────────
@@ -830,8 +835,16 @@ class ReportWriter:
             payload["_reconciled"] = True
             if preserved_reconcile_note:
                 payload["_reconciled_note"] = preserved_reconcile_note
-        with open(json_path, "w", encoding="utf-8") as f:
+        # Atomic write: serialise to a temp file in the same directory and
+        # os.replace() into place. This guards the merge source against
+        # corruption (and silent prior-session data loss) if the process is
+        # killed mid-write.
+        tmp_path = f"{json_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, json_path)
 
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
@@ -863,6 +876,10 @@ class ReportWriter:
                         f"report has {expected_closed} closed dry-run position(s), "
                         f"fill saw {closed}"
                     )
+            except ModuleNotFoundError:
+                # fill_dryrun_analysis was retired with the dry-run data
+                # overhaul — DB auto-fill is intentionally unavailable.
+                pass
             except Exception as e:
                 self.log.warning(f"Dry-run analysis auto-fill skipped: {e}")
 

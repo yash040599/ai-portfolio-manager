@@ -24,7 +24,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import Config, now_ist  # noqa: E402
-from scripts.trade.fill_dryrun_analysis import fill_reports  # noqa: E402
 from scripts.trade.fill_intraday_ledger import fill_fy  # noqa: E402
 from shared.tax_db import indian_fy  # noqa: E402
 
@@ -201,7 +200,13 @@ def build_daily_evidence(
         )
     if update_dbs:
         if data_source == "dryrun":
-            fill_reports(date_from=date_str, date_to=date_str)
+            # fill_dryrun_analysis was retired with the dry-run data overhaul.
+            # Skip DB-fill gracefully if the optional module is absent.
+            try:
+                from scripts.trade.fill_dryrun_analysis import fill_reports
+                fill_reports(date_from=date_str, date_to=date_str)
+            except ModuleNotFoundError:
+                pass
         else:
             fill_fy(indian_fy(date_str))
 

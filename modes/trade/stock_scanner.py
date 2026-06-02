@@ -420,6 +420,10 @@ class StockScanner:
         # on stale data.
         self.last_tape_breadth: dict | None = None
 
+        # AI's explanation when it returns zero trades from a scan.
+        # Surfaced by the manager so a no-trade day is never silent.
+        self.last_scan_rationale: str = ""
+
         # ── Per-candidate telemetry (Roadmap #259) ───────────────
         # Best-effort, write-only, swallows exceptions. Records every
         # V2_MIN-passing candidate to data/trades.db::intraday_candidates
@@ -491,8 +495,14 @@ class StockScanner:
     def scan(self, quotes: dict, nifty_context: str = "", perf_context: str = "", session_context: str = "") -> list[dict]:
         """
         V2 scan: pre-filter with candle math, then send top candidates
-        to Claude with enriched technical data.
+        to the configured AI provider (Gemini / GPT / Claude per
+        Config.AI_PROVIDER) with enriched technical data.
         """
+        provider = self.cfg.AI_PROVIDER.upper()
+
+        # Reset per-scan AI rationale (set when zero trades are returned)
+        self.last_scan_rationale = ""
+
         # Extract Nifty trend from context string for hard filter
         nifty_trend = ""
         if "BEARISH" in nifty_context.upper():
@@ -505,30 +515,35 @@ class StockScanner:
 
         if not candidates:
             self.log.warning("Pre-filter found no candidates with signals")
-            # Fall back to V1 behaviour (send all quotes to Claude)
-            return super().scan(quotes, nifty_context, perf_context, session_context)
+            # No candidates passed the math pre-filter — no trades this scan
+            return []
 
-        # Step 2: Build enriched snapshot for Claude (only candidates)
+        # Step 2: Build enriched snapshot for the AI (only candidates)
         snapshot = self._build_enriched_snapshot(candidates, quotes)
 
         if not snapshot:
-            self.log.warning("No valid enriched snapshot — falling back to V1")
-            return super().scan(quotes, nifty_context, perf_context, session_context)
+            self.log.warning("No valid enriched snapshot — no trades this scan")
+            return []
 
-        # Step 3: Send to Claude with technical context
+        # Step 3: Send to the AI provider with technical context
         prompt = self._build_v2_scan_prompt(snapshot, nifty_context, perf_context, session_context)
 
-        self.log.info("Asking Claude to pick trades from pre-filtered candidates...")
+        self.log.info(f"Asking {provider} to pick trades from pre-filtered candidates...")
         try:
             raw = self.claude.call(prompt)
             trades = self._parse_scan_response(raw)
-            # Enrich Claude trades with indicator snapshot data for learning
+            # Enrich AI trades with indicator snapshot data for learning
             self._enrich_trades_with_indicators(trades, candidates)
-            self.log.success(f"Claude recommended {len(trades)} trades from {len(candidates)} candidates")
+            if not trades and not self.last_scan_rationale:
+                # Parser found no valid blocks but the AI didn't emit the
+                # NO_TRADES_TODAY token — keep the raw reply as the reason.
+                cleaned = self._clean_rationale(raw)
+                self.last_scan_rationale = cleaned or "no parseable trades returned"
+            self.log.success(f"{provider} recommended {len(trades)} trades from {len(candidates)} candidates")
             return trades
         except Exception as e:
             error = ClaudeClient.classify_error(e)
-            self.log.error(f"V2 scan failed: {error}")
+            self.log.error(f"AI scan failed: {error}")
             return []
 
     # ================================================================
@@ -561,15 +576,16 @@ class StockScanner:
             closed_positions or [],
         )
 
-        self.log.info("Claude reviewing open positions...")
+        provider = self.cfg.AI_PROVIDER.upper()
+        self.log.info(f"{provider} reviewing open positions...")
         try:
             raw = self.claude.call(prompt)
             actions = self._parse_review_response(raw)
-            self.log.success(f"Claude review: {len(actions)} recommendations")
+            self.log.success(f"{provider} review: {len(actions)} recommendations")
             return actions
         except Exception as e:
             error = ClaudeClient.classify_error(e)
-            self.log.warning(f"Claude review failed: {error} — keeping current positions")
+            self.log.warning(f"{provider} review failed: {error} — keeping current positions")
             return []
 
     # ================================================================
@@ -719,7 +735,7 @@ CURRENT MARKET DATA (live prices):
 RESPONSE FORMAT — STRICTLY FOLLOW:
 ══════════════════════════════════════════════════════════
 One block per trade. No text before or after.
-If no trades pass ALL rejection filters, respond with exactly: NO_TRADES_TODAY
+If no trades pass ALL rejection filters, respond with: NO_TRADES_TODAY: <one-line reason why> (e.g. NO_TRADES_TODAY: all candidates extended or below RVol threshold).
 Prefer FEWER high-conviction trades (1-2) over many mediocre ones.
 The system enforces MAX 2 TRADES PER DAY. Return at most 2.
 
@@ -902,6 +918,22 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
     # RESPONSE PARSERS
     # ================================================================
 
+    def _clean_rationale(self, text: str, max_len: int = 280) -> str:
+        """
+        Normalises an AI free-text reason for single-line display:
+        collapses internal whitespace/newlines, strips stray template
+        tokens, and truncates to a readable length with an ellipsis.
+        """
+        if not text:
+            return ""
+        # Drop any structured block leftovers so only prose remains
+        cleaned = re.sub(r"(?im)^(SYMBOL|SIDE|ENTRY_PRICE|STOP_LOSS|TARGET|QTY|RATIONALE|TRADE\s*\d+)\s*:.*$", " ", text)
+        cleaned = cleaned.replace("===END===", " ")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -—:")
+        if len(cleaned) > max_len:
+            cleaned = cleaned[:max_len].rstrip() + "…"
+        return cleaned
+
     def _parse_scan_response(self, raw: str) -> list[dict]:
         """
         Parses Claude's trade recommendations from the pre-market scan.
@@ -913,7 +945,16 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         text = raw.strip()
 
         if "NO_TRADES_TODAY" in text:
-            self.log.info("Claude says: no good trades today")
+            # Capture any one-line reason the AI gave after the token
+            # so the manager can surface why nothing was picked.
+            m = re.search(r"NO_TRADES_TODAY\s*:?\s*(.+)", text, re.DOTALL)
+            reason = m.group(1).strip() if m and m.group(1).strip() else ""
+            reason = self._clean_rationale(reason)
+            self.last_scan_rationale = reason
+            if reason:
+                self.log.info(f"AI says no trades today — {reason}")
+            else:
+                self.log.info("AI says: no good trades today")
             return []
 
         trades = []
@@ -2906,7 +2947,7 @@ STOP-LOSS AND TARGET RULES:
 • SL range: {default_sl}% to {self.cfg.MAX_INTRADAY_SL_PCT}% from entry. The system may widen SL up to {self.cfg.MAX_INTRADAY_SL_PCT}% using ATR if the stock's volatility demands it, but prefer tighter SLs near structural levels.
 • Target: minimum {self.cfg.RR_TARGET_RATIO}× the SL distance from entry. Prefer 2× for afternoon entries when time is short.
 • For volatile stocks (change already >1.5%): use SL near structural support/resistance, not % based.
-• NOTE: At {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at {int(self.cfg.TRAIL_STEP_PCT)}% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. Claude does NOT need to suggest partial exits.
+• NOTE: At {self.cfg.TRAIL_AFTER_RISK_MULTIPLE}× risk profit, the system AUTOMATICALLY exits 33% of the position (1/3 qty) and trails SL at {int(self.cfg.TRAIL_STEP_PCT)}% of profit. Factor this into your qty sizing — prefer qty >= 3 so partial exits can split. You do NOT need to suggest partial exits.
 • NOTE: The system uses ATR-based SL (14-period, 15-min candles) when available, falling back to your SL otherwise. Set your SL at the structural level you actually want — don't add buffer. Entry price is also overridden by the live Zerodha quote at execution time.
 
 ══════════════════════════════════════════════════════════
@@ -2928,11 +2969,15 @@ PRE-FILTERED CANDIDATES (ranked by technical score):
 RESPONSE FORMAT — STRICTLY FOLLOW:
 ══════════════════════════════════════════════════════════
 One block per trade. No text before or after.
-If no trades pass ALL hard rejection filters, respond with exactly: NO_TRADES_TODAY
+If no trades pass ALL hard rejection filters, respond with: NO_TRADES_TODAY: <one-line reason why> (e.g. NO_TRADES_TODAY: all candidates extended or below RVol threshold).
 Prefer FEWER high-conviction trades (1-2) over many mediocre ones.
 The system enforces MAX 2 TRADES PER DAY. Return at most 2.
 
 TRADE 1:
+SYMBOL: [NSE stock symbol e.g. RELIANCE]
+SIDE: [BUY or SELL]
+ENTRY_PRICE: [realistic entry price in Rs., near current price]
+STOP_LOSS: [stop-loss price in Rs. — state which structural level: today's L/H, Open, or PrevClose]
 TARGET: [target price — at least {self.cfg.RR_TARGET_RATIO}× SL distance from entry]
 QTY: [number of shares within budget constraints]
 RATIONALE: [2-3 sentences: (1) confluence count X/13 and which indicators align with specific values, (2) what structural level SL is based on, (3) R:R ratio. If stock Chg >2%, explain why it's NOT an extended-move violation.]
@@ -3005,15 +3050,16 @@ TRADE 2:
             nifty_context, closed_positions,
         )
 
-        self.log.info("Claude reviewing positions with candle analysis...")
+        provider = self.cfg.AI_PROVIDER.upper()
+        self.log.info(f"{provider} reviewing positions with candle analysis...")
         try:
             raw = self.claude.call(prompt)
             actions = self._parse_review_response(raw)
-            self.log.success(f"Claude V2 review: {len(actions)} recommendations")
+            self.log.success(f"{provider} review: {len(actions)} recommendations")
             return actions
         except Exception as e:
             error = ClaudeClient.classify_error(e)
-            self.log.warning(f"Claude V2 review failed: {error} — keeping current positions")
+            self.log.warning(f"{provider} review failed: {error} — keeping current positions")
             return []
 
     def _build_v2_review_prompt(

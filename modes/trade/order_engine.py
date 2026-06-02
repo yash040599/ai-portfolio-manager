@@ -4318,6 +4318,7 @@ class OrderEngine:
         Applies recommendations from StockScanner.review_positions().
         Handles: EXIT, ADJUST_SL, ADJUST_TARGET, HOLD, NEW trades.
         """
+        provider = self.cfg.AI_PROVIDER.upper()
         for action in actions:
             act    = action.get("action", "").upper()
             symbol = action.get("symbol", "")
@@ -4334,12 +4335,12 @@ class OrderEngine:
                         else (pos["entry_price"] - price) * pos["qty"]
                     )
                     self.log.info(
-                        f"CLAUDE REVIEW → EXIT {symbol}: {reason} | "
+                        f"{provider} REVIEW → EXIT {symbol}: {reason} | "
                         f"Current Rs.{price:.2f}, Est P&L Rs.{pnl_est:+,.2f}"
                     )
                     self.exit_position(pos, price, "REVIEW_EXIT")
                 else:
-                    self.log.warning(f"Claude said EXIT {symbol} but no open position found")
+                    self.log.warning(f"{provider} said EXIT {symbol} but no open position found")
 
             elif act == "ADJUST_SL" and action.get("new_sl"):
                 pos = self._find_open_position(symbol)
@@ -4374,7 +4375,7 @@ class OrderEngine:
                         else:
                             new_sl = round(entry * (1 + max_sl_pct / 100), 2)
                         self.log.warning(
-                            f"Claude SL for {symbol} capped: {sl_dist_pct:.1f}% "
+                            f"{provider} SL for {symbol} capped: {sl_dist_pct:.1f}% "
                             f"→ {max_sl_pct}% (Rs.{new_sl:.2f})"
                         )
 
@@ -4395,7 +4396,7 @@ class OrderEngine:
                     pos["stop_loss"] = new_sl
                     self._update_exchange_sl(pos, new_sl)
                     self.log.info(
-                        f"CLAUDE REVIEW → ADJUST SL {symbol}: "
+                        f"{provider} REVIEW → ADJUST SL {symbol}: "
                         f"Rs.{old_sl:.2f} → Rs.{new_sl:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_SL", symbol, "", 0, new_sl,
@@ -4425,7 +4426,7 @@ class OrderEngine:
 
                     pos["target_price"] = new_target
                     self.log.info(
-                        f"CLAUDE REVIEW → ADJUST TARGET {symbol}: "
+                        f"{provider} REVIEW → ADJUST TARGET {symbol}: "
                         f"Rs.{old_tgt:.2f} → Rs.{new_target:.2f} | {reason}"
                     )
                     self._log_action("ADJUST_TARGET", symbol, "", 0, new_target,
@@ -4433,13 +4434,13 @@ class OrderEngine:
 
             elif act == "NEW":
                 self.log.info(
-                    f"CLAUDE REVIEW → NEW TRADE: {action.get('side', '?')} "
+                    f"{provider} REVIEW → NEW TRADE: {action.get('side', '?')} "
                     f"{action.get('symbol', '?')} | {reason}"
                 )
                 self.enter_trade(action)
 
             elif act == "HOLD":
-                self.log.info(f"CLAUDE REVIEW → HOLD {symbol}: {reason}")
+                self.log.info(f"{provider} REVIEW → HOLD {symbol}: {reason}")
 
     # ================================================================
     # SQUARE OFF — END OF DAY
@@ -5479,8 +5480,9 @@ class OrderEngine:
         gross_pnl = self.day_pnl()
         charges   = self.calculate_charges()
 
-        # Net profit = gross P&L minus per-trade charges and Claude API cost.
-        # Zerodha monthly subscription is NOT subtracted here — it's FYI.
+        # Net profit = gross P&L minus per-trade market/Zerodha charges.
+        # AI API cost and Zerodha monthly subscription are NOT subtracted
+        # here — both are informational (FYI) only.
         net = gross_pnl - charges["total_costs"]
 
         # Estimated tax liability (only on positive net profit)

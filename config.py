@@ -2962,7 +2962,9 @@ class Config:
             "sebi_charges":          round(sebi, 4),
             "stamp_duty":            round(stamp_duty, 2),
             "total_tax_and_charges": round(total_charges, 2),
+            # AI API cost is informational only (FYI) — NOT deducted from
+            # net profit. Trading P&L reflects market + Zerodha costs only.
             "claude_api_cost":       round(claude_cost, 2),
-            "total_costs":           round(total_charges + claude_cost, 2),
+            "total_costs":           round(total_charges, 2),
             "zerodha_monthly_fyi":   cls.ZERODHA_MONTHLY_COST,
         }
