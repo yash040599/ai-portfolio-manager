@@ -141,7 +141,13 @@ SKIP_NAMES = {
 
 
 def should_skip(name: str) -> bool:
-    return name in SKIP_NAMES or name.endswith((".pyc", ".pyo", ".swp", ".swo"))
+    # SQLite WAL/SHM/journal sidecars are transient — they may vanish
+    # between listing and comparison and must never be synced.
+    return (
+        name in SKIP_NAMES
+        or name.endswith((".pyc", ".pyo", ".swp", ".swo"))
+        or name.endswith(("-shm", "-wal", "-journal"))
+    )
 
 
 def collect_files(base: str, folder: str) -> dict[str, str]:
