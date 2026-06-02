@@ -261,6 +261,8 @@ def render_portfolio_page() -> str:
 
     body.append(_render_header(snap))
     body.append(_render_actions(snap))
+    from modes.dashboard.chat_widget import chat_section_html
+    body.append(chat_section_html("portfolio"))
     body.append(_render_charts(snap))
     body.append(_render_metrics(snap.metrics))
     body.append(_render_lazy_sections_loader())
@@ -816,10 +818,15 @@ def render_stock_drilldown(symbol: str) -> str:
     s = latest_for_symbol(sym)
     history = history_for_symbol(sym, limit=5)
     is_held = bool(s and s.qty and (s.qty.value or 0) > 0)
+    from modes.dashboard.chat_widget import chat_section_html
     body = [
-        '<a class="back-link" href="/portfolio">\u2190 Back to portfolio</a>',
+        '<a class="back-link" href="/portfolio">\u2190 Back to portfolio</a>'
+        f'<span style="margin:0 8px;color:#999">·</span>'
+        f'<a class="back-link" href="/swing/{html.escape(sym)}">'
+        f'View swing analysis \u2192</a>',
         _render_drilldown_header(sym, s, is_held=is_held),
         _render_drilldown_actions(sym),
+        chat_section_html("portfolio_detail", sym),
     ]
     if s is not None:
         if is_held:

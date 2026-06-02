@@ -61,6 +61,9 @@ def render_us_page() -> str:
     body.append('<h1 class="page-title">US Trading</h1>')
     body.append(_render_freshness(latest_scan, bool(live_syms), fx))
 
+    from modes.dashboard.chat_widget import chat_section_html
+    body.append(chat_section_html("us"))
+
     # P&L summary card (mirrors swing's "Realised Swing P&L").
     body.append(_render_pnl_card(pnl, positions, live_positions))
 
@@ -163,6 +166,8 @@ def render_us_detail(symbol: str) -> str:
     body.append('<div class="wrap">')
     body.append(f'<h1 class="page-title">{html.escape(sym)} — US Detail</h1>')
     body.append('<div class="sub"><a href="/us">&larr; Back to US Dashboard</a></div>')
+    from modes.dashboard.chat_widget import chat_section_html
+    body.append(chat_section_html("us_detail", sym))
 
     try:
         row = analyse_us_symbol(sym, default_ticket)
@@ -182,9 +187,18 @@ def render_us_detail(symbol: str) -> str:
     payload = html.escape(json.dumps(_action_payload(row),
                                      separators=(",", ":")))
     pnl_cls = "pos" if chg >= 0 else "neg"
-    buy_label = "I Bought More" if any(
-        p.symbol.strip().upper() == sym for p in _us_positions()
-    ) else "I Bought It"
+    detail_position = next(
+        (p for p in _us_positions() if p.symbol.strip().upper() == sym),
+        None,
+    )
+    buy_label = "I Bought More" if detail_position is not None else "I Bought It"
+
+    # Your-position card (shown first when you already hold the stock).
+    if detail_position is not None:
+        from modes.dashboard.swing_page import _render_holding_card
+        body.append(_render_holding_card(detail_position, lprice,
+                                         currency="$",
+                                         book_label="US book"))
 
     # ── Summary card ───────────────────────────────────────────
     body.append('<div class="card">')
@@ -312,13 +326,59 @@ def render_us_detail(symbol: str) -> str:
         '</div>'
     )
     body.append('<div id="ai-overlay-host">')
-    body.append('<p class="muted">Click <em>Analyse with AI</em> above '
-                'to add a qualitative thesis.</p>')
+    body.append(_render_us_cached_ai(sym))
     body.append('</div></div>')
 
     body.append('</div>')  # /.wrap
     body.append(_js(fx))
     return _wrap(f"US — {sym}", body, fx)
+
+
+def _render_us_cached_ai(sym: str) -> str:
+    """Render the most recent saved AI overlay for `sym` so the US
+    detail page is sticky across navigation. Falls back to the
+    'click Analyse with AI' prompt when nothing is on file."""
+    from modes.dashboard.us_analysis import latest_us_ai_overlay
+    from modes.dashboard.swing_page import _render_ai_md
+
+    cached = None
+    try:
+        cached = latest_us_ai_overlay(sym, max_age_days=365)
+    except Exception:
+        cached = None
+
+    if not cached:
+        return ('<p class="muted">Click <em>Analyse with AI</em> above '
+                'to add a qualitative thesis.</p>')
+
+    overlay, saved_at = cached
+    raw = str(overlay.get("raw_response") or "")
+    if not raw:
+        return ('<p class="muted">Click <em>Analyse with AI</em> above '
+                'to add a qualitative thesis.</p>')
+
+    age_html = ""
+    if saved_at:
+        try:
+            import datetime as _dt
+            _t = _dt.datetime.fromisoformat(saved_at.split(".")[0])
+            if _t.tzinfo is not None:
+                _t = _t.replace(tzinfo=None)
+            _age = (_dt.datetime.now() - _t).days
+            age_str = ("today" if _age <= 0
+                       else "yesterday" if _age == 1
+                       else f"{_age} days ago")
+        except Exception:
+            age_str = saved_at[:10]
+        age_html = (
+            f'<div class="muted" style="font-size:11px;margin-bottom:6px">'
+            f'Analysed <strong>{html.escape(age_str)}</strong> '
+            f'<span style="opacity:0.7">({html.escape(saved_at[:16])})</span>. '
+            f'Click <em>Analyse with AI</em> above to refresh.</div>'
+        )
+    return (f'{age_html}'
+            f'<div style="font-size:13px;line-height:1.7">'
+            f'{_render_ai_md(raw)}</div>')
 
 
 # ── Section renderers ──────────────────────────────────────────

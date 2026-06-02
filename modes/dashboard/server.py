@@ -371,6 +371,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_analyse_one(parse_qs(url.query))
             elif url.path == "/api/ai/switch":
                 self._serve_ai_switch()
+            elif url.path == "/api/chat/prompt":
+                self._serve_chat_prompt()
             else:
                 self.send_error(404, "Not found")
         except Exception as exc:  # noqa: BLE001
@@ -546,6 +548,17 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 force_refresh=force_refresh,
             )
             status = 200
+            # Persist the single-stock AI overlay so the US detail
+            # page is sticky across navigation (origin 2026-06-02:
+            # ORCL AI section went blank on revisit).
+            if use_ai and isinstance(payload, dict):
+                overlay = payload.get("ai_overlay")
+                if isinstance(overlay, dict) and not overlay.get("error"):
+                    try:
+                        from modes.dashboard.us_analysis import save_us_ai_overlay
+                        save_us_ai_overlay(symbol, overlay)
+                    except Exception:
+                        pass
         except Exception as exc:
             payload = {"ok": False, "symbol": symbol, "error": str(exc)[:300]}
             status = 500
@@ -1979,6 +1992,36 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _serve_chat_prompt(self) -> None:
+        """POST /api/chat/prompt — build a copy-paste LLM prompt from
+        the user's personal data for a given page scope/symbol.
+
+        Body (JSON): {"scope": str, "symbol": str, "question": str}
+        Returns: {"ok": true, "prompt": str} or {"ok": false, "error": str}
+        """
+        import json as _json
+        from modes.dashboard.chat_widget import build_chat_prompt
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        try:
+            data = _json.loads(raw) if raw.strip() else {}
+        except _json.JSONDecodeError:
+            self._write_json(
+                _json.dumps({"ok": False, "error": "Invalid JSON"}).encode(),
+                status=400)
+            return
+        scope = str(data.get("scope", "")).strip()
+        symbol = str(data.get("symbol", "")).strip()
+        question = str(data.get("question", ""))
+        try:
+            prompt = build_chat_prompt(scope, symbol, question)
+        except ValueError as exc:
+            self._write_json(
+                _json.dumps({"ok": False, "error": str(exc)}).encode(),
+                status=400)
+            return
+        self._write_json(_json.dumps({"ok": True, "prompt": prompt}).encode())
 
     def _serve_login_submit(self) -> None:
         # Read form-urlencoded body; extract redirect_url; exchange

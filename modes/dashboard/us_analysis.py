@@ -23,6 +23,12 @@ US_SCAN_CACHE_PATH = os.path.join("data", "us_scan_latest.json")
 # "what changed since last scan" card on /us can diff the latest
 # scan vs the one before it, mirroring the Indian Swing diff card.
 US_SCAN_PRIOR_PATH = os.path.join("data", "us_scan_prior.json")
+# 2026-06-02: persist single-stock AI overlays keyed by symbol so the
+# US detail page is STICKY — once you "Analyse with AI" for ORCL, the
+# overlay survives navigating away and back (mirrors the Indian Swing
+# `ai_overlay_json` persistence, but file-backed because US has no
+# per-symbol SQLite table).
+US_AI_OVERLAY_PATH = os.path.join("data", "us_ai_overlays.json")
 _FX_CACHE_PATH = os.path.join("data", "usdinr_rate.json")
 
 # Live quote + FX cache (process-local).
@@ -199,6 +205,69 @@ def save_us_scan(payload: dict[str, Any]) -> None:
         pass
     with open(US_SCAN_CACHE_PATH, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, default=str)
+
+
+def save_us_ai_overlay(symbol: str, overlay: dict[str, Any]) -> None:
+    """Persist a single-stock US AI overlay keyed by symbol so the
+    detail page can re-render it on the next visit (sticky AI).
+
+    Overlays carrying an `error` are NOT saved — a transient AI
+    failure must not overwrite a previously good analysis."""
+    sym = (symbol or "").strip().upper()
+    if not sym or not isinstance(overlay, dict) or overlay.get("error"):
+        return
+    os.makedirs(os.path.dirname(US_AI_OVERLAY_PATH), exist_ok=True)
+    store: dict[str, Any] = {}
+    if os.path.exists(US_AI_OVERLAY_PATH):
+        try:
+            with open(US_AI_OVERLAY_PATH, encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                store = loaded
+        except (OSError, json.JSONDecodeError):
+            store = {}
+    store[sym] = {"overlay": overlay, "saved_at": now_ist().isoformat()}
+    try:
+        with open(US_AI_OVERLAY_PATH, "w", encoding="utf-8") as fh:
+            json.dump(store, fh, indent=2, default=str)
+    except OSError:
+        pass
+
+
+def latest_us_ai_overlay(
+    symbol: str, max_age_days: int = 365,
+) -> tuple[dict[str, Any], str] | None:
+    """Return `(overlay, saved_at_iso)` for the most recent saved US
+    AI overlay for `symbol`, or None if missing / older than
+    `max_age_days`."""
+    sym = (symbol or "").strip().upper()
+    if not sym or not os.path.exists(US_AI_OVERLAY_PATH):
+        return None
+    try:
+        with open(US_AI_OVERLAY_PATH, encoding="utf-8") as fh:
+            store = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(store, dict):
+        return None
+    entry = store.get(sym)
+    if not isinstance(entry, dict):
+        return None
+    overlay = entry.get("overlay")
+    saved_at = str(entry.get("saved_at") or "")
+    if not isinstance(overlay, dict):
+        return None
+    if max_age_days and saved_at:
+        try:
+            ts = datetime.datetime.fromisoformat(saved_at.split(".")[0])
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+            age_days = (datetime.datetime.now() - ts).days
+            if age_days > max_age_days:
+                return None
+        except (ValueError, TypeError):
+            pass
+    return overlay, saved_at
 
 
 def latest_us_scan_prior() -> dict[str, Any] | None:

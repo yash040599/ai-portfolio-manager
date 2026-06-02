@@ -266,6 +266,9 @@ def render_swing_page() -> str:
 
     body.append('<div class="sub">' + '<br>'.join(freshness_parts) + '</div>')
 
+    from modes.dashboard.chat_widget import chat_section_html
+    body.append(chat_section_html("swing"))
+
     # ── P&L summary ────────────────────────────────────────────
     invested = sum(p.managed_qty * p.entry_price for p in positions)
     current_value = 0.0
@@ -866,6 +869,61 @@ def _render_action_table(actions: list, live: dict,
 
 # ── Detail page for /swing/<symbol> ────────────────────────────
 
+def _render_holding_card(
+    pos,
+    current_price: float,
+    *,
+    currency: str = "Rs.",
+    book_label: str = "swing book",
+) -> str:
+    """Portfolio-style "Your Position" card for swing / US detail
+    pages. Shows qty + buy price + live P&L when the user already
+    holds the stock, so the page (and the prompt builder) can pick
+    up the existing values. Mirrors the portfolio drill-down card UI.
+    """
+    qty = int(getattr(pos, "managed_qty", 0) or 0)
+    entry = float(getattr(pos, "entry_price", 0) or 0.0)
+    stop = float(getattr(pos, "stop_price", 0) or 0.0)
+    target = float(getattr(pos, "target_price", 0) or 0.0)
+    entry_date = str(getattr(pos, "entry_date", "") or "")
+    cur = float(current_price or 0.0)
+    invested = qty * entry
+    cur_value = qty * cur
+    pnl = cur_value - invested
+    pnl_pct = (pnl / invested * 100.0) if invested else 0.0
+    cls = "pos" if pnl >= 0 else "neg"
+
+    def _m(v: float) -> str:
+        return f"{currency}{v:,.2f}"
+
+    extra = ""
+    if entry_date:
+        extra += f'<tr><td>Entered on</td><td>{html.escape(entry_date)}</td></tr>'
+    if stop:
+        extra += f'<tr><td>Your stop</td><td>{_m(stop)}</td></tr>'
+    if target:
+        extra += f'<tr><td>Your target</td><td>{_m(target)}</td></tr>'
+
+    return f"""
+<div class="card" style="border-left:3px solid var(--accent)">
+  <h2>Your Position ({html.escape(book_label)})</h2>
+  <p class="muted" style="margin:-4px 0 10px;font-size:12px">
+    You already hold this stock. These are your actual entry values —
+    the AI prompt builder above uses them automatically.</p>
+  <table class="kvtable">
+    <tr><td>Quantity held</td><td>{qty}</td></tr>
+    <tr><td>Your buy price</td><td>{_m(entry)}</td></tr>
+    <tr><td>Current price</td><td>{_m(cur)}</td></tr>
+    <tr><td>Invested value</td><td>{currency}{invested:,.0f}</td></tr>
+    <tr><td>Current value</td><td>{currency}{cur_value:,.0f}</td></tr>
+    <tr><td>Unrealised P&amp;L</td>
+        <td class="{cls}">{currency}{pnl:+,.0f} ({pnl_pct:+.2f}%)</td></tr>
+    {extra}
+  </table>
+</div>
+"""
+
+
 def render_swing_detail(symbol: str) -> str:
     """Render the per-stock swing detail page."""
     init_db()
@@ -877,7 +935,11 @@ def render_swing_detail(symbol: str) -> str:
     body.append(_topnav("/swing"))
     body.append('<div class="wrap">')
     body.append(f'<h1 class="page-title">{html.escape(sym)} — Swing Detail</h1>')
-    body.append('<div class="sub"><a href="/swing">&larr; Back to Swing Dashboard</a></div>')
+    body.append('<div class="sub"><a href="/swing">&larr; Back to Swing Dashboard</a>'
+                f' &middot; <a href="/portfolio/{html.escape(sym)}">'
+                f'View in long-term Portfolio &rarr;</a></div>')
+    from modes.dashboard.chat_widget import chat_section_html
+    body.append(chat_section_html("swing_detail", sym))
 
     if not cand and not dip_cand:
         body.append('<div class="card"><p class="muted">No swing analysis '
@@ -908,18 +970,26 @@ def render_swing_detail(symbol: str) -> str:
         except Exception:
             detail_action_id = 0
     try:
-        is_add_more_detail = any(
-            p.symbol == sym and p.status == "OPEN"
-            for p in open_positions(exchange="NSE")
+        detail_position = next(
+            (p for p in open_positions(exchange="NSE")
+             if p.symbol == sym and p.status == "OPEN"),
+            None,
         )
     except Exception:
-        is_add_more_detail = False
+        detail_position = None
+    is_add_more_detail = detail_position is not None
     detail_buy_label = "I Bought More" if is_add_more_detail else "I Bought It"
 
     # Live quote
     lq = get_live_quotes([sym])
     lprice = lq.get(sym, {}).get("price", cand.close_price) or cand.close_price
     chg = lq.get(sym, {}).get("change_pct", 0)
+
+    # Your-position card (shown first when you already hold the stock).
+    if detail_position is not None:
+        body.append(_render_holding_card(detail_position, lprice,
+                                         currency="Rs.",
+                                         book_label="swing book"))
 
     # ── Summary card ────────────────────────────────────────────
     body.append('<div class="card">')
