@@ -158,7 +158,18 @@ class Config:
     # ── Strategy Profile ─────────────────────────────────────────
     # Controls which alpha-selection logic runs in NoAI mode.
     # NOAI_LEGACY_FULL: blended score from all indicators (default)
+    # NOAI_GAP_AND_GO:  gap-and-go with volume (Phase 7.2, OOS PF 1.35)
     TRADE_STRATEGY_PROFILE: str = "NOAI_LEGACY_FULL"
+
+    # ── Gap-and-Go Strategy Config (Phase 7.2) ───────────────────
+    # OOS PF 1.35 (ALL regimes), 1.78 (VOLATILE-only).
+    # First strategy to clear the 1.15 promotion gate.
+    # Set TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO" to activate.
+    GAP_GO_MIN_GAP_PCT: float = 1.0       # minimum gap % from prev close
+    GAP_GO_MAX_GAP_PCT: float = 5.0       # reject extreme gaps (likely corporate action)
+    GAP_GO_VOLUME_MULTIPLE: float = 2.0   # first-candle vol > this × 20-day avg
+    GAP_GO_DAILY_CAP: int = 2             # max trades per day (backtest K1=2)
+    GAP_GO_SKIP_RANGE_REGIME: bool = True  # skip RANGE days (PF 1.41 vs 1.35)
 
     # ── Alpha Strategies (backtested 2026-05-25) ─────────────────
     # Each can be enabled/disabled independently. When multiple are
@@ -2854,6 +2865,9 @@ class Config:
         "MIN_MINUTES_FOR_ENTRY",
         # Scanner / score floors
         "TRADE_STRATEGY_PROFILE",
+        "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
+        "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
+        "GAP_GO_SKIP_RANGE_REGIME",
         "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",

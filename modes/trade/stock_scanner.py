@@ -2085,6 +2085,386 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         )
         return all_trades
 
+    # ================================================================
+    # GAP-AND-GO SCANNER (Phase 7.2 — OOS PF 1.35)
+    # ================================================================
+
+    def _scan_noai_gap_go(
+        self, quotes: dict, max_trades: int,
+        session_context: str = "", open_buys: int = 0,
+        open_sells: int = 0, as_of: datetime.datetime | None = None,
+    ) -> list[dict]:
+        """Gap-and-Go with Volume Qualification scanner.
+
+        Strategy: enter stocks that gapped >GAP_GO_MIN_GAP_PCT from
+        previous close with first-candle volume >GAP_GO_VOLUME_MULTIPLE×
+        20-day average volume. Enter in the gap direction (gap up = BUY,
+        gap down = SELL).
+
+        Phase 7.2 backtest result: OOS PF 1.35 (ALL), 1.78 (VOLATILE-only).
+        First strategy to clear the 1.15 promotion gate.
+
+        Returns list[dict] with standard trade plan keys.
+        """
+        profile = "NOAI_GAP_AND_GO"
+        universe = self.get_universe()
+        self.last_tape_breadth = None
+        self.log.info(f"NoAI strategy profile: {profile} — gap-and-go with volume")
+
+        min_gap_pct = getattr(self.cfg, "GAP_GO_MIN_GAP_PCT", 1.0)
+        max_gap_pct = getattr(self.cfg, "GAP_GO_MAX_GAP_PCT", 5.0)
+        vol_mult = getattr(self.cfg, "GAP_GO_VOLUME_MULTIPLE", 2.0)
+        gap_daily_cap = getattr(self.cfg, "GAP_GO_DAILY_CAP", 2)
+
+        # ── Bug fix #8: daily cap must match backtest (K1=2) ──────
+        max_trades = min(max_trades, gap_daily_cap)
+
+        self.log.info(
+            f"Gap-and-Go config: gap >= {min_gap_pct}%, "
+            f"<= {max_gap_pct}%, vol >= {vol_mult}x 20-day avg, "
+            f"daily cap = {gap_daily_cap}"
+        )
+
+        min_price = self.cfg.SCAN_MIN_PRICE
+        max_price = self.cfg.SCAN_MAX_PRICE
+        if max_price <= 0:
+            max_price = self._budget * self.cfg.MAX_POSITION_PCT / 100
+
+        # ── Fetch missing quotes ──────────────────────────────────
+        missing_quote_symbols = []
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+            if ltp <= 0:
+                missing_quote_symbols.append(symbol)
+        if missing_quote_symbols:
+            retry_quotes = self.zerodha.get_quotes_safe(
+                [{"symbol": s, "exchange": "NSE"} for s in missing_quote_symbols],
+                max_retries=3,
+            ) or {}
+            for symbol in missing_quote_symbols:
+                key = f"NSE:{symbol}"
+                q = retry_quotes.get(key, {})
+                ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
+                if ltp > 0:
+                    quotes[key] = q
+
+        # ── Screen for gap + volume ───────────────────────────────
+        gap_candidates: list[dict] = []
+        dropped_no_quote = 0
+        dropped_price = 0
+        dropped_no_gap = 0
+        dropped_vol = 0
+        dropped_extreme = 0
+
+        for symbol in universe:
+            key = f"NSE:{symbol}"
+            q = quotes.get(key, {})
+            if not isinstance(q, dict):
+                dropped_no_quote += 1
+                continue
+
+            ltp = q.get("last_price", 0)
+            if ltp <= 0:
+                dropped_no_quote += 1
+                continue
+            if ltp < min_price or ltp > max_price:
+                dropped_price += 1
+                continue
+
+            ohlc = q.get("ohlc", {})
+            prev_close = ohlc.get("close", 0)
+            today_open = ohlc.get("open", 0)
+
+            if not prev_close or prev_close <= 0 or not today_open or today_open <= 0:
+                dropped_no_quote += 1
+                continue
+
+            # Compute gap from prev close to today's open
+            gap_pct = (today_open - prev_close) / prev_close * 100
+
+            if abs(gap_pct) < min_gap_pct:
+                dropped_no_gap += 1
+                continue
+
+            if abs(gap_pct) > max_gap_pct:
+                dropped_extreme += 1
+                continue
+
+            # ── Bug fix #2: volume filter matching backtest ───────
+            # Compare first 15-min candle volume vs 20-day average of
+            # same candle, exactly as the backtest does.
+            intraday_candles = self._fetch_intraday_candles(
+                symbol, "NSE", interval="15minute", days_back=25,
+            )
+            if not intraday_candles or len(intraday_candles) < 5:
+                dropped_vol += 1
+                continue
+
+            # Group by day to get per-day first-candle volumes
+            candle_days: dict[str, list[dict]] = {}
+            for cd in intraday_candles:
+                cd_date = cd.get("date")
+                if not cd_date:
+                    continue
+                if isinstance(cd_date, datetime.datetime):
+                    ds = cd_date.date().isoformat()
+                else:
+                    ds = str(cd_date)[:10]
+                candle_days.setdefault(ds, []).append(cd)
+
+            today_str = _as_of_dt(as_of).date().isoformat()
+
+            # Get today's first candle volume
+            today_candles = candle_days.get(today_str, [])
+            if not today_candles:
+                # Fallback: use cumulative volume from quote
+                today_first_vol = q.get("volume", 0) or 0
+            else:
+                # Use the second candle (09:30) if available, else first
+                cidx = min(1, len(today_candles) - 1)
+                today_first_vol = today_candles[cidx].get("volume", 0) or 0
+
+            # Compute 20-day avg of same-period candle volume
+            prior_dates = sorted(
+                d for d in candle_days if d < today_str
+            )[-20:]
+            hist_vols = []
+            for pd in prior_dates:
+                pcandles = candle_days[pd]
+                if pcandles:
+                    pidx = min(1, len(pcandles) - 1)
+                    pv = pcandles[pidx].get("volume", 0) or 0
+                    if pv > 0:
+                        hist_vols.append(pv)
+
+            if not hist_vols:
+                dropped_vol += 1
+                continue
+
+            avg_candle_vol = sum(hist_vols) / len(hist_vols)
+            if avg_candle_vol <= 0 or today_first_vol < vol_mult * avg_candle_vol:
+                dropped_vol += 1
+                continue
+
+            # ── Passed all filters — this is a gap-and-go candidate ──
+            side = "BUY" if gap_pct > 0 else "SELL"
+
+            # Run full technical analysis for telemetry + indicator snapshot
+            result = self._analyse_stock(symbol, as_of=as_of)
+            tech = result.get("technical", {}) if result else {}
+
+            # ── Bug fix #3: compute gap-candle SL matching backtest ──
+            # SL is anchored to the gap candle structure, not ATR.
+            if today_candles and len(today_candles) >= 2:
+                entry_candle = today_candles[min(1, len(today_candles) - 1)]
+                gap_candle_low = entry_candle.get("low", ltp * 0.99)
+                gap_candle_high = entry_candle.get("high", ltp * 1.01)
+            else:
+                # Fallback: use today's OHLC
+                gap_candle_low = ohlc.get("low", ltp * 0.99)
+                gap_candle_high = ohlc.get("high", ltp * 1.01)
+
+            if side == "BUY":
+                sl_price = gap_candle_low
+                sl_dist = ltp - sl_price
+                if sl_dist <= 0:
+                    sl_dist = ltp * 0.01  # 1% fallback
+                    sl_price = ltp - sl_dist
+            else:
+                sl_price = gap_candle_high
+                sl_dist = sl_price - ltp
+                if sl_dist <= 0:
+                    sl_dist = ltp * 0.01
+                    sl_price = ltp + sl_dist
+
+            # ── Bug fix #7: target = max(SL-based, ATR-based) ────
+            # matching backtest's dual-target logic
+            atr_val = 0
+            if result:
+                atr_info = tech.get("atr", {})
+                if isinstance(atr_info, dict):
+                    atr_val = atr_info.get("value", 0) or 0
+            if atr_val <= 0:
+                atr_val = ltp * 0.005
+            atr_target_dist = atr_val * self.cfg.ATR_MULTIPLIER * self.cfg.RR_TARGET_RATIO
+            sl_target_dist = sl_dist * self.cfg.RR_TARGET_RATIO
+            target_dist = max(sl_target_dist, atr_target_dist)
+
+            if side == "BUY":
+                target_price = round(ltp + target_dist, 2)
+            else:
+                target_price = round(ltp - target_dist, 2)
+
+            gap_candidates.append({
+                "symbol": symbol,
+                "side": side,
+                "gap_pct": gap_pct,
+                "price": ltp,
+                "prev_close": prev_close,
+                "today_open": today_open,
+                "gap_candle_sl": round(sl_price, 2),
+                "gap_candle_target": round(target_price, 2),
+                "technical": tech,
+                "_indicator_snapshot": (
+                    self._build_indicator_snapshot(tech, result)
+                    if result else ""
+                ),
+            })
+
+        self.log.info(
+            f"Gap-and-Go filter: {len(gap_candidates)} candidates passed "
+            f"(dropped: no_quote={dropped_no_quote}, price={dropped_price}, "
+            f"no_gap={dropped_no_gap}, extreme_gap={dropped_extreme}, "
+            f"low_vol={dropped_vol})"
+        )
+
+        if not gap_candidates:
+            self.log.warning("Gap-and-Go scan: no candidates found")
+            return []
+
+        # ── Rank by gap magnitude (strongest gaps first) ──────────
+        gap_candidates.sort(key=lambda c: abs(c["gap_pct"]), reverse=True)
+
+        # ── Direction slot allocation ─────────────────────────────
+        max_same_dir = max(1, self.cfg.MAX_POSITIONS - 1)
+        buy_slots = max(0, max_same_dir - open_buys)
+        sell_slots = max(0, max_same_dir - open_sells)
+
+        # ── Build trade plans ─────────────────────────────────────
+        budget = self._budget
+        max_pct = self.cfg.MAX_POSITION_PCT / 100
+        max_per = budget * max_pct
+        budget_per_slot = min(budget / max_trades, max_per)
+
+        # Parse already-traded symbols
+        skip_symbols: set[str] = set()
+        if session_context:
+            m = re.search(r"Already traded today:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols = {s.strip() for s in m.group(1).split(",")}
+            m = re.search(r"Currently holding:\s*(.+)", session_context)
+            if m and m.group(1).strip().lower() != "none":
+                skip_symbols |= {s.strip() for s in m.group(1).split(",")}
+
+        scan_ts = _as_of_dt(as_of).strftime("%Y-%m-%d %H:%M:%S")
+        self.last_scan_time = scan_ts
+
+        trades = []
+        used_buy = 0
+        used_sell = 0
+        noai_sector_counts: dict[str, int] = {}
+
+        for c in gap_candidates:
+            symbol = c["symbol"]
+            if symbol in skip_symbols:
+                continue
+
+            side = c["side"]
+            if side == "BUY" and used_buy >= buy_slots:
+                continue
+            if side == "SELL" and used_sell >= sell_slots:
+                continue
+
+            sector = SECTOR_MAP.get(symbol, "OTHER")
+            sec_count = noai_sector_counts.get(sector, 0)
+            if sec_count >= MAX_PER_SECTOR:
+                continue
+
+            price = c["price"]
+            if price <= 0:
+                continue
+
+            noai_sector_counts[sector] = sec_count + 1
+            if side == "BUY":
+                used_buy += 1
+            else:
+                used_sell += 1
+
+            # ── Bug fix #3: use gap-candle SL/target, not default ──
+            sl = c["gap_candle_sl"]
+            target = c["gap_candle_target"]
+
+            qty = max(1, int(budget_per_slot / price))
+
+            # Build rationale
+            rationale = (
+                f"GAP-AND-GO | Gap {c['gap_pct']:+.1f}% | "
+                f"PrevClose {c['prev_close']:.2f} → Open {c['today_open']:.2f}"
+            )
+            tech = c.get("technical", {})
+            adx_info = tech.get("adx", {})
+            if adx_info.get("adx", 0) > 0:
+                rationale += f" | ADX {adx_info['adx']:.0f}"
+            rsi_info = tech.get("rsi", {})
+            if rsi_info.get("rsi", 0) > 0:
+                rationale += f" | RSI {rsi_info['rsi']:.0f}"
+
+            # ── Bug fix #6: score in a scale the engine expects ──
+            # The engine uses |score| thresholds designed for ~5-20 range.
+            # Map gap_pct (1-5) to ~5-15 range so gates work correctly.
+            score_magnitude = abs(c["gap_pct"]) * 3.0  # 1% → 3, 3% → 9, 5% → 15
+            score = score_magnitude if side == "BUY" else -score_magnitude
+
+            trades.append({
+                "symbol": symbol,
+                "exchange": "NSE",
+                "side": side,
+                "entry_price": round(price, 2),
+                "stop_loss": sl,
+                "target_price": target,
+                "qty": qty,
+                "rationale": rationale,
+                "status": "PENDING",
+                "strategy_id": profile,
+                "_entry_score": score,
+                "_entry_rsi": tech.get("rsi", {}).get("rsi", 0),
+                "_entry_adx": tech.get("adx", {}).get("adx", 0),
+                "_entry_plus_di": tech.get("adx", {}).get("plus_di", 0),
+                "_entry_minus_di": tech.get("adx", {}).get("minus_di", 0),
+                "_entry_patterns": [],
+                "_indicator_snapshot": c.get("_indicator_snapshot", ""),
+                "_scan_time": scan_ts,
+            })
+
+        if not trades:
+            self.log.warning(
+                f"Gap-and-Go scan: {len(gap_candidates)} gap candidates found "
+                f"but none fit slots/sector/budget"
+            )
+            return []
+
+        # Telemetry
+        for t in trades:
+            self.telemetry.record_scored(
+                {
+                    "symbol": t["symbol"],
+                    "current_price": t["entry_price"],
+                    "combined_score": t["_entry_score"],
+                },
+                scan_time=scan_ts,
+                nifty_trend=self.last_nifty_trend,
+                vix=self.last_vix,
+                tape="GAP_GO",
+                sector=SECTOR_MAP.get(t["symbol"], "OTHER"),
+            )
+
+        primary = self._validate_budget(trades[:max_trades])
+        fallback = trades[max_trades:]
+        while len(primary) < max_trades and fallback:
+            promoted = fallback.pop(0)
+            candidate = self._validate_budget([promoted])
+            if candidate:
+                primary.extend(candidate)
+
+        all_trades = primary + fallback
+        self.log.success(
+            f"Gap-and-Go scan: {len(primary)} primary + {len(fallback)} "
+            f"fallback = {len(all_trades)} candidates for entry loop"
+        )
+        return all_trades
+
     def scan_noai(
         self, quotes: dict, nifty_context: str = "",
         max_trades: int = 0, session_context: str = "",
@@ -2115,6 +2495,14 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
         if profile == "NOAI_SIMPLE_MR_BASELINE":
             return self._scan_noai_simple_mr(
+                quotes, max_trades,
+                session_context=session_context,
+                open_buys=open_buys,
+                open_sells=open_sells,
+                as_of=as_of,
+            )
+        if profile == "NOAI_GAP_AND_GO":
+            return self._scan_noai_gap_go(
                 quotes, max_trades,
                 session_context=session_context,
                 open_buys=open_buys,

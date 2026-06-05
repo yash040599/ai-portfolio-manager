@@ -1,10 +1,11 @@
 # Trade Next Ideas — Intraday & Options Research
 
 > **Created:** 2026-06-06
-> **Status:** Research / ideation only — no code changes implied.
-> **Context:** Phases 0-6 of intraday equity backtesting are complete.
-> Best OOS result is PF 1.10 (VOLATILE-only regime gate), still below 1.15
-> promotion gate. This doc captures the next set of ideas to explore.
+> **Status:** Phase 7 complete. A.2 (Gap-and-Go) **PASSES** OOS PF 1.28 and is
+> implemented. A.3 (Cross-sectional momentum) and A.6 (prev-day breakout) tested
+> and failed. Remaining ideas deferred.
+> **Context:** Phases 0-7 of intraday equity backtesting are complete.
+> Gap-and-Go clears the 1.15 promotion gate. Dry-run validation pending.
 
 ---
 

@@ -1,17 +1,18 @@
 # Trading Statistics
 
-Last updated: 2026-05-26 (post 62-gate backtest audit).
+Last updated: 2026-06-06 (Phase 7 Gap-and-Go backtested; code-reviewed).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.0-2026-05-26-BACKTEST_OPTIMIZED |
-| Active stage | **BACKTEST_OPTIMIZED** - 62-gate backtest audit applied. |
-| AI mode | Gemini 2.5 Flash (detailed plan) selects best 2 trades/day from NIFTY50. |
-| Run command | python main.py --mode trade --ai |
+| Runtime strategy version | 2.1-2026-06-06-GAP_AND_GO |
+| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go passes OOS PF 1.28 (ALL), 1.35 (skip-RANGE). Dry-run validation pending. |
+| Strategy profile | `NOAI_GAP_AND_GO` (set `TRADE_STRATEGY_PROFILE` to activate) |
+| AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
+| Run command | python main.py --mode trade --dryrun |
 | Budget | Rs.50,000 |
-| Daily trade cap (K1) | 2 trades max per day |
+| Daily trade cap (K1) | 2 trades max per day (GAP_GO_DAILY_CAP) |
 | Square-off | 14:00 IST |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
 

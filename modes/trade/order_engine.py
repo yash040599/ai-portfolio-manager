@@ -1813,10 +1813,11 @@ class OrderEngine:
             or getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
         )
         simple_mr_entry = strategy_id == "NOAI_SIMPLE_MR_BASELINE"
+        gap_go_entry = strategy_id == "NOAI_GAP_AND_GO"
         self._last_entry_rejection_gate = ""
         self._last_entry_rejection_reason = ""
         skip_legacy_performance_pauses = (
-            simple_mr_entry
+            (simple_mr_entry or gap_go_entry)
             and bool(getattr(self.cfg, "SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES", False))
         )
         if skip_legacy_performance_pauses and not self._simple_mr_legacy_pause_skip_logged:
@@ -2238,29 +2239,37 @@ class OrderEngine:
                     self.log.info(f"  ⚠ {symbol}: volume data unavailable — proceeding without RVol check")
 
         # ── ATR-based dynamic stop-loss / target ──────────────────
-        atr = self.calculate_atr(symbol, exchange)
-        result = self._compute_atr_sl_target(entry, side, atr)
-        if result:
-            sl, target = result
-
-            # Log cap info if SL was wider than MAX_INTRADAY_SL_PCT
-            raw_sl_pct = self.cfg.ATR_MULTIPLIER * atr / entry * 100
-            max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
-            if raw_sl_pct > max_sl_pct:
-                self.log.info(
-                    f"ATR SL was {raw_sl_pct:.1f}% — capped to {max_sl_pct}%: "
-                    f"SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
-                )
-
+        # Gap-and-Go: skip ATR override — scanner already computed
+        # gap-candle-based SL/target that matches the backtest.
+        if gap_go_entry:
             self.log.info(
-                f"ATR({self.cfg.ATR_PERIOD}, {self.cfg.ATR_INTERVAL}) "
-                f"for {symbol}: Rs.{atr:.2f} | "
-                f"Dynamic SL: Rs.{sl:.2f} | Target: Rs.{target:.2f}"
+                f"Gap-and-Go: using scanner SL Rs.{sl:.2f} / "
+                f"Target Rs.{target:.2f} (gap-candle based, not ATR)"
             )
         else:
-            self.log.info(
-                f"ATR unavailable for {symbol} — using Claude SL: Rs.{sl:.2f} / Target: Rs.{target:.2f}"
-            )
+            atr = self.calculate_atr(symbol, exchange)
+            result = self._compute_atr_sl_target(entry, side, atr)
+            if result:
+                sl, target = result
+
+                # Log cap info if SL was wider than MAX_INTRADAY_SL_PCT
+                raw_sl_pct = self.cfg.ATR_MULTIPLIER * atr / entry * 100
+                max_sl_pct = self.cfg.MAX_INTRADAY_SL_PCT
+                if raw_sl_pct > max_sl_pct:
+                    self.log.info(
+                        f"ATR SL was {raw_sl_pct:.1f}% — capped to {max_sl_pct}%: "
+                        f"SL Rs.{sl:.2f} | Target Rs.{target:.2f}"
+                    )
+
+                self.log.info(
+                    f"ATR({self.cfg.ATR_PERIOD}, {self.cfg.ATR_INTERVAL}) "
+                    f"for {symbol}: Rs.{atr:.2f} | "
+                    f"Dynamic SL: Rs.{sl:.2f} | Target: Rs.{target:.2f}"
+                )
+            else:
+                self.log.info(
+                    f"ATR unavailable for {symbol} — using Claude SL: Rs.{sl:.2f} / Target: Rs.{target:.2f}"
+                )
 
         # ── SL sanity check: ensure SL is on the correct side of entry ─
         # Can happen when entry was overridden to live price but SL was
@@ -2543,25 +2552,25 @@ class OrderEngine:
         if entry_rsi > 0:
             rsi_sell_max = self.cfg.RSI_SELL_BLOCK_THRESHOLD
             rsi_buy_max  = self.cfg.RSI_BUY_BLOCK_THRESHOLD
-            if side == "SELL" and entry_rsi > rsi_sell_max and not simple_mr_entry:
+            if side == "SELL" and entry_rsi > rsi_sell_max and not simple_mr_entry and not gap_go_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} > {rsi_sell_max:.0f} — too overbought to "
                     f"short (strong buying pressure). Skipping."
                 )
                 return False
-            if side == "BUY" and entry_rsi > rsi_buy_max:
+            if side == "BUY" and entry_rsi > rsi_buy_max and not gap_go_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} > {rsi_buy_max:.0f} — BUY chasing "
                     f"extended overbought move. Skipping."
                 )
                 return False
-            if side == "BUY" and entry_rsi < self.cfg.RSI_BUY_FLOOR_THRESHOLD and not simple_mr_entry:
+            if side == "BUY" and entry_rsi < self.cfg.RSI_BUY_FLOOR_THRESHOLD and not simple_mr_entry and not gap_go_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} < {self.cfg.RSI_BUY_FLOOR_THRESHOLD:.0f} — too oversold to "
                     f"buy (strong selling pressure). Skipping."
                 )
                 return False
-            if side == "SELL" and entry_rsi < self.cfg.RSI_SELL_FLOOR_THRESHOLD:
+            if side == "SELL" and entry_rsi < self.cfg.RSI_SELL_FLOOR_THRESHOLD and not gap_go_entry:
                 self.log.warning(
                     f"{symbol}: RSI {entry_rsi:.0f} < {self.cfg.RSI_SELL_FLOOR_THRESHOLD:.0f} — SELL chasing "
                     f"extended oversold move. Skipping."
@@ -2577,7 +2586,7 @@ class OrderEngine:
         # main gate even when the chart is printing a flip pattern.
         # Empirical: PNB BUY @ +6.1 / TRENT BUY @ +6.4 both with
         # BEARISH_ENGULFING on 2026-04-22 \u2014 both stagnant losers.
-        if self.cfg.PATTERN_VETO_ENABLED and not simple_mr_entry:
+        if self.cfg.PATTERN_VETO_ENABLED and not simple_mr_entry and not gap_go_entry:
             entry_patterns = trade.get("_entry_patterns") or []
             if entry_patterns:
                 pset = {str(p).upper() for p in entry_patterns}
@@ -2603,7 +2612,7 @@ class OrderEngine:
         # Also reject when DI direction disagrees with the trade side —
         # e.g. trying to BUY while -DI > +DI means sellers are dominant.
         # Fails open when ADX is missing (treat as pass).
-        if self.cfg.ADX_ENTRY_GATE_ENABLED and not simple_mr_entry:
+        if self.cfg.ADX_ENTRY_GATE_ENABLED and not simple_mr_entry and not gap_go_entry:
             entry_adx = trade.get("_entry_adx", 0) or 0
             plus_di   = trade.get("_entry_plus_di", 0) or 0
             minus_di  = trade.get("_entry_minus_di", 0) or 0
@@ -2652,7 +2661,7 @@ class OrderEngine:
         # gaps (low-volume) and NO_GAP are not gated here. Fails open
         # when the snapshot is missing/malformed (other gates remain
         # active).
-        if getattr(self.cfg, "GAP_COHERENCE_GATE_ENABLED", False) and not simple_mr_entry:
+        if getattr(self.cfg, "GAP_COHERENCE_GATE_ENABLED", False) and not simple_mr_entry and not gap_go_entry:
             snap_str = trade.get("_indicator_snapshot", "")
             if snap_str:
                 try:
@@ -2787,7 +2796,7 @@ class OrderEngine:
         # Skip before 10:15 — VWAP needs at least a full hour of candles
         # to be stable; early readings swing wildly on low volume.
         entry_score_abs = abs(trade.get("_entry_score") or 0)
-        if (not simple_mr_entry) and (now.hour > 10 or (now.hour == 10 and now.minute >= 15)):
+        if (not simple_mr_entry) and (not gap_go_entry) and (now.hour > 10 or (now.hour == 10 and now.minute >= 15)):
             snap_str = trade.get("_indicator_snapshot", "")
             if snap_str:
                 try:

@@ -3,11 +3,12 @@
 <!-- Maintenance: keep in sync with code changes.  Per-pass history
      lives in commit messages and `docs/TRADE_ROADMAP.md`. -->
 
-> **Active stage (2026-05-26):** `BACKTEST_OPTIMIZED` — Full 62-gate backtest audit applied.
-> Gates are enabled/disabled based on backtest evidence from the 2026-05-26 audit.
-> AI mode (Gemini 2.5 Flash) selects the best 2 trades per day from NIFTY50.
-> This doc is the *technical reference for what each gate does when enabled*.
-> The single source of truth for which gates are live today is `config.py`.
+> **Active stage (2026-06-06):** `GAP_AND_GO_DRY_RUN` — Phase 7 Gap-and-Go
+> strategy passes OOS PF 1.28 (ALL regimes), 1.35 (skip-RANGE), 1.66
+> (VOLATILE-only). Code-reviewed and bug-fixed. Set
+> `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO"` to activate. Dry-run
+> validation pending. Legacy multi-indicator scorer available as
+> `NOAI_LEGACY_FULL` (default).
 > See [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for current results and
 > [TRADE_ROADMAP.md](TRADE_ROADMAP.md) for the operating plan.
 
