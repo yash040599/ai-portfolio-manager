@@ -102,6 +102,7 @@ class PortfolioManager:
         self._noai = False             # True when running in --noai mode
         self._last_nifty_check = 0.0   # timestamp of last NIFTY regime re-check
         self._last_opportunity_scan = 0.0  # timestamp of last periodic opportunity scan
+        self._gap_go = False  # True when running gap-and-go profile
 
     # ================================================================
     # RUN — MAIN ENTRY POINT
@@ -281,6 +282,12 @@ class PortfolioManager:
         self._apply_vix_adjustments()
         self._fetch_preopen_data()
 
+        # Set gap-go flag BEFORE the resume/fresh branch so crash-resume
+        # also gets the correct one-shot/no-rescan behaviour.
+        self._gap_go = (
+            getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_GAP_AND_GO"
+        )
+
         if resumed > 0:
             # Already have live positions — run an immediate Claude
             # review so it can assess the resumed positions, then
@@ -301,10 +308,7 @@ class PortfolioManager:
             # volume, which only exist after 9:30 IST. Defer scan to
             # after the decision floor, then enter immediately (no
             # additional observation — the gap IS the signal).
-            gap_go_profile = (
-                getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_GAP_AND_GO"
-            )
-            if gap_go_profile:
+            if self._gap_go:
                 self.log.section("GAP-AND-GO MODE — scan deferred to post-open")
                 self.log.info(
                     "Gap-and-Go requires today's opening price + first-candle "
@@ -324,6 +328,21 @@ class PortfolioManager:
                 )
                 floor_min = self.cfg.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN
                 floor_time = market_open + datetime.timedelta(minutes=floor_min)
+
+                # Late-start guard: gap signal is only valid in the
+                # first hour after open. After 10:15, the gap has
+                # either followed through or failed — entering is
+                # chasing a stale signal.
+                gap_go_cutoff = market_open + datetime.timedelta(minutes=60)
+                if now > gap_go_cutoff:
+                    self.log.warning(
+                        f"Gap-and-Go: started too late ({now.strftime('%H:%M')}) — "
+                        f"gap signal only valid in first hour after open. "
+                        f"Nothing to do today."
+                    )
+                    self._generate_report()
+                    return
+
                 if now < floor_time:
                     wait_sec = (floor_time - now).total_seconds()
                     self.log.info(
@@ -1220,6 +1239,16 @@ class PortfolioManager:
                     self.log.error("All positions closed, order API broken — stopping")
                     break
 
+                # Gap-and-Go: no rescans — the gap is a one-shot signal.
+                # Once gap trades close, the day is done.
+                if self._gap_go:
+                    self._clear_status_line()
+                    self.log.info(
+                        "Gap-and-Go: all positions closed — gap signal is "
+                        "one-shot, no rescan. Done for the day."
+                    )
+                    break
+
                 sq_off = now.replace(
                     hour=self.cfg.SQUARE_OFF_HOUR,
                     minute=self.cfg.SQUARE_OFF_MINUTE,
@@ -1560,8 +1589,10 @@ class PortfolioManager:
                     self._last_nifty_check = time.time()
 
             # ── Periodic opportunity scan (fill free slots) ───────
+            # Gap-and-Go: skip — gap signal is one-shot at open, no
+            # mid-day rescans for new gap entries.
             opp_rescan_interval = self.cfg.OPPORTUNITY_RESCAN_MINUTES * 60
-            if opp_rescan_interval > 0:
+            if opp_rescan_interval > 0 and not self._gap_go:
                 open_count = len(self.engine.open_positions())
                 opp_elapsed = time.time() - self._last_opportunity_scan
                 if (
