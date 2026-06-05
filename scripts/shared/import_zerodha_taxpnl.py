@@ -553,6 +553,8 @@ def _update_trading_reports(zerodha_trades: list[dict], conn) -> dict:
 
         positions = data.get("positions", [])
         old_charges = data.get("pnl", {}).get("charges", {})
+        if not isinstance(old_charges, dict):
+            old_charges = {}
 
         # ── Update positions from trades DB ───────────────────
         _match_positions_from_trades_db(conn, positions, date_str)

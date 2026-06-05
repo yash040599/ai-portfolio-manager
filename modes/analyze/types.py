@@ -38,6 +38,7 @@ SRC_CANDLE_CACHE  = "candle_cache"
 SRC_SECTOR_MAP    = "sector_map"
 SRC_DIVIDENDS     = "dividends_seed"
 SRC_FUNDAMENTALS  = "fundamentals_seed"
+SRC_YFINANCE      = "yfinance"         # live public data (market cap, etc.)
 SRC_RULE_ENGINE   = "rule_engine"
 SRC_CLAUDE_PRO    = "claude_pro"
 SRC_CLAUDE_FREE   = "claude_free"

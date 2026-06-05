@@ -881,7 +881,7 @@ def _render_holding_card(
     holds the stock, so the page (and the prompt builder) can pick
     up the existing values. Mirrors the portfolio drill-down card UI.
     """
-    qty = int(getattr(pos, "managed_qty", 0) or 0)
+    qty = float(getattr(pos, "managed_qty", 0) or 0)
     entry = float(getattr(pos, "entry_price", 0) or 0.0)
     stop = float(getattr(pos, "stop_price", 0) or 0.0)
     target = float(getattr(pos, "target_price", 0) or 0.0)
@@ -892,6 +892,8 @@ def _render_holding_card(
     pnl = cur_value - invested
     pnl_pct = (pnl / invested * 100.0) if invested else 0.0
     cls = "pos" if pnl >= 0 else "neg"
+
+    qty_str = str(int(qty)) if qty == int(qty) else f"{qty:.2f}"
 
     def _m(v: float) -> str:
         return f"{currency}{v:,.2f}"
@@ -911,7 +913,7 @@ def _render_holding_card(
     You already hold this stock. These are your actual entry values —
     the AI prompt builder above uses them automatically.</p>
   <table class="kvtable">
-    <tr><td>Quantity held</td><td>{qty}</td></tr>
+    <tr><td>Quantity held</td><td>{qty_str}</td></tr>
     <tr><td>Your buy price</td><td>{_m(entry)}</td></tr>
     <tr><td>Current price</td><td>{_m(cur)}</td></tr>
     <tr><td>Invested value</td><td>{currency}{invested:,.0f}</td></tr>

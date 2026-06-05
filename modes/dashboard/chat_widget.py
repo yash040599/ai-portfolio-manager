@@ -50,6 +50,16 @@ def _num(field, default=0.0) -> float:
         return default
 
 
+def _qty_str(field, default=0.0) -> str:
+    """Format a share quantity. Whole numbers render without decimals
+    (e.g. "128"); fractional holdings keep up to 2 decimals (e.g.
+    "0.42") so sub-1-share positions aren't truncated to "0"."""
+    q = _num(field, default)
+    if q == int(q):
+        return str(int(q))
+    return f"{q:.2f}"
+
+
 def _txt(field, default="") -> str:
     val = _fval(field, default)
     return default if val is None else str(val)
@@ -286,7 +296,7 @@ def _portfolio_detail_block(sym: str) -> str:
     if held:
         lines += [
             f"- I HOLD this stock.",
-            f"- Quantity: {int(_num(s.qty))} shares",
+            f"- Quantity: {_qty_str(s.qty)} shares",
             f"- My average buy price: Rs.{_num(s.avg_buy_price):,.2f}",
             f"- Total invested: Rs.{_num(s.invested_value):,.0f}",
             f"- Last recorded price (verify current): Rs.{_num(s.current_price):,.2f}",
@@ -348,7 +358,7 @@ def _portfolio_overview_block() -> str:
     )
     for h in holdings:
         lines.append(
-            f"- {h.symbol}: {int(_num(h.qty))} sh · "
+            f"- {h.symbol}: {_qty_str(h.qty)} sh · "
             f"avg Rs.{_num(h.avg_buy_price):,.2f} · "
             f"last Rs.{_num(h.current_price):,.2f} · "
             f"{_num(h.pnl_pct):+.1f}% · {_txt(h.sector, 'n/a')}"
@@ -382,7 +392,7 @@ def _swing_detail_block(sym: str) -> str:
     if held is not None:
         lines += [
             "- I already HOLD an open swing position in this:",
-            f"  · Quantity: {int(getattr(held, 'managed_qty', 0) or 0)} shares",
+            f"  · Quantity: {_qty_str(getattr(held, 'managed_qty', 0))} shares",
             f"  · My entry price: Rs.{float(getattr(held, 'entry_price', 0) or 0):,.2f}",
             f"  · My stop: Rs.{float(getattr(held, 'stop_price', 0) or 0):,.2f}",
             f"  · My target: Rs.{float(getattr(held, 'target_price', 0) or 0):,.2f}",
@@ -403,7 +413,7 @@ def _swing_detail_block(sym: str) -> str:
             f"- Risk:reward: {float(getattr(cand, 'rr_ratio', 0) or 0):.1f}x "
             f"(risk Rs.{float(getattr(cand, 'risk_rupees', 0) or 0):,.0f} / "
             f"reward Rs.{float(getattr(cand, 'reward_rupees', 0) or 0):,.0f})",
-            f"- Suggested quantity: {int(getattr(cand, 'suggested_qty', 0) or 0)} shares",
+            f"- Suggested quantity: {_qty_str(getattr(cand, 'suggested_qty', 0))} shares",
             f"- Composite score: {float(getattr(cand, 'composite_score', 0) or 0):.2f}",
         ]
         reasons = getattr(cand, "reasons", None) or []
@@ -432,7 +442,7 @@ def _swing_overview_block() -> str:
         lines.append("Open swing positions (symbol · qty · entry · stop · target):")
         for p in positions:
             lines.append(
-                f"- {p.symbol}: {int(getattr(p, 'managed_qty', 0) or 0)} sh · "
+                f"- {p.symbol}: {_qty_str(getattr(p, 'managed_qty', 0))} sh · "
                 f"entry Rs.{float(getattr(p, 'entry_price', 0) or 0):,.2f} · "
                 f"stop Rs.{float(getattr(p, 'stop_price', 0) or 0):,.2f} · "
                 f"target Rs.{float(getattr(p, 'target_price', 0) or 0):,.2f}"
@@ -467,7 +477,7 @@ def _us_detail_block(sym: str) -> str:
     if held is not None:
         lines += [
             "- I already HOLD an open position in this:",
-            f"  · Quantity: {int(getattr(held, 'managed_qty', 0) or 0)} shares",
+            f"  · Quantity: {_qty_str(getattr(held, 'managed_qty', 0))} shares",
             f"  · My entry price: ${float(getattr(held, 'entry_price', 0) or 0):,.2f}",
             f"  · My stop: ${float(getattr(held, 'stop_price', 0) or 0):,.2f}",
             f"  · My target: ${float(getattr(held, 'target_price', 0) or 0):,.2f}",
@@ -486,7 +496,7 @@ def _us_detail_block(sym: str) -> str:
             f"- Stop loss: ${float(row.get('stop_price') or 0):,.2f}",
             f"- Target: ${float(row.get('target_price') or 0):,.2f}",
             f"- Risk:reward: {float(row.get('rr_ratio') or 0):.2f}x",
-            f"- Suggested quantity: {int(row.get('suggested_qty') or 0)} shares",
+            f"- Suggested quantity: {_qty_str(row.get('suggested_qty'))} shares",
             f"- Composite score: {float(row.get('score') or 0):.2f}",
             f"- 52w high: ${float(ind.get('high_52w') or 0):,.2f} "
             f"({float(ind.get('dip_from_52w_high_pct') or 0):.2f}% below high)",
@@ -531,7 +541,7 @@ def _us_overview_block() -> str:
         lines.append("Open US positions (symbol · qty · entry · stop · target):")
         for p in positions:
             lines.append(
-                f"- {p.symbol}: {int(getattr(p, 'managed_qty', 0) or 0)} sh · "
+                f"- {p.symbol}: {_qty_str(getattr(p, 'managed_qty', 0))} sh · "
                 f"entry ${float(getattr(p, 'entry_price', 0) or 0):,.2f} · "
                 f"stop ${float(getattr(p, 'stop_price', 0) or 0):,.2f} · "
                 f"target ${float(getattr(p, 'target_price', 0) or 0):,.2f}"

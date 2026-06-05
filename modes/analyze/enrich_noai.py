@@ -36,6 +36,7 @@ from modes.analyze.types import (
     SRC_FUNDAMENTALS,
     SRC_MISSING,
     SRC_SECTOR_MAP,
+    SRC_YFINANCE,
     SRC_ZERODHA_API,
 )
 
@@ -382,16 +383,21 @@ def _enrich_one(
     industry_f = Field(value=_industry_for(symbol, sector),
                        source=SRC_SECTOR_MAP, as_of=now_ist())
 
-    # Market-cap tier (LARGE / MID / SMALL / ETF). Hand-curated seed,
-    # refreshed semi-annually after AMFI's mcap-tier publication.
+    # Market-cap tier (LARGE / MID / SMALL / ETF). Hybrid: live
+    # yfinance market cap (cached) classified against absolute AMFI
+    # thresholds, falling back to the hand-curated seed when the live
+    # fetch is unavailable. See modes/analyze/market_cap.py.
+    from modes.analyze.market_cap import classify_tier
     tier_lookup = refs.get("market_cap_tiers") or {}
-    tier_value  = tier_lookup.get(symbol, "UNKNOWN")
+    tier_value, tier_note = classify_tier(symbol, tier_lookup)
+    cap_tier_src = (SRC_YFINANCE if tier_note.startswith("yfinance")
+                    else SRC_SECTOR_MAP)
     cap_tier_f  = Field(
         value=tier_value,
-        source=SRC_SECTOR_MAP,
-        as_of=refs.get("market_cap_tiers_as_of") or now_ist(),
-        note=("AMFI tier" if tier_value != "UNKNOWN"
-              else "no market_cap_tier.json entry — refresh seed"),
+        source=cap_tier_src,
+        as_of=now_ist() if cap_tier_src == SRC_YFINANCE
+              else (refs.get("market_cap_tiers_as_of") or now_ist()),
+        note=tier_note,
     )
 
     # Dividend yield TTM.
