@@ -531,6 +531,22 @@ Do not enable live execution until the scanner has at least:
 
 ---
 
+## ⚠️ 2026-06-06 Update: F&O Constraint Under Review
+
+The "No F&O" hard constraint (2026-04-28) is being revisited. After completing
+Phases 0-6 of intraday equity backtesting (best OOS PF = 1.10, still <1.15
+gate), the structural cost disadvantage of equity MIS on NSE has been
+identified as the primary blocker. Options may solve this.
+
+See **[TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md)** for:
+- Section A: Remaining intraday equity ideas to test before concluding
+- Section B: Options trading research for a potential new `--mode options`
+
+The F&O constraint remains in effect for CODE — no options code will be written
+until the ideas in TRADE_NEXT_IDEAS.md are evaluated and approved.
+
+---
+
 ## Out Of Scope / Removed From Ideation
 
 These were previously mentioned or tempting, but are now explicitly rejected
