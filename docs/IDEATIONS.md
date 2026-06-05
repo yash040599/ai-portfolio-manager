@@ -1,9 +1,10 @@
 # Ideations -- Future Money Engines
 
-> **Status:** Planning / research only -- no code changes implied.
-> **Context:** V2 intraday improvements stay in [TRADE_ROADMAP.md](TRADE_ROADMAP.md).
-> This file is for broader future product directions that can make money beyond
-> the current intraday bot.
+> **Status:** Partially superseded (2026-06-06).
+> **A1 (V3 AI Intraday):** Superseded by [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md) which has the current intraday + options research.
+> **A2 (Swing):** Active — see [SWING_GUIDE.md](SWING_GUIDE.md) and [SWING_ROADMAP.md](SWING_ROADMAP.md).
+> **A3 (ETF Rotation):** Still planning stage — content below remains relevant.
+> **Hard Constraints:** The "No F&O" rule is under review — see [TRADE_NEXT_IDEAS.md §B](TRADE_NEXT_IDEAS.md).
 
 ---
 
@@ -530,20 +531,6 @@ Do not enable live execution until the scanner has at least:
 | Churn | Low enough that DP/statutory charges do not dominate. |
 
 ---
-
-## ⚠️ 2026-06-06 Update: F&O Constraint Under Review
-
-The "No F&O" hard constraint (2026-04-28) is being revisited. After completing
-Phases 0-6 of intraday equity backtesting (best OOS PF = 1.10, still <1.15
-gate), the structural cost disadvantage of equity MIS on NSE has been
-identified as the primary blocker. Options may solve this.
-
-See **[TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md)** for:
-- Section A: Remaining intraday equity ideas to test before concluding
-- Section B: Options trading research for a potential new `--mode options`
-
-The F&O constraint remains in effect for CODE — no options code will be written
-until the ideas in TRADE_NEXT_IDEAS.md are evaluated and approved.
 
 ---
 

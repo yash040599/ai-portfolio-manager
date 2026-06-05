@@ -1,5 +1,11 @@
 # Trade Strategy Rollout
 
+> **⚠️ STALE (2026-06-06):** This doc shows "Live trading: ENABLED" but the
+> system verdict is **DO NOT GO LIVE** (OOS PF 0.82, negative expectancy).
+> See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) for current posture and
+> [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md) for next research steps.
+> This file is kept because config.py and manager.py reference it.
+
 > Updated 2026-05-25. Chan framework removed. Replaced with
 > backtest-driven gate optimization approach.
 >

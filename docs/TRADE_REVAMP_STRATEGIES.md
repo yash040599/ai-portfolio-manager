@@ -1,5 +1,10 @@
 # Trade Revamp — Candidate Strategies
 
+> **⚠️ SUPERSEDED (2026-06-06):** All three strategies below were backtested and REJECTED.
+> VWAP MR: PF 0.80. ORB-15: PF 0.97. EMA Pullback: PF 0.65 after costs.
+> See [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md) for current research.
+> This file is kept for historical reference only.
+
 **Date**: 2026-05-25
 **Capital**: ₹50,000 (config-adjustable)
 **Risk per trade**: 1–2% (₹500–₹1,000)
