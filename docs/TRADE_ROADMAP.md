@@ -33,7 +33,7 @@ Last updated: 2026-06-01 (Phases 1–6 done — momentum levers top out at OOS P
 6. **2026-05-26b**: Code review pass. Fixed a real bug — the expiry daily-cap (`EXPIRY_MAX_TRADES_PER_DAY=0`) was silently *disabling* the K1 cap on expiry Thursdays (unlimited trades). Now regression-tested ([tests/test_expiry_cap.py](../tests/test_expiry_cap.py)). Stale docs (square-off, loser-exit, trade-cap values) corrected. Forward plan reworked to gate live trading behind out-of-sample validation.
 7. **2026-05-29**: Phase 0 executed. Cost model reconciled to a single source of truth. Walk-forward validation ran ([scripts/trade/walk_forward.py](../scripts/trade/walk_forward.py)): **out-of-sample PF 0.82, negative expectancy → VERDICT FAIL, do not go live.** Proceeding to Phase 1 (regime classifier).
 8. **2026-06-01**: Phase 1.4 + Phase 2 executed. Regime routing (VOLATILE-only) lifts OOS PF 0.82 → **1.10** but stays below the 1.15 gate. Fetched 2yr of 5-min candles and tested finer entries: 5-min entry timing (OOS PF **0.70**) and ORB-5 (OOS PF **0.66**) are both **worse** than 15-min. **Verdict: tighter timeframe is a dead end; the regime gate is necessary but not sufficient. The edge gap is the entry *signal*, not its resolution.** Still do not go live.
-9. **2026-06-06**: Research review. Documented remaining intraday ideas (A.1-A.8) and options mode research (B.1-B.5) in [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md). Three quick backtestable ideas (cross-sectional momentum, gap-and-go, prev-day breakout) identified as final intraday tests before concluding.
+9. **2026-06-06**: Research review. Documented remaining intraday ideas (A.1-A.8) and options mode research (B.1-B.5) in [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md). Three quick backtestable ideas (cross-sectional momentum, gap-and-go, prev-day breakout) identified as **Phase 7 — final intraday tests** before concluding. Options roadmap created at [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
 
 ## Key Config (Post-Audit)
 
@@ -279,6 +279,9 @@ ORB-5 collapses out-of-sample (TRAIN 1.02 → TEST 0.66) — classic overfit, an
 **Decision on which candidate**: Made after Phase 5 based on what the data shows.
 
 #### Phase 6 Results (2026-06-01) — Pairs trading REJECTED (intraday); REDIRECT to swing
+
+**Decision (PM call, 2026-06-01):** Do NOT deploy capital to the intraday trade tool. The one promising thread — market-neutral pairs trading — should be rebuilt in the SWING tool. The intraday tool stays paused. See Phase 7 below for the final three tests before concluding.
+
 `scripts/trade/backtest_pairs.py`. Market-neutral stat-arb on NIFTY50 same-sector pairs (`SECTOR_MAP`). Strict no-lookahead: hedge ratio β = OLS on TRAIN log-prices (frozen); pair selection (correlation ≥ floor, OU half-life band) on TRAIN only; traded OOS on TEST with a causal trailing-window z-score; **costs charged on both legs** via `Config.calculate_charges`; intraday MIS with 15:15 square-off.
 
 **The killer finding is in pair selection, not the P&L:** the OU **half-life of every viable sector spread is 270–3000+ 15-min bars** (÷ ~25 bars/day = **~10–120 trading days**). The spreads mean-revert over *weeks*, so an intraday tool that must flatten by 15:15 exits long before convergence while paying two-leg costs every day.
@@ -296,6 +299,78 @@ Raising the entry threshold cuts trade count (cost drag) and lifts PF 0.48 → 0
 | **Pairs trading (SWING / multi-day)** | Move to swing tool; daily-candle spread + overnight-risk + financing model |
 | Expiry-day options selling (Thursday NIFTY/BANKNIFTY) | Options infra, Sensibull/Opstra integration |
 | Intraday momentum (first-half → last-half) | Simple; can backtest on existing candle data |
+
+---
+
+### Phase 7: Final Intraday Equity Tests (Last 3 Signals Before Concluding)
+**Goal**: Test three genuinely different signal families that have zero overlap with the indicator-based scorer. If all three fail OOS, intraday equity is conclusively dead at this capital level. If any passes, stack with regime gate and evaluate.
+**Status**: **PENDING** — next work item. Pick up in a new session.
+**Trigger**: After Phase 6 verdict. All use existing 15-min backtest data — no new data needed.
+**Estimated effort**: ~5-6 hours total for all three.
+
+| Step | Action | Signal Family | Rationale | Done? |
+|---|---|---|---|---|
+| 7.1 | **Backtest cross-sectional momentum** | Rank-based (relative strength) | Different from absolute scoring — ranks NIFTY50 stocks by first-15-min return, buys top 2. Academic evidence (Jegadeesh & Titman) for intraday cross-sectional persistence. Zero overlap with current 14-indicator scorer. | |
+| 7.2 | **Backtest gap-and-go with volume** | Gap + volume filter | ORB-15 was PF 0.97 (closest to profitable). Gap-and-go adds strict volume qualification (>2x average) which should filter false breakouts. Same regime routing (TREND + VOLATILE days only). | |
+| 7.3 | **Backtest previous-day high/low breakout** | Pure price-level breakout | One of the oldest intraday signals. No indicators needed — just previous day's high/low as breakout level + volume confirmation. Different from multi-indicator scoring. | |
+| 7.4 | **Verdict on each** | — | Walk-forward OOS, net of costs, same protocol as Phases 0-6. Keep if OOS PF ≥ 1.15. | |
+
+**Backtest protocol (same as all prior phases):**
+- Walk-forward: TRAIN on year 1, TEST on year 2 (OOS)
+- Net of costs via `Config.calculate_charges`
+- Same frozen config (ATR 2.0, RR 1.8, K1=2, sq-off 14:00)
+- Regime routing: test ALL, skip-RANGE, VOLATILE-only variants
+- Capital Rs.50K, per-trade Rs.15K
+
+**Implementation notes for each:**
+
+#### 7.1 — Cross-Sectional Momentum
+```
+Script: scripts/trade/backtest_cross_momentum.py (new)
+Logic:
+  1. At 09:30 (after first 15-min candle), compute return for all 50 stocks
+  2. Rank by return (descending for BUY, ascending for SELL)
+  3. Enter top 2 (BUY) — no indicator scoring needed
+  4. ATR-based SL/target (same as current)
+  5. Same exit rules (loser exit 13:00, sq-off 14:00)
+  6. Regime-route: skip RANGE days
+Data: existing intraday_15m.sqlite
+```
+
+#### 7.2 — Gap-and-Go with Volume
+```
+Script: scripts/trade/backtest_gap_go.py (new)
+Logic:
+  1. At 09:30, identify stocks that gapped >1% from previous close
+  2. Volume filter: first-15-min volume > 2x same-period 20-day average
+  3. Enter in gap direction (gap up → BUY, gap down → SELL)
+  4. SL: below gap candle low (BUY) / above gap candle high (SELL)
+  5. Target: 50-100% of gap size continuation
+  6. Regime-route: TREND + VOLATILE only
+Data: existing intraday_15m.sqlite + daily candles for prev close
+```
+
+#### 7.3 — Previous Day High/Low Breakout
+```
+Script: scripts/trade/backtest_prev_day_breakout.py (new)
+Logic:
+  1. Compute previous day's high and low for each stock
+  2. Monitor 15-min candles; enter when close breaks above prev-day high (BUY)
+     or below prev-day low (SELL)
+  3. Volume confirmation: breakout candle volume > 1.5x average
+  4. ADX > 25 filter (breakout needs trend strength)
+  5. ATR-based SL/target
+  6. Regime-route: TREND days only
+Data: existing intraday_15m.sqlite + daily candles for prev day H/L
+```
+
+**Exit criteria (Phase 7 overall):**
+
+| Outcome | Action |
+|---|---|
+| **Any strategy OOS PF ≥ 1.15** | Stack with regime gate → dry-run 10 sessions → evaluate live |
+| **Best strategy OOS PF 1.00-1.14** | Marginal — stack with regime + ML classifier (A.8) for one more attempt |
+| **All three OOS PF < 1.00** | **Intraday equity is conclusively dead** at Rs.50K on NSE. Archive trade mode. Pivot to OPTIONS mode (see [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md)). |
 
 ---
 
@@ -339,5 +414,8 @@ See [TRADE_REVAMP_STRATEGIES.md](TRADE_REVAMP_STRATEGIES.md) for full backtest d
 | Score-weighted sizing | Anti-correlated with P&L at current edge |
 | Budget regime deltas | Not needed at Rs.50K single tier |
 | HFT/WebSocket | Speed does not fix a losing strategy |
-| Pairs/stat-arb | Deferred to Phase 6 if needed |
-| Options strategies | Deferred to Phase 6 if needed |
+| Pairs/stat-arb (intraday) | REJECTED Phase 6 — horizon mismatch. Redirect to SWING |
+| Options strategies | Separate mode — see [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md) |
+| Order flow / OFI (Phase 4) | Needs paid data. Only pursue if Phase 7 shows marginal signal |
+| Optuna tuning (Phase 5) | Only if Phase 7 produces a near-gate strategy to optimize |
+| ML classifier (A.8) | Only if Phase 7 produces PF 1.00-1.14 range to filter |

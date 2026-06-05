@@ -7,6 +7,7 @@ Routes:
     /theory/evolution           -> docs/TRADE_EVOLUTION.md
     /theory/tax-guide           -> docs/TRADE_TAX_GUIDE.md (regulatory reference for the /tax page)
     /theory/options-guide       -> docs/OPTIONS_GUIDE.md (plain-English options primer)
+    /theory/options-roadmap     -> docs/OPTIONS_ROADMAP.md (options mode build plan)
     /theory/next-ideas          -> docs/TRADE_NEXT_IDEAS.md (intraday & options research)
 
 UI: shared shell with a "Docs" dropdown selector at top-right for
@@ -43,6 +44,7 @@ PAGES: dict[str, tuple[str, str, bool]] = {
     "evolution":   ("Strategy Evolution",               "TRADE_EVOLUTION.md",  False),
     "tax-guide":   ("Tax Guide (India — Intraday)",     "TRADE_TAX_GUIDE.md",           False),
     "options-guide": ("Options Trading Guide",          "OPTIONS_GUIDE.md",             False),
+    "options-roadmap": ("Options Roadmap",              "OPTIONS_ROADMAP.md",           False),
     "next-ideas":  ("Next Ideas — Intraday & Options",  "TRADE_NEXT_IDEAS.md",          False),
 }
 
