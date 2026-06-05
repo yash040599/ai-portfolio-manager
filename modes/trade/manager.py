@@ -296,34 +296,100 @@ class PortfolioManager:
                 self.log.warning(f"Initial review quote fetch failed: {e}")
             self._run_monitor_loop()
         else:
-            self._run_pre_market_scan()
-            if self._shutdown_requested:
-                return
+            # ── Gap-and-Go: scan AFTER market open ────────────────
+            # Gap-and-Go needs today's opening price + first-candle
+            # volume, which only exist after 9:30 IST. Defer scan to
+            # after the decision floor, then enter immediately (no
+            # additional observation — the gap IS the signal).
+            gap_go_profile = (
+                getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_GAP_AND_GO"
+            )
+            if gap_go_profile:
+                self.log.section("GAP-AND-GO MODE — scan deferred to post-open")
+                self.log.info(
+                    "Gap-and-Go requires today's opening price + first-candle "
+                    "volume. Waiting for market open + 15 min (9:30 candle close)."
+                )
+                self._wait_for_market_open()
+                if self._shutdown_requested:
+                    self._emergency_shutdown()
+                    return
 
-            if not self._trade_plans:
-                if self._scan_failed:
-                    self.log.error("Scan failed — could not fetch market data. Exiting.")
-                else:
-                    if self._noai:
-                        self.log.warning("No trades passed the rule-based filters. Nothing to do today.")
-                    else:
-                        provider = self.cfg.AI_PROVIDER.upper()
-                        reason = getattr(self.scanner, "last_scan_rationale", "") or "no reason given"
-                        self.log.warning(
-                            f"No trades recommended by {provider}. Nothing to do today."
+                # Wait for the 9:30 candle to close (decision floor)
+                now = now_ist()
+                market_open = now.replace(
+                    hour=self.cfg.MARKET_OPEN_HOUR,
+                    minute=self.cfg.MARKET_OPEN_MINUTE,
+                    second=0, microsecond=0,
+                )
+                floor_min = self.cfg.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN
+                floor_time = market_open + datetime.timedelta(minutes=floor_min)
+                if now < floor_time:
+                    wait_sec = (floor_time - now).total_seconds()
+                    self.log.info(
+                        f"Waiting {wait_sec/60:.0f} min for 9:30 candle close..."
+                    )
+                    while now_ist() < floor_time and not self._shutdown_requested:
+                        remaining = (floor_time - now_ist()).total_seconds()
+                        mins, secs = divmod(int(remaining), 60)
+                        print(
+                            f"\r  \U0001f50d Gap-and-Go wait: {mins:02d}:{secs:02d} remaining  ",
+                            end="", flush=True,
                         )
-                        self.log.info(f"  {provider} rationale: {reason}")
-                self._generate_report()
-                return
+                        time.sleep(1)
+                    print()
+                if self._shutdown_requested:
+                    self._emergency_shutdown()
+                    return
 
-            # ── Step 6: Wait for market open ──────────────────────────
-            self._wait_for_market_open()
-            if self._shutdown_requested:
-                self._emergency_shutdown()
-                return
+                # Now scan — quotes have today's open + first candle volume
+                self._run_pre_market_scan()
+                if self._shutdown_requested:
+                    return
 
-            # ── Step 7: Observation period + Enter positions ──────────
-            self._observe_and_enter()
+                if not self._trade_plans:
+                    if self._scan_failed:
+                        self.log.error("Scan failed — could not fetch market data. Exiting.")
+                    else:
+                        self.log.warning(
+                            "Gap-and-Go scan: no stocks gapped with volume today. "
+                            "Nothing to do."
+                        )
+                    self._generate_report()
+                    return
+
+                # Enter immediately — no observation delay needed
+                # (the gap IS the directional signal)
+                self._enter_positions()
+            else:
+                self._run_pre_market_scan()
+                if self._shutdown_requested:
+                    return
+
+                if not self._trade_plans:
+                    if self._scan_failed:
+                        self.log.error("Scan failed — could not fetch market data. Exiting.")
+                    else:
+                        if self._noai:
+                            self.log.warning("No trades passed the rule-based filters. Nothing to do today.")
+                        else:
+                            provider = self.cfg.AI_PROVIDER.upper()
+                            reason = getattr(self.scanner, "last_scan_rationale", "") or "no reason given"
+                            self.log.warning(
+                                f"No trades recommended by {provider}. Nothing to do today."
+                            )
+                            self.log.info(f"  {provider} rationale: {reason}")
+                    self._generate_report()
+                    return
+
+                # ── Step 6: Wait for market open ──────────────────────────
+                self._wait_for_market_open()
+                if self._shutdown_requested:
+                    self._emergency_shutdown()
+                    return
+
+                # ── Step 7: Observation period + Enter positions ──────────
+                self._observe_and_enter()
 
             # If order API broke during entry, skip monitor and shut down
             if self.engine.is_order_api_broken():
