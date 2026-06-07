@@ -288,6 +288,27 @@ class PortfolioManager:
             getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_GAP_AND_GO"
         )
 
+        # Gap-and-Go: override square-off time (gap signal fades by midday)
+        if self._gap_go:
+            gap_sq_h = getattr(self.cfg, "GAP_GO_SQUARE_OFF_HOUR", 13)
+            gap_sq_m = getattr(self.cfg, "GAP_GO_SQUARE_OFF_MINUTE", 0)
+            if gap_sq_h != self.cfg.SQUARE_OFF_HOUR or gap_sq_m != self.cfg.SQUARE_OFF_MINUTE:
+                self.log.info(
+                    f"Gap-and-Go: overriding square-off from "
+                    f"{self.cfg.SQUARE_OFF_HOUR}:{self.cfg.SQUARE_OFF_MINUTE:02d} → "
+                    f"{gap_sq_h}:{gap_sq_m:02d} (gap signal fades by midday)"
+                )
+                self.cfg.SQUARE_OFF_HOUR = gap_sq_h
+                self.cfg.SQUARE_OFF_MINUTE = gap_sq_m
+            # Also adjust loser exit to be earlier (gap losers identified faster)
+            loser_h = max(gap_sq_h - 1, 11)  # 1 hour before sq-off, min 11:00
+            if loser_h < self.cfg.LOSER_EXIT_HOUR:
+                self.log.info(
+                    f"Gap-and-Go: adjusting loser exit from "
+                    f"{self.cfg.LOSER_EXIT_HOUR}:00 → {loser_h}:00"
+                )
+                self.cfg.LOSER_EXIT_HOUR = loser_h
+
         if resumed > 0:
             # Already have live positions — run an immediate Claude
             # review so it can assess the resumed positions, then
