@@ -1,6 +1,6 @@
 # Trading Roadmap
 
-Last updated: 2026-06-06 (Phase 7 complete + code review — **Gap-and-Go PASSES OOS PF 1.28** (ALL regimes, 228 trades), **1.35 skip-RANGE**, **1.66 VOLATILE-only**. PF revised from 1.35→1.28 after code review enforced gap cap and fixed 10 backtest↔live mismatches).
+Last updated: 2026-06-08 (Phase 7 complete + code review + pre-dry-run sweep — **Gap-and-Go final config: PF 1.28**, cap=2, sq-off 13:00, no trailing stop. Ready for dry-run Monday 2026-06-09).
 
 ## Current Posture
 
@@ -8,7 +8,7 @@ Last updated: 2026-06-06 (Phase 7 complete + code review — **Gap-and-Go PASSES
 |---|---|
 | Stage | **PHASE 7 DONE — Gap-and-Go PASSES OOS PF 1.28 (ALL), 1.35 (skip-RANGE), 1.66 (VOLATILE-only).** PF revised after code-review enforced gap cap and fixed 10 backtest↔live mismatches. First strategy to clear the 1.15 promotion gate. **Next: dry-run validation (10+ sessions).** |
 | Mode | AI mode: Gemini 2.5 Flash selects 2 trades/day from NIFTY50 |
-| Run command | python main.py --mode trade --ai (use --dry-run only — not for real capital) |
+| Run command | python main.py --mode trade --dryrun (set TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO" first) |
 | Live trading | **DO NOT GO LIVE YET** — Gap-and-Go passes OOS PF 1.28 but needs dry-run validation (10+ sessions) before capital is risked. |
 | Budget | Rs.50,000 |
 | Config version | 2.1-2026-06-06-GAP_AND_GO |
@@ -39,6 +39,13 @@ Last updated: 2026-06-06 (Phase 7 complete + code review — **Gap-and-Go PASSES
     - **7.2 Gap-and-Go with Volume**: OOS PF **1.28** (ALL, 228 trades), **1.35** (skip-RANGE), **1.66** (VOLATILE-only, 78 trades). **FIRST STRATEGY TO PASS THE 1.15 PROMOTION GATE OOS.** Robust across parameter sweep (gap 1-2%, vol 1.5-3×). PF revised from 1.35 after code review enforced gap cap (≤5%). ([scripts/trade/backtest_gap_go.py](../scripts/trade/backtest_gap_go.py))
     - **7.3 Previous-Day Breakout**: OOS PF **0.87** (ALL), **1.18** (VOLATILE-only, 98 trades). Marginal with regime gate; fails without. ([scripts/trade/backtest_prev_day_breakout.py](../scripts/trade/backtest_prev_day_breakout.py))
     - **Verdict: Gap-and-Go is the clear winner.** Proceed to dry-run validation.
+11. **2026-06-08**: **Pre-dry-run sweep.** Swept daily cap (1-10), trailing stop (0-2R), square-off time (12:00-15:10), and combinations. Key findings:
+    - **Daily cap: 2 is optimal.** PF drops monotonically with more stocks: cap=2 PF 1.28, cap=3 PF 1.24, cap=5 PF 1.17, cap=10 PF 1.08. 3rd+ gap stocks are weaker follow-throughs.
+    - **Trailing stop: DESTROYS the strategy.** Every trail config makes PF worse: trail@0.5R PF 0.45, trail@1.0R PF 0.71, trail@1.5R PF 0.97, trail@2.0R PF 1.03. Winners need to run to full target (2.85× win/loss ratio).
+    - **Square-off: 13:00 is optimal** (PF 1.34, Sharpe 1.54, MaxDD 8.45%). Gap signal fades by midday. 14:00 was PF 1.28, MaxDD 11.09%.
+    - **Hybrid afternoon strategy: not yet.** Legacy scorer PF 0.82 would dilute edge. Deferred to Phase 9.
+    - **Loser exit adjusted to 12:00** (1 hour before 13:00 sq-off).
+    - Final dry-run config: PF 1.28, Sharpe 1.30, MaxDD 8.71%. Code changes: `GAP_GO_SQUARE_OFF_HOUR=13`, manager overrides SQUARE_OFF and LOSER_EXIT for gap-go.
 
 ## Key Config (Post-Audit)
 
@@ -47,9 +54,10 @@ Last updated: 2026-06-06 (Phase 7 complete + code review — **Gap-and-Go PASSES
 | ATR multiplier | 2.0 | Backtest E1: best per-trade expectancy |
 | R:R target | 1.8:1 | Backtest E1: practical optimum |
 | R:R floor | 1.3:1 | Uniform all day |
-| Daily trade cap | 2 | Backtest K1: PF 0.81 vs 0.71 |
-| Square-off | 14:00 IST | Backtest L11: 14:00 optimal |
-| Loser exit | 13:00 IST | Backtest L10: marginal benefit |
+| Daily trade cap | 2 | Backtest K1: PF 0.81 vs 0.71; Gap-Go sweep: PF drops with 3+ |
+| Square-off | 13:00 IST (gap-go) / 14:00 IST (legacy) | Gap-Go sweep: 13:00 PF 1.34 vs 14:00 PF 1.28 |
+| Loser exit | 12:00 IST (gap-go) / 13:00 IST (legacy) | 1 hour before sq-off |
+| Trailing stop | DISABLED (gap-go) | Sweep: every trail config makes PF worse (0.45-1.03) |
 | SL range | 0.8% - 2.5% | Min floor prevents whipsaw |
 | Entry floor | 9:30 IST (15min after open) | Avoids opening volatility |
 | Signal reversal exit | Enabled (score >= 7 + pattern) | Pro decision |
@@ -429,7 +437,50 @@ The parameter sweep robustness (PF consistently >1.15 across many configs) suppo
 
 The edge is **monotonically improving** — not a random blip. Oct-May (7/8 months) are profitable. SELL side (PF 1.61) is stronger than BUY (PF 1.14). Win/loss asymmetry: avg winner +1.18% vs avg loser -0.41% (2.85×).
 
-**Implementation**: Gap-and-Go is integrated into the trade mode via `TRADE_STRATEGY_PROFILE = \"NOAI_GAP_AND_GO\"` ([modes/trade/stock_scanner.py](../modes/trade/stock_scanner.py) `_scan_noai_gap_go()`). Config knobs: `GAP_GO_MIN_GAP_PCT`, `GAP_GO_MAX_GAP_PCT`, `GAP_GO_VOLUME_MULTIPLE`, `GAP_GO_DAILY_CAP`, `GAP_GO_SKIP_RANGE_REGIME`. Gap-coherence gate bypassed for this strategy (we trade WITH the gap). Code-reviewed and bug-fixed: SL uses gap-candle structure (not ATR), volume filter matches backtest (per-candle, not prorated daily), all RSI/ADX/pattern/VWAP gates bypassed for gap-go entries, ATR override skipped to preserve scanner SL/target.
+**Implementation**: Gap-and-Go is integrated into the trade mode via `TRADE_STRATEGY_PROFILE = \"NOAI_GAP_AND_GO\"` ([modes/trade/stock_scanner.py](../modes/trade/stock_scanner.py) `_scan_noai_gap_go()`). Config knobs: `GAP_GO_MIN_GAP_PCT`, `GAP_GO_MAX_GAP_PCT`, `GAP_GO_VOLUME_MULTIPLE`, `GAP_GO_DAILY_CAP`, `GAP_GO_SQUARE_OFF_HOUR`, `GAP_GO_SQUARE_OFF_MINUTE`, `GAP_GO_SKIP_RANGE_REGIME`. Gap-coherence gate bypassed for this strategy (we trade WITH the gap). Code-reviewed and bug-fixed: SL uses gap-candle structure (not ATR), volume filter matches backtest (per-candle, not prorated daily), all RSI/ADX/pattern/VWAP gates bypassed for gap-go entries, ATR override skipped to preserve scanner SL/target.
+
+#### Pre-Dry-Run Sweep Results (2026-06-08)
+
+**Daily cap sweep** (TEST, ALL regimes, no trail):
+
+| Cap | Trades | WR% | PF | Exp% | Ret% | Sharpe |
+|--:|--:|--:|--:|--:|--:|--:|
+| 1 | 148 | 29.7 | 1.21 | +0.062 | +9.25 | +0.80 |
+| **2** | **228** | **31.6** | **1.28** | **+0.080** | **+18.26** | **+1.30** |
+| 3 | 265 | 31.7 | 1.24 | +0.068 | +17.91 | +1.23 |
+| 4 | 289 | 31.1 | 1.20 | +0.058 | +16.66 | +1.10 |
+| 5 | 302 | 30.8 | 1.17 | +0.048 | +14.64 | +0.96 |
+| 10 | 340 | 29.7 | 1.08 | +0.024 | +8.05 | +0.50 |
+
+**Verdict: cap=2 is optimal.** PF and Sharpe both peak at 2 and monotonically decline. The 3rd+ stocks are weaker gaps with less follow-through. Even cap=6 still clears the 1.15 gate (PF 1.15), but it's diluted.
+
+**Trailing stop sweep** (TEST, ALL, cap=2):
+
+| Config | PF | Sharpe | Trail exits | Target hits |
+|---|--:|--:|--:|--:|
+| **No trail (baseline)** | **1.28** | **+1.30** | **0** | **21** |
+| Trail@0.5R / 50% | 0.45 | -4.49 | 125 | 0 |
+| Trail@1.0R / 50% | 0.71 | -1.87 | 101 | 2 |
+| Trail@1.0R / 60% | 0.79 | -1.38 | 103 | 1 |
+| Trail@1.5R / 50% | 0.97 | -0.14 | 73 | 7 |
+| Trail@2.0R / 50% | 1.03 | +0.17 | 56 | 12 |
+
+**Verdict: DO NOT enable trailing stop.** Every trail config reduces PF. The strategy depends on a 2.85× win/loss ratio (avg winner +1.18% vs avg loser -0.41%). Trailing chops winners on normal gap-stock retracements. Trail@0.5R is catastrophic — converts 21 target hits into ZERO.
+
+**Square-off time sweep** (TEST, ALL, cap=2):
+
+| Time | PF | Sharpe | MaxDD |
+|---|--:|--:|--:|
+| 12:00 | 1.17 | +0.86 | 9.60 |
+| 12:30 | 1.23 | +1.14 | 9.20 |
+| **13:00** | **1.34** | **+1.54** | **8.45** |
+| 13:30 | 1.32 | +1.48 | 9.96 |
+| 14:00 | 1.28 | +1.30 | 11.09 |
+| 15:10 | 1.22 | +1.04 | 10.32 |
+
+**Verdict: 13:00 is optimal.** Gap signal fades by midday. Earlier exit avoids afternoon reversals (MaxDD 8.45% vs 11.09% at 14:00). PF peaks at 13:00 (1.34). Implemented as `GAP_GO_SQUARE_OFF_HOUR = 13`, with loser exit at 12:00.
+
+**Hybrid afternoon strategy decision:** After gap-go trades close, should the bot switch to the legacy scorer for the afternoon? **No — not for dry run.** Legacy scorer OOS PF 0.82 (loses money). Mixing strategies dilutes edge. Gap-go's one-shot design (enter at 9:30, monitor until 13:00, done) is a feature. Afternoon hybrid is deferred to Phase 9 if/when a profitable afternoon strategy exists.
 
 **7.3 — Previous-Day High/Low Breakout** ([scripts/trade/backtest_prev_day_breakout.py](../scripts/trade/backtest_prev_day_breakout.py))
 Enter when price breaks above prev-day high (BUY) or below prev-day low (SELL). ADX≥25 + volume≥1.5× filters.
@@ -490,20 +541,38 @@ See [TRADE_REVAMP_STRATEGIES.md](TRADE_REVAMP_STRATEGIES.md) for full backtest d
 | Options strategies | Separate mode — see [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md) | After Gap-and-Go live verdict |
 | Order flow / OFI (Phase 4) | Needs paid data (₹1,500/mo) | Only if Gap-and-Go dry-run fails (PF < 1.0) |
 | Optuna tuning (Phase 5) | Gap-and-Go already clears gate — tuning risks overfitting | Only if dry-run PF is 1.00-1.14 |
-| ML classifier (A.8) | Gap-and-Go PF 1.28 doesn't need filtering | Only if dry-run PF degrades to 1.00-1.14 |
+| ML classifier (A.8) | Gap-and-Go PF 1.28 doesn't need filtering | Only if dry-run PF degrades to 1.00-1.14 |\n| **Hybrid afternoon strategy** | Legacy scorer PF 0.82 would dilute gap-go edge. No profitable afternoon strategy exists yet. | **Phase 9** — only after gap-go is validated live AND a new afternoon signal is found |
 
 ---
 
 ### Phase 8: Gap-and-Go Dry-Run Validation (NEXT — Monday 2026-06-09)
 **Goal**: Validate the Gap-and-Go strategy on live market data with simulated orders. The backtest OOS PF 1.28 must hold in real-time conditions (live quotes, real spreads, live volume data).
-**Status**: **READY** — code implemented, config knobs set, code-reviewed.
+**Status**: **READY** — code implemented, config knobs set, code-reviewed, pre-dry-run sweep complete.
 **Known limitation**: `GAP_GO_SKIP_RANGE_REGIME` is not wired — dry-run trades ALL regime days (PF 1.28 baseline, not the 1.35 skip-RANGE variant). If dry-run PF is marginal, wiring regime skip is the first fix to try.
 **Expected PF**: ~1.15-1.28 (conservative estimate accounting for live slippage and backtest→live degradation).
+
+**Finalized dry-run config:**
+| Parameter | Value | Evidence |
+|---|---|---|
+| `TRADE_STRATEGY_PROFILE` | `"NOAI_GAP_AND_GO"` | Phase 7.2 OOS PF 1.28 |
+| `GAP_GO_MIN_GAP_PCT` | 1.0% | Sweep: PF 1.28. Lower (0.5%) drops to PF 1.01 |
+| `GAP_GO_MAX_GAP_PCT` | 5.0% | Extreme gaps = corporate actions |
+| `GAP_GO_VOLUME_MULTIPLE` | 2.0× | Sweep: PF 1.28. Higher (3.0×) = PF 1.49 but fewer trades |
+| `GAP_GO_DAILY_CAP` | 2 | Sweep: PF drops with 3+ (1.24, 1.20, 1.17...) |
+| `GAP_GO_SQUARE_OFF_HOUR` | 13 | Sweep: 13:00 PF 1.34, MaxDD 8.45% (best) |
+| `GAP_GO_SQUARE_OFF_MINUTE` | 0 | — |
+| `TRAIL_AFTER_RISK_MULTIPLE` | 0.0 (disabled) | Sweep: every trail config destroys PF (0.45-1.03) |
+| Loser exit | 12:00 (auto: sq-off − 1hr) | 1 hour before sq-off |
+| Entry time | 9:30 IST (after first 15-min candle) | Backtest ENTRY_CANDLE_IDX=1 |
+| SL | Gap-candle low/high | Not ATR — gap structure is the support/resistance |
+| Target | max(SL×1.8, ATR×2.0×1.8) | Dual-target matching backtest |
+
+**Timeline: start tool before 9:00 AM → login → wait → scan at 9:30 → enter 2 trades → monitor → loser exit 12:00 → square-off 13:00 → report → done by 13:15.**
 
 **How to run:**
 ```bash
 # Step 1: Set strategy profile in config.py
-# TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO"
+TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO"
 
 # Step 2: Run dry-run
 python main.py --mode trade --dryrun

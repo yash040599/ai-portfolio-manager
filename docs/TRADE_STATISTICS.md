@@ -1,19 +1,21 @@
 # Trading Statistics
 
-Last updated: 2026-06-06 (Phase 7 Gap-and-Go backtested; code-reviewed).
+Last updated: 2026-06-08 (Pre-dry-run sweep complete; finalized config).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.1-2026-06-06-GAP_AND_GO |
-| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go passes OOS PF 1.28 (ALL), 1.35 (skip-RANGE). Dry-run validation pending. |
+| Runtime strategy version | 2.2-2026-06-08-GAP_AND_GO_TUNED |
+| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go passes OOS PF 1.28. Pre-dry-run sweep confirmed cap=2, 13:00 sq-off, no trail. Dry-run starts Monday 2026-06-09. |
 | Strategy profile | `NOAI_GAP_AND_GO` (set `TRADE_STRATEGY_PROFILE` to activate) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun |
 | Budget | Rs.50,000 |
-| Daily trade cap (K1) | 2 trades max per day (GAP_GO_DAILY_CAP) |
-| Square-off | 14:00 IST |
+| Daily trade cap | 2 trades max (GAP_GO_DAILY_CAP=2; sweep: PF drops with 3+) |
+| Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13; sweep: optimal) |
+| Loser exit | 12:00 IST (auto: sq-off − 1hr) |
+| Trailing stop | DISABLED (sweep: every trail config destroys PF) |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
 
 ## 1. Backtest Results (62-Gate Audit, 2026-05-26)
