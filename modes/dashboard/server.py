@@ -268,6 +268,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_day(parse_qs(url.query))
             elif url.path == "/api/ai/status":
                 self._serve_ai_status()
+            elif url.path == "/dryrun" or url.path == "/dryrun/":
+                self._serve_dryrun()
             else:
                 self.send_error(404, "Not found")
         except (ConnectionAbortedError, ConnectionResetError,
@@ -286,6 +288,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     def _serve_home(self) -> None:
         from modes.dashboard.home_page import render_home_page
         self._write_html(render_home_page().encode("utf-8"))
+
+    def _serve_dryrun(self) -> None:
+        from modes.dashboard.dryrun_page import render_dryrun_page
+        self._serve_cached_html("page:dryrun", render_dryrun_page)
 
     def _write_html(self, body: bytes) -> None:
         self.send_response(200)

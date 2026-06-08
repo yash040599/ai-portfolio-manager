@@ -11,6 +11,7 @@ NAV_ITEMS = [
     ("Swing", "/swing"),
     ("US", "/us"),
     ("Trading (Live P&L)", "/trading"),
+    ("Dry Run", "/dryrun"),
     ("Tax", "/tax"),
     ("Theory", "/theory/statistics"),
 ]

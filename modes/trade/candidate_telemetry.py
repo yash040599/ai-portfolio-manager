@@ -136,10 +136,31 @@ class CandidateTelemetry:
                 )
                 """
             )
+            # ── Migration: add strategy_type column (2026-06-08) ────
+            cols = {r[1] for r in conn.execute(
+                "PRAGMA table_info(intraday_candidates)"
+            )}
+            if "strategy_type" not in cols:
+                conn.execute(
+                    "ALTER TABLE intraday_candidates "
+                    "ADD COLUMN strategy_type TEXT DEFAULT ''"
+                )
+                # Backfill existing rows: derive strategy_type from
+                # config_version which contains the profile name.
+                conn.execute(
+                    "UPDATE intraday_candidates SET strategy_type = 'NOAI_LEGACY_FULL' "
+                    "WHERE strategy_type = '' OR strategy_type IS NULL"
+                )
+                conn.commit()
+
             # Helpful covering indexes for the common audit queries.
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_candidates_date_status "
                 "ON intraday_candidates (date, status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_candidates_strategy_type "
+                "ON intraday_candidates (strategy_type, date)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_candidates_symbol_date "
@@ -199,6 +220,7 @@ class CandidateTelemetry:
                 pattern_json = ""
 
             cfg_version, cfg_hash = Config.snapshot_hash()
+            strategy_type = str(getattr(Config, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL"))
 
             with closing(self._connect()) as conn:
                 conn.execute(
@@ -208,13 +230,13 @@ class CandidateTelemetry:
                         rsi, adx, rvol, vwap, ltp,
                         pattern_summary, technical_json,
                         nifty_trend, vix, tape, sector,
-                        config_version, config_hash, status)
+                        config_version, config_hash, strategy_type, status)
                        VALUES (?, ?, ?, ?, ?,
                                ?, ?, ?,
                                ?, ?, ?, ?, ?,
                                ?, ?,
                                ?, ?, ?, ?,
-                               ?, ?, 'SCORED')""",
+                               ?, ?, ?, 'SCORED')""",
                     (
                         today, scan_ts, symbol, exchange, side,
                         score, pattern_score, tech_score,
@@ -224,7 +246,7 @@ class CandidateTelemetry:
                         _safe_float(candidate.get("current_price")),
                         pattern_json, technical_json,
                         nifty_trend, _safe_float(vix), tape, sector,
-                        cfg_version, cfg_hash,
+                        cfg_version, cfg_hash, strategy_type,
                     ),
                 )
                 conn.commit()
