@@ -1,8 +1,10 @@
 """Dry-run strategy dashboard page.
 
 Per-strategy P&L, stats, and configuration surface for dry-run data.
-Each strategy type (NOAI_LEGACY_FULL, NOAI_GAP_AND_GO, etc.) is
-tracked separately via the strategy_type column in intraday_candidates.
+Strategy classification comes from two sources:
+  1. Trading report JSONs (authoritative for trade P&L + actual strategy)
+  2. intraday_candidates DB table (candidate funnel: scored/entered/rejected)
+
 The dropdown lets the user pick a strategy and see its performance
 in isolation — essential when multiple strategies are being dry-run
 in parallel.
@@ -10,6 +12,7 @@ in parallel.
 
 from __future__ import annotations
 
+import glob
 import html
 import json
 import os
@@ -25,6 +28,7 @@ from modes.dashboard.nav import render_topnav
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ANALYSIS_DB = PROJECT_ROOT / Config.TRADE_ANALYSIS_DB_PATH
+REPORTS_TRADING = PROJECT_ROOT / "reports" / "trading"
 
 
 # ── Strategy definitions ──────────────────────────────────────────
@@ -87,50 +91,139 @@ def _col_exists(conn: sqlite3.Connection, table: str, col: str) -> bool:
     return col in cols
 
 
-# ── Data layer ────────────────────────────────────────────────────
+# ── Report JSON loader (authoritative trade data) ────────────────
 
-def _available_strategies() -> list[str]:
-    """Return distinct strategy_type values found in the dry-run DB."""
+def _load_dryrun_reports() -> list[dict[str, Any]]:
+    """Load all dry-run trading report JSONs. Each contains positions,
+    P&L breakdown, config (including strategy_profile), and date."""
+    reports: list[dict[str, Any]] = []
+    for raw in sorted(glob.glob(
+        str(REPORTS_TRADING / "**" / "*_dry_run.json"), recursive=True
+    )):
+        path = Path(raw)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("mode") != "dry_run":
+            continue
+        cfg = data.get("config") or {}
+        positions = data.get("positions") or []
+        pnl_data = data.get("pnl") or {}
+        # The strategy_profile in the report is what the bot actually
+        # wrote at end of session — but it can be wrong when the
+        # manager fell back (e.g., gap-go → legacy). The user can
+        # correct this. For now, trust the report.
+        strategy = str(cfg.get("strategy_profile") or "NOAI_LEGACY_FULL")
+        date = str(data.get("date") or "")
+        if not date:
+            continue
+
+        trades = []
+        for p in positions:
+            if not isinstance(p, dict):
+                continue
+            if p.get("status") != "CLOSED":
+                # Include open positions too
+                pass
+            trades.append({
+                "date": date,
+                "symbol": p.get("symbol", ""),
+                "side": p.get("side", ""),
+                "entry_price": p.get("entry_price"),
+                "exit_price": p.get("exit_price"),
+                "entry_time": p.get("entry_time"),
+                "exit_time": p.get("exit_time"),
+                "exit_reason": p.get("exit_reason", ""),
+                "pnl": float(p.get("pnl") or 0.0),
+                "status": p.get("status", "CLOSED"),
+            })
+
+        reports.append({
+            "date": date,
+            "strategy_profile": strategy,
+            "config": cfg,
+            "trades": trades,
+            "gross_pnl": float(pnl_data.get("gross_pnl") or 0.0),
+            "net_profit": float(pnl_data.get("net_profit") or 0.0),
+            "charges": float(
+                (pnl_data.get("charges") or {}).get("total_costs") or 0.0
+            ),
+            "path": str(path),
+        })
+    return reports
+
+
+# ── Candidate funnel from DB ──────────────────────────────────────
+
+def _candidate_funnel(strategy_type: str,
+                      report_dates: set[str]) -> dict[str, Any]:
+    """Read candidate funnel stats from intraday_candidates DB,
+    filtered by dates that belong to this strategy (from reports)."""
+    result = {
+        "total_candidates": 0,
+        "status_counts": {},
+        "side_counts": {},
+        "rejections": {},
+    }
     conn = _connect_existing(ANALYSIS_DB)
     if conn is None:
-        return []
+        return result
     try:
         if not _table_exists(conn, "intraday_candidates"):
-            return []
-        if not _col_exists(conn, "intraday_candidates", "strategy_type"):
-            # Column not yet migrated — derive from config_version
-            rows = conn.execute(
-                "SELECT DISTINCT config_version FROM intraday_candidates"
-            ).fetchall()
-            types = set()
-            for r in rows:
-                cv = str(r[0] or "")
-                if "GAP_AND_GO" in cv.upper():
-                    types.add("NOAI_GAP_AND_GO")
-                elif "SIMPLE_MR" in cv.upper():
-                    types.add("NOAI_SIMPLE_MR_BASELINE")
-                else:
-                    types.add("NOAI_LEGACY_FULL")
-            return sorted(types)
+            return result
+        if not report_dates:
+            return result
+
+        placeholders = ",".join("?" for _ in report_dates)
         rows = conn.execute(
-            "SELECT DISTINCT strategy_type FROM intraday_candidates "
-            "WHERE strategy_type IS NOT NULL AND strategy_type != '' "
-            "ORDER BY strategy_type"
+            f"SELECT date, status, side, rejected_gate "
+            f"FROM intraday_candidates "
+            f"WHERE date IN ({placeholders})",
+            tuple(sorted(report_dates)),
         ).fetchall()
-        return [str(r[0]) for r in rows]
+
+        result["total_candidates"] = len(rows)
+        result["status_counts"] = dict(Counter(
+            str(r["status"] or "<none>") for r in rows
+        ))
+        result["side_counts"] = dict(Counter(
+            str(r["side"] or "<none>") for r in rows
+        ))
+        result["rejections"] = dict(Counter(
+            str(r["rejected_gate"] or "<none>")
+            for r in rows if r["status"] == "REJECTED"
+        ))
     finally:
         conn.close()
+    return result
+
+
+# ── Main data aggregation ─────────────────────────────────────────
+
+def _available_strategies() -> list[str]:
+    """Return distinct strategy_profile values from dry-run reports."""
+    reports = _load_dryrun_reports()
+    types = {r["strategy_profile"] for r in reports}
+    # Also add the current profile so it always appears in dropdown
+    types.add(str(getattr(Config, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")))
+    return sorted(types)
 
 
 def _strategy_stats(strategy_type: str) -> dict[str, Any]:
-    """Aggregate stats for a given strategy_type from the dry-run DB."""
+    """Aggregate stats for a given strategy from trading report JSONs."""
+    all_reports = _load_dryrun_reports()
+    reports = [r for r in all_reports if r["strategy_profile"] == strategy_type]
+
     result: dict[str, Any] = {
         "strategy_type": strategy_type,
         "total_candidates": 0,
         "status_counts": {},
         "side_counts": {},
         "rejections": {},
-        "sessions": 0,
+        "sessions": len(reports),
         "entered_trades": 0,
         "closed_trades": 0,
         "wins": 0,
@@ -154,213 +247,93 @@ def _strategy_stats(strategy_type: str) -> dict[str, Any]:
         "config_hashes": [],
     }
 
-    conn = _connect_existing(ANALYSIS_DB)
-    if conn is None:
+    if not reports:
         return result
 
-    try:
-        if not _table_exists(conn, "intraday_candidates"):
-            return result
+    # ── Collect all trades from reports ────────────────────────
+    all_trades: list[dict[str, Any]] = []
+    report_dates: set[str] = set()
+    config_hashes: set[str] = set()
 
-        has_strategy_col = _col_exists(conn, "intraday_candidates", "strategy_type")
+    for r in reports:
+        report_dates.add(r["date"])
+        cfg = r.get("config") or {}
+        h = str(cfg.get("strategy_config_hash") or "")
+        if h:
+            config_hashes.add(h)
+        all_trades.extend(r["trades"])
 
-        if has_strategy_col:
-            where = "strategy_type = ?"
-            params: tuple = (strategy_type,)
-        else:
-            # Fallback: all rows are considered NOAI_LEGACY_FULL
-            where = "1=1"
-            params = ()
+    result["config_hashes"] = sorted(config_hashes)
+    result["first_date"] = min(report_dates)
+    result["latest_date"] = max(report_dates)
+    result["entered_trades"] = len(all_trades)
 
-        # ── Candidate stats ───────────────────────────────────
-        rows = conn.execute(
-            f"SELECT date, status, side, rejected_gate, config_hash "
-            f"FROM intraday_candidates WHERE {where}",
-            params,
-        ).fetchall()
+    # Closed = has exit_price
+    closed = [t for t in all_trades if t.get("exit_price") is not None]
+    open_trades = [t for t in all_trades if t.get("exit_price") is None]
+    result["closed_trades"] = len(closed)
+    result["trades"] = all_trades  # show all (including open)
 
-        result["total_candidates"] = len(rows)
-        result["status_counts"] = dict(Counter(
-            str(r["status"] or "<none>") for r in rows
-        ))
-        result["side_counts"] = dict(Counter(
-            str(r["side"] or "<none>") for r in rows
-        ))
-        result["rejections"] = dict(Counter(
-            str(r["rejected_gate"] or "<none>")
-            for r in rows if r["status"] == "REJECTED"
-        ))
-        result["config_hashes"] = sorted({
-            str(r["config_hash"] or "") for r in rows
-        })
-        all_dates = {str(r["date"]) for r in rows}
-        result["sessions"] = len(all_dates)
-        if all_dates:
-            result["first_date"] = min(all_dates)
-            result["latest_date"] = max(all_dates)
+    # ── P&L stats from closed trades ──────────────────────────
+    pnl_values = [float(t.get("pnl") or 0.0) for t in closed]
 
-        # ── Trade-level stats (ENTERED rows with outcomes) ────
-        entered = conn.execute(
-            f"SELECT date, symbol, side, entry_price, exit_price, "
-            f"entry_time, exit_time, exit_reason, pnl "
-            f"FROM intraday_candidates "
-            f"WHERE {where} AND status = 'ENTERED' "
-            f"ORDER BY date, entry_time",
-            params,
-        ).fetchall()
+    if pnl_values:
+        wins_list = [v for v in pnl_values if v > 0]
+        losses_list = [v for v in pnl_values if v < 0]
+        result["wins"] = len(wins_list)
+        result["losses"] = len(losses_list)
+        result["breakeven"] = len([v for v in pnl_values if v == 0])
+        result["gross_pnl"] = round(
+            sum(float(r.get("gross_pnl") or 0.0) for r in reports), 2
+        )
+        result["net_pnl"] = round(
+            sum(float(r.get("net_profit") or 0.0) for r in reports), 2
+        )
+        result["win_rate"] = round(
+            len(wins_list) / len(pnl_values) * 100, 1
+        )
+        result["avg_win"] = round(
+            sum(wins_list) / len(wins_list), 2
+        ) if wins_list else None
+        result["avg_loss"] = round(
+            sum(losses_list) / len(losses_list), 2
+        ) if losses_list else None
+        result["max_win"] = round(max(pnl_values), 2)
+        result["max_loss"] = round(min(pnl_values), 2)
 
-        result["entered_trades"] = len(entered)
+        total_wins = sum(wins_list)
+        total_losses = -sum(losses_list)
+        if total_losses > 0:
+            result["profit_factor"] = round(total_wins / total_losses, 2)
+        elif total_wins > 0:
+            result["profit_factor"] = float("inf")
+        result["expectancy"] = round(
+            sum(pnl_values) / len(pnl_values), 2
+        )
 
-        closed = [r for r in entered if r["exit_price"] is not None]
-        result["closed_trades"] = len(closed)
+    # ── Daily P&L series (from report net_profit) ─────────────
+    by_day: dict[str, float] = {}
+    for r in reports:
+        by_day[r["date"]] = round(float(r.get("net_profit") or 0.0), 2)
 
-        pnl_values = []
-        trade_rows = []
-        for r in closed:
-            pnl_val = float(r["pnl"] or 0.0)
-            pnl_values.append(pnl_val)
-            trade_rows.append({
-                "date": r["date"],
-                "symbol": r["symbol"],
-                "side": r["side"],
-                "entry_price": r["entry_price"],
-                "exit_price": r["exit_price"],
-                "entry_time": r["entry_time"],
-                "exit_time": r["exit_time"],
-                "exit_reason": r["exit_reason"],
-                "pnl": pnl_val,
-            })
+    cumulative = 0.0
+    daily = []
+    for day in sorted(by_day):
+        net = by_day[day]
+        cumulative = round(cumulative + net, 2)
+        daily.append({"date": day, "net": net, "cum": cumulative})
+    result["daily"] = daily
 
-        result["trades"] = trade_rows
+    if by_day:
+        result["best_day"] = round(max(by_day.values()), 2)
+        result["worst_day"] = round(min(by_day.values()), 2)
 
-        if pnl_values:
-            wins_list = [v for v in pnl_values if v > 0]
-            losses_list = [v for v in pnl_values if v < 0]
-            result["wins"] = len(wins_list)
-            result["losses"] = len(losses_list)
-            result["breakeven"] = len([v for v in pnl_values if v == 0])
-            result["gross_pnl"] = round(sum(pnl_values), 2)
-            result["net_pnl"] = round(sum(pnl_values), 2)
-            result["win_rate"] = round(
-                len(wins_list) / len(pnl_values) * 100, 1
-            ) if pnl_values else None
-            result["avg_win"] = round(
-                sum(wins_list) / len(wins_list), 2
-            ) if wins_list else None
-            result["avg_loss"] = round(
-                sum(losses_list) / len(losses_list), 2
-            ) if losses_list else None
-            result["max_win"] = round(max(pnl_values), 2)
-            result["max_loss"] = round(min(pnl_values), 2)
-
-            total_wins = sum(wins_list)
-            total_losses = -sum(losses_list)
-            if total_losses > 0:
-                result["profit_factor"] = round(total_wins / total_losses, 2)
-            elif total_wins > 0:
-                result["profit_factor"] = float("inf")
-            result["expectancy"] = round(
-                sum(pnl_values) / len(pnl_values), 2
-            )
-
-        # ── Also check dryrun_trade_ledger if it exists ───────
-        if _table_exists(conn, "dryrun_trade_ledger"):
-            has_strat_ledger = _col_exists(
-                conn, "dryrun_trade_ledger", "strategy_type"
-            )
-            if has_strat_ledger:
-                ledger_where = "strategy_type = ?"
-                ledger_params: tuple = (strategy_type,)
-            else:
-                # Fallback: use all ledger rows (pre-migration)
-                ledger_where = "1=1"
-                ledger_params = ()
-
-            ledger_rows = conn.execute(
-                f"SELECT date, gross_pnl, total_charges, net_pnl, side, "
-                f"exit_reason, symbol, entry_price, exit_price, "
-                f"entry_time, exit_time "
-                f"FROM dryrun_trade_ledger WHERE {ledger_where} "
-                f"ORDER BY date, entry_time",
-                ledger_params,
-            ).fetchall()
-
-            if ledger_rows:
-                nets = [float(r["net_pnl"] or 0.0) for r in ledger_rows]
-                result["closed_trades"] = len(ledger_rows)
-                result["gross_pnl"] = round(
-                    sum(float(r["gross_pnl"] or 0.0) for r in ledger_rows), 2
-                )
-                result["net_pnl"] = round(sum(nets), 2)
-                wins_list = [v for v in nets if v > 0]
-                losses_list = [v for v in nets if v < 0]
-                result["wins"] = len(wins_list)
-                result["losses"] = len(losses_list)
-                result["breakeven"] = len([v for v in nets if v == 0])
-                result["win_rate"] = round(
-                    len(wins_list) / len(nets) * 100, 1
-                ) if nets else None
-                result["avg_win"] = round(
-                    sum(wins_list) / len(wins_list), 2
-                ) if wins_list else None
-                result["avg_loss"] = round(
-                    sum(losses_list) / len(losses_list), 2
-                ) if losses_list else None
-                result["max_win"] = round(max(nets), 2) if nets else None
-                result["max_loss"] = round(min(nets), 2) if nets else None
-                total_wins = sum(wins_list)
-                total_losses = -sum(losses_list)
-                if total_losses > 0:
-                    result["profit_factor"] = round(
-                        total_wins / total_losses, 2
-                    )
-                elif total_wins > 0:
-                    result["profit_factor"] = float("inf")
-                result["expectancy"] = round(
-                    sum(nets) / len(nets), 2
-                ) if nets else None
-
-                ledger_dates = {str(r["date"]) for r in ledger_rows}
-                result["sessions"] = max(
-                    result["sessions"], len(ledger_dates)
-                )
-
-                trade_rows = []
-                for r in ledger_rows:
-                    trade_rows.append({
-                        "date": r["date"],
-                        "symbol": r["symbol"],
-                        "side": r["side"],
-                        "entry_price": r["entry_price"],
-                        "exit_price": r["exit_price"],
-                        "entry_time": r["entry_time"],
-                        "exit_time": r["exit_time"],
-                        "exit_reason": r["exit_reason"],
-                        "pnl": float(r["net_pnl"] or 0.0),
-                    })
-                result["trades"] = trade_rows
-
-        # ── Daily P&L series ──────────────────────────────────
-        by_day: dict[str, float] = defaultdict(float)
-        for t in result["trades"]:
-            day = str(t.get("date") or "")[:10]
-            if day:
-                by_day[day] += float(t.get("pnl") or 0.0)
-
-        cumulative = 0.0
-        daily = []
-        for day in sorted(by_day):
-            net = round(by_day[day], 2)
-            cumulative = round(cumulative + net, 2)
-            daily.append({"date": day, "net": net, "cum": cumulative})
-        result["daily"] = daily
-
-        if by_day:
-            result["best_day"] = max(by_day.values())
-            result["worst_day"] = min(by_day.values())
-
-    finally:
-        conn.close()
+    # ── Candidate funnel from DB ──────────────────────────────
+    funnel = _candidate_funnel(strategy_type, report_dates)
+    result["total_candidates"] = funnel["total_candidates"]
+    result["status_counts"] = funnel["status_counts"]
+    result["side_counts"] = funnel["side_counts"]
+    result["rejections"] = funnel["rejections"]
 
     return result
 
