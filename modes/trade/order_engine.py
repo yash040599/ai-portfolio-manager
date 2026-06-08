@@ -381,6 +381,13 @@ class OrderEngine:
         """True if too many scans failed even at relaxed R:R floor."""
         return self._rr_giveup
 
+    def is_daily_cap_reached(self) -> bool:
+        """True if daily trade cap is exhausted (no more entries possible)."""
+        max_daily = self._effective_daily_trade_cap()
+        if max_daily <= 0:
+            return False
+        return len(self.positions) >= max_daily
+
     def _reject_entry(self, gate: str, message: str) -> bool:
         self._last_entry_rejection_gate = gate
         self._last_entry_rejection_reason = message
@@ -1757,6 +1764,7 @@ class OrderEngine:
         the in-this-method gates in code order; scanner-side filters
         (earnings blackout, pattern↔tech contradiction, tape-breadth)
         run before this method is called.
+          0.  Daily trade cap (FIRST — skip all expensive gates if cap hit)
           0a. Rolling-PF circuit breaker — session pause on rolling 3d losses
           0b. Directional auto-pause + bypasses (NIFTY-bounce, tape-breadth)
           0c. Entry-burst cap — block 3rd+ entry inside any 60s window
@@ -1790,7 +1798,7 @@ class OrderEngine:
          26.  Pattern-direction entry veto (opposite-side reversal pattern)
          27.  ADX + DI directional gate (chop-day reject)
          28.  Gap-coherence gate (BUY blocked on GAP_DOWN_STRONG)
-         29.  Daily trade cap + expiry trade cap
+         29.  (daily trade cap — moved to gate 0)
          30.  Stagnant churn guard
          31.  VWAP guard (trend-fight + extension + fresh-reversal)
          32.  Net-of-charges R:R check (effective R:R ≥ 1.0)
@@ -1816,6 +1824,21 @@ class OrderEngine:
         gap_go_entry = strategy_id == "NOAI_GAP_AND_GO"
         self._last_entry_rejection_gate = ""
         self._last_entry_rejection_reason = ""
+
+        # ── Daily trade cap (FIRST CHECK — skip all expensive gates) ─
+        # Moved to gate 0 from gate 29 to avoid wasted computation.
+        # Each candidate was getting price-validated, ATR-computed,
+        # R:R-checked, then rejected here — pure waste.
+        max_daily = self._effective_daily_trade_cap()
+        if max_daily > 0:
+            total_trades = len(self.positions)  # open + closed + external
+            if total_trades >= max_daily:
+                self.log.warning(
+                    f"{symbol}: daily trade cap reached ({total_trades}/{max_daily}) — "
+                    f"no more entries today"
+                )
+                return False
+
         skip_legacy_performance_pauses = (
             (simple_mr_entry or gap_go_entry)
             and bool(getattr(self.cfg, "SIMPLE_MR_SKIP_LEGACY_PERFORMANCE_PAUSES", False))
@@ -2691,21 +2714,10 @@ class OrderEngine:
                         f"parse failed ({type(e).__name__}: {e})"
                     )
 
-        # ── Daily trade cap ───────────────────────────────────────
-        # Prevent overtrading churn. Each exit+entry costs ~Rs.36.
-        # Intentionally counts EXTERNAL/adopted positions too — manual
-        # trades on Zerodha still use slots and add to daily churn.
-        # Regime-adjusted (Roadmap #165): tighter for small accounts,
-        # looser for large ones.
-        max_daily = self._effective_daily_trade_cap()
-        if max_daily > 0:
-            total_trades = len(self.positions)  # open + closed + external
-            if total_trades >= max_daily:
-                self.log.warning(
-                    f"{symbol}: daily trade cap reached ({total_trades}/{max_daily}) — "
-                    f"no more entries today"
-                )
-                return False
+        # ── Daily trade cap — HANDLED AT GATE 0 (top of method) ──
+        # Intentionally left as comment — the check was moved to the
+        # very start of enter_trade() to avoid wasted ATR/R:R/price
+        # computation on candidates that will be rejected anyway.
 
         # ── Stagnant churn guard ──────────────────────────────────
         # Don't re-enter a stock+direction that was exited as stagnant.

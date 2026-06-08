@@ -333,6 +333,13 @@ def simulate_trades(
     gate_rsi_sell_floor: float = 0,      # 0 = disabled, e.g. 25
     gate_max_reentries: int = 0,         # 0 = unlimited, e.g. 2
     gate_vwap_trail: bool = False,       # Phase 3: VWAP-as-trailing-stop
+    # N1: RSI contra-momentum — block extreme-RSI entries unless score overrides
+    gate_rsi_contra_sell: float = 0,     # 0 = disabled, e.g. 30 (block SELL when RSI < X)
+    gate_rsi_contra_buy: float = 0,      # 0 = disabled, e.g. 70 (block BUY when RSI > X)
+    gate_rsi_contra_score: float = 8.0,  # |score| override for contra-momentum
+    # N2: RSI overbought buy ceiling — block BUY when RSI extreme
+    gate_rsi_ob_buy: float = 0,          # 0 = disabled, e.g. 70 (block BUY when RSI > X)
+    gate_rsi_ob_score: float = 8.0,      # |score| override
 ) -> list[dict]:
     """Run the full scoring + simulation pipeline for one symbol.
     Uses a rolling multi-day window for indicator computation."""
@@ -539,6 +546,18 @@ def simulate_trades(
                 rejected = True
             if gate_rsi_sell_floor > 0 and this_side == "SELL" and rsi_val < gate_rsi_sell_floor:
                 rejected = True
+            # N1: RSI contra-momentum — block oversold shorts / overbought longs
+            # unless score is high enough to justify fighting the extreme
+            if gate_rsi_contra_sell > 0 and this_side == "SELL" and rsi_val < gate_rsi_contra_sell:
+                if abs(score) < gate_rsi_contra_score:
+                    rejected = True
+            if gate_rsi_contra_buy > 0 and this_side == "BUY" and rsi_val > gate_rsi_contra_buy:
+                if abs(score) < gate_rsi_contra_score:
+                    rejected = True
+            # N2: RSI overbought buy ceiling (with score override)
+            if gate_rsi_ob_buy > 0 and this_side == "BUY" and rsi_val > gate_rsi_ob_buy:
+                if abs(score) < gate_rsi_ob_score:
+                    rejected = True
             if gate_max_reentries > 0 and day_trade_count >= gate_max_reentries:
                 rejected = True
             if gate_vwap_trend_fight > 0 and vwap_val > 0:
@@ -912,6 +931,24 @@ def main():
             elif gate == "G4":
                 kwargs["gate_rsi_sell_floor"] = val
                 label = f"G4: RSI_SELL_FLOOR = {val}"
+            elif gate == "N1_SELL":
+                # Sweep RSI threshold for contra-momentum sell guard (score override = 8)
+                kwargs["gate_rsi_contra_sell"] = val
+                kwargs["gate_rsi_contra_score"] = 8.0
+                label = f"N1_SELL: RSI_CONTRA_SELL < {val} (override ≥8)"
+            elif gate == "N1_SELL_S":
+                # Sweep score override for contra-momentum sell guard (RSI threshold = 30)
+                kwargs["gate_rsi_contra_sell"] = 30.0
+                kwargs["gate_rsi_contra_score"] = val
+                label = f"N1_SELL_S: RSI<30 override ≥ {val}"
+            elif gate == "N1_BUY":
+                kwargs["gate_rsi_contra_buy"] = val
+                kwargs["gate_rsi_contra_score"] = 8.0
+                label = f"N1_BUY: RSI_CONTRA_BUY > {val} (override ≥8)"
+            elif gate == "N2":
+                kwargs["gate_rsi_ob_buy"] = val
+                kwargs["gate_rsi_ob_score"] = 8.0
+                label = f"N2: RSI_OB_BUY > {val} (override ≥8)"
             elif gate == "J1":
                 kwargs["gate_max_reentries"] = int(val)
                 label = f"J1: MAX_REENTRIES = {int(val)}"

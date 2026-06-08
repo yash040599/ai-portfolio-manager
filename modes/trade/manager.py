@@ -358,9 +358,51 @@ class PortfolioManager:
                 if now > gap_go_cutoff:
                     self.log.warning(
                         f"Gap-and-Go: started too late ({now.strftime('%H:%M')}) — "
-                        f"gap signal only valid in first hour after open. "
-                        f"Nothing to do today."
+                        f"gap signal only valid in first hour after open."
                     )
+                    # Offer fallback to legacy score-based strategy
+                    sq_off = now.replace(
+                        hour=self.cfg.SQUARE_OFF_HOUR,
+                        minute=self.cfg.SQUARE_OFF_MINUTE,
+                        second=0, microsecond=0,
+                    )
+                    mins_left = (sq_off - now).total_seconds() / 60
+                    if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
+                        print(
+                            f"\n  Cannot run Gap-and-Go at {now.strftime('%H:%M')} "
+                            f"(cutoff was {gap_go_cutoff.strftime('%H:%M')})."
+                            f"\n  {mins_left:.0f} minutes left until square-off."
+                            f"\n"
+                            f"\n  Options:"
+                            f"\n    [1] Fallback to legacy score-based strategy "
+                            f"(NOAI_LEGACY_FULL, backtest PF 0.86)"
+                            f"\n    [2] Exit — nothing to do today"
+                            f"\n"
+                        )
+                        try:
+                            choice = input("  Your choice [2]: ").strip()
+                        except (EOFError, KeyboardInterrupt):
+                            choice = "2"
+                        if choice == "1":
+                            self.log.info(
+                                "User chose legacy fallback — switching to "
+                                "NOAI_LEGACY_FULL for today"
+                            )
+                            self._gap_go = False
+                            self.cfg.TRADE_STRATEGY_PROFILE = "NOAI_LEGACY_FULL"
+                            # Restore default square-off time (legacy uses later close)
+                            self.cfg.SQUARE_OFF_HOUR = 14
+                            self.cfg.SQUARE_OFF_MINUTE = 0
+                            self._run_pre_market_scan()
+                            if self._trade_plans:
+                                self._enter_positions()
+                                self._run_monitor_loop()
+                            else:
+                                self.log.info("Legacy scan: no trades found")
+                            self._generate_report()
+                            return
+                        else:
+                            self.log.info("User chose to exit — no trades today")
                     self._generate_report()
                     return
 
@@ -1207,7 +1249,11 @@ class PortfolioManager:
         - Enhanced Claude review with position candle context
         """
         if self._noai:
-            self.log.section("V2 MONITORING — NoAI (rule-based + candle re-scan)")
+            profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+            if self._gap_go:
+                self.log.section("MONITORING — Gap-and-Go (SL/target only)")
+            else:
+                self.log.section("V2 MONITORING — NoAI (rule-based + candle re-scan)")
         else:
             self.log.section("V2 MONITORING — Candle-aware price tracking")
 
@@ -1217,11 +1263,18 @@ class PortfolioManager:
         candle_rescan_interval = self.cfg.CANDLE_RESCAN_MINUTES * 60
 
         if self._noai:
-            self.log.info(
-                f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
-                f"AI review: DISABLED (noai) | "
-                f"Candle rescan: every {self.cfg.CANDLE_RESCAN_MINUTES}min"
-            )
+            if self._gap_go:
+                self.log.info(
+                    f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
+                    f"Candle rescan: DISABLED (gap-and-go) | "
+                    f"Periodic opportunity scan: DISABLED (one-shot)"
+                )
+            else:
+                self.log.info(
+                    f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
+                    f"AI review: DISABLED (noai) | "
+                    f"Candle rescan: every {self.cfg.CANDLE_RESCAN_MINUTES}min"
+                )
         else:
             self.log.info(
                 f"Base poll: {base_poll}s | Fast poll: {fast_poll}s | "
@@ -1283,6 +1336,13 @@ class PortfolioManager:
                         self.log.warning(
                             "All positions closed — R:R giveup active, "
                             "no viable setups today. Stopping."
+                        )
+                        break
+                    if self.engine.is_daily_cap_reached():
+                        self._clear_status_line()
+                        self.log.info(
+                            "All positions closed — daily trade cap reached, "
+                            "no more entries today. Stopping."
                         )
                         break
                     if self.engine.is_sl_paused():
@@ -1399,6 +1459,7 @@ class PortfolioManager:
                     and not self._circuit_broken
                     and not self.engine.is_sl_paused()
                     and not self.engine.is_rr_giveup()
+                    and not self.engine.is_daily_cap_reached()
                     and time_since_rescan >= rescan_cooldown
                 ):
                     sq_now = now_ist()
@@ -1515,66 +1576,66 @@ class PortfolioManager:
             # ── Periodic candle re-scan (free, no Claude cost) ──
             candle_elapsed = time.time() - self._last_candle_scan
             if candle_elapsed >= candle_rescan_interval and self.engine.open_positions():
-                self._clear_status_line()
-                self.log.info("Candle re-scan: refreshing technical data for open positions")
-                for pos in self.engine.open_positions():
-                    fresh = self.scanner._analyse_stock(pos["symbol"], pos.get("exchange", "NSE"))
-                    if not fresh:
-                        continue
+                # Gap-and-Go: skip candle re-scan entirely — gap signal
+                # is one-shot, no score-based decay/reversal exits.
+                # SL/target/square-off are handled by check_stops_and_targets().
+                if self._gap_go:
+                    self._last_candle_scan = time.time()
+                else:
+                    self._clear_status_line()
+                    self.log.info("Candle re-scan: refreshing technical data for open positions")
+                    for pos in self.engine.open_positions():
+                        fresh = self.scanner._analyse_stock(pos["symbol"], pos.get("exchange", "NSE"))
+                        if not fresh:
+                            continue
 
-                    score = fresh["combined_score"]
-                    ps = fresh["pattern_summary"]
-                    patterns = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
+                        score = fresh["combined_score"]
+                        ps = fresh["pattern_summary"]
+                        patterns = ", ".join(ps["patterns"][:3]) if ps["patterns"] else "none"
 
-                    if abs(score) >= 5:
-                        self.log.info(
-                            f"  {pos['symbol']}: score {score:+.1f}  "
-                            f"tech: {fresh['technical']['signal']}  "
-                            f"patterns: [{patterns}]"
-                        )
+                        if abs(score) >= 5:
+                            self.log.info(
+                                f"  {pos['symbol']}: score {score:+.1f}  "
+                                f"tech: {fresh['technical']['signal']}  "
+                                f"patterns: [{patterns}]"
+                            )
 
-                    # Hard exit on strong signal reversal (#174). Runs
-                    # BEFORE _auto_protect_on_contrary_signal — if the
-                    # reversal is severe enough to trigger an exit, no
-                    # point tightening SL on a position we're closing.
-                    if self._signal_reversal_exit(pos, fresh, quotes):
-                        continue
+                        # Hard exit on strong signal reversal (#174). Runs
+                        # BEFORE _auto_protect_on_contrary_signal — if the
+                        # reversal is severe enough to trigger an exit, no
+                        # point tightening SL on a position we're closing.
+                        if self._signal_reversal_exit(pos, fresh, quotes):
+                            continue
 
-                    # Same-direction thesis decay (#188). Catches
-                    # trades where the entry signal hasn't flipped to
-                    # the opposite side (which #174 already covers)
-                    # but has decayed to a small fraction of its entry
-                    # strength. Runs AFTER reversal so a decisive flip
-                    # still goes through the reversal log line.
-                    if self._signal_decay_exit(pos, fresh, quotes):
-                        continue
+                        # Same-direction thesis decay (#188). Catches
+                        # trades where the entry signal hasn't flipped to
+                        # the opposite side (which #174 already covers)
+                        # but has decayed to a small fraction of its entry
+                        # strength. Runs AFTER reversal so a decisive flip
+                        # still goes through the reversal log line.
+                        if self._signal_decay_exit(pos, fresh, quotes):
+                            continue
 
-                    # Auto-tighten SL on strong contrary signal
-                    self._auto_protect_on_contrary_signal(pos, fresh, quotes)
+                        # Auto-tighten SL on strong contrary signal
+                        self._auto_protect_on_contrary_signal(pos, fresh, quotes)
 
-                # Sector-cascade protect (#149) — runs once per
-                # candle re-scan, AFTER per-position checks so it
-                # only tightens what's still open. Defensive only;
-                # never opens a new trade.
-                try:
-                    self._sector_cascade_protect(quotes)
-                except (AttributeError, KeyError) as e:
-                    # Expected defensive-programming failures
-                    # (missing scanner attr, missing position field):
-                    # silent debug.
-                    self.log.debug(f"Sector cascade protect skipped: {e}")
-                except Exception as e:
-                    # Unexpected failure — surface at WARNING so we
-                    # notice in the daily log review instead of
-                    # losing a defensive exit silently.
-                    self.log.warning(f"Sector cascade protect failed: {e}")
+                    # Sector-cascade protect (#149) — runs once per
+                    # candle re-scan, AFTER per-position checks so it
+                    # only tightens what's still open. Defensive only;
+                    # never opens a new trade.
+                    try:
+                        self._sector_cascade_protect(quotes)
+                    except (AttributeError, KeyError) as e:
+                        self.log.debug(f"Sector cascade protect skipped: {e}")
+                    except Exception as e:
+                        self.log.warning(f"Sector cascade protect failed: {e}")
 
-                self._last_candle_scan = time.time()
-                next_candle = now_ist() + datetime.timedelta(seconds=candle_rescan_interval)
-                self.log.info(
-                    f"Next candle re-scan: {next_candle.strftime('%H:%M:%S')} "
-                    f"({self.cfg.CANDLE_RESCAN_MINUTES}min)"
-                )
+                    self._last_candle_scan = time.time()
+                    next_candle = now_ist() + datetime.timedelta(seconds=candle_rescan_interval)
+                    self.log.info(
+                        f"Next candle re-scan: {next_candle.strftime('%H:%M:%S')} "
+                        f"({self.cfg.CANDLE_RESCAN_MINUTES}min)"
+                    )
 
             # ── Periodic NIFTY regime re-check (free) ─────────────
             nifty_recheck_interval = self.cfg.NIFTY_RECHECK_MINUTES * 60
@@ -1625,6 +1686,7 @@ class PortfolioManager:
                     and not self.engine.is_sl_paused()
                     and not self._check_vix_spike()
                     and not self.engine.is_rr_giveup()
+                    and not self.engine.is_daily_cap_reached()
                 ):
                     sq_now = now_ist()
                     sq_off = sq_now.replace(
@@ -3262,8 +3324,8 @@ class PortfolioManager:
 
     def _run_noai_scan(self, session_context: str = ""):
         """
-        Pre-market scan without Claude — uses scan_noai() which
-        selects trades purely from technical scores.
+        Pre-market scan without Claude — routes to the active strategy
+        profile (legacy score-based or gap-and-go).
         """
         now = now_ist()
         market_open = now.replace(
@@ -3272,15 +3334,30 @@ class PortfolioManager:
             second=0, microsecond=0,
         )
 
-        if now < market_open:
-            self.log.section("PRE-MARKET SCAN (NoAI)")
-        else:
-            self.log.section("MARKET SCAN (NoAI — joined late)")
+        profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+        strategy_label = {
+            "NOAI_GAP_AND_GO": "Gap-and-Go",
+            "NOAI_SIMPLE_MR_BASELINE": "Simple MR",
+        }.get(profile, "NoAI")
 
+        if now < market_open:
+            self.log.section(f"PRE-MARKET SCAN ({strategy_label})")
+        else:
+            self.log.section(f"MARKET SCAN ({strategy_label})")
+
+        self.log.info(f"Strategy: {profile}")
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
         self.log.info(f"Budget: Rs.{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
-        self.log.info("Selection: pure technical signals (no AI calls)")
+        if profile == "NOAI_GAP_AND_GO":
+            self.log.info(
+                f"Gap-and-Go config: gap >= {self.cfg.GAP_GO_MIN_GAP_PCT}%, "
+                f"vol >= {self.cfg.GAP_GO_VOLUME_MULTIPLE}x, "
+                f"cap = {self.cfg.GAP_GO_DAILY_CAP}, "
+                f"sq-off = {self.cfg.GAP_GO_SQUARE_OFF_HOUR}:{self.cfg.GAP_GO_SQUARE_OFF_MINUTE:02d}"
+            )
+        else:
+            self.log.info("Selection: pure technical signals (no AI calls)")
 
         universe = self.scanner.get_universe()
         self.log.info(f"Scanning {len(universe)} stocks...")
@@ -3323,7 +3400,12 @@ class PortfolioManager:
             max_t = self.cfg.MAX_POSITIONS
             primary_plans = self._trade_plans[:max_t]
             fallback_plans = self._trade_plans[max_t:]
-            self.log.section("TRADE PLAN (NoAI)")
+            profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+            strategy_label = {
+                "NOAI_GAP_AND_GO": "Gap-and-Go",
+                "NOAI_SIMPLE_MR_BASELINE": "Simple MR",
+            }.get(profile, "NoAI")
+            self.log.section(f"TRADE PLAN ({strategy_label})")
             for i, t in enumerate(primary_plans, 1):
                 self.log.info(
                     f"  Pick {i}: {t['side']} {t['qty']}x {t['symbol']} "

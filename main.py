@@ -170,7 +170,36 @@ def main():
 
         # Single trading entry point. Default mode is NoAI (pure rules,
         # zero AI API calls). Use --ai for AI selection + reviews.
+        #
+        # Gap-and-Go strategy is pure rules-based — AI adds no value
+        # (the alpha is gap+volume, not score ranking). Auto-downgrade
+        # to noai when Gap-and-Go is active.
         runner = PortfolioManager(Config)
+        profile = getattr(Config, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
+        if use_ai and profile == "NOAI_GAP_AND_GO":
+            print(
+                "\n  Gap-and-Go strategy is pure rules-based (gap + volume signal)."
+                "\n  AI selection adds no value here."
+                "\n"
+                "\n  Options:"
+                "\n    [1] Continue with Gap-and-Go (NoAI) — recommended, backtest PF 1.37"
+                "\n    [2] Switch to AI + legacy score-based strategy (backtest PF 0.86)"
+                "\n    [3] Exit"
+                "\n"
+            )
+            try:
+                choice = input("  Your choice [1]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                choice = "1"
+            if choice == "2":
+                print("  Switching to AI + NOAI_LEGACY_FULL.\n")
+                Config.TRADE_STRATEGY_PROFILE = "NOAI_LEGACY_FULL"
+            elif choice == "3":
+                print("  Exiting.")
+                sys.exit(0)
+            else:
+                print("  Continuing with Gap-and-Go (NoAI).\n")
+                use_ai = False
         if use_ai:
             if use_test:
                 runner.run_test(noai=False)

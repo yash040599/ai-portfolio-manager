@@ -158,11 +158,11 @@ class Config:
     # ── Strategy Profile ─────────────────────────────────────────
     # Controls which alpha-selection logic runs in NoAI mode.
     # NOAI_LEGACY_FULL: blended score from all indicators (default)
-    # NOAI_GAP_AND_GO:  gap-and-go with volume (Phase 7.2, OOS PF 1.35)
-    TRADE_STRATEGY_PROFILE: str = "NOAI_LEGACY_FULL"
+    # NOAI_GAP_AND_GO:  gap-and-go with volume (Phase 7.2, OOS PF 1.37)
+    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO"
 
     # ── Gap-and-Go Strategy Config (Phase 7.2) ───────────────────
-    # OOS PF 1.28 (ALL, cap=2, sq-off 14:00), 1.34 (sq-off 13:00).
+    # OOS PF 1.28 (ALL, cap=2, sq-off 14:00), 1.37 (BUY RSI>70 filter).
     # First strategy to clear the 1.15 promotion gate.
     # Set TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO" to activate.
     GAP_GO_MIN_GAP_PCT: float = 1.0       # minimum gap % from prev close
@@ -172,6 +172,11 @@ class Config:
     GAP_GO_SQUARE_OFF_HOUR: int = 13      # gap signal fades by midday (sweep: 13:00 PF 1.34 > 14:00 PF 1.28)
     GAP_GO_SQUARE_OFF_MINUTE: int = 0
     GAP_GO_SKIP_RANGE_REGIME: bool = True  # skip RANGE days (PF 1.35 vs 1.28) — not wired yet
+    # RSI filter for Gap-and-Go (backtest 2026-06-08):
+    #   BUY blocked RSI>70: PF 1.37 (+7%), MaxDD 7.93% (-28%), Sharpe +1.38
+    #   SELL floor: ALL values harmful (same as legacy). Not enabled.
+    GAP_GO_RSI_BUY_CEILING: float = 70.0  # block BUY gap-ups when RSI already overbought
+    GAP_GO_RSI_SELL_FLOOR: float = 0.0    # 0 = disabled (backtest: all values worse)
 
     # ── Alpha Strategies (backtested 2026-05-25) ─────────────────
     # Each can be enabled/disabled independently. When multiple are

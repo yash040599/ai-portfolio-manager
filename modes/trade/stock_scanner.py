@@ -1459,10 +1459,11 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         drift_check_enabled = bool(getattr(self.cfg, "VWAP_DRIFT_CHECK_ENABLED", True))
         drift_warn_pct = float(getattr(self.cfg, "VWAP_DRIFT_WARN_PCT", 0.30))
         for i, symbol in enumerate(price_filtered):
-            # Progress indicator — every 25% of universe
-            quarter = max(1, len(price_filtered) // 4)
-            if (i + 1) % quarter == 0 or i + 1 == len(price_filtered):
-                self.log.info(f"  Analysing... {i + 1}/{len(price_filtered)}")
+            # Progress indicator — every 25% of universe (first scan only)
+            if not getattr(self, "_first_scan_done", False):
+                quarter = max(1, len(price_filtered) // 4)
+                if (i + 1) % quarter == 0 or i + 1 == len(price_filtered):
+                    self.log.info(f"  Analysing... {i + 1}/{len(price_filtered)}")
 
             result = self._analyse_stock(symbol, as_of=as_of)
             if result:
@@ -1499,6 +1500,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                         )
 
         self.log.info(f"  Analysed {len(scored)} stocks with sufficient candle data")
+        self._first_scan_done = True
         if drift_check_enabled and drift_warn_count > 0:
             self.log.warning(
                 f"  VWAP drift sanity check: {drift_warn_count} symbol(s) "
@@ -2255,6 +2257,26 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
             result = self._analyse_stock(symbol, as_of=as_of)
             tech = result.get("technical", {}) if result else {}
 
+            # ── RSI contra-momentum filter (backtest 2026-06-08) ──
+            # BUY RSI>70 block: PF 1.28 → 1.37 (+7%), MaxDD -28%.
+            # SELL floor: all values harmful, disabled (0).
+            rsi_info = tech.get("rsi", {})
+            entry_rsi = float(rsi_info.get("rsi", 0) or 0) if isinstance(rsi_info, dict) else 0
+            rsi_buy_ceil = getattr(self.cfg, "GAP_GO_RSI_BUY_CEILING", 0)
+            rsi_sell_floor = getattr(self.cfg, "GAP_GO_RSI_SELL_FLOOR", 0)
+            if side == "BUY" and rsi_buy_ceil > 0 and entry_rsi > rsi_buy_ceil:
+                self.log.info(
+                    f"  {symbol}: Gap-and-Go BUY skipped — RSI {entry_rsi:.0f} > "
+                    f"{rsi_buy_ceil:.0f} (overbought gap-up, high reversal risk)"
+                )
+                continue
+            if side == "SELL" and rsi_sell_floor > 0 and entry_rsi < rsi_sell_floor:
+                self.log.info(
+                    f"  {symbol}: Gap-and-Go SELL skipped — RSI {entry_rsi:.0f} < "
+                    f"{rsi_sell_floor:.0f} (oversold gap-down)"
+                )
+                continue
+
             # ── Bug fix #3: compute gap-candle SL matching backtest ──
             # SL is anchored to the gap candle structure, not ATR.
             if today_candles and len(today_candles) >= 2:
@@ -2863,10 +2885,12 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         factor confidence is low. Re-enable trigger #258R.
         """
         if not self.cfg.SCORE_WEIGHTED_SIZING_ENABLED:
-            self.log.info(
-                "  Score-weighted sizing disabled (kill-switch); "
-                "using equal sizing"
-            )
+            if not getattr(self, "_sizing_logged", False):
+                self.log.info(
+                    "  Score-weighted sizing disabled (kill-switch); "
+                    "using equal sizing"
+                )
+                self._sizing_logged = True
             return trades
 
         if len(trades) <= 1:

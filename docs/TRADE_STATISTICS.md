@@ -1,14 +1,14 @@
 # Trading Statistics
 
-Last updated: 2026-06-08 (Pre-dry-run sweep complete; finalized config).
+Last updated: 2026-06-08 (Gap-and-Go activated with RSI filter; config switched from legacy).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.2-2026-06-08-GAP_AND_GO_TUNED |
-| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go passes OOS PF 1.28. Pre-dry-run sweep confirmed cap=2, 13:00 sq-off, no trail. Dry-run starts Monday 2026-06-09. |
-| Strategy profile | `NOAI_GAP_AND_GO` (set `TRADE_STRATEGY_PROFILE` to activate) |
+| Runtime strategy version | 2.3-2026-06-08-GAP_AND_GO_RSI |
+| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go with RSI BUY ceiling. OOS PF 1.37. Config switched to `NOAI_GAP_AND_GO`. |
+| Strategy profile | `NOAI_GAP_AND_GO` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun |
 | Budget | Rs.50,000 |
@@ -16,7 +16,9 @@ Last updated: 2026-06-08 (Pre-dry-run sweep complete; finalized config).
 | Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13; sweep: optimal) |
 | Loser exit | 12:00 IST (auto: sq-off − 1hr) |
 | Trailing stop | DISABLED (sweep: every trail config destroys PF) |
+| RSI BUY ceiling | 70.0 (block overbought gap-up buys; PF 1.28→1.37, MaxDD -28%) |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
+| Note | 2026-06-08 dry run accidentally used NOAI_LEGACY_FULL (old scores). Config now fixed. |
 
 ## 1. Backtest Results (62-Gate Audit, 2026-05-26)
 

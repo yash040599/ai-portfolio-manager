@@ -50,7 +50,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _make_trade,
+    compute_charges, compute_metrics, _atr, _rsi, _make_trade,
     CAPITAL,
 )
 from regime_analysis import label_regimes  # noqa: E402
@@ -125,6 +125,9 @@ def simulate_gap_go(
     skip_regimes: set[str] | None = None,
     start: str | None = None,
     end: str | None = None,
+    # RSI contra-momentum filter (N1 gate for Gap-and-Go)
+    rsi_contra_sell: float = 0,     # block SELL when RSI < X (0=disabled)
+    rsi_contra_buy: float = 0,      # block BUY when RSI > X (0=disabled)
 ) -> list[dict]:
     """Run gap-and-go strategy across all dates."""
     if skip_regimes is None:
@@ -195,6 +198,16 @@ def simulate_gap_go(
                 atr_val = entry_candle["close"] * 0.005
 
             side = "BUY" if gap > 0 else "SELL"
+
+            # RSI contra-momentum filter: compute RSI on closes up to entry candle
+            if rsi_contra_sell > 0 or rsi_contra_buy > 0:
+                rsi_closes = [c["close"] for c in atr_window]
+                entry_rsi = _rsi(rsi_closes, 14)
+                if side == "SELL" and rsi_contra_sell > 0 and entry_rsi < rsi_contra_sell:
+                    continue
+                if side == "BUY" and rsi_contra_buy > 0 and entry_rsi > rsi_contra_buy:
+                    continue
+
             candidates.append((sym, side, abs(gap), candles, atr_val))
 
         if not candidates:
@@ -340,6 +353,9 @@ def main() -> None:
     ap.add_argument("--gap-pct", type=float, default=GAP_PCT, help="Minimum gap %%")
     ap.add_argument("--vol-mult", type=float, default=VOL_MULT, help="Volume multiplier floor")
     ap.add_argument("--daily-cap", type=int, default=DAILY_CAP, help="Max trades per day")
+    ap.add_argument("--rsi-contra-sell", type=float, default=0, help="Block SELL when RSI < X (0=disabled)")
+    ap.add_argument("--rsi-contra-buy", type=float, default=0, help="Block BUY when RSI > X (0=disabled)")
+    ap.add_argument("--sweep-rsi", action="store_true", help="Sweep RSI contra-momentum thresholds")
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
@@ -435,6 +451,39 @@ def main() -> None:
             )
             m = compute_metrics(trades, f"gap{gp}/vol{vm}", with_costs=True)
             _print_table(f"gap>={gp}% vol>={vm}x", m)
+
+    # ── RSI contra-momentum sweep (if requested) ───────────────
+    if args.sweep_rsi:
+        print(f"\n  ── RSI contra-momentum sweep (TEST window, ALL regimes) ──")
+        print(f"  Baseline first, then sweep SELL floor and BUY ceiling")
+
+        rsi_base = simulate_gap_go(
+            all_symbol_days, regime_labels,
+            gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+            daily_cap=args.daily_cap, skip_regimes=set(),
+            start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        )
+        _print_table("Baseline (no RSI filter)", compute_metrics(rsi_base, "RSI-base", True))
+
+        for thresh in [20, 25, 30, 35, 40]:
+            trades = simulate_gap_go(
+                all_symbol_days, regime_labels,
+                gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+                daily_cap=args.daily_cap, skip_regimes=set(),
+                start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+                rsi_contra_sell=float(thresh),
+            )
+            _print_table(f"SELL blocked RSI<{thresh}", compute_metrics(trades, f"RSI-sell-{thresh}", True))
+
+        for thresh in [65, 70, 75, 80]:
+            trades = simulate_gap_go(
+                all_symbol_days, regime_labels,
+                gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+                daily_cap=args.daily_cap, skip_regimes=set(),
+                start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+                rsi_contra_buy=float(thresh),
+            )
+            _print_table(f"BUY blocked RSI>{thresh}", compute_metrics(trades, f"RSI-buy-{thresh}", True))
 
     # ── Verdict ───────────────────────────────────────────────
     print(f"\n  === PHASE 7.2 VERDICT ===")
