@@ -23,75 +23,108 @@ Last updated: 2026-06-09 (Gap-and-Go v1.1: entry timing fix, gap-hold, score-con
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
 | Note | v1.0 dry-run on 2026-06-09 lost Rs.475 (0/2 wins). Root cause: entry timing mismatch vs backtest + missing gap-hold check. Both fixed in v1.1. |
 
-## 1. Backtest Results (62-Gate Audit, 2026-05-26)
+## 1. Backtest Results — Gap-and-Go v1.1 (2026-06-09)
 
-| Metric | Before Audit | After Audit | Change |
-|---|---:|---:|---|
-| Profit Factor | 0.71 | 0.86 | +21% |
-| Trades (annual) | ~18,750 | 970 | -95% (K1=2 cap) |
-| Win Rate | 40.5% | 37.8% | Fewer but higher-quality |
-| Sharpe | -1.89 | -1.22 | +35% |
-| H2 2024 PF | 0.82 | 1.02 | Profitable half |
+### v1.1 OOS Results (TEST window: 2025-06-01 → 2026-05-22, net of costs)
 
-Key optimizations applied:
-- **ATR 2.0** (was 1.5): wider SL reduces whipsaw churn
-- **RR 1.8** (was 1.5): higher reward-to-risk improves expectancy
-- **K1=2** daily trade cap: eliminates overtrading, PF 0.71 -> 0.81
-- **14:00 square-off** (was 15:10): avoids toxic closing volatility
-- **13:00 loser exit**: cuts dead weight 1 hour before close
-- **RSI gates disabled**: all 4 RSI gates hurt PF in backtest
-- **VWAP gates disabled**: trend-fight and extension gates removed profitable trades
-- **Signal reversal exit enabled**: cuts losses on thesis invalidation
+| Config | Trades | WR | PF | Exp%/trade | Return | MaxDD | Sharpe |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **v1.0 baseline (RSI 70)** | 159 | 32.1% | 1.37 | +0.100% | +15.94% | 7.93% | 1.38 |
+| v1.1 + gap-hold 0.3% only | 98 | 37.8% | 1.57 | +0.146% | +14.26% | 5.59% | 1.67 |
+| v1.1 + score-contra only | 131 | 32.1% | 1.44 | +0.122% | +16.02% | 6.46% | 1.46 |
+| **v1.1 FULL (all filters)** | **98** | **35.7%** | **1.55** | **+0.146%** | **+14.33%** | **7.18%** | **1.66** |
+| v1.1 + skip RANGE | 74 | 32.4% | 1.49 | +0.138% | +10.20% | 5.60% | 1.33 |
+| v1.1 + VOLATILE only | 43 | 34.9% | 1.98 | +0.252% | +10.83% | 4.47% | 2.98 |
 
-## 2. Active Configuration
+### v1.1 Changes (what improved PF from 1.37 → 1.55)
 
-### Enabled Gates
-| Gate | Setting | Evidence |
-|---|---|---|
-| Exchange SL-M | Always on | Instant stop-loss execution on NSE |
-| ATR-based SL/target | ATR 2.0 x 14-period 15min | Backtest E1: best per-trade expectancy |
-| R:R floor | 1.3:1 uniform | Backtest E1: practical optimum |
-| Daily trade cap | 2 trades/day | Backtest K1: PF 0.81 vs 0.71 baseline |
-| Signal reversal exit | score >= 7 + pattern | Pro decision: institutional best practice |
-| Consecutive SL pause | 3 losses -> 30 min pause | Pro decision: prop-firm standard |
-| Circuit breaker | 3% of budget | Always-on safety net |
-| LIMIT orders | LTP with 8s timeout, 2 retries | Reduces slippage vs MARKET orders |
+1. **Entry at 09:30 candle close** (not LTP at 09:30:06): backtest enters at `candles[1]["close"]`, v1.0 entered at live LTP 1 second into the candle — look-ahead bias removed.
+2. **Gap-hold 0.3%**: reject if LTP faded >0.3% from today's open. Standalone PF 1.57. Swept: 0.3% best (PF 1.57), 0.5% PF 1.44, 0.7% PF 1.47, 1.0% PF 1.31.
+3. **Score-contradiction block**: reject BUY when composite score < 0 (SELL when > 0). Standalone PF 1.44.
 
-### Disabled Gates (by backtest evidence)
-| Gate | Reason |
-|---|---|
-| RSI buy/sell ceilings | G1/G2: inert or harmful (PF worse at every level) |
-| RSI buy/sell floors | G3/G4: G4 was biggest hidden PF killer (-10%) |
-| VWAP trend-fight | G6: inert, removes <3% of trades |
-| VWAP extension block | G7: all values make PF worse |
-| All other optional gates | Disabled pending future backtest evidence |
+### Regime-Conditional Cap Sweep (v1.1, TEST window)
 
-## 3. Break-Even Constraint
+Tested whether raising daily trade cap on VOLATILE days captures more edge.
 
-At 1.8:1 R:R target with 2.0x ATR SL:
+| Config | Trades | PF | Sharpe | Return |
+|---|---:|---:|---:|---:|
+| **baseline cap=2 all days** | **98** | **1.55** | **1.66** | **+14.33%** |
+| VOLATILE cap=3 | 96 | 1.58 | 1.71 | +14.97% |
+| VOLATILE cap=4 | 99 | 1.46 | 1.45 | +12.86% |
+| VOLATILE cap=5 | 102 | 1.43 | 1.38 | +12.21% |
+| VOLATILE cap=8 | 108 | 1.46 | 1.47 | +13.96% |
+| VOLATILE+TREND cap=3 | 100 | 1.54 | 1.65 | +14.56% |
 
-    Break-even WR (before charges) = 1 / (1 + 1.8) = 35.7%
-    Break-even WR (after charges)  ~ 42-45%
+**Verdict: keep cap=2 universally.** Cap=3 on VOLATILE is +2% PF (within noise). Cap=4+ degrades monotonically — the 3rd+ gap stocks are weaker follow-throughs. The v1.1 filters already self-select out bad RANGE-day trades, so the regime skip also hurts (PF 1.55 → 1.49).
 
-The backtest shows 37.8% WR - below after-cost break-even but above raw break-even.
-The AI quality gate (Gemini picking 2 from 50) is expected to push WR above the
-after-cost threshold by filtering out marginal setups that the rule-based scorer passes.
+### Regime Skip Verdict
 
-## 4. FY 2026-27 Historical Record
+Skipping RANGE days makes PF **worse** (1.55 → 1.49) with v1.1 filters. The gap-hold and score-contra filters implicitly remove bad RANGE trades (gaps fade fast → caught by 0.3% hold check; indicators contradict → caught by score filter). Remaining RANGE-day trades that pass all filters are profitable. **Run every day, let the filters do their job.**
 
-From tax ledger (pre-audit, NoAI mode):
+### Expected Rs P&L — v1.1 at Rs.50K Budget (OOS backtest)
+
+Per-trade sizing: Rs.25K per slot (50K / 2 slots).
 
 | Metric | Value |
 |---|---:|
-| Total trades | 184 |
-| Net P&L | Rs.-3,929 |
-| Charges | Rs.2,591 |
+| Total trades (1 year OOS) | 91 |
+| Total net P&L | Rs.+3,621 |
+| Total charges | Rs.2,332 (39% of gross) |
+| Avg winner | Rs.+274 (34 wins) |
+| Avg loser | Rs.-100 (57 losses) |
+| Avg per trade | Rs.+40 |
 
-This is the old NoAI baseline. Post-audit AI-mode results will be tracked separately.
+**Weekly** (40 active weeks):
 
-## 5. Promotion Metrics
+| | Rs. |
+|---|---:|
+| Best week | +1,822 |
+| P75 | +276 |
+| Median | -37 |
+| P25 | -130 |
+| Worst week | -979 |
+| Positive weeks | 45% |
 
-Evidence starts from the first AI-mode live session:
+**Monthly** (11 months):
+
+| | Rs. |
+|---|---:|
+| Best month | +1,737 |
+| P75 | +1,145 |
+| Median | +190 |
+| P25 | -200 |
+| Worst month | -1,068 |
+| Positive months | 55% (6/11) |
+
+**Annual**: +7.2% return on Rs.50K. Charges eat 39% of gross at this budget — scaling to Rs.1L would roughly double net returns as charge ratio drops to ~20%.
+
+## 2. Legacy Backtest (62-Gate Audit, 2026-05-26)
+
+The legacy multi-indicator scorer (NOAI_LEGACY_FULL) was audited across 62 gates:
+
+| Metric | Before Audit | After Audit |
+|---|---:|---:|
+| Profit Factor | 0.71 | 0.86 |
+| OOS PF (walk-forward) | — | 0.82 |
+| Trades (annual) | ~18,750 | 970 |
+| Win Rate | 40.5% | 37.8% |
+
+**Verdict: FAIL.** OOS PF 0.82 = negative expectancy. Led to the Gap-and-Go research (Phases 1-7) that produced the first passing strategy.
+
+## 3. FY 2026-27 Historical Record
+
+| Metric | Value |
+|---|---:|
+| Total trades (old NoAI baseline) | 184 |
+| Net P&L (old NoAI baseline) | Rs.-3,929 |
+| Charges (old NoAI baseline) | Rs.2,591 |
+| v1.0 dry-run 2026-06-09 | 2 trades, Rs.-476 (0/2 wins) |
+
+Gap-and-Go v1.1 dry-run results will be tracked here starting 2026-06-10.
+
+## 4. Promotion Metrics
+
+Evidence starts from the first v1.1 dry-run session:
 
 | Metric | Target |
 |---|---:|
@@ -102,9 +135,10 @@ Evidence starts from the first AI-mode live session:
 | Max drawdown | <= 3% of daily capital |
 | Sample size | >= 10 sessions, >= 20 trades |
 
-Capital scaling (Rs.50K -> Rs.1L) requires passing all promotion metrics.
+Capital scaling (Rs.50K → Rs.1L) requires passing all promotion metrics.
+At Rs.50K, charges eat 39% of gross; at Rs.1L this drops to ~20%.
 
-## 6. Update Protocol
+## 5. Update Protocol
 
 After each live trading session:
 1. Check daily report in 

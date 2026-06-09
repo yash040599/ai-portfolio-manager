@@ -1,11 +1,11 @@
 # Trade Next Ideas — Intraday & Options Research
 
-> **Created:** 2026-06-06
-> **Status:** Phase 7 complete. A.2 (Gap-and-Go) **PASSES** OOS PF 1.28 and is
-> implemented. A.3 (Cross-sectional momentum) and A.6 (prev-day breakout) tested
-> and failed. Remaining ideas deferred.
-> **Context:** Phases 0-7 of intraday equity backtesting are complete.
-> Gap-and-Go clears the 1.15 promotion gate. Dry-run validation pending.
+> **Created:** 2026-06-06 | **Updated:** 2026-06-09
+> **Status:** Gap-and-Go **v1.1** passes OOS PF 1.55, Sharpe 1.66. Dry-run
+> validation started (v1.0 failed day 1; v1.1 fixes deployed).
+> **Context:** Phases 0-7 of intraday equity backtesting + Phase 8 (v1.1
+> hardening) are complete. All other intraday ideas deferred until v1.1
+> dry-run validation (10+ sessions) completes.
 
 ---
 

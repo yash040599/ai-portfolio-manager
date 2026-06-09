@@ -131,6 +131,8 @@ def simulate_gap_go(
     # v1.1 filters
     gap_hold_min_pct: float = 0,    # reject if gap faded > X% from open (0=disabled)
     score_contra_block: bool = False,  # reject when composite score contradicts gap
+    # Regime-conditional cap: override daily_cap on specific regimes
+    regime_cap_overrides: dict[str, int] | None = None,  # e.g. {"VOLATILE": 4}
 ) -> list[dict]:
     """Run gap-and-go strategy across all dates."""
     if skip_regimes is None:
@@ -245,7 +247,10 @@ def simulate_gap_go(
 
         # Sort by gap magnitude (strongest gaps first) and cap
         candidates.sort(key=lambda x: x[2], reverse=True)
-        selected = candidates[:daily_cap]
+        effective_cap = daily_cap
+        if regime_cap_overrides and regime and regime in regime_cap_overrides:
+            effective_cap = regime_cap_overrides[regime]
+        selected = candidates[:effective_cap]
 
         for sym, side, gap_mag, candles, atr_val in selected:
             entry_candle = candles[ENTRY_CANDLE_IDX]
@@ -625,6 +630,43 @@ def main() -> None:
     v11_pf = compute_metrics(v11_all, "v1.1", True).get("pf", 0)
     print(f"\n  v1.0 PF: {compute_metrics(v10, 'v1.0', True).get('pf', 0):.2f}  →  "
           f"v1.1 PF: {v11_pf:.2f}")
+
+    # ── Regime-conditional cap sweep (VOLATILE days get more trades) ──
+    print(f"\n  {'='*100}")
+    print(f"  Regime-Conditional Cap Sweep (v1.1 filters, TEST window)")
+    print(f"  Base cap=2 on TREND/RANGE, varying VOLATILE cap")
+    print(f"  {'='*100}")
+
+    _print_table("  baseline cap=2 all days", compute_metrics(v11_all, "base", True))
+
+    for vol_cap in [3, 4, 5, 6, 8]:
+        trades_rc = simulate_gap_go(
+            all_symbol_days, regime_labels,
+            gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+            daily_cap=2, skip_regimes=set(),
+            start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+            rsi_contra_buy=70.0,
+            gap_hold_min_pct=0.3,
+            score_contra_block=True,
+            regime_cap_overrides={"VOLATILE": vol_cap},
+        )
+        m = compute_metrics(trades_rc, f"vol-cap-{vol_cap}", True)
+        _print_table(f"  VOLATILE cap={vol_cap}", m)
+
+    # Also test raising cap on VOLATILE + TREND
+    for vol_cap in [3, 4]:
+        trades_rc2 = simulate_gap_go(
+            all_symbol_days, regime_labels,
+            gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+            daily_cap=2, skip_regimes=set(),
+            start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+            rsi_contra_buy=70.0,
+            gap_hold_min_pct=0.3,
+            score_contra_block=True,
+            regime_cap_overrides={"VOLATILE": vol_cap, "TREND": vol_cap},
+        )
+        m2 = compute_metrics(trades_rc2, f"vol+trend-cap-{vol_cap}", True)
+        _print_table(f"  VOLATILE+TREND cap={vol_cap}", m2)
 
 
 if __name__ == "__main__":

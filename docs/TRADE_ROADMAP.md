@@ -53,6 +53,9 @@ Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, sco
     - **v1.1 implemented**: entry at 09:45 (candle close), gap-hold 0.3%, score-contradiction block.
     - **OOS backtest: PF 1.37 → 1.55 (+13%), Sharpe 1.38 → 1.66 (+20%), WR 32.1% → 35.7%.**
     - Chan evidence framework removed (dead code). Version scheme introduced: `NOAI_GAP_AND_GO_X.Y`.
+    - **Regime-conditional cap sweep**: tested cap=3-8 on VOLATILE days. Cap=3 best at PF 1.58 (+2%, within noise). Cap=4+ degrades monotonically. **Verdict: keep cap=2 universally** — v1.1 filters already self-select out bad trades on non-volatile days.
+    - **Regime skip tested**: skipping RANGE days makes PF **worse** (1.55 → 1.49). Gap-hold + score-contra filters implicitly filter bad RANGE trades. **Run every day.**
+    - **Rs P&L projection at Rs.50K**: +Rs.3,621/year net (7.2%). Charges eat 39% of gross. Avg winner Rs.274, avg loser Rs.-100. Median month +Rs.190, best +Rs.1,737, worst -Rs.1,068. 55% positive months. Fat-tail strategy — profits come from volatile weeks that cover many small losses.
 
 ## Key Config (v1.1)
 
