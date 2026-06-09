@@ -35,7 +35,11 @@ class ZerodhaClient:
         # Instrument token cache — loaded once, reused per session
         self._nse_tokens: dict | None = None
         self._bse_tokens: dict | None = None
-        self._tick_sizes: dict | None = None   # "NSE:SYMBOL" → tick_size
+        self._tick_sizes: dict = {}            # "NSE:SYMBOL" → tick_size
+
+        # NFO (F&O) instrument cache — loaded by load_nfo_instruments()
+        self._nfo_tokens: dict | None = None
+        self._nfo_lot_sizes: dict = {}         # symbol → lot_size
 
         # Rate-limit throttle for historical API (Zerodha ~3 req/sec)
         self._last_historical_call: float = 0.0
@@ -713,7 +717,6 @@ class ZerodhaClient:
                 i["tradingsymbol"]: i["instrument_token"]
                 for i in bse_instruments
             }
-            self._tick_sizes = {}
             for i in nse_instruments:
                 self._tick_sizes[f"NSE:{i['tradingsymbol']}"] = i.get("tick_size", 0.05)
             for i in bse_instruments:
@@ -723,6 +726,9 @@ class ZerodhaClient:
 
     def _get_instrument_token(self, symbol: str, exchange: str) -> int | None:
         """Internal helper — loads instrument cache if needed."""
+        if exchange == "NFO":
+            nfo = self.load_nfo_instruments()
+            return nfo.get(symbol)
         nse, bse = self.load_instruments()
         tokens   = nse if exchange == "NSE" else bse
         return tokens.get(symbol)
@@ -737,8 +743,136 @@ class ZerodhaClient:
         return round(round(price / tick) * tick, 2)
 
     # ================================================================
-    # ORDER METHODS — Phase 2
+    # NFO INSTRUMENTS (Options Mode — Phase O-4)
     # ================================================================
+
+    def load_nfo_instruments(self) -> dict:
+        """
+        Load NFO (F&O) instrument list from Kite. Caches on self.
+        Returns dict mapping symbol → instrument_token for NFO.
+        """
+        self._require_login()
+
+        if self._nfo_tokens is None:
+            self.log.info("Loading NFO instrument list (one-time)...")
+            nfo_instruments = self._kite.instruments("NFO")
+            self._nfo_tokens = {
+                i["tradingsymbol"]: i["instrument_token"]
+                for i in nfo_instruments
+            }
+            # Cache tick sizes and lot sizes for NFO
+            for i in nfo_instruments:
+                sym = i["tradingsymbol"]
+                self._tick_sizes[f"NFO:{sym}"] = i.get("tick_size", 0.05)
+                self._nfo_lot_sizes[sym] = i.get("lot_size", 1)
+            self.log.info(f"NFO instruments loaded: {len(self._nfo_tokens)} contracts.")
+
+        return self._nfo_tokens
+
+    def get_nfo_lot_size(self, symbol: str) -> int:
+        """Return the lot size for an NFO symbol (loads cache if needed)."""
+        self.load_nfo_instruments()
+        return self._nfo_lot_sizes.get(symbol, 1)
+
+    def place_option_order(
+        self,
+        symbol:     str,
+        exchange:   str = "NFO",
+        qty:        int = 25,
+        side:       str = "BUY",
+        order_type: str = "MARKET",
+        price:      float = 0,
+        max_retries: int = 3,
+    ) -> str:
+        """
+        Place an option order on Zerodha (NFO exchange, NRML product).
+
+        Args:
+            symbol:     NFO trading symbol e.g. "NIFTY2560924000CE"
+            exchange:   "NFO" (default)
+            qty:        Number of units (lot_size × lots)
+            side:       "BUY" or "SELL"
+            order_type: "MARKET" or "LIMIT"
+            price:      Required if order_type is "LIMIT"
+            max_retries: Retry count on failure
+
+        Returns:
+            Zerodha order ID string on success.
+
+        Raises:
+            RuntimeError if order fails after all retries.
+        """
+        self._require_login()
+
+        transaction = (
+            self._kite.TRANSACTION_TYPE_BUY if side.upper() == "BUY"
+            else self._kite.TRANSACTION_TYPE_SELL
+        )
+
+        # Options use NRML (normal) for weekly/monthly expiry.
+        # MIS (intraday) is also possible but NRML gives flexibility
+        # to hold until expiry if needed.
+        order_params = {
+            "tradingsymbol":    symbol,
+            "exchange":         exchange,
+            "transaction_type": transaction,
+            "quantity":         qty,
+            "product":          self._kite.PRODUCT_MIS,     # Intraday for options
+            "order_type":       self._kite.ORDER_TYPE_MARKET,
+            "validity":         self._kite.VALIDITY_DAY,
+        }
+
+        if order_type.upper() == "LIMIT" and price > 0:
+            order_params["order_type"] = self._kite.ORDER_TYPE_LIMIT
+            tick = self._tick_sizes.get(f"{exchange}:{symbol}", 0.05)
+            order_params["price"] = self.round_to_tick(price, tick)
+
+        if order_params["order_type"] in (
+            self._kite.ORDER_TYPE_MARKET,
+            getattr(self._kite, "ORDER_TYPE_SLM", "SL-M"),
+        ):
+            order_params["market_protection"] = -1
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                order_id = self._kite.place_order(
+                    variety=self._kite.VARIETY_REGULAR,
+                    **order_params,
+                )
+                self.log.success(
+                    f"NFO order placed: {side} {qty}x {symbol} | ID: {order_id}"
+                )
+                return str(order_id)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    dup = self._find_recent_matching_order(
+                        symbol=symbol, side=side, qty=qty,
+                        order_type=order_params["order_type"],
+                        max_age_seconds=90,
+                    )
+                    if dup:
+                        self.log.warning(
+                            f"NFO order retry: previous attempt appears live "
+                            f"(order {dup}). Returning existing ID."
+                        )
+                        return str(dup)
+                    wait = attempt * 2
+                    self.log.warning(
+                        f"NFO order failed (attempt {attempt}/{max_retries}): "
+                        f"{side} {qty}x {symbol} — {e} | Retrying in {wait}s..."
+                    )
+                    time.sleep(wait)
+                else:
+                    self.log.error(
+                        f"NFO order FAILED after {max_retries} attempts: "
+                        f"{side} {qty}x {symbol} — {e}"
+                    )
+
+        raise RuntimeError(
+            f"Option order failed after {max_retries} retries: {last_error}"
+        ) from last_error
     # place_order sends a real order to Zerodha via Kite API.
     # The OrderEngine decides whether to call this (live mode) or
     # just log the order (dry-run mode). This class always executes.

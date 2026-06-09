@@ -25,6 +25,8 @@
 #                                                    ← side-by-side compare up to 4
 #   python main.py --mode swing --compare-sector BANKING
 #                                                    ← top 4 in a sector, auto-picked
+#   python main.py --mode options                 ← NIFTY option buying (dry-run default)
+#   python main.py --mode options --live          ← enable live option orders
 #   python main.py --mode login                   ← test Zerodha login only
 #   python main.py --mode dashboard               ← launch the web dashboard
 #
@@ -50,7 +52,7 @@ from core.zerodha_client import ZerodhaClient
 from modes.analyze.analyser  import PortfolioAnalyser
 from modes.trade.manager   import PortfolioManager
 
-VALID_MODES = {"analyze", "trade", "swing", "login", "dashboard"}
+VALID_MODES = {"analyze", "trade", "swing", "options", "login", "dashboard"}
 
 
 def main():
@@ -121,7 +123,7 @@ def main():
         sys.exit(1)
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|swing|login|dashboard] [flags]")
+        print("Usage: python main.py --mode [analyze|trade|swing|options|login|dashboard] [flags]")
         print()
         print("  analyze                       — long-term portfolio analysis (NoAI, default)")
         print("  analyze --ai                  — analyse + AI qualitative overlay")
@@ -142,6 +144,10 @@ def main():
         print("  swing --positions             — list open swing book")
         print("  swing --confirm <ID> --qty N --price P  — confirm action")
         print("  swing --skip <ID>             — skip a pending action")
+        print()
+        print("  options                       — NIFTY option buying (dry-run default)")
+        print("  options --dryrun              — same as default (explicit dry-run)")
+        print("  options --live                — enable live orders (use with caution)")
         print()
         print("  login                         — test Zerodha login only")
         print("  dashboard                     — launch the web dashboard")
@@ -380,6 +386,19 @@ def main():
         client = ZerodhaClient(Config, Logger("ZerodhaLogin"))
         client.login()
         client.print_account_snapshot()
+
+    elif mode == "options":
+        # Options mode — directional NIFTY option buying.
+        # DRY_RUN is default. Pass --live to enable real orders.
+        from modes.options.manager import OptionsManager
+
+        if use_dryrun:
+            Config.OPTIONS_DRY_RUN = True
+        if "--live" in sys.argv:
+            Config.OPTIONS_DRY_RUN = False
+
+        runner = OptionsManager(Config)
+        runner.run()
 
     elif mode == "dashboard":
         # Read-only profitability dashboard. All flags after `--mode

@@ -14,7 +14,7 @@ Copilot/automation should follow this contract so updates are
 consistent across edits.
 
 Structure (do NOT reorder, do NOT merge):
-  1. What it does       — 4 modes (Phase 1 analyse, Phase 2 trade, Phase 3 dashboard, Phase 4 swing). One paragraph + bullets each.
+  1. What it does       — 5 modes (Phase 1 analyse, Phase 2 trade, Phase 3 dashboard, Phase 4 swing, Phase 5 options). One paragraph + bullets each.
   2. Quick start        — install + first run, max 7 commands.
   3. Documentation map  — table of links to docs/* (single source of truth).
   4. Prerequisites      — bullets only.
@@ -246,6 +246,43 @@ python main.py --mode swing --positions           # list open book
 
 Full operator walkthrough: [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md).
 
+### Phase 5 — Options trading (NIFTY, research stage)
+
+A separate engine for **NIFTY index option buying** on weekly expiries.
+Currently in **research stage** — code is complete but the v1.0 strategy
+(regime-gated directional buying) does not pass the 1.15 PF gate in
+backtesting (PF 0.42). No live or dry-run trading until the strategy
+improves.
+
+See [docs/OPTIONS_ROADMAP.md](docs/OPTIONS_ROADMAP.md) for the phased
+rollout plan; [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) for the
+plain-English options primer.
+
+What ships today:
+
+- **Full mode scaffold** — `modes/options/` with manager, scanner, order
+  engine, performance tracker, report writer. Same lifecycle pattern as
+  equity (login → scan → enter → monitor → square-off → report).
+- **NFO support in ZerodhaClient** — `load_nfo_instruments()`,
+  `place_option_order()`, NFO token cache.
+- **Regime-gated scanner** — classifies day as VOLATILE/TREND/RANGE using
+  prior 5-day range + gap signal. Only trades on VOLATILE/TREND days.
+- **Safety hard blocks** — naked sell forbidden in code (always), buy-only
+  in Phase O-4, circuit breaker at 3% daily loss, DRY_RUN default.
+- **Backtest engine** — `scripts/trade/backtest_options.py` with
+  Brenner-Subrahmanyam premium model, Parkinson volatility estimator,
+  full NSE option charge model, walk-forward validation.
+- **Dashboard integration** — `/dryrun` page has Intraday/Options mode
+  switcher showing backtest results.
+- **Separate DB** — `data/options.db` for option trades + candidate audit.
+
+```
+python main.py --mode options                     # dry-run (default)
+python main.py --mode options --live              # live (future)
+python scripts/trade/backtest_options.py          # run backtest
+python scripts/trade/backtest_options.py --sweep  # parameter sweep
+```
+
 ### Historical candle cache
 
 - `data/candle_cache.db` (SQLite) keeps prior days' candles to avoid
@@ -290,6 +327,8 @@ their content.
 | [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
 | [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages) shipped 2026-05-12** + **D30-D31 (live quotes + /swing page) shipped 2026-05-13** |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday research, A2 delivery swing, A3 ETF rotation; cash-market only, no F&O, Phase 1 remains FYI-only |
+| [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) | **Plain-English options primer** — what options are, how P&L works, the Greeks (delta/theta/vega/gamma), buying vs selling mechanics |
+| [docs/OPTIONS_ROADMAP.md](docs/OPTIONS_ROADMAP.md) | **Options mode phased rollout** — O-0 to O-6, capital plan, promotion gates, backtest results (v1.0 PF 0.42 FAIL), strategy plans |
 | [docs/TRADE_TAX_GUIDE.md](docs/TRADE_TAX_GUIDE.md) | India intraday tax guide (FY 2026-27 ready) |
 
 ---
@@ -589,6 +628,8 @@ Full migration notes are mirrored in [copilot/machine-migration.md](copilot/mach
 | `python main.py --mode trade --nifty 150` | Override scan universe |
 | `python main.py --mode swing` | Phase 4 — swing scan (NoAI). Report-only by permanent design — see SWING_ROADMAP. Best run after market close (3:30 PM IST). |
 | `python main.py --mode swing --ai` | Same scan + AI qualitative overlay (capped). See [Swing CLI reference](#swing-cli-reference) below for the full sub-command list. |
+| `python main.py --mode options` | Phase 5 — NIFTY option buying (dry-run default). Research stage — strategy not yet profitable. |
+| `python main.py --mode options --live` | Phase 5 — enable live orders (BLOCKED until strategy passes 1.15 gate) |
 | `python main.py --mode login` | Test Zerodha login only |
 | `python main.py --mode dashboard` | Launch interactive profitability dashboard (local server + browser). `--no-open` writes a static HTML snapshot; `--text` prints plain text; `--port N` pins a port. See [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) |
 

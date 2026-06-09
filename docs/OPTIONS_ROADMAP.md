@@ -1,11 +1,11 @@
 # Options Mode — Roadmap
 
-> **Created:** 2026-06-06
-> **Status:** Research / planning — no code exists yet.
-> **Context:** Intraday equity Phases 0-6 complete (best OOS PF 1.10, below
-> 1.15 gate). Options mode is being evaluated as a separate engine.
+> **Created:** 2026-06-06 | **Updated:** 2026-06-09
+> **Status:** Code complete (Phase O-4). Backtest v1.0 ran — PF 0.42 (FAIL).
+> Strategy needs improvement before dry-run.
+> **Context:** Intraday equity Gap-and-Go v1.1 passes OOS PF 1.55.
+> Options mode built as a separate engine (`--mode options`).
 > See [OPTIONS_GUIDE.md](OPTIONS_GUIDE.md) for plain-English primer.
-> See [TRADE_NEXT_IDEAS.md §B](TRADE_NEXT_IDEAS.md) for strategy research.
 
 ---
 
@@ -13,11 +13,39 @@
 
 | Area | Status |
 |---|---|
-| Stage | **PRE-RESEARCH — no code, no capital** |
-| Depends on | Intraday Phase 7 backtest verdict (see [TRADE_ROADMAP.md](TRADE_ROADMAP.md)) |
-| Capital | **Start at minimum** — 1 lot NIFTY (Rs.5K-15K premium). Scale only after evidence. |
-| Mode | Will be `--mode options` — completely separate from `--mode trade` |
-| API | Zerodha Kite Connect supports NFO (F&O segment). Same API, different exchange + product params. |
+| Stage | **Phase O-4 — Code complete, backtest FAIL** |
+| Code | `modes/options/` — manager, scanner, order engine, tracker, report writer |
+| Backtest | v1.0 directional buying: PF 0.42 FULL, PF 0.64 OOS (FAIL) |
+| Dashboard | Dry-run page has Intraday/Options mode switcher |
+| CLI | `python main.py --mode options` (dry-run default) |
+| Next step | Improve signal (OFI, momentum, VWAP) or pivot to selling |
+| Capital | **Rs.0 — no live trading until strategy passes 1.15 gate** |
+
+---
+
+## Backtest Results — v1.0 Directional Buying (2026-06-09)
+
+**Strategy:** Regime-Gated Directional NIFTY Option Buying
+**Data:** 509 NIFTY 50 daily candles (Apr 2024 – May 2026)
+**Premium model:** Brenner-Subrahmanyam ATM approximation + Parkinson vol
+
+| Window | Trades | Win Rate | PF | Sharpe | P&L |
+|---|---|---|---|---|---|
+| FULL | 147 | 19.7% | 0.42 | -6.37 | -Rs.168,245 |
+| TRAIN (2024-2025) | 84 | 14.3% | 0.30 | -8.81 | -Rs.119,145 |
+| TEST (2025-2026) | 60 | 30.0% | 0.64 | -3.24 | -Rs.39,409 |
+
+**Per-regime:** VOLATILE PF 0.77 (36 trades) > TREND PF 0.33 (111 trades)
+
+**Verdict: FAIL.** Directional option buying with a simple gap signal does
+not overcome theta decay + Indian regulatory charges (STT, exchange fees).
+
+**Key learnings:**
+1. VOLATILE regime routing IS valuable (PF 0.77 vs 0.33 in TREND)
+2. OOS performance (PF 0.64) is better than in-sample (PF 0.30) — regime
+   split is robust, not overfit
+3. Win rate (~20-30%) too low for option buying payoff structure
+4. Need either: better signal (>50% accuracy), or pivot to selling (theta collection)
 
 ---
 
@@ -208,9 +236,9 @@ loses money, do NOT proceed to code.
 
 | Step | Action | Done? |
 |---|---|---|
-| O-2.1 | Add `instruments("NFO")` to ZerodhaClient, cache NFO tokens | |
-| O-2.2 | Build `get_option_chain(index, expiry)` → returns strikes, premiums, OI | |
-| O-2.3 | Store option chain snapshots in `data/options.db` | |
+| O-2.1 | Add `instruments("NFO")` to ZerodhaClient, cache NFO tokens | ✅ |
+| O-2.2 | Build `get_option_chain(index, expiry)` → returns strikes, premiums, OI | ✅ |
+| O-2.3 | Store option chain snapshots in `data/options.db` | ✅ |
 | O-2.4 | Fetch NIFTY weekly option chain daily for 2+ weeks (build history) | |
 | O-2.5 | Verify: can we get historical option premiums from Zerodha API? | |
 
@@ -225,7 +253,7 @@ available for backtesting.
 
 | Step | Action | Done? |
 |---|---|---|
-| O-3.1 | Backtest Strategy 1 (directional buying on VOLATILE days) | |
+| O-3.1 | Backtest Strategy 1 (directional buying on VOLATILE days) | ✅ PF 0.42 FAIL |
 | O-3.2 | Backtest Strategy 2 (iron condor on RANGE expiry days) | |
 | O-3.3 | Walk-forward: train on first half, test on second half | |
 | O-3.4 | Calculate P&L net of ALL option costs (brokerage, STT, exchange, GST) | |
@@ -242,14 +270,14 @@ OR both fail and options mode is shelved.
 
 | Step | Action | Done? |
 |---|---|---|
-| O-4.1 | Create `modes/options/` module structure | |
-| O-4.2 | Build option order engine (buy-only initially, DRY_RUN) | |
-| O-4.3 | Build option scanner (strike selection, premium analysis) | |
-| O-4.4 | Integrate regime classifier for strategy routing | |
-| O-4.5 | Build performance tracker + reports (`reports/options/`) | |
-| O-4.6 | Add dashboard panel for options P&L | |
-| O-4.7 | Dry-run with live option prices for 30+ trades | |
-| O-4.8 | **Verdict:** dry-run PF ≥ 1.15 on 30+ trades | |
+| O-4.1 | Create `modes/options/` module structure | ✅ |
+| O-4.2 | Build option order engine (buy-only initially, DRY_RUN) | ✅ |
+| O-4.3 | Build option scanner (strike selection, premium analysis) | ✅ |
+| O-4.4 | Integrate regime classifier for strategy routing | ✅ |
+| O-4.5 | Build performance tracker + reports (`reports/options/`) | ✅ |
+| O-4.6 | Add dashboard panel for options P&L | ✅ (mode switcher on /dryrun) |
+| O-4.7 | Dry-run with live option prices for 30+ trades | ⏳ BLOCKED — strategy PF < 1.0 |
+| O-4.8 | **Verdict:** dry-run PF ≥ 1.15 on 30+ trades | ⏳ |
 
 **Exit criteria:** Dry-run results match backtest expectations. 30+ trades
 logged with positive PF.

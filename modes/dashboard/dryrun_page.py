@@ -435,6 +435,22 @@ def _metric_card(label: str, value: str, hint: str = "",
     )
 
 
+def _load_options_backtest() -> dict[str, Any]:
+    """Load options backtest results from reports/backtest/options_bt_*.json."""
+    result: dict[str, Any] = {}
+    bt_dir = PROJECT_ROOT / "reports" / "backtest"
+    for name in ["options_bt_full.json", "options_bt_train.json", "options_bt_test.json"]:
+        path = bt_dir / name
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                key = name.replace("options_bt_", "").replace(".json", "").upper()
+                result[key] = data
+            except (OSError, json.JSONDecodeError):
+                pass
+    return result
+
+
 def render_dryrun_page() -> str:
     """Render the full dry-run strategy dashboard page."""
     strategies = _available_strategies()
@@ -515,18 +531,31 @@ def render_dryrun_page() -> str:
         for st in strategies
     }).replace("</", "<\\/")
 
+    # Options backtest data
+    options_bt = _load_options_backtest()
+    options_bt_json = json.dumps(options_bt, allow_nan=False, default=str).replace("</", "<\\/")
+
     body = f"""
 <h1 class="page-title">Dry-Run Strategy Dashboard</h1>
 <div class="sub">Per-strategy P&amp;L and statistics for dry-run data. Generated {html.escape(now_ist().strftime('%Y-%m-%d %H:%M IST'))}.</div>
 
 <section class="card selector-card">
-  <h2>Strategy</h2>
+  <h2>Mode &amp; Strategy</h2>
   <div class="selector-row">
+    <select id="mode-select" onchange="onModeChange()" style="min-width:180px">
+      <option value="intraday" selected>Intraday Equity</option>
+      <option value="options">Options (NIFTY)</option>
+    </select>
     <select id="strategy-select" onchange="onStrategyChange()">
       {options_html}
     </select>
     <span id="strategy-desc" class="strategy-desc"></span>
   </div>
+</section>
+
+<section id="options-backtest-section" class="card" style="display:none">
+  <h2>Options Backtest Results — v1.0</h2>
+  <div id="options-bt-content"></div>
 </section>
 
 <section id="config-section" class="card">
@@ -585,6 +614,7 @@ def render_dryrun_page() -> str:
 window.DRYRUN_DATA = {chart_json};
 window.DRYRUN_CONFIG = {config_json};
 window.DRYRUN_META = {meta_json};
+window.OPTIONS_BT = {options_bt_json};
 </script>
 {_SCRIPT}
 """
@@ -690,7 +720,116 @@ _SCRIPT = r"""
   const allData = window.DRYRUN_DATA || {};
   const allConfig = window.DRYRUN_CONFIG || {};
   const allMeta = window.DRYRUN_META || {};
+  const optionsBT = window.OPTIONS_BT || {};
   let cumChart = null, dailyChart = null, rejectChart = null;
+
+  // ── Mode switching (Intraday / Options) ────────────────────
+  function onModeChange() {
+    const mode = document.getElementById('mode-select').value;
+    const intradaySections = [
+      'strategy-select', 'config-section', 'stats-cards',
+    ];
+    const optSection = document.getElementById('options-backtest-section');
+    // Show/hide strategy dropdown
+    document.getElementById('strategy-select').style.display =
+      mode === 'intraday' ? '' : 'none';
+
+    // Show/hide intraday sections
+    ['config-section', 'stats-cards'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = mode === 'intraday' ? '' : 'none';
+    });
+    // Show/hide all .grid sections and trade card
+    document.querySelectorAll('section.grid, section.card:not(.selector-card):not(#options-backtest-section)').forEach(function(el) {
+      if (el.id === 'options-backtest-section') return;
+      el.style.display = mode === 'intraday' ? '' : 'none';
+    });
+
+    // Options section
+    if (optSection) {
+      optSection.style.display = mode === 'options' ? '' : 'none';
+      if (mode === 'options') renderOptionsBT();
+    }
+
+    // Re-render intraday if switching back
+    if (mode === 'intraday') {
+      const sel = document.getElementById('strategy-select');
+      if (sel && sel.value) render(sel.value);
+    }
+  }
+  window.onModeChange = onModeChange;
+
+  function renderOptionsBT() {
+    const wrap = document.getElementById('options-bt-content');
+    if (!wrap) return;
+    const full = optionsBT['FULL'];
+    if (!full) {
+      wrap.innerHTML = '<div class="empty">No options backtest data. Run: <code>python scripts/trade/backtest_options.py</code></div>';
+      return;
+    }
+    const s = full;
+    const pf = s.profit_factor || 0;
+    const pfClass = pf >= 1.15 ? 'ok' : (pf >= 1.0 ? 'warn' : 'neg');
+    const pnlClass = (s.total_pnl || 0) >= 0 ? 'pos' : 'neg';
+
+    let html = '<div class="grid four">';
+    html += metricHTML('Total Trades', fmtInt(s.total_trades), s.date_range || '');
+    html += metricHTML('Win Rate', fmtPct(s.win_rate), s.wins + 'W / ' + s.losses + 'L');
+    html += metricHTML('Profit Factor', '<span class="' + pfClass + '">' + fmtPF(pf) + '</span>', 'Gate: 1.15');
+    html += metricHTML('Sharpe', (s.sharpe || 0).toFixed(2), '');
+    html += '</div>';
+
+    html += '<div class="grid two"><div class="card"><h2>Summary</h2><table class="kv"><tbody>';
+    const rows = [
+      ['Strategy', 'Regime-Gated Directional Buying v1.0'],
+      ['Net P&L', '<span class="' + pnlClass + '">' + fmtRs(s.total_pnl) + '</span>'],
+      ['Total Charges', fmtRs(s.total_charges)],
+      ['Gross Profit', fmtRs(s.gross_profit)],
+      ['Gross Loss', fmtRs(s.gross_loss)],
+      ['Avg Win', fmtRs(s.avg_win)],
+      ['Avg Loss', fmtRs(s.avg_loss)],
+      ['Max Drawdown', fmtRs(s.max_drawdown)],
+    ];
+    rows.forEach(function(r) { html += '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; });
+    html += '</tbody></table></div>';
+
+    // Exit reasons + regime breakdown
+    html += '<div class="card"><h2>Breakdown</h2><table class="kv"><tbody>';
+    const exits = s.exit_reasons || {};
+    Object.keys(exits).sort().forEach(function(k) {
+      const pct = s.total_trades > 0 ? (exits[k] / s.total_trades * 100).toFixed(1) : '0';
+      html += '<tr><td>Exit: ' + k + '</td><td>' + exits[k] + ' (' + pct + '%)</td></tr>';
+    });
+    const regimes = s.regime_stats || {};
+    Object.keys(regimes).sort().forEach(function(k) {
+      const rs = regimes[k];
+      html += '<tr><td>Regime: ' + k + '</td><td>' + rs.trades + ' trades, PF ' + fmtPF(rs.pf) + ', WR ' + fmtPct(rs.win_rate) + '</td></tr>';
+    });
+    html += '</tbody></table></div></div>';
+
+    // Strategy params
+    const params = s.params || {};
+    html += '<div class="card"><h2>Strategy Configuration</h2><table class="kv"><tbody>';
+    html += '<tr><td><code>OPTIONS_SL_PCT_OF_PREMIUM</code></td><td>' + (params.sl_pct || 30) + '%</td></tr>';
+    html += '<tr><td><code>OPTIONS_TARGET_PCT_OF_PREMIUM</code></td><td>' + (params.target_pct || 75) + '%</td></tr>';
+    html += '<tr><td><code>OPTIONS_MIN_DTE</code></td><td>' + (params.dte || 5) + '</td></tr>';
+    html += '<tr><td><code>CAPITAL_PER_TRADE</code></td><td>Rs.' + (params.capital_per_trade || 10000).toLocaleString('en-IN') + '</td></tr>';
+    html += '<tr><td><code>LOT_SIZE</code></td><td>' + (params.lot_size || 25) + '</td></tr>';
+    html += '<tr><td><code>SKIP_REGIMES</code></td><td>' + JSON.stringify(params.skip_regimes || ['RANGE']) + '</td></tr>';
+    html += '</tbody></table></div>';
+
+    // Verdict
+    const verdict = pf >= 1.15 ? 'PASS' : (pf >= 1.0 ? 'MARGINAL' : 'FAIL');
+    const verdictClass = pf >= 1.15 ? 'ok' : (pf >= 1.0 ? 'warn' : 'neg');
+    html += '<div class="card"><span class="pill ' + verdictClass + '">' + verdict + '</span> ';
+    html += 'PF ' + fmtPF(pf) + ' — ';
+    if (pf >= 1.15) html += 'Strategy passes gate. Proceed to dry-run.';
+    else if (pf >= 1.0) html += 'Positive but below 1.15 gate. Needs improvement.';
+    else html += 'Strategy loses money after costs. Directional option buying with simple gap signal does not overcome theta + Indian charges. Need better signal or pivot to selling strategies.';
+    html += '</div>';
+
+    wrap.innerHTML = html;
+  }
 
   function fmtRs(v) {
     if (v == null) return '-';

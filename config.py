@@ -414,6 +414,43 @@ class Config:
     # Set to a large number (e.g. 100) to disable the cap.
     SWING_AI_MAX_CANDIDATES: int = 15
 
+    # ══════════════════════════════════════════════════════════════
+    # OPTIONS MODE — Directional NIFTY option buying (Phase O-4)
+    # ══════════════════════════════════════════════════════════════
+    # See docs/OPTIONS_ROADMAP.md for the phased rollout plan.
+    # Currently: BUY ONLY, dry-run only, 1 lot NIFTY weeklies.
+    # Naked selling is hard-blocked in code regardless of config.
+
+    # ── Budget & sizing ───────────────────────────────────────────
+    OPTIONS_BUDGET_INR:           int   = 15_000    # Start small (1 lot ~5K-15K premium)
+    OPTIONS_MAX_LOTS:             int   = 1         # Scale up with evidence only
+    OPTIONS_NIFTY_LOT_SIZE:       int   = 25        # NIFTY lot size (fixed by NSE)
+    OPTIONS_INDEX:                str   = "NIFTY"   # Only NIFTY for now
+
+    # ── Risk management ───────────────────────────────────────────
+    OPTIONS_SL_PCT_OF_PREMIUM:    float = 30.0      # SL = 30% loss on premium paid
+    OPTIONS_TARGET_PCT_OF_PREMIUM: float = 75.0     # Target = 75% gain on premium
+    OPTIONS_MAX_LOSS_PER_DAY_PCT: float = 3.0       # Circuit breaker (% of budget)
+
+    # ── Strike selection ──────────────────────────────────────────
+    OPTIONS_NIFTY_STRIKE_STEP:    int   = 50        # NIFTY strikes at 50-pt intervals
+    OPTIONS_STRIKE_OFFSET_STEPS:  int   = 0         # 0 = ATM, 1 = 1 strike OTM
+    OPTIONS_EXPIRY_PREFERENCE:    str   = "WEEKLY"  # Thursday weekly expiry
+    OPTIONS_MIN_DTE:              int   = 1         # Min days to expiry (skip 0-DTE)
+
+    # ── VIX filter ────────────────────────────────────────────────
+    OPTIONS_VIX_MAX:              float = 25.0      # Skip when VIX > 25 (premiums too rich)
+
+    # ── Timing ────────────────────────────────────────────────────
+    OPTIONS_SQUARE_OFF_HOUR:      int   = 14        # 14:00 IST (same as equity)
+    OPTIONS_SQUARE_OFF_MINUTE:    int   = 0
+    OPTIONS_ENTRY_DELAY_MINUTES:  int   = 15        # Wait 15 min after open (09:30)
+    OPTIONS_POLL_SECONDS:         int   = 15        # Premium poll frequency
+
+    # ── Mode ──────────────────────────────────────────────────────
+    OPTIONS_DRY_RUN:              bool  = True      # ALWAYS start in dry-run
+    OPTIONS_NAKED_SELL_ALLOWED:   bool  = False     # HARD BLOCK — never change
+
     # ── Position Limits ───────────────────────────────────────────
     # MAX_POSITIONS: auto-set at runtime by dynamic_max_positions().
     #   DO NOT manually edit this — it is overwritten when set_budget() runs.
