@@ -1,10 +1,11 @@
 # Options Trading Guide — Plain English
 
-> **Created:** 2026-06-06
+> **Created:** 2026-06-06 | **Updated:** 2026-06-09
 > **Audience:** Anyone new to options. No jargon assumed.
-> **Context:** This is a learning reference. No options code exists in the
-> codebase yet. See [TRADE_NEXT_IDEAS.md §B](TRADE_NEXT_IDEAS.md) for the
-> research plan if we decide to build an options mode.
+> **Context:** Options mode (`--mode options`) is shipped. Backtest v1.0
+> ran but failed (PF 0.42). Strategy improvement needed.
+> See [OPTIONS_STRATEGY.md](OPTIONS_STRATEGY.md) for the strategy spec;
+> [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md) for the rollout plan.
 
 ---
 

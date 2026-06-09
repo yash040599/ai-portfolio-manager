@@ -141,8 +141,57 @@ At Rs.50K, charges eat 39% of gross; at Rs.1L this drops to ~20%.
 ## 5. Update Protocol
 
 After each live trading session:
-1. Check daily report in 
-eports/trading/
+1. Check daily report in reports/trading/
 2. Run scripts/trade/promotion_check.py --window 20 when >= 20 trades accumulated
 3. Update this doc with latest metrics
 4. Capital scaling decision only after promotion metrics pass
+
+---
+
+## 6. Options Backtest Results — v1.0 (2026-06-09)
+
+**Strategy:** Regime-Gated Directional NIFTY Option Buying
+**Data:** 509 NIFTY 50 daily candles (Apr 2024 – May 2026)
+**Premium model:** Brenner-Subrahmanyam ATM approximation + Parkinson vol
+**Backtest script:** `scripts/trade/backtest_options.py`
+
+### Walk-Forward Results (net of all NSE option charges)
+
+| Window | Trades | Win Rate | PF | Sharpe | P&L |
+|---|---|---|---|---|---|
+| FULL | 147 | 19.7% | 0.42 | -6.37 | -Rs.168,245 |
+| TRAIN (2024-2025) | 84 | 14.3% | 0.30 | -8.81 | -Rs.119,145 |
+| TEST (2025-2026) | 60 | 30.0% | 0.64 | -3.24 | -Rs.39,409 |
+
+### Per-Regime Breakdown
+
+| Regime | Trades | Win Rate | PF | P&L |
+|---|---|---|---|---|
+| VOLATILE | 36 | 27.8% | 0.77 | -Rs.14,500 |
+| TREND | 111 | 17.1% | 0.33 | -Rs.153,745 |
+
+**Verdict: FAIL.** PF 0.42 — directional buying with simple gap signal
+cannot overcome theta + charges. VOLATILE regime (PF 0.77) shows promise
+but still sub-1.0. See [OPTIONS_STRATEGY.md §6](OPTIONS_STRATEGY.md)
+for improvement ideas.
+
+---
+
+## 7. All-Mode Backtest Summary (Consolidated)
+
+| Mode | Strategy | Window | Trades | PF | Sharpe | Status |
+|---|---|---|---|---|---|---|
+| **Intraday equity** | Gap-and-Go v1.1 | OOS | 98 | **1.55** | 1.66 | ✅ Dry-run active |
+| Intraday equity | Legacy blended score | OOS | 970 | 0.82 | -1.30 | ❌ Abandoned |
+| Intraday equity | ORB-15 breakout | OOS | ~200 | 0.97 | -0.15 | ❌ Close but fail |
+| Intraday equity | VWAP mean-reversion | OOS | ~300 | 0.80 | -0.80 | ❌ Abandoned |
+| Intraday equity | EMA pullback | OOS | ~250 | 0.65 | -2.10 | ❌ Abandoned |
+| **Options** | Directional buying v1.0 | FULL | 147 | 0.42 | -6.37 | ❌ FAIL |
+| Options | Directional buying v1.0 | OOS | 60 | 0.64 | -3.24 | ❌ FAIL |
+| Options | VOLATILE-only subset | FULL | 36 | 0.77 | — | ❌ Promising but fail |
+| **Swing** | 52W dip-buy | 10yr | ~500 | 1.29 CAGR alpha | — | ✅ Report-only |
+
+**Key takeaways:**
+1. Only Gap-and-Go v1.1 passes the 1.15 PF gate — currently in dry-run
+2. Options directional buying needs a better signal or pivot to selling
+3. Regime routing is the strongest reusable asset across all modes

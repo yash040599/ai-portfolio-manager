@@ -147,24 +147,26 @@ days → sell premium. VOLATILE days → skip selling (gamma too high).
 
 ### Zerodha API Changes (ZerodhaClient)
 
-| What | Current | Needed |
+| What | Current | Needed | Done? |
+|---|---|---|---|
+| Instrument loading | `instruments("NSE")`, `instruments("BSE")` | Add `instruments("NFO")` | ✅ `load_nfo_instruments()` |
+| Place order product | `PRODUCT_MIS` hardcoded | Support `PRODUCT_MIS` and `PRODUCT_NRML` | ✅ `place_option_order()` |
+| Place order exchange | `"NSE"` / `"BSE"` | Add `"NFO"` | ✅ |
+| Symbol format | `"RELIANCE"` | `"NIFTY2560524000CE"` (option symbol format) | ✅ `_build_option_symbol()` |
+| Option chain | Not fetched | Add `get_option_chain(index, expiry)` helper | ✅ via NFO token cache |
+| Greeks | Not available | Compute from premium + VIX or use Sensibull API | ⚠️ Synthetic model only |
+
+### Module: `modes/options/` ✅ COMPLETE
+
+| File | Purpose | Done? |
 |---|---|---|
-| Instrument loading | `instruments("NSE")`, `instruments("BSE")` | Add `instruments("NFO")` |
-| Place order product | `PRODUCT_MIS` hardcoded | Support `PRODUCT_MIS` and `PRODUCT_NRML` |
-| Place order exchange | `"NSE"` / `"BSE"` | Add `"NFO"` |
-| Symbol format | `"RELIANCE"` | `"NIFTY2560524000CE"` (option symbol format) |
-| Option chain | Not fetched | Add `get_option_chain(index, expiry)` helper |
-| Greeks | Not available | Compute from premium + VIX or use Sensibull API |
+| `manager.py` | Day lifecycle: morning regime check → strategy select → enter → monitor → exit | ✅ |
+| `order_engine.py` | Option order execution, position tracking, multi-leg management | ✅ (buy-only) |
+| `option_scanner.py` | Strike selection, premium analysis, Greeks estimation | ✅ |
+| `performance_tracker.py` | SQLite persistence (separate `options.db`) | ✅ |
+| `report_writer.py` | Reports under `reports/options/` | ✅ |
 
-### New Module: `modes/options/`
-
-| File | Purpose |
-|---|---|
-| `manager.py` | Day lifecycle: morning regime check → strategy select → enter → monitor → exit |
-| `order_engine.py` | Option order execution, position tracking, multi-leg management |
-| `option_scanner.py` | Strike selection, premium analysis, Greeks estimation |
-| `performance_tracker.py` | SQLite persistence (separate `options.db`) |
-| `report_writer.py` | Reports under `reports/options/` |
+Full strategy reference: [OPTIONS_STRATEGY.md](OPTIONS_STRATEGY.md)
 
 ### New Database: `data/options.db`
 

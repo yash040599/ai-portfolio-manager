@@ -1,20 +1,19 @@
-# Ideations -- Future Money Engines
+# Ideations — Future Money Engines
 
-> **Status:** Partially superseded (2026-06-06).
-> **A1 (V3 AI Intraday):** Superseded by [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md) which has the current intraday + options research.
-> **A2 (Swing):** Active — see [SWING_GUIDE.md](SWING_GUIDE.md) and [SWING_ROADMAP.md](SWING_ROADMAP.md).
-> **A3 (ETF Rotation):** Still planning stage — content below remains relevant.
-> **Hard Constraints:** The "No F&O" rule is under review — see [TRADE_NEXT_IDEAS.md §B](TRADE_NEXT_IDEAS.md).
+> **Updated:** 2026-06-09
+> **A1 (V3 AI Intraday):** Superseded by [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md).
+> **A2 (Swing):** ✅ **DONE** — shipped as Phase 4. See [SWING_GUIDE.md](SWING_GUIDE.md).
+> **A3 (ETF Rotation):** Still planning stage.
+> **Options:** ✅ **SHIPPED** — Phase 5. See [OPTIONS_STRATEGY.md](OPTIONS_STRATEGY.md)
+> and [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
 
 ---
 
-## Hard Constraints Added 2026-04-28
+## Hard Constraints (revised 2026-06-09)
 
-These constraints override older V3/Future ideas in this file.
-
-1. **No F&O ideas.** Do not propose options, futures, options-chain execution,
-   covered calls, futures hedges, options selling, pledged-margin F&O, or
-   overnight shorting workflows.
+1. ~~**No F&O ideas.**~~ **LIFTED** — Options mode (`--mode options`) shipped
+   2026-06-09. NIFTY weekly options trading is live in code. Naked selling
+   remains hard-blocked. See [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
 2. **Phase 1 remains FYI-only.** It may analyse the existing Zerodha portfolio,
    but it must not generate executable orders for long-term holdings.
 3. **Long-term invested stocks are not touched.** New money engines must use a
@@ -31,11 +30,12 @@ These constraints override older V3/Future ideas in this file.
 
 The repo now has three broad future tracks:
 
-| Track | Purpose | Execution Boundary |
+| Track | Purpose | Status |
 |---|---|---|
-| **A1. V3 AI Intraday Research** | Make the existing intraday bot smarter using ML/news/order-book context. | Still Phase 2 intraday; no F&O. |
-| **A2. Delivery Swing Trading Engine** | Buy separate CNC positions, hold for days/weeks, sell on target/stop/trend failure. | Separate short/medium-term bucket; never touches Phase 1 holdings. |
-| **A3. ETF Rotation Engine** | Rotate a separate capital bucket between liquid ETFs based on trend/momentum. | Separate CNC ETF bucket; low-turnover allocation engine. |
+| **A1. V3 AI Intraday Research** | Make the existing intraday bot smarter using ML/news/order-book context. | Superseded by TRADE_NEXT_IDEAS.md |
+| ~~**A2. Delivery Swing Trading Engine**~~ | ~~Buy CNC positions, hold days/weeks.~~ | ✅ **DONE** — Phase 4 shipped. 37 items delivered. |
+| **A3. ETF Rotation Engine** | Rotate a capital bucket between liquid ETFs based on trend/momentum. | Planning stage — not started. |
+| **A4. Options Trading Engine** | Trade NIFTY weekly options (buy directional, later sell spreads). | ✅ **SHIPPED** — Phase 5. Backtest v1.0 PF 0.42 (FAIL). |
 
 The important pivot: at Rs.50k, pure intraday fights regulatory charges,
 brokerage, spread, and slippage. The next money-making experiments should
@@ -536,70 +536,46 @@ Do not enable live execution until the scanner has at least:
 
 ## Out Of Scope / Removed From Ideation
 
-These were previously mentioned or tempting, but are now explicitly rejected
-under the 2026-04-28 constraints.
+These were previously mentioned or tempting, but are explicitly rejected.
 
 | Idea | Reason |
 |---|---|
-| Options chain signals | F&O-linked; no longer allowed. |
-| Expiry-day PCR/max-pain/OI logic | F&O-linked; no longer allowed. |
-| High-OI stock filter from options data | F&O-linked; no longer allowed. |
-| Covered calls on existing holdings | F&O and touches long-term holdings. |
-| Futures/options hedge engine | F&O; out of scope. |
-| Options strategy lab | F&O; out of scope. |
-| Pledged collateral / margin workflows | Mostly useful for F&O; out of scope. |
-| Pairs trading with short/futures leg | Requires shorting/F&O/SLB complexity; not aligned now. |
+| Options chain signals for **equity** | Options OI/PCR signals don't belong in the equity scanner. Options has its own mode. |
+| Covered calls on existing holdings | Touches long-term Phase 1 holdings — forbidden. |
+| Pledged collateral / margin workflows | Complexity; not needed at current capital. |
+| Pairs trading with short/futures leg | Requires SLB complexity; not aligned. |
 | MTF swing trading | Adds interest drag; avoid until cash-only systems prove edge. |
+| **Naked option selling** | Hard-blocked in code. Unlimited loss potential. Never. |
+
+### Moved to Options Mode (no longer ideation)
+
+| Idea | Where It Lives Now |
+|---|---|
+| Directional option buying | [OPTIONS_STRATEGY.md §2](OPTIONS_STRATEGY.md) — implemented + backtested |
+| Expiry-day iron condor selling | [OPTIONS_ROADMAP.md Phase O-6](OPTIONS_ROADMAP.md) — planned |
+| VIX-based strategy routing | [OPTIONS_STRATEGY.md §6.5](OPTIONS_STRATEGY.md) — planned |
+| Calendar/diagonal spreads | [OPTIONS_STRATEGY.md §6.6](OPTIONS_STRATEGY.md) — planned |
+| Futures/options hedge engine | [TRADE_NEXT_IDEAS.md §A.4](TRADE_NEXT_IDEAS.md) — NIFTY futures idea |
 
 ---
 
 ## Summary Table
 
-| # | Feature | Category | Impact | Effort | Depends On |
-|---|---|---|---|---|---|
-| A1 | V3 AI Intraday Research | Existing V3 | High | High | Backtesting #24 + 200-500 labelled trades/candidates |
-| A2 | Delivery Swing Trading Engine | New Money Engine | High | Medium | Daily candle scanner + paper ledger + CNC support |
-| A3 | ETF Rotation Engine | New Money Engine | Medium-High | Medium | ETF universe + paper ledger + benchmark dashboard |
+| # | Feature | Category | Impact | Status |
+|---|---|---|---|---|
+| A1 | V3 AI Intraday Research | Existing V3 | High | Superseded by TRADE_NEXT_IDEAS |
+| ~~A2~~ | ~~Delivery Swing Trading~~ | ~~New Money Engine~~ | ~~High~~ | ✅ DONE — Phase 4 |
+| A3 | ETF Rotation Engine | New Money Engine | Medium-High | Not started |
+| A4 | Options Trading Engine | New Money Engine | High | ✅ Phase 5 code shipped. Strategy v1.0 FAIL. |
 
 ---
 
-## Implementation Order
+## Implementation Order (revised 2026-06-09)
 
-1. Keep Phase 2 intraday stable; do not add speculative intraday tweaks without
-   evidence.
-2. Build **ETF Rotation scanner** first because it is easiest to backtest and
-   lowest stress.
-3. Build **Delivery Swing scanner** second because it has higher return
-   potential but more stock-specific risk.
-4. Paper-track both for 30-60 days minimum.
-5. Compare:
-   - paper return vs NIFTY,
-   - max drawdown,
-   - number of trades,
-   - charges/tax friction,
-   - time spent,
-   - correlation with existing intraday bot performance.
-6. Promote only the better engine to manual-confirm execution.
-7. Add full VM execution only after manual/live results are stable.
-8. Keep V3 AI Intraday research separate; it depends on backtesting and more
-   labelled trade history.
-
----
-
-## First MVP Recommendation
-
-Build a recommendation-only mode before adding live execution:
-
-```text
-python main.py --mode opportunities
-```
-
-Sections:
-
-1. ETF rotation candidates.
-2. Delivery swing candidates.
-3. Event/corporate-action watchlist later, if still desired.
-4. Idle cash note later, if useful.
-
-No orders at first. The goal is to discover whether ETF rotation or delivery
-swing has better paper edge before spending engineering time on execution.
+1. ✅ Phase 2 intraday — Gap-and-Go v1.1 OOS PF 1.55. Dry-run in progress.
+2. ✅ Phase 4 Swing — shipped (37 items). Report-only by permanent design.
+3. ✅ Phase 5 Options — code complete. Backtest v1.0 FAIL. Strategy needs work.
+4. **Next: ETF Rotation scanner** (A3) — easiest to backtest, lowest stress.
+5. **Next: Options strategy improvement** — VOLATILE-only, better signal, or
+   pivot to selling (see OPTIONS_STRATEGY.md §6).
+6. **Deferred: V3 AI Intraday** — needs more labelled data + backtest infra.
