@@ -37,34 +37,38 @@ REPORTS_TRADING = PROJECT_ROOT / "reports" / "trading"
 STRATEGY_META: dict[str, dict[str, Any]] = {
     "NOAI_LEGACY_FULL": {
         "label": "NoAI Legacy (Blended Score)",
-        "desc": "Original blended score from all indicators — candle patterns + technical score.",
+        "desc": "Original blended score from all indicators — candle patterns + technical score. OOS PF 0.82.",
         "config_keys": [
-            "MIN_SCORE", "CANDLE_INTERVAL", "SCAN_UNIVERSE",
-            "SQUARE_OFF_HOUR", "SQUARE_OFF_MINUTE",
+            "SCAN_UNIVERSE", "MIN_SCORE", "CANDLE_INTERVAL",
+            "MAX_TRADES_PER_DAY",
+            "ATR_MULTIPLIER", "RR_TARGET_RATIO", "RR_HARD_FLOOR",
             "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
-            "MAX_POSITIONS", "RR_TARGET_RATIO",
+            "SQUARE_OFF_HOUR", "SQUARE_OFF_MINUTE",
+            "LOSER_EXIT_HOUR", "LOSER_EXIT_MINUTE",
+            "TRAIL_AFTER_RISK_MULTIPLE",
         ],
     },
     "NOAI_GAP_AND_GO": {
         "label": "NoAI Gap-and-Go v1.0",
         "desc": "Gap + volume alpha v1.0. Entry at 09:30 LTP, no gap-hold or score checks. OOS PF 1.37.",
         "config_keys": [
+            "SCAN_UNIVERSE",
             "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
             "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
-            "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
-            "GAP_GO_SKIP_RANGE_REGIME",
             "GAP_GO_RSI_BUY_CEILING", "GAP_GO_RSI_SELL_FLOOR",
-            "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
-            "MAX_POSITIONS",
+            "ATR_MULTIPLIER", "RR_TARGET_RATIO", "RR_HARD_FLOOR",
+            "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
+            "TRAIL_AFTER_RISK_MULTIPLE",
         ],
     },
     "NOAI_SIMPLE_MR_BASELINE": {
         "label": "NoAI Simple Mean-Reversion Baseline",
         "desc": "Mean-reversion baseline for Stage 1 research.",
         "config_keys": [
-            "MIN_SCORE", "CANDLE_INTERVAL", "SCAN_UNIVERSE",
+            "SCAN_UNIVERSE", "MIN_SCORE", "CANDLE_INTERVAL",
+            "MAX_TRADES_PER_DAY",
+            "ATR_MULTIPLIER", "RR_TARGET_RATIO",
             "SQUARE_OFF_HOUR", "SQUARE_OFF_MINUTE",
-            "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
         ],
     },
 }
@@ -72,15 +76,15 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
 # ── Gap-and-Go versioned meta (v1.1+) ────────────────────────────
 # Any NOAI_GAP_AND_GO_X.Y profile gets this meta + version suffix.
 _GAP_GO_VERSIONED_CONFIG_KEYS = [
+    "SCAN_UNIVERSE",
     "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
     "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
-    "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
-    "GAP_GO_SKIP_RANGE_REGIME",
     "GAP_GO_RSI_BUY_CEILING", "GAP_GO_RSI_SELL_FLOOR",
     "GAP_GO_ENTRY_AFTER_CANDLE_CLOSE", "GAP_GO_GAP_HOLD_MIN_PCT",
     "GAP_GO_SCORE_CONTRADICTION_BLOCK", "GAP_GO_USE_CANDLE_CLOSE_PRICE",
-    "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
-    "MAX_POSITIONS",
+    "ATR_MULTIPLIER", "RR_TARGET_RATIO", "RR_HARD_FLOOR",
+    "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
+    "TRAIL_AFTER_RISK_MULTIPLE",
 ]
 
 
