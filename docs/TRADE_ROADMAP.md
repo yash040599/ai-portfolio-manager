@@ -14,7 +14,7 @@ Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, sco
 | Config version | 2.1-2026-06-09-GAP_AND_GO_1.1 |
 | FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
 
-> **Where we are → where next (plain English):** After 7 phases of research, the **Gap-and-Go strategy is the first to clear the OOS promotion gate** (PF 1.28 on 228 trades, ALL regimes; PF 1.35 skip-RANGE). The signal is simple: buy stocks that gap >1% on the open with >2× average volume, in the gap direction. It works because gap + volume = institutional intent that persists for hours. The parameter sweep shows robustness — PF stays above 1.15 across all tested gap/volume thresholds (gap 1-2%, vol 1.5-3×). VOLATILE-only regime routing pushes it to PF 1.66 (78 trades). A full code review fixed 10 critical/high bugs in the live integration (SL logic, volume filter, gate bypasses, daily cap). **Next step: dry-run validation on 10+ live sessions.** If dry-run confirms, this is the first strategy that could go live.
+> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. **v1.0 day-1 dry-run (2026-06-09) failed 0/2** — both trades stopped out because of three implementation bugs: entry at 09:30 LTP (not candle close like the backtest), no gap-fade check, and no score-contradiction filter. **v1.1 fixes all three** and lifts OOS PF from 1.37 to **1.55** (+13%), Sharpe 1.38 → **1.66** (+20%), with fewer but higher-quality trades (159 → 98). The gap-hold filter at 0.3% is the single strongest improvement (PF 1.57 standalone). **Next step: v1.1 dry-run validation on 10+ live sessions starting 2026-06-10.** If dry-run confirms, this is the first strategy that could go live.
 
 > **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
@@ -46,11 +46,19 @@ Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, sco
     - **Hybrid afternoon strategy: not yet.** Legacy scorer PF 0.82 would dilute edge. Deferred to Phase 9.
     - **Loser exit adjusted to 12:00** (1 hour before 13:00 sq-off).
     - Final dry-run config: PF 1.28, Sharpe 1.30, MaxDD 8.71%. Code changes: `GAP_GO_SQUARE_OFF_HOUR=13`, manager overrides SQUARE_OFF and LOSER_EXIT for gap-go.
+12. **2026-06-09**: **v1.0 day-1 dry-run FAILED (0/2, Rs.-475).** Root causes diagnosed:
+    - SHRIRAMFIN BUY: score -3.5 (bearish) on a gap-up — indicator contradiction ignored.
+    - BHARTIARTL BUY: gap faded 0.79% from open before entry — no gap-hold check.
+    - Both entered at 09:30:06 LTP — backtest enters at 09:30 candle close (look-ahead bias).
+    - **v1.1 implemented**: entry at 09:45 (candle close), gap-hold 0.3%, score-contradiction block.
+    - **OOS backtest: PF 1.37 → 1.55 (+13%), Sharpe 1.38 → 1.66 (+20%), WR 32.1% → 35.7%.**
+    - Chan evidence framework removed (dead code). Version scheme introduced: `NOAI_GAP_AND_GO_X.Y`.
 
-## Key Config (Post-Audit)
+## Key Config (v1.1)
 
 | Parameter | Value | Evidence |
 |---|---|---|
+| Strategy profile | `NOAI_GAP_AND_GO_1.1` | OOS PF 1.55, Sharpe 1.66 |
 | ATR multiplier | 2.0 | Backtest E1: best per-trade expectancy |
 | R:R target | 1.8:1 | Backtest E1: practical optimum |
 | R:R floor | 1.3:1 | Uniform all day |
@@ -59,7 +67,10 @@ Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, sco
 | Loser exit | 12:00 IST (gap-go) / 13:00 IST (legacy) | 1 hour before sq-off |
 | Trailing stop | DISABLED (gap-go) | Sweep: every trail config makes PF worse (0.45-1.03) |
 | SL range | 0.8% - 2.5% | Min floor prevents whipsaw |
-| Entry floor | 9:30 IST (15min after open) | Avoids opening volatility |
+| Entry timing | 09:45 IST (v1.1: after 09:30 candle closes) | Matches backtest entry at candle close |
+| Gap-hold filter | 0.3% | v1.1: reject if gap faded >0.3% — PF 1.57 standalone |
+| Score contradiction | ENABLED | v1.1: reject BUY when score < 0 — PF 1.44 standalone |
+| RSI BUY ceiling | 70 | Block overbought gap-ups — PF 1.28→1.37 |
 | Signal reversal exit | Enabled (score >= 7 + pattern) | Pro decision |
 | Consecutive SL pause | 3 losses -> 30 min | Pro decision |
 

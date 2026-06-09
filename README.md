@@ -87,15 +87,16 @@ foundation in flight; D24-D29 dashboard surface in flight).
 Fully automated NSE intraday loop. **NoAI is the default** (zero AI API
 calls, pure indicators); add `--ai` to put the active AI provider in the
 selection loop. Supports multiple strategy profiles via `TRADE_STRATEGY_PROFILE`
-(default: legacy multi-indicator scorer; `NOAI_GAP_AND_GO`: gap-and-go
-with volume qualification, OOS PF 1.28).
+(default: `NOAI_GAP_AND_GO_1.1` — gap-and-go with volume qualification,
+gap-hold confirmation, score-contradiction filter. OOS PF 1.55, Sharpe 1.66).
 
 Loop, in plain English:
 
 1. **Pre-market scan** — fetch candles for every stock in `SCAN_UNIVERSE`,
    apply price filter, run candlestick + indicator detectors, score, pick
    the best candidates. Gap-and-Go profile scans for stocks gapping >1%
-   with >2× average volume instead.
+   with >2× average volume, confirms gap is holding, and rejects entries
+   where technical score contradicts gap direction.
 2. **Execute** — LIMIT entry at LTP + 1 tick (MARKET fallback), ATR-based
    SL/target with min-distance floor (gap-and-go uses gap-candle SL),
    **44-check pre-trade pipeline** (see
