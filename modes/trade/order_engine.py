@@ -1821,7 +1821,10 @@ class OrderEngine:
             or getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
         )
         simple_mr_entry = strategy_id == "NOAI_SIMPLE_MR_BASELINE"
-        gap_go_entry = strategy_id == "NOAI_GAP_AND_GO"
+        gap_go_entry = (
+            strategy_id == "NOAI_GAP_AND_GO"
+            or strategy_id.startswith("NOAI_GAP_AND_GO_")
+        )
         self._last_entry_rejection_gate = ""
         self._last_entry_rejection_reason = ""
 

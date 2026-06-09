@@ -176,7 +176,7 @@ def main():
         # to noai when Gap-and-Go is active.
         runner = PortfolioManager(Config)
         profile = getattr(Config, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
-        if use_ai and profile == "NOAI_GAP_AND_GO":
+        if use_ai and (profile == "NOAI_GAP_AND_GO" or profile.startswith("NOAI_GAP_AND_GO_")):
             print(
                 "\n  Gap-and-Go strategy is pure rules-based (gap + volume signal)."
                 "\n  AI selection adds no value here."

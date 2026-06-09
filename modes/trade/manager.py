@@ -284,8 +284,15 @@ class PortfolioManager:
 
         # Set gap-go flag BEFORE the resume/fresh branch so crash-resume
         # also gets the correct one-shot/no-rescan behaviour.
+        _profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "")
         self._gap_go = (
-            getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "") == "NOAI_GAP_AND_GO"
+            _profile == "NOAI_GAP_AND_GO"
+            or _profile.startswith("NOAI_GAP_AND_GO_")
+        )
+        # v1.1+ waits for the 09:30 candle to CLOSE (entry at 09:45)
+        self._gap_go_wait_candle_close = (
+            self._gap_go
+            and getattr(self.cfg, "GAP_GO_ENTRY_AFTER_CANDLE_CLOSE", False)
         )
 
         # Gap-and-Go: override square-off time (gap signal fades by midday)
@@ -331,23 +338,34 @@ class PortfolioManager:
             # additional observation — the gap IS the signal).
             if self._gap_go:
                 self.log.section("GAP-AND-GO MODE — scan deferred to post-open")
-                self.log.info(
-                    "Gap-and-Go requires today's opening price + first-candle "
-                    "volume. Waiting for market open + 15 min (9:30 candle close)."
-                )
+                if self._gap_go_wait_candle_close:
+                    self.log.info(
+                        "Gap-and-Go v1.1+: waiting for 09:30 candle to CLOSE "
+                        "(entry at 09:45 IST). Aligns entry timing with backtest."
+                    )
+                else:
+                    self.log.info(
+                        "Gap-and-Go requires today's opening price + first-candle "
+                        "volume. Waiting for market open + 15 min (9:30 candle close)."
+                    )
                 self._wait_for_market_open()
                 if self._shutdown_requested:
                     self._emergency_shutdown()
                     return
 
-                # Wait for the 9:30 candle to close (decision floor)
+                # Wait for the candle to close (decision floor)
+                # v1.1+: wait for 09:30 candle CLOSE at 09:45 (30 min)
+                # v1.0:  wait for 09:15 candle CLOSE at 09:30 (15 min)
                 now = now_ist()
                 market_open = now.replace(
                     hour=self.cfg.MARKET_OPEN_HOUR,
                     minute=self.cfg.MARKET_OPEN_MINUTE,
                     second=0, microsecond=0,
                 )
-                floor_min = self.cfg.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN
+                if self._gap_go_wait_candle_close:
+                    floor_min = 30  # 09:15 + 30 = 09:45 (09:30 candle closes)
+                else:
+                    floor_min = self.cfg.ENTRY_DECISION_FLOOR_MINUTES_AFTER_OPEN
                 floor_time = market_open + datetime.timedelta(minutes=floor_min)
 
                 # Late-start guard: gap signal is only valid in the
@@ -408,8 +426,10 @@ class PortfolioManager:
 
                 if now < floor_time:
                     wait_sec = (floor_time - now).total_seconds()
+                    target_time = floor_time.strftime("%H:%M")
                     self.log.info(
-                        f"Waiting {wait_sec/60:.0f} min for 9:30 candle close..."
+                        f"Waiting {wait_sec/60:.0f} min for "
+                        f"{'09:30 candle close at 09:45' if self._gap_go_wait_candle_close else '09:15 candle close at 09:30'}..."
                     )
                     while now_ist() < floor_time and not self._shutdown_requested:
                         remaining = (floor_time - now_ist()).total_seconds()
@@ -425,6 +445,24 @@ class PortfolioManager:
                     return
 
                 # Now scan — quotes have today's open + first candle volume
+                # ── v1.1: Regime awareness (log-level for now) ────
+                skip_range = getattr(self.cfg, "GAP_GO_SKIP_RANGE_REGIME", False)
+                if skip_range and self._market_condition:
+                    # Approximate RANGE regime: NEUTRAL condition + NORMAL volatility
+                    is_range_like = (
+                        "NEUTRAL" in self._market_condition
+                        and "HIGH_VOLATILITY" not in self._market_condition
+                    )
+                    if is_range_like:
+                        self.log.warning(
+                            f"Gap-and-Go regime filter: market is {self._market_condition} "
+                            f"(range-like). Backtest PF 0.62 on RANGE days. "
+                            f"Consider skipping."
+                        )
+                        # TODO: once we have 10+ dry-run sessions mapping
+                        # NEUTRAL_NORMAL → backtest RANGE, convert this to
+                        # a hard skip. For now, log + continue.
+
                 self._run_pre_market_scan()
                 if self._shutdown_requested:
                     return
@@ -3335,10 +3373,12 @@ class PortfolioManager:
         )
 
         profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
-        strategy_label = {
-            "NOAI_GAP_AND_GO": "Gap-and-Go",
-            "NOAI_SIMPLE_MR_BASELINE": "Simple MR",
-        }.get(profile, "NoAI")
+        if profile == "NOAI_GAP_AND_GO" or profile.startswith("NOAI_GAP_AND_GO_"):
+            strategy_label = f"Gap-and-Go v{profile.split('_')[-1]}" if '_' in profile[len('NOAI_GAP_AND_GO'):] else "Gap-and-Go"
+        elif profile == "NOAI_SIMPLE_MR_BASELINE":
+            strategy_label = "Simple MR"
+        else:
+            strategy_label = "NoAI"
 
         if now < market_open:
             self.log.section(f"PRE-MARKET SCAN ({strategy_label})")
@@ -3349,7 +3389,7 @@ class PortfolioManager:
         self.log.info(f"Universe: {self.cfg.SCAN_UNIVERSE}")
         self.log.info(f"Budget: Rs.{self._budget:,.2f}")
         self.log.info(f"Mode: {'DRY RUN' if self.cfg.DRY_RUN else 'LIVE TRADING'}")
-        if profile == "NOAI_GAP_AND_GO":
+        if profile == "NOAI_GAP_AND_GO" or profile.startswith("NOAI_GAP_AND_GO_"):
             self.log.info(
                 f"Gap-and-Go config: gap >= {self.cfg.GAP_GO_MIN_GAP_PCT}%, "
                 f"vol >= {self.cfg.GAP_GO_VOLUME_MULTIPLE}x, "
@@ -3401,10 +3441,12 @@ class PortfolioManager:
             primary_plans = self._trade_plans[:max_t]
             fallback_plans = self._trade_plans[max_t:]
             profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
-            strategy_label = {
-                "NOAI_GAP_AND_GO": "Gap-and-Go",
-                "NOAI_SIMPLE_MR_BASELINE": "Simple MR",
-            }.get(profile, "NoAI")
+            if profile == "NOAI_GAP_AND_GO" or profile.startswith("NOAI_GAP_AND_GO_"):
+                strategy_label = f"Gap-and-Go v{profile.split('_')[-1]}" if '_' in profile[len('NOAI_GAP_AND_GO'):] else "Gap-and-Go"
+            elif profile == "NOAI_SIMPLE_MR_BASELINE":
+                strategy_label = "Simple MR"
+            else:
+                strategy_label = "NoAI"
             self.log.section(f"TRADE PLAN ({strategy_label})")
             for i, t in enumerate(primary_plans, 1):
                 self.log.info(

@@ -901,20 +901,6 @@ class ReportWriter:
             except Exception as e:
                 self.log.warning(f"Tax ledger auto-fill skipped: {e}")
 
-        try:
-            from scripts.trade.chan_daily_evidence import write_daily_evidence
-            evidence = write_daily_evidence(
-                str(today),
-                "dryrun" if dry_run else "live",
-                update_dbs=dry_run and not dryrun_analysis_updated,
-            )
-            self.log.info(
-                f"Chan evidence  : {evidence['evidence_markdown_path']} "
-                f"({evidence.get('status', 'UNKNOWN')})"
-            )
-        except Exception as e:
-            self.log.warning(f"Chan evidence snapshot skipped: {e}")
-
         return txt_path
 
     # ================================================================

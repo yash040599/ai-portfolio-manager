@@ -157,26 +157,64 @@ class Config:
 
     # ── Strategy Profile ─────────────────────────────────────────
     # Controls which alpha-selection logic runs in NoAI mode.
-    # NOAI_LEGACY_FULL: blended score from all indicators (default)
-    # NOAI_GAP_AND_GO:  gap-and-go with volume (Phase 7.2, OOS PF 1.37)
-    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO"
+    # Version scheme: NOAI_GAP_AND_GO_X.Y
+    #   X = strategy logic change (entry timing, new filters, etc.)
+    #   Y = parameter tuning within the same logic
+    #
+    # NOAI_LEGACY_FULL:       blended score from all indicators
+    # NOAI_GAP_AND_GO:        alias for NOAI_GAP_AND_GO_1.0 (backward compat)
+    # NOAI_GAP_AND_GO_1.0:    original gap-and-go (OOS PF 1.28). Enters at
+    #                         09:30 using LTP. No gap-hold or score checks.
+    # NOAI_GAP_AND_GO_1.1:    hardened gap-and-go. Entry delayed to 09:45
+    #                         (09:30 candle close), gap-hold confirmation,
+    #                         score-contradiction filter, regime filter.
+    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO_1.1"
 
-    # ── Gap-and-Go Strategy Config (Phase 7.2) ───────────────────
-    # OOS PF 1.28 (ALL, cap=2, sq-off 14:00), 1.37 (BUY RSI>70 filter).
-    # First strategy to clear the 1.15 promotion gate.
-    # Set TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO" to activate.
+    # ── Gap-and-Go Strategy Config ───────────────────────────────
+    # Shared params used by ALL gap-and-go versions (1.0, 1.1, …).
     GAP_GO_MIN_GAP_PCT: float = 1.0       # minimum gap % from prev close
     GAP_GO_MAX_GAP_PCT: float = 5.0       # reject extreme gaps (likely corporate action)
     GAP_GO_VOLUME_MULTIPLE: float = 2.0   # first-candle vol > this × 20-day avg
     GAP_GO_DAILY_CAP: int = 2             # max trades per day (sweep: PF drops with more)
     GAP_GO_SQUARE_OFF_HOUR: int = 13      # gap signal fades by midday (sweep: 13:00 PF 1.34 > 14:00 PF 1.28)
     GAP_GO_SQUARE_OFF_MINUTE: int = 0
-    GAP_GO_SKIP_RANGE_REGIME: bool = True  # skip RANGE days (PF 1.35 vs 1.28) — not wired yet
+    GAP_GO_SKIP_RANGE_REGIME: bool = True  # skip RANGE days (PF 1.35 vs 1.28)
     # RSI filter for Gap-and-Go (backtest 2026-06-08):
     #   BUY blocked RSI>70: PF 1.37 (+7%), MaxDD 7.93% (-28%), Sharpe +1.38
     #   SELL floor: ALL values harmful (same as legacy). Not enabled.
     GAP_GO_RSI_BUY_CEILING: float = 70.0  # block BUY gap-ups when RSI already overbought
     GAP_GO_RSI_SELL_FLOOR: float = 0.0    # 0 = disabled (backtest: all values worse)
+
+    # ── Gap-and-Go 1.1 enhancements ─────────────────────────────
+    # These params only apply when TRADE_STRATEGY_PROFILE contains
+    # "NOAI_GAP_AND_GO_1.1" or later. 1.0 ignores them.
+    #
+    # GAP_GO_ENTRY_AFTER_CANDLE_CLOSE: wait for the 09:30 candle to
+    #   close before entering (scan at 09:45 not 09:30). Aligns with
+    #   backtest which enters at candles[1]["close"]. The 09:30 LTP
+    #   used by 1.0 has look-ahead bias vs the backtest.
+    GAP_GO_ENTRY_AFTER_CANDLE_CLOSE: bool = True
+    #
+    # GAP_GO_GAP_HOLD_MIN_PCT: reject entry if LTP has faded more
+    #   than this % from today_open. e.g. 0.3 means if open was 100
+    #   and LTP is 99.6 → gap faded 0.4% → skip. BHARTIARTL 2026-06-09
+    #   entered at 1822.55 when open was 1837 → faded 0.79% → would
+    #   have been rejected.
+    #   Backtest sweep: 0.3% PF 1.57, 0.5% PF 1.44, 0.7% PF 1.47.
+    #   0 = disabled.
+    GAP_GO_GAP_HOLD_MIN_PCT: float = 0.3
+    #
+    # GAP_GO_SCORE_CONTRADICTION_BLOCK: reject entry when the technical
+    #   composite score contradicts the gap direction. e.g. gap-up BUY
+    #   with score -3.5 = bearish internals, gap was noise not flow.
+    #   SHRIRAMFIN 2026-06-09: score -3.5 on a BUY → would be blocked.
+    GAP_GO_SCORE_CONTRADICTION_BLOCK: bool = True
+    #
+    # GAP_GO_USE_CANDLE_CLOSE_PRICE: use the 09:30 candle's close
+    #   price as entry_price instead of current LTP. Matches backtest
+    #   exactly. Only meaningful when GAP_GO_ENTRY_AFTER_CANDLE_CLOSE
+    #   is True (otherwise the candle hasn't closed yet).
+    GAP_GO_USE_CANDLE_CLOSE_PRICE: bool = True
 
     # ── Alpha Strategies (backtested 2026-05-25) ─────────────────
     # Each can be enabled/disabled independently. When multiple are
@@ -2845,7 +2883,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v2.0-2026-05-26-BACKTEST_OPTIMIZED"
+    STRATEGY_CONFIG_VERSION: str = "v2.1-2026-06-09-GAP_AND_GO_1.1"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Stage ladder (rollout doc)
@@ -2876,6 +2914,9 @@ class Config:
         "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
         "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
         "GAP_GO_SKIP_RANGE_REGIME",
+        "GAP_GO_RSI_BUY_CEILING", "GAP_GO_RSI_SELL_FLOOR",
+        "GAP_GO_ENTRY_AFTER_CANDLE_CLOSE", "GAP_GO_GAP_HOLD_MIN_PCT",
+        "GAP_GO_SCORE_CONTRADICTION_BLOCK", "GAP_GO_USE_CANDLE_CLOSE_PRICE",
         "MIN_SCORE", "CANDLE_INTERVAL",
         "SCAN_UNIVERSE", "SCAN_MIN_PRICE", "SCAN_MAX_PRICE",
         "OPPORTUNITY_RESCAN_MINUTES", "NIFTY_RECHECK_MINUTES",

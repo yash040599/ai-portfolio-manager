@@ -1,17 +1,17 @@
 # Trading Roadmap
 
-Last updated: 2026-06-08 (Phase 7 complete + code review + pre-dry-run sweep — **Gap-and-Go final config: PF 1.28**, cap=2, sq-off 13:00, no trailing stop. Ready for dry-run Monday 2026-06-09).
+Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, score-contra block. OOS PF 1.37→1.55. Ready for dry-run Tuesday 2026-06-10).
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PHASE 7 DONE — Gap-and-Go PASSES OOS PF 1.28 (ALL), 1.35 (skip-RANGE), 1.66 (VOLATILE-only).** PF revised after code-review enforced gap cap and fixed 10 backtest↔live mismatches. First strategy to clear the 1.15 promotion gate. **Next: dry-run validation (10+ sessions).** |
-| Mode | AI mode: Gemini 2.5 Flash selects 2 trades/day from NIFTY50 |
-| Run command | python main.py --mode trade --dryrun (set TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO" first) |
-| Live trading | **DO NOT GO LIVE YET** — Gap-and-Go passes OOS PF 1.28 but needs dry-run validation (10+ sessions) before capital is risked. |
+| Stage | **PHASE 8 — Gap-and-Go v1.1 dry-run validation.** v1.0 day-1 dry-run (2026-06-09) failed 0/2 (Rs.-475). Root causes identified: entry timing mismatch (LTP at 09:30:06 vs backtest's candle close), missing gap-hold check (BHARTIARTL faded 0.79%), score contradiction ignored (SHRIRAMFIN score -3.5 on BUY). All three fixed in v1.1. **OOS PF 1.37→1.55 (+13%), Sharpe 1.38→1.66 (+20%)**, 98 trades (fewer, higher quality). |
+| Mode | NoAI, pure rules-based |
+| Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1") |
+| Live trading | **DO NOT GO LIVE YET** — v1.1 needs dry-run validation (10+ sessions). |
 | Budget | Rs.50,000 |
-| Config version | 2.1-2026-06-06-GAP_AND_GO |
+| Config version | 2.1-2026-06-09-GAP_AND_GO_1.1 |
 | FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
 
 > **Where we are → where next (plain English):** After 7 phases of research, the **Gap-and-Go strategy is the first to clear the OOS promotion gate** (PF 1.28 on 228 trades, ALL regimes; PF 1.35 skip-RANGE). The signal is simple: buy stocks that gap >1% on the open with >2× average volume, in the gap direction. It works because gap + volume = institutional intent that persists for hours. The parameter sweep shows robustness — PF stays above 1.15 across all tested gap/volume thresholds (gap 1-2%, vol 1.5-3×). VOLATILE-only regime routing pushes it to PF 1.66 (78 trades). A full code review fixed 10 critical/high bugs in the live integration (SL logic, volume filter, gate bypasses, daily cap). **Next step: dry-run validation on 10+ live sessions.** If dry-run confirms, this is the first strategy that could go live.

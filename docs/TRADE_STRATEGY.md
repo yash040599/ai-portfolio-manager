@@ -3,12 +3,11 @@
 <!-- Maintenance: keep in sync with code changes.  Per-pass history
      lives in commit messages and `docs/TRADE_ROADMAP.md`. -->
 
-> **Active stage (2026-06-06):** `GAP_AND_GO_DRY_RUN` — Phase 7 Gap-and-Go
-> strategy passes OOS PF 1.28 (ALL regimes), 1.35 (skip-RANGE), 1.66
-> (VOLATILE-only). Code-reviewed and bug-fixed. Set
-> `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO"` to activate. Dry-run
-> validation pending. Legacy multi-indicator scorer available as
-> `NOAI_LEGACY_FULL` (default).
+> **Active stage (2026-06-09):** `GAP_AND_GO_DRY_RUN` — Gap-and-Go v1.1
+> hardened: entry at 09:30 candle close (matching backtest), gap-hold
+> 0.3% check, score-contradiction block. OOS PF 1.55, Sharpe 1.66.
+> Set `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1"` to activate.
+> Version scheme: X.Y where X = strategy logic change, Y = param tuning.
 > See [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for current results and
 > [TRADE_ROADMAP.md](TRADE_ROADMAP.md) for the operating plan.
 

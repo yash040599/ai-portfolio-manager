@@ -128,6 +128,9 @@ def simulate_gap_go(
     # RSI contra-momentum filter (N1 gate for Gap-and-Go)
     rsi_contra_sell: float = 0,     # block SELL when RSI < X (0=disabled)
     rsi_contra_buy: float = 0,      # block BUY when RSI > X (0=disabled)
+    # v1.1 filters
+    gap_hold_min_pct: float = 0,    # reject if gap faded > X% from open (0=disabled)
+    score_contra_block: bool = False,  # reject when composite score contradicts gap
 ) -> list[dict]:
     """Run gap-and-go strategy across all dates."""
     if skip_regimes is None:
@@ -207,6 +210,33 @@ def simulate_gap_go(
                     continue
                 if side == "BUY" and rsi_contra_buy > 0 and entry_rsi > rsi_contra_buy:
                     continue
+
+            # v1.1: Gap-hold check — reject if gap faded from open
+            # by the time the entry candle closed
+            if gap_hold_min_pct > 0:
+                entry_close = entry_candle["close"]
+                if side == "BUY":
+                    fade = (open_price - entry_close) / open_price * 100
+                else:
+                    fade = (entry_close - open_price) / open_price * 100
+                if fade > gap_hold_min_pct:
+                    continue
+
+            # v1.1: Score contradiction — compute a simple trend score
+            # from the candle data (EMA direction proxy) and reject if
+            # it contradicts the gap direction
+            if score_contra_block:
+                # Use recent closes to compute 5-period vs 20-period
+                # EMA direction as a simple trend proxy
+                closes = [c["close"] for c in atr_window[-20:]]
+                if len(closes) >= 20:
+                    ema5 = sum(closes[-5:]) / 5
+                    ema20 = sum(closes[-20:]) / 20
+                    trend_bullish = ema5 > ema20
+                    if side == "BUY" and not trend_bullish:
+                        continue
+                    if side == "SELL" and trend_bullish:
+                        continue
 
             candidates.append((sym, side, abs(gap), candles, atr_val))
 
@@ -356,7 +386,16 @@ def main() -> None:
     ap.add_argument("--rsi-contra-sell", type=float, default=0, help="Block SELL when RSI < X (0=disabled)")
     ap.add_argument("--rsi-contra-buy", type=float, default=0, help="Block BUY when RSI > X (0=disabled)")
     ap.add_argument("--sweep-rsi", action="store_true", help="Sweep RSI contra-momentum thresholds")
+    ap.add_argument("--gap-hold", type=float, default=0, help="Gap-hold filter: reject if gap faded > X%% (0=disabled)")
+    ap.add_argument("--score-contra", action="store_true", help="Score contradiction filter: reject when score contradicts gap")
+    ap.add_argument("--v11", action="store_true", help="Run with all v1.1 filters (gap-hold 0.5, score-contra, RSI-buy 70)")
     args = ap.parse_args()
+
+    # v1.1 preset: activates all new filters
+    if args.v11:
+        args.gap_hold = 0.5
+        args.score_contra = True
+        args.rsi_contra_buy = 70.0
 
     symbols = get_universe(args.universe)
     print(f"\n  Phase 7.2 — Gap-and-Go with Volume Qualification")
@@ -494,6 +533,10 @@ def main() -> None:
         daily_cap=args.daily_cap,
         skip_regimes=set(),
         start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        gap_hold_min_pct=args.gap_hold,
+        score_contra_block=args.score_contra,
+        rsi_contra_buy=args.rsi_contra_buy,
+        rsi_contra_sell=args.rsi_contra_sell,
     )
     test_m = compute_metrics(test_trades, "TEST/ALL", with_costs=True)
     pf = test_m.get("pf", 0)
@@ -504,6 +547,84 @@ def main() -> None:
     else:
         print(f"  FAIL — OOS PF {pf} < 1.0. Gap-and-Go does not have edge at this config.")
     print(f"  Total charges (TEST/ALL): Rs.{test_m.get('total_charges', 0):,.2f}")
+
+    # ── v1.1 comparison (gap-hold + score-contra sweep) ───────
+    print(f"\n  {'='*100}")
+    print(f"  v1.1 Filter Comparison (TEST window)")
+    print(f"  {'='*100}")
+
+    # Baseline v1.0 (no new filters)
+    v10 = simulate_gap_go(
+        all_symbol_days, regime_labels,
+        gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+        daily_cap=args.daily_cap, skip_regimes=set(),
+        start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        rsi_contra_buy=70.0,  # RSI filter is in both versions
+    )
+    _print_table("v1.0 baseline (RSI 70)", compute_metrics(v10, "v1.0", True))
+
+    # Gap-hold sweep
+    for hold_pct in [0.3, 0.5, 0.7, 1.0]:
+        trades = simulate_gap_go(
+            all_symbol_days, regime_labels,
+            gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+            daily_cap=args.daily_cap, skip_regimes=set(),
+            start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+            rsi_contra_buy=70.0,
+            gap_hold_min_pct=hold_pct,
+        )
+        _print_table(f"  + gap-hold {hold_pct}%", compute_metrics(trades, f"hold-{hold_pct}", True))
+
+    # Score contradiction
+    trades_sc = simulate_gap_go(
+        all_symbol_days, regime_labels,
+        gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+        daily_cap=args.daily_cap, skip_regimes=set(),
+        start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        rsi_contra_buy=70.0,
+        score_contra_block=True,
+    )
+    _print_table("  + score-contra only", compute_metrics(trades_sc, "score-contra", True))
+
+    # Full v1.1 (gap-hold 0.5 + score-contra + RSI 70)
+    v11_all = simulate_gap_go(
+        all_symbol_days, regime_labels,
+        gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+        daily_cap=args.daily_cap, skip_regimes=set(),
+        start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        rsi_contra_buy=70.0,
+        gap_hold_min_pct=0.5,
+        score_contra_block=True,
+    )
+    _print_table("  v1.1 FULL (all filters)", compute_metrics(v11_all, "v1.1-full", True))
+
+    # v1.1 + skip RANGE
+    v11_skip = simulate_gap_go(
+        all_symbol_days, regime_labels,
+        gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+        daily_cap=args.daily_cap, skip_regimes={"RANGE"},
+        start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        rsi_contra_buy=70.0,
+        gap_hold_min_pct=0.5,
+        score_contra_block=True,
+    )
+    _print_table("  v1.1 + skip RANGE", compute_metrics(v11_skip, "v1.1-skipR", True))
+
+    # v1.1 + VOLATILE only
+    v11_vol = simulate_gap_go(
+        all_symbol_days, regime_labels,
+        gap_pct=args.gap_pct, vol_mult=args.vol_mult,
+        daily_cap=args.daily_cap, skip_regimes={"TREND", "RANGE"},
+        start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
+        rsi_contra_buy=70.0,
+        gap_hold_min_pct=0.5,
+        score_contra_block=True,
+    )
+    _print_table("  v1.1 + VOLATILE only", compute_metrics(v11_vol, "v1.1-vol", True))
+
+    v11_pf = compute_metrics(v11_all, "v1.1", True).get("pf", 0)
+    print(f"\n  v1.0 PF: {compute_metrics(v10, 'v1.0', True).get('pf', 0):.2f}  →  "
+          f"v1.1 PF: {v11_pf:.2f}")
 
 
 if __name__ == "__main__":

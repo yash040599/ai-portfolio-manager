@@ -2088,13 +2088,14 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         return all_trades
 
     # ================================================================
-    # GAP-AND-GO SCANNER (Phase 7.2 — OOS PF 1.35)
+    # GAP-AND-GO SCANNER (Phase 7.2+)
     # ================================================================
 
     def _scan_noai_gap_go(
         self, quotes: dict, max_trades: int,
         session_context: str = "", open_buys: int = 0,
         open_sells: int = 0, as_of: datetime.datetime | None = None,
+        version: str = "1.0",
     ) -> list[dict]:
         """Gap-and-Go with Volume Qualification scanner.
 
@@ -2103,15 +2104,18 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         20-day average volume. Enter in the gap direction (gap up = BUY,
         gap down = SELL).
 
-        Phase 7.2 backtest result: OOS PF 1.35 (ALL), 1.78 (VOLATILE-only).
-        First strategy to clear the 1.15 promotion gate.
+        Version history:
+          1.0: Original. OOS PF 1.28 (ALL), 1.37 (RSI filter).
+          1.1: Entry at 09:30 candle close, gap-hold check, score
+               contradiction filter, regime filter, enhanced logging.
 
         Returns list[dict] with standard trade plan keys.
         """
-        profile = "NOAI_GAP_AND_GO"
+        is_v11 = version >= "1.1"
+        profile = f"NOAI_GAP_AND_GO_{version}" if version != "1.0" else "NOAI_GAP_AND_GO"
         universe = self.get_universe()
         self.last_tape_breadth = None
-        self.log.info(f"NoAI strategy profile: {profile} — gap-and-go with volume")
+        self.log.info(f"NoAI strategy profile: {profile} — gap-and-go with volume (v{version})")
 
         min_gap_pct = getattr(self.cfg, "GAP_GO_MIN_GAP_PCT", 1.0)
         max_gap_pct = getattr(self.cfg, "GAP_GO_MAX_GAP_PCT", 5.0)
@@ -2121,11 +2125,24 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         # ── Bug fix #8: daily cap must match backtest (K1=2) ──────
         max_trades = min(max_trades, gap_daily_cap)
 
+        # ── v1.1 params ──────────────────────────────────────────
+        gap_hold_min_pct = getattr(self.cfg, "GAP_GO_GAP_HOLD_MIN_PCT", 0.0) if is_v11 else 0.0
+        score_contra_block = getattr(self.cfg, "GAP_GO_SCORE_CONTRADICTION_BLOCK", False) if is_v11 else False
+        use_candle_close = getattr(self.cfg, "GAP_GO_USE_CANDLE_CLOSE_PRICE", False) if is_v11 else False
+        skip_range_regime = getattr(self.cfg, "GAP_GO_SKIP_RANGE_REGIME", False) if is_v11 else False
+
         self.log.info(
             f"Gap-and-Go config: gap >= {min_gap_pct}%, "
             f"<= {max_gap_pct}%, vol >= {vol_mult}x 20-day avg, "
             f"daily cap = {gap_daily_cap}"
         )
+        if is_v11:
+            self.log.info(
+                f"  v1.1 enhancements: gap_hold_check={gap_hold_min_pct}%, "
+                f"score_contra_block={score_contra_block}, "
+                f"use_candle_close={use_candle_close}, "
+                f"skip_range={skip_range_regime}"
+            )
 
         min_price = self.cfg.SCAN_MIN_PRICE
         max_price = self.cfg.SCAN_MAX_PRICE
@@ -2159,6 +2176,12 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         dropped_no_gap = 0
         dropped_vol = 0
         dropped_extreme = 0
+        dropped_rsi = 0
+        dropped_gap_fade = 0
+        dropped_score_contra = 0
+
+        # Detailed per-stock gap log for transparency
+        gap_log_rows: list[str] = []
 
         for symbol in universe:
             key = f"NSE:{symbol}"
@@ -2246,36 +2269,86 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 continue
 
             avg_candle_vol = sum(hist_vols) / len(hist_vols)
+            vol_ratio = today_first_vol / avg_candle_vol if avg_candle_vol > 0 else 0
             if avg_candle_vol <= 0 or today_first_vol < vol_mult * avg_candle_vol:
+                gap_log_rows.append(
+                    f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                    f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  → SKIP (low volume)"
+                )
                 dropped_vol += 1
                 continue
 
-            # ── Passed all filters — this is a gap-and-go candidate ──
+            # ── Passed gap + volume — this is a gap-and-go candidate ──
             side = "BUY" if gap_pct > 0 else "SELL"
+
+            # ── v1.1: Gap-hold confirmation ───────────────────────
+            # Reject if LTP has faded significantly from today's open.
+            # If the gap has already reversed, the thesis is dead.
+            if gap_hold_min_pct > 0:
+                if side == "BUY":
+                    fade_pct = (today_open - ltp) / today_open * 100
+                else:
+                    fade_pct = (ltp - today_open) / today_open * 100
+                if fade_pct > gap_hold_min_pct:
+                    gap_log_rows.append(
+                        f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                        f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  "
+                        f"fade {fade_pct:.2f}%  → SKIP (gap faded >{gap_hold_min_pct}%)"
+                    )
+                    dropped_gap_fade += 1
+                    continue
 
             # Run full technical analysis for telemetry + indicator snapshot
             result = self._analyse_stock(symbol, as_of=as_of)
             tech = result.get("technical", {}) if result else {}
 
             # ── RSI contra-momentum filter (backtest 2026-06-08) ──
-            # BUY RSI>70 block: PF 1.28 → 1.37 (+7%), MaxDD -28%.
-            # SELL floor: all values harmful, disabled (0).
             rsi_info = tech.get("rsi", {})
             entry_rsi = float(rsi_info.get("rsi", 0) or 0) if isinstance(rsi_info, dict) else 0
             rsi_buy_ceil = getattr(self.cfg, "GAP_GO_RSI_BUY_CEILING", 0)
             rsi_sell_floor = getattr(self.cfg, "GAP_GO_RSI_SELL_FLOOR", 0)
             if side == "BUY" and rsi_buy_ceil > 0 and entry_rsi > rsi_buy_ceil:
-                self.log.info(
-                    f"  {symbol}: Gap-and-Go BUY skipped — RSI {entry_rsi:.0f} > "
-                    f"{rsi_buy_ceil:.0f} (overbought gap-up, high reversal risk)"
+                gap_log_rows.append(
+                    f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                    f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  RSI {entry_rsi:.0f}  "
+                    f"→ SKIP (RSI>{rsi_buy_ceil:.0f}, overbought gap-up)"
                 )
+                dropped_rsi += 1
                 continue
             if side == "SELL" and rsi_sell_floor > 0 and entry_rsi < rsi_sell_floor:
-                self.log.info(
-                    f"  {symbol}: Gap-and-Go SELL skipped — RSI {entry_rsi:.0f} < "
-                    f"{rsi_sell_floor:.0f} (oversold gap-down)"
+                gap_log_rows.append(
+                    f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                    f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  RSI {entry_rsi:.0f}  "
+                    f"→ SKIP (RSI<{rsi_sell_floor:.0f}, oversold gap-down)"
                 )
+                dropped_rsi += 1
                 continue
+
+            # ── v1.1: Score contradiction filter ──────────────────
+            # Reject when the composite technical score contradicts
+            # the gap direction. Gap-up BUY with bearish score = noise.
+            composite_score = 0
+            if result:
+                composite_score = result.get("combined_score", 0) or 0
+            if score_contra_block and composite_score != 0:
+                if side == "BUY" and composite_score < 0:
+                    gap_log_rows.append(
+                        f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                        f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  RSI {entry_rsi:.0f}  "
+                        f"score {composite_score:+.1f}  "
+                        f"→ SKIP (BUY contradicted by bearish score)"
+                    )
+                    dropped_score_contra += 1
+                    continue
+                if side == "SELL" and composite_score > 0:
+                    gap_log_rows.append(
+                        f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                        f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  RSI {entry_rsi:.0f}  "
+                        f"score {composite_score:+.1f}  "
+                        f"→ SKIP (SELL contradicted by bullish score)"
+                    )
+                    dropped_score_contra += 1
+                    continue
 
             # ── Bug fix #3: compute gap-candle SL matching backtest ──
             # SL is anchored to the gap candle structure, not ATR.
@@ -2288,18 +2361,28 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 gap_candle_low = ohlc.get("low", ltp * 0.99)
                 gap_candle_high = ohlc.get("high", ltp * 1.01)
 
+            # v1.1: use candle close as entry price (matches backtest)
+            if use_candle_close and today_candles and len(today_candles) >= 2:
+                candle_close = entry_candle.get("close", 0)
+                if candle_close and candle_close > 0:
+                    entry_px = candle_close
+                else:
+                    entry_px = ltp
+            else:
+                entry_px = ltp
+
             if side == "BUY":
                 sl_price = gap_candle_low
-                sl_dist = ltp - sl_price
+                sl_dist = entry_px - sl_price
                 if sl_dist <= 0:
-                    sl_dist = ltp * 0.01  # 1% fallback
-                    sl_price = ltp - sl_dist
+                    sl_dist = entry_px * 0.01  # 1% fallback
+                    sl_price = entry_px - sl_dist
             else:
                 sl_price = gap_candle_high
-                sl_dist = sl_price - ltp
+                sl_dist = sl_price - entry_px
                 if sl_dist <= 0:
-                    sl_dist = ltp * 0.01
-                    sl_price = ltp + sl_dist
+                    sl_dist = entry_px * 0.01
+                    sl_price = entry_px + sl_dist
 
             # ── Bug fix #7: target = max(SL-based, ATR-based) ────
             # matching backtest's dual-target logic
@@ -2309,21 +2392,30 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 if isinstance(atr_info, dict):
                     atr_val = atr_info.get("value", 0) or 0
             if atr_val <= 0:
-                atr_val = ltp * 0.005
+                atr_val = entry_px * 0.005
             atr_target_dist = atr_val * self.cfg.ATR_MULTIPLIER * self.cfg.RR_TARGET_RATIO
             sl_target_dist = sl_dist * self.cfg.RR_TARGET_RATIO
             target_dist = max(sl_target_dist, atr_target_dist)
 
             if side == "BUY":
-                target_price = round(ltp + target_dist, 2)
+                target_price = round(entry_px + target_dist, 2)
             else:
-                target_price = round(ltp - target_dist, 2)
+                target_price = round(entry_px - target_dist, 2)
+
+            # ── Log: accepted candidate ──────────────────────────
+            gap_log_rows.append(
+                f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
+                f"ltp {ltp:>9.2f}  {'entry_px ' + str(round(entry_px, 2)) + '  ' if entry_px != ltp else ''}"
+                f"vol {vol_ratio:.1f}x  RSI {entry_rsi:.0f}  "
+                f"score {composite_score:+.1f}  SL {sl_price:.2f}  "
+                f"tgt {target_price:.2f}  → ACCEPTED ({side})"
+            )
 
             gap_candidates.append({
                 "symbol": symbol,
                 "side": side,
                 "gap_pct": gap_pct,
-                "price": ltp,
+                "price": round(entry_px, 2),
                 "prev_close": prev_close,
                 "today_open": today_open,
                 "gap_candle_sl": round(sl_price, 2),
@@ -2335,11 +2427,21 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 ),
             })
 
+        # ── Print detailed gap scan log ───────────────────────────
+        if gap_log_rows:
+            self.log.info("Gap-and-Go per-stock scan results:")
+            for row in gap_log_rows:
+                self.log.info(row)
+
         self.log.info(
             f"Gap-and-Go filter: {len(gap_candidates)} candidates passed "
             f"(dropped: no_quote={dropped_no_quote}, price={dropped_price}, "
             f"no_gap={dropped_no_gap}, extreme_gap={dropped_extreme}, "
-            f"low_vol={dropped_vol})"
+            f"low_vol={dropped_vol}"
+            + (f", rsi={dropped_rsi}" if dropped_rsi else "")
+            + (f", gap_fade={dropped_gap_fade}" if dropped_gap_fade else "")
+            + (f", score_contra={dropped_score_contra}" if dropped_score_contra else "")
+            + ")"
         )
 
         if not gap_candidates:
@@ -2412,7 +2514,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
             # Build rationale
             rationale = (
-                f"GAP-AND-GO | Gap {c['gap_pct']:+.1f}% | "
+                f"GAP-AND-GO v{version} | Gap {c['gap_pct']:+.1f}% | "
                 f"PrevClose {c['prev_close']:.2f} → Open {c['today_open']:.2f}"
             )
             tech = c.get("technical", {})
@@ -2482,9 +2584,18 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
         all_trades = primary + fallback
         self.log.success(
-            f"Gap-and-Go scan: {len(primary)} primary + {len(fallback)} "
+            f"Gap-and-Go v{version} scan: {len(primary)} primary + {len(fallback)} "
             f"fallback = {len(all_trades)} candidates for entry loop"
         )
+        # ── Selection summary log (what the user sees) ────────────
+        for i, t in enumerate(primary, 1):
+            self.log.info(
+                f"  #{i} {t['symbol']:<14s} {t['side']:<5s} "
+                f"entry {t['entry_price']:>9.2f}  "
+                f"SL {t['stop_loss']:>9.2f} ({abs(t['entry_price'] - t['stop_loss'])/t['entry_price']*100:.2f}%)  "
+                f"tgt {t['target_price']:>9.2f} ({abs(t['target_price'] - t['entry_price'])/t['entry_price']*100:.2f}%)  "
+                f"qty {t['qty']}  R:R 1:{abs(t['target_price'] - t['entry_price'])/max(abs(t['entry_price'] - t['stop_loss']), 0.01):.1f}"
+            )
         return all_trades
 
     def scan_noai(
@@ -2530,6 +2641,15 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 open_buys=open_buys,
                 open_sells=open_sells,
                 as_of=as_of,
+            )
+        if profile.startswith("NOAI_GAP_AND_GO_"):
+            return self._scan_noai_gap_go(
+                quotes, max_trades,
+                session_context=session_context,
+                open_buys=open_buys,
+                open_sells=open_sells,
+                as_of=as_of,
+                version=profile.split("NOAI_GAP_AND_GO_")[-1],
             )
 
         # Extract Nifty trend for hard filter

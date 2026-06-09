@@ -1,24 +1,27 @@
 # Trading Statistics
 
-Last updated: 2026-06-08 (Gap-and-Go activated with RSI filter; config switched from legacy).
+Last updated: 2026-06-09 (Gap-and-Go v1.1: entry timing fix, gap-hold, score-contra filters).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.3-2026-06-08-GAP_AND_GO_RSI |
-| Active stage | **GAP_AND_GO_DRY_RUN** — Phase 7 Gap-and-Go with RSI BUY ceiling. OOS PF 1.37. Config switched to `NOAI_GAP_AND_GO`. |
-| Strategy profile | `NOAI_GAP_AND_GO` (active in config.py) |
+| Runtime strategy version | 2.3-2026-06-09-GAP_AND_GO_1.1 |
+| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1 hardened: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.55. |
+| Strategy profile | `NOAI_GAP_AND_GO_1.1` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun |
 | Budget | Rs.50,000 |
-| Daily trade cap | 2 trades max (GAP_GO_DAILY_CAP=2; sweep: PF drops with 3+) |
-| Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13; sweep: optimal) |
+| Daily trade cap | 2 trades max (GAP_GO_DAILY_CAP=2) |
+| Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13) |
 | Loser exit | 12:00 IST (auto: sq-off − 1hr) |
 | Trailing stop | DISABLED (sweep: every trail config destroys PF) |
-| RSI BUY ceiling | 70.0 (block overbought gap-up buys; PF 1.28→1.37, MaxDD -28%) |
+| RSI BUY ceiling | 70.0 (block overbought gap-up buys) |
+| Gap-hold filter | 0.3% (v1.1: reject if gap faded > 0.3% from open) |
+| Score contradiction | ENABLED (v1.1: reject when score contradicts gap direction) |
+| Entry timing | 09:45 IST (v1.1: after 09:30 candle closes, matching backtest) |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
-| Note | 2026-06-08 dry run accidentally used NOAI_LEGACY_FULL (old scores). Config now fixed. |
+| Note | v1.0 dry-run on 2026-06-09 lost Rs.475 (0/2 wins). Root cause: entry timing mismatch vs backtest + missing gap-hold check. Both fixed in v1.1. |
 
 ## 1. Backtest Results (62-Gate Audit, 2026-05-26)
 
