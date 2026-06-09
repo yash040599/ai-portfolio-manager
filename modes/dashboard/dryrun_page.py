@@ -46,8 +46,8 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
         ],
     },
     "NOAI_GAP_AND_GO": {
-        "label": "NoAI Gap-and-Go",
-        "desc": "Gap + volume alpha. Enters on opening gap with volume confirmation. OOS PF 1.37.",
+        "label": "NoAI Gap-and-Go v1.0",
+        "desc": "Gap + volume alpha v1.0. Entry at 09:30 LTP, no gap-hold or score checks. OOS PF 1.37.",
         "config_keys": [
             "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
             "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
@@ -68,6 +68,35 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
         ],
     },
 }
+
+# ── Gap-and-Go versioned meta (v1.1+) ────────────────────────────
+# Any NOAI_GAP_AND_GO_X.Y profile gets this meta + version suffix.
+_GAP_GO_VERSIONED_CONFIG_KEYS = [
+    "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
+    "GAP_GO_VOLUME_MULTIPLE", "GAP_GO_DAILY_CAP",
+    "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
+    "GAP_GO_SKIP_RANGE_REGIME",
+    "GAP_GO_RSI_BUY_CEILING", "GAP_GO_RSI_SELL_FLOOR",
+    "GAP_GO_ENTRY_AFTER_CANDLE_CLOSE", "GAP_GO_GAP_HOLD_MIN_PCT",
+    "GAP_GO_SCORE_CONTRADICTION_BLOCK", "GAP_GO_USE_CANDLE_CLOSE_PRICE",
+    "DEFAULT_STOP_LOSS_PCT", "DEFAULT_TARGET_PCT",
+    "MAX_POSITIONS",
+]
+
+
+def _get_strategy_meta(strategy_type: str) -> dict[str, Any]:
+    """Look up strategy metadata, with fallback for versioned gap-and-go profiles."""
+    if strategy_type in STRATEGY_META:
+        return STRATEGY_META[strategy_type]
+    # Versioned gap-and-go: NOAI_GAP_AND_GO_1.1, NOAI_GAP_AND_GO_2.0, etc.
+    if strategy_type.startswith("NOAI_GAP_AND_GO_"):
+        version = strategy_type.split("NOAI_GAP_AND_GO_")[-1]
+        return {
+            "label": f"NoAI Gap-and-Go v{version}",
+            "desc": f"Gap + volume alpha v{version}. OOS PF 1.55 (v1.1).",
+            "config_keys": _GAP_GO_VERSIONED_CONFIG_KEYS,
+        }
+    return {"label": strategy_type, "desc": "", "config_keys": []}
 
 
 def _connect_existing(path: Path) -> sqlite3.Connection | None:
@@ -420,7 +449,7 @@ def render_dryrun_page() -> str:
     # Build strategy options for dropdown
     options_html = ""
     for st in strategies:
-        meta = STRATEGY_META.get(st, {})
+        meta = _get_strategy_meta(st)
         label = meta.get("label", st)
         count = all_stats[st]["closed_trades"]
         net = all_stats[st]["net_pnl"]
@@ -468,7 +497,7 @@ def render_dryrun_page() -> str:
     # Strategy config sections
     config_sections: dict[str, list[dict[str, str]]] = {}
     for st in strategies:
-        meta = STRATEGY_META.get(st, {})
+        meta = _get_strategy_meta(st)
         keys = meta.get("config_keys", [])
         config_sections[st] = _current_config_values(keys)
     config_json = json.dumps(config_sections).replace("</", "<\\/")
@@ -476,8 +505,8 @@ def render_dryrun_page() -> str:
     # Strategy meta
     meta_json = json.dumps({
         st: {
-            "label": STRATEGY_META.get(st, {}).get("label", st),
-            "desc": STRATEGY_META.get(st, {}).get("desc", ""),
+            "label": _get_strategy_meta(st).get("label", st),
+            "desc": _get_strategy_meta(st).get("desc", ""),
         }
         for st in strategies
     }).replace("</", "<\\/")
