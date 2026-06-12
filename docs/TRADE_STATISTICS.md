@@ -221,6 +221,8 @@ for improvement ideas.
 | Intraday equity | EMA pullback | OOS | ~250 | 0.65 | -2.10 | ❌ Abandoned |
 | Intraday equity | First Hour Range Breakout | OOS | 466 | 0.81 | -1.67 | ❌ FAIL (Phase 9.1) |
 | Intraday equity | Opening Candle Momentum | OOS | 443 | 0.87 | -1.16 | ❌ FAIL (Phase 9.4) |
+| Intraday equity | NIFTY Index Momentum (futures) | OOS | 13 | 0.25 | -2.62 | ❌ FAIL (Phase 9.3) |
+| Intraday equity | Sector Rotation Intraday | OOS | 472 | 0.78 | -2.22 | ❌ FAIL (Phase 9.6) |
 | **Options** | Directional buying v1.0 | FULL | 147 | 0.42 | -6.37 | ❌ FAIL |
 | Options | Directional buying v1.0 | OOS | 60 | 0.64 | -3.24 | ❌ FAIL |
 | Options | VOLATILE-only subset | FULL | 36 | 0.77 | — | ❌ Promising but fail |
@@ -228,6 +230,7 @@ for improvement ideas.
 
 **Key takeaways:**
 1. Only Gap-and-Go v1.1.1 passes the 1.15 PF gate — currently in dry-run
-2. FHRB (PF 0.81) and OCM (PF 0.87) both failed Phase 9 testing
-3. Options directional buying needs a better signal or pivot to selling
-4. Regime routing is the strongest reusable asset across all modes
+2. Phase 9 tested 4 new strategies (FHRB, OCM, NIFTY Futures, Sector Rotation) — all FAIL
+3. Intraday equity search space on NSE is largely exhausted at Rs.50K/cost level
+4. Options directional buying needs a better signal or pivot to selling
+5. Regime routing is the strongest reusable asset across all modes

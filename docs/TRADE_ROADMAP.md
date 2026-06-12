@@ -646,6 +646,8 @@ python main.py --mode trade --dryrun
 | Options directional buying | 0.42-0.64 | FAIL | Theta + charges kill it |
 | **First Hour Range Breakout** | **0.81** | **FAIL** | **Phase 9.1 (2026-06-12). SL too wide (full 1hr range), trades drift as late losers. Narrow range + tight RR doesn't help. Worse than ORB-15.** |
 | **Opening Candle Momentum** | **0.87** | **FAIL** | **Phase 9.4 (2026-06-12). First candle shape+vol signal. VOLATILE-only PF 1.15 (81 trades) but ALL regimes 0.87. Gap confirm and RSI don't rescue it.** |
+| **NIFTY Index Momentum (sim. futures)** | **0.25** | **FAIL** | **Phase 9.3 (2026-06-12). Synthetic NIFTY index gap-and-go with futures costs. 13 OOS trades, PF 0.25. Index doesn't gap enough and has no momentum follow-through.** |
+| **Sector Rotation Intraday** | **0.78** | **FAIL** | **Phase 9.6 (2026-06-12). Buy top sector / sell bottom sector by first-45-min return. 472 OOS trades, PF 0.78. Sector momentum doesn't persist intraday after costs.** |
 
 #### Already listed in TRADE_NEXT_IDEAS.md but not yet backtested
 
@@ -679,11 +681,11 @@ Sourced from web research, TradingQnA (Zerodha community), Zerodha Varsity, and 
 | Step | Action | Status |
 |---|---|---|
 | 9.1 | **Backtest C.1 (FHRB)** — first hour range breakout with volume + ADX filter, walk-forward OOS. Uses existing 15-min data. | **DONE — FAIL. OOS PF 0.81.** All param combos (vol 1-3x, RR 1.2-2.0, ADX 0-30, sq-off 13-15) stay below 1.0. Skip-RANGE PF 0.95, VOLATILE-only PF 0.89. The first-hour range on NIFTY100 stocks is too wide — breakout entries get stopped out frequently. Worse than ORB-15 (PF 0.97). |
-| 9.2 | **Fetch NIFTY futures data** — pull 2yr of NIFTY futures 15-min candles from Zerodha. Needed for C.2. | TODO |
-| 9.3 | **Backtest C.2 (NIFTY Futures Momentum)** — apply our existing NIFTY trend signal to futures. Measure cost savings vs equity. | TODO |
+| 9.2 | **Fetch NIFTY futures data** — pull 2yr of NIFTY futures 15-min candles from Zerodha. Needed for C.2. | SKIPPED — used synthetic index proxy from NIFTY50 constituent candles instead. |
+| 9.3 | **Backtest C.2 (NIFTY Futures Momentum)** — apply gap-and-go signal to NIFTY index with futures cost structure. | **DONE — FAIL. OOS PF 0.25.** Only 13 OOS trades. Index gaps are tiny (0.2-0.5%) and don't follow through. Even with zero STT (futures cost model), the signal has no edge. The index is too efficient — institutional arbitrage absorbs gaps instantly. |
 | 9.4 | **Backtest C.6 (Opening Candle Momentum)** — proxy for auction imbalance using first candle shape + volume. | **DONE — FAIL. OOS PF 0.87.** VOLATILE-only PF 1.15 (81 trades) at gate threshold but thin sample. Gap confirm doesn't help. RSI filter lifts to 0.93 but still <1.0. No param combo clears gate on ALL regimes. |
-| 9.5 | **Backtest C.4 (Earnings Gap Reversion)** — needs earnings calendar. | TODO |
-| 9.6 | **Backtest C.5 (Sector Rotation)** — needs sector index data from Zerodha. | TODO |
-| 9.7 | **Verdict** — rank all strategies by OOS PF. Any that clear 1.15 gate → dry-run. Multiple strategies can run simultaneously on different signals. | TODO |
+| 9.5 | **Backtest C.4 (Earnings Gap Reversion)** — needs earnings calendar. | DEFERRED — no earnings calendar in data. Strategy is very sparse (~4 events/year/stock). Low priority. |
+| 9.6 | **Backtest C.5 (Sector Rotation)** — buy top sector / sell bottom sector by first-45-min return. | **DONE — FAIL. OOS PF 0.78.** 472 trades. Sector momentum doesn't persist intraday — first-45-min sector leadership reverses or flattens by afternoon. No param combo (SL 1-2%, RR 1-2, spread 0.2-0.5%) rescues it. |
+| 9.7 | **Verdict** — rank all strategies by OOS PF. Any that clear 1.15 gate → dry-run. | **DONE. ALL FAIL.** 4 strategies tested (C.1 FHRB PF 0.81, C.2 NIFTY Futures PF 0.25, C.5 Sector Rotation PF 0.78, C.6 OCM PF 0.87). C.4 deferred (no earnings calendar). **Gap-and-Go v1.1.1 remains the only passing strategy.** The intraday equity search space on NSE is largely exhausted at this capital/cost level. |
 
 **Exit criteria**: At least 3 intraday equity strategies backtested OOS. Any with PF ≥ 1.15 proceed to dry-run alongside Gap-and-Go.
