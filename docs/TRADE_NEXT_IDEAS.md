@@ -1,11 +1,12 @@
 # Trade Next Ideas — Intraday & Options Research
 
-> **Created:** 2026-06-06 | **Updated:** 2026-06-09
-> **Status:** Gap-and-Go **v1.1** passes OOS PF 1.55, Sharpe 1.66. Dry-run
-> validation started (v1.0 failed day 1; v1.1 fixes deployed).
-> **Context:** Phases 0-7 of intraday equity backtesting + Phase 8 (v1.1
-> hardening) are complete. All other intraday ideas deferred until v1.1
-> dry-run validation (10+ sessions) completes.
+> **Created:** 2026-06-06 | **Updated:** 2026-06-12
+> **Status:** Gap-and-Go **v1.1.1** (NIFTY100) passes OOS PF 1.62, Sharpe 1.80.
+> Dry-run validation in progress. Phase 9 diversification research complete —
+> 4 additional strategies tested, **all FAIL**. Intraday equity search space
+> on NSE largely exhausted.
+> **Context:** Phases 0-9 of intraday equity backtesting complete. Gap-and-Go
+> v1.1.1 remains the only strategy to pass the 1.15 OOS promotion gate.
 
 ---
 
@@ -43,86 +44,38 @@ cannot prove it without live data.
 
 ---
 
-### A.2 Gap-and-Go with Volume Qualification
+### A.2 Gap-and-Go with Volume Qualification — ✅ TESTED → PASS
+
+> **Result (Phase 7.2, 2026-06-06):** OOS PF **1.28** (ALL, 228 trades), **1.66** (VOLATILE-only). **FIRST STRATEGY TO PASS the 1.15 OOS promotion gate.** Now live as v1.1.1 on NIFTY100 (OOS PF **1.62**, Sharpe **1.80**). See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 7-8 and [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for full results.
 
 **What:** Dedicated strategy for stocks that gap >1% on open with >2x average
 volume. Enter in gap direction within first 15 min, target 50-100% of gap
 continuation.
 
-**Why it might work:** Our ORB-15 was PF 0.97 — the closest any strategy came
-to breakeven. Gap-and-go is the same family but adds a **volume filter** that
-should filter out false breakouts. Academic evidence (Caginalp & Laurent 1998)
-supports gap follow-through when accompanied by volume.
-
-**How to integrate:**
-- Regime-routed: only active on TREND + VOLATILE days (skip RANGE)
-- Reuses existing gap-analysis indicator (+1 score today) but makes it primary
-- Volume filter: first-15-min volume > 2x same-period 20-day average
-- SL: below gap candle low (for BUY gaps)
-- Target: 50-100% of gap size beyond the open
-
-**Effort:** Medium — can reuse existing candle data + regime labels.
-
-**Backtest feasibility:** Fully backtestable with existing 15-min data.
-
-**Expected impact:** Moderate — ORB-15 was 0.97 so this COULD cross 1.0 with a
-better filter. But even 1.0 is below the 1.15 gate.
+**Why it worked:** Volume qualification filters false breakouts. v1.1.0 added
+gap-hold 0.3% check + score-contradiction block, lifting PF 1.37→1.55. v1.1.1
+expanded to NIFTY100 for better candidate quality (PF 1.55→1.62).
 
 ---
 
-### A.3 Cross-Sectional Momentum (Rank-Based Entry)
+### A.3 Cross-Sectional Momentum (Rank-Based Entry) — ❌ TESTED → FAIL
+
+> **Result (Phase 7.1, 2026-06-06):** OOS PF **0.81** (ALL, 474 trades). VOLATILE-only PF 1.22 (100 trades) but thin sample. See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 7.1.
 
 **What:** Instead of scoring each stock independently, RANK all NIFTY50 stocks
-by first-15-min return. Buy the top 2 strongest. This exploits relative
-strength, not absolute score.
+by first-15-min return. Buy the top 2 strongest.
 
-**Why it might work:** Our current scorer evaluates each stock in isolation.
-Cross-sectional momentum (Jegadeesh & Titman) shows that relative outperformers
-persist for 1-3 hours intraday. The stock that's #1 at 9:30 has elevated
-probability of staying strong until 12:00.
-
-**How to integrate:**
-- At 9:30, compute first-15-min return for all 50 stocks
-- Rank by return, pick top 2 (BUY) or bottom 2 (SELL)
-- No technical scoring needed — pure momentum ranking
-- Still apply safety gates (spread, impact cost, circuit, budget)
-
-**Effort:** Low — simple to code, fully backtestable.
-
-**Backtest feasibility:** Fully backtestable with existing 15-min data.
-
-**Expected impact:** Unknown — this is a fundamentally different signal family.
-Worth backtesting as it has zero overlap with current approach.
+**Why it failed:** Relative outperformance doesn't persist intraday after costs on NSE. SELL-side also negative (PF 0.88).
 
 ---
 
-### A.4 NIFTY Futures (Single Instrument, Zero STT)
+### A.4 NIFTY Futures (Single Instrument, Zero STT) — ❌ TESTED → FAIL
 
-**What:** Instead of trading 50 individual stocks, trade NIFTY50 futures only.
+> **Result (Phase 9.3, 2026-06-12):** OOS PF **0.25** (13 trades). Index gaps are tiny (0.2-0.5%) and don't follow through — institutional arbitrage absorbs gaps instantly. Even with zero STT (futures cost model), no edge. See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 9.3.
 
-**Why it might work:**
-- **Zero STT** for intraday futures (CTT is 0.01% vs equity STT 0.025%/side)
-- Single instrument eliminates stock-specific risk, sector analysis, spread
-  concerns across 50+ symbols
-- Our NIFTY trend signal is already built and working
-- Much lower total cost per round-trip
+**What:** Trade NIFTY50 futures instead of individual stocks.
 
-**How to integrate:**
-- Reuse NIFTY trend signal from scanner (already tracking NIFTY ADX, EMA,
-  direction)
-- Add futures product type (NRML/MIS) to ZerodhaClient
-- Single instrument means much simpler monitoring loop
-- Same regime gate applies (VOLATILE-only or skip-RANGE)
-
-**Effort:** Medium — needs futures support in Zerodha client + separate
-backtest on NIFTY futures data.
-
-**Backtest feasibility:** Need NIFTY futures historical data (available free
-from Zerodha API).
-
-**Expected impact:** Moderate-High — cost reduction alone could flip PF from
-0.82 → potentially above 1.0. The question is whether the NIFTY trend signal
-has enough edge.
+**Why it failed:** The index is too efficient. NIFTY doesn't produce the 1-2% gaps with volume conviction that individual stocks do. Cost reduction alone cannot rescue a signal that doesn't exist.
 
 ---
 
@@ -147,27 +100,13 @@ exhaustion points rather than arbitrary RSI levels.
 
 ---
 
-### A.6 Previous Day High/Low Breakout
+### A.6 Previous Day High/Low Breakout — ❌ TESTED → FAIL
 
-**What:** Dedicated strategy for breakout of previous day's high or low level.
-One of the oldest and most robust intraday signals globally.
+> **Result (Phase 7.3, 2026-06-06):** OOS PF **0.87** (ALL, 472 trades). VOLATILE-only PF 1.18 (98 trades, marginal). TREND-only is worst at PF 0.73 — breakouts into trend days are false breakouts. See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 7.3.
 
-**How to integrate:**
-- Our scanner already tracks "Prev-Day S&R" (±0.5 to ±1 score) but as one of
-  14 factors
-- Make it primary: BUY when price breaks above yesterday's high with volume
-  confirmation
-- SELL when price breaks below yesterday's low
-- ADX >25 filter (breakout needs trend strength — our audit showed ADX flat
-  with K1=2, may help here)
-- Regime-routed: TREND days only
+**What:** Breakout of previous day's high/low with ADX≥25 + volume≥1.5× filters.
 
-**Effort:** Low — simple to code, fully backtestable.
-
-**Backtest feasibility:** Fully backtestable with existing daily + 15-min data.
-
-**Expected impact:** Moderate — well-documented edge in academic literature but
-may be arbitraged in NIFTY50 liquid names.
+**Why it failed:** Well-arbitraged in NIFTY50 liquid names. Breakout signals produce false breakouts into established trends (TREND-only PF 0.73).
 
 ---
 
@@ -220,40 +159,49 @@ ML won't rescue it.
 
 ### A.9 Intraday Viability Assessment
 
-**Honest verdict after Phases 0-6:**
+**Honest verdict after Phases 0-9 (2026-06-12):**
 
-| What We Tried | Result |
-|---|---|
-| 62-gate backtest optimization | PF 0.71 → 0.86 (still <1.0) |
-| Walk-forward OOS validation | PF 0.82 (negative expectancy) |
-| Regime classification + routing | VOLATILE-only PF 1.10 (best, <1.15 gate) |
-| 5-min timeframe | PF 0.70 (worse) |
-| ORB-5 | PF 0.66 (overfit collapse) |
-| VWAP trailing stop | PF 0.78 (clips winners) |
-| Intraday pairs trading | PF 0.48-0.69 (horizon mismatch) |
-| VWAP mean-reversion | PF 0.80 (doesn't work intraday NSE) |
-| EMA pullback | PF 0.65 (edge doesn't survive costs) |
-| ORB-15 breakout | PF 0.97 (closest, still not enough) |
+| What We Tried | Result | Phase |
+|---|---|---|
+| 62-gate backtest optimization | PF 0.71 → 0.86 (still <1.0) | Audit |
+| Walk-forward OOS validation | PF 0.82 (negative expectancy) | 0 |
+| Regime classification + routing | VOLATILE-only PF 1.10 (best, <1.15 gate) | 1 |
+| 5-min timeframe | PF 0.70 (worse) | 2 |
+| ORB-5 | PF 0.66 (overfit collapse) | 2 |
+| VWAP trailing stop | PF 0.78 (clips winners) | 3 |
+| Intraday pairs trading | PF 0.48-0.69 (horizon mismatch) | 6 |
+| VWAP mean-reversion | PF 0.80 (doesn't work intraday NSE) | Pre-audit |
+| EMA pullback | PF 0.65 (edge doesn't survive costs) | Pre-audit |
+| ORB-15 breakout | PF 0.97 (closest, still not enough) | Pre-audit |
+| Cross-sectional momentum | PF 0.81 (ALL), 1.22 (VOL thin) | 7 |
+| **Gap-and-Go** | **PF 1.62 (NIFTY100) — PASS** | **7-8** |
+| Previous-day breakout | PF 0.87 (ALL), 1.18 (VOL marginal) | 7 |
+| First Hour Range Breakout | PF 0.81 | 9 |
+| Opening Candle Momentum | PF 0.87 (ALL), 1.15 (VOL thin) | 9 |
+| NIFTY Index Momentum | PF 0.25 (13 trades) | 9 |
+| Sector Rotation Intraday | PF 0.78 (472 trades) | 9 |
+| Options directional buying | PF 0.42-0.64 | Options v1 |
+| Budget scaling (Rs.1L) | Saves only 0.024%/trade — signal problem, not cost | 9 |
 
 **Is intraday equity conclusively dead?**
 
-Not 100% — but the remaining levers (A.1-A.8 above) are increasingly
-speculative. The strongest untested ideas are:
+**For all strategies except Gap-and-Go — yes.** 17 strategies/variants tested
+across 9 phases. Only Gap-and-Go clears the OOS 1.15 gate. The structural
+NSE cost floor (0.05-0.10% round-trip) kills every strategy with <0.10%
+expectancy, and budget scaling doesn't help (signal problem, not cost).
 
-1. **OFI (A.1)** — but requires paid data and can't be backtested historically
-2. **NIFTY Futures (A.4)** — cost reduction alone may flip the PF
-3. **Cross-sectional momentum (A.3)** — different signal family, quick to test
-4. **Gap-and-Go (A.2)** — ORB-15 was 0.97, this could push it over
+**Remaining untested ideas (diminishing returns):**
 
-**The structural problem remains:** Equity MIS on NSE has ~0.05-0.10%
-round-trip costs. At Rs.15K/trade, that's Rs.8-15 per trade. With typical
-winner size of Rs.150-300, costs eat 5-10% of every winner. This cost floor is
-fixed by regulation and cannot be optimized away.
+1. **OFI (A.1)** — requires paid data, can't backtest historically — LOW priority
+2. **RSI Divergence (A.5)** — mean-reversion variant, untested — LOW priority
+3. **Volatility Squeeze (A.7)** — BB inside KC, untested — LOW priority
+4. **ML Classifier (A.8)** — only 970 samples, overfitting risk — LOW priority
 
-**Recommendation:** Backtest A.2 (gap-and-go), A.3 (cross-sectional), and A.6
-(prev-day breakout) — they're quick, use existing data, and test genuinely
-different signals. If all three fail OOS, the intraday equity tool is
-conclusively dead at this capital level and cost structure.
+**Recommendation:** Gap-and-Go v1.1.1 is the system. Continue dry-run
+validation. The remaining A.x ideas have low expected value. Research effort
+is better spent on **entirely different domains** (options selling,
+swing/delivery, or non-equity asset classes) rather than more intraday equity
+variants on NSE.
 
 ---
 
