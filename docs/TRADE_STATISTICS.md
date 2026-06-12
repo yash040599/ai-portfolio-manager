@@ -219,6 +219,8 @@ for improvement ideas.
 | Intraday equity | ORB-15 breakout | OOS | ~200 | 0.97 | -0.15 | ❌ Close but fail |
 | Intraday equity | VWAP mean-reversion | OOS | ~300 | 0.80 | -0.80 | ❌ Abandoned |
 | Intraday equity | EMA pullback | OOS | ~250 | 0.65 | -2.10 | ❌ Abandoned |
+| Intraday equity | First Hour Range Breakout | OOS | 466 | 0.81 | -1.67 | ❌ FAIL (Phase 9.1) |
+| Intraday equity | Opening Candle Momentum | OOS | 443 | 0.87 | -1.16 | ❌ FAIL (Phase 9.4) |
 | **Options** | Directional buying v1.0 | FULL | 147 | 0.42 | -6.37 | ❌ FAIL |
 | Options | Directional buying v1.0 | OOS | 60 | 0.64 | -3.24 | ❌ FAIL |
 | Options | VOLATILE-only subset | FULL | 36 | 0.77 | — | ❌ Promising but fail |
@@ -226,5 +228,6 @@ for improvement ideas.
 
 **Key takeaways:**
 1. Only Gap-and-Go v1.1.1 passes the 1.15 PF gate — currently in dry-run
-2. Options directional buying needs a better signal or pivot to selling
-3. Regime routing is the strongest reusable asset across all modes
+2. FHRB (PF 0.81) and OCM (PF 0.87) both failed Phase 9 testing
+3. Options directional buying needs a better signal or pivot to selling
+4. Regime routing is the strongest reusable asset across all modes
