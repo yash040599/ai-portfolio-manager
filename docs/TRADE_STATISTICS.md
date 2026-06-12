@@ -231,6 +231,7 @@ for improvement ideas.
 **Key takeaways:**
 1. Only Gap-and-Go v1.1.1 passes the 1.15 PF gate — currently in dry-run
 2. Phase 9 tested 4 new strategies (FHRB, OCM, NIFTY Futures, Sector Rotation) — all FAIL
-3. Intraday equity search space on NSE is largely exhausted at Rs.50K/cost level
-4. Options directional buying needs a better signal or pivot to selling
-5. Regime routing is the strongest reusable asset across all modes
+3. Budget scaling Rs.50K→Rs.1L saves only 0.024%/trade — doesn't rescue any failed strategy
+4. Intraday equity search space on NSE is largely exhausted at Rs.50K/cost level
+5. Options directional buying needs a better signal or pivot to selling
+6. Regime routing is the strongest reusable asset across all modes
