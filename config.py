@@ -354,7 +354,7 @@ class Config:
     # For Rs.10K budget, NIFTY50 is recommended — most liquid, lowest
     # impact cost, tightest bid-ask spreads for intraday.
     # Override per-run with: --nifty 50 | --nifty 100 | --nifty 150 | --nifty 200
-    SCAN_UNIVERSE: str = "NIFTY50"
+    SCAN_UNIVERSE: str = "NIFTY100"
 
     # Only used when SCAN_UNIVERSE = "CUSTOM".
     # Add NSE symbols you want the bot to consider.

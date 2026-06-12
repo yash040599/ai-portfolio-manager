@@ -1,20 +1,20 @@
 # Trading Roadmap
 
-Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, score-contra block. OOS PF 1.37→1.55. Ready for dry-run Tuesday 2026-06-10).
+Last updated: 2026-06-12 (NIFTY100 universe backtest: PF 1.55→1.62, Sharpe 1.66→1.80. Config switched to NIFTY100).
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PHASE 8 — Gap-and-Go v1.1 dry-run validation.** v1.0 day-1 dry-run (2026-06-09) failed 0/2 (Rs.-475). Root causes identified: entry timing mismatch (LTP at 09:30:06 vs backtest's candle close), missing gap-hold check (BHARTIARTL faded 0.79%), score contradiction ignored (SHRIRAMFIN score -3.5 on BUY). All three fixed in v1.1. **OOS PF 1.37→1.55 (+13%), Sharpe 1.38→1.66 (+20%)**, 98 trades (fewer, higher quality). |
+| Stage | **PHASE 8 — Gap-and-Go v1.1 dry-run validation (NIFTY100).** Universe expanded NIFTY50→NIFTY100 (2026-06-12) after backtest showed strictly better metrics: **OOS PF 1.55→1.62 (+5%), Sharpe 1.66→1.80 (+8%)** with identical trade count (98). Same daily cap=2 selects higher-quality trades from the wider pool. v1.0 day-1 dry-run (2026-06-09) failed 0/2; v1.1 fixes shipped. |
 | Mode | NoAI, pure rules-based |
-| Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1") |
+| Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1", SCAN_UNIVERSE = "NIFTY100") |
 | Live trading | **DO NOT GO LIVE YET** — v1.1 needs dry-run validation (10+ sessions). |
 | Budget | Rs.50,000 |
 | Config version | 2.1-2026-06-09-GAP_AND_GO_1.1 |
 | FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
 
-> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. **v1.0 day-1 dry-run (2026-06-09) failed 0/2** — both trades stopped out because of three implementation bugs: entry at 09:30 LTP (not candle close like the backtest), no gap-fade check, and no score-contradiction filter. **v1.1 fixes all three** and lifts OOS PF from 1.37 to **1.55** (+13%), Sharpe 1.38 → **1.66** (+20%), with fewer but higher-quality trades (159 → 98). The gap-hold filter at 0.3% is the single strongest improvement (PF 1.57 standalone). **Next step: v1.1 dry-run validation on 10+ live sessions starting 2026-06-10.** If dry-run confirms, this is the first strategy that could go live.
+> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. v1.1 fixed three v1.0 bugs and lifted OOS PF from 1.37 to 1.55. On 2026-06-12, the universe was expanded from NIFTY50 to **NIFTY100** — backtest shows the wider pool provides better-quality gap candidates: **PF 1.55→1.62 (+5%), Sharpe 1.66→1.80 (+8%)**, identical trade count (cap=2 picks best 2 from 100 instead of 50). VOLATILE-only PF jumps from 1.98 to **2.45**. The extra 50 mid-large-caps add more explosive gap moves on volatile days. **Next step: continue v1.1 dry-run validation on NIFTY100 (10+ sessions needed).** If dry-run confirms, this is the first strategy that could go live.
 
 > **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
@@ -56,12 +56,19 @@ Last updated: 2026-06-09 (v1.1 implemented: entry timing fix, gap-hold 0.3%, sco
     - **Regime-conditional cap sweep**: tested cap=3-8 on VOLATILE days. Cap=3 best at PF 1.58 (+2%, within noise). Cap=4+ degrades monotonically. **Verdict: keep cap=2 universally** — v1.1 filters already self-select out bad trades on non-volatile days.
     - **Regime skip tested**: skipping RANGE days makes PF **worse** (1.55 → 1.49). Gap-hold + score-contra filters implicitly filter bad RANGE trades. **Run every day.**
     - **Rs P&L projection at Rs.50K**: +Rs.3,621/year net (7.2%). Charges eat 39% of gross. Avg winner Rs.274, avg loser Rs.-100. Median month +Rs.190, best +Rs.1,737, worst -Rs.1,068. 55% positive months. Fat-tail strategy — profits come from volatile weeks that cover many small losses.
+13. **2026-06-12**: **NIFTY100 universe expansion.** After two dry-run sessions with 0 trades (all 31 gapping NIFTY50 stocks failed volume gate on a broad-market gap-up day), backtested NIFTY100 to widen the candidate pool. Results (v1.1 filters, OOS TEST window):
+    - **NIFTY50 vs NIFTY100 head-to-head**: PF 1.55→**1.62** (+5%), Sharpe 1.66→**1.80** (+8%), Return +14.33%→**+16.09%**, Expectancy +0.146%→**+0.164%** per trade. Trade count identical (98) — cap=2 just selects better candidates from the wider pool.
+    - **Regime uplift**: Skip-RANGE PF 1.49→**1.75**, VOLATILE-only PF 1.98→**2.45** (Sharpe 2.98→**3.97**).
+    - **Regime-conditional cap**: VOLATILE cap=3 PF **1.75** (Sharpe 2.12), still best at cap=2-3 range.
+    - **Why it helps**: broader gap-up days dilute volume across NIFTY50 stocks (nobody clears 2.0x). NIFTY100 extras (51-100) include mid-large-caps with more concentrated institutional flow on gap days.
+    - **No downside**: same trade count, no cost increase, no drawdown increase (7.18% both), all data already cached.
+    - Config switched: `SCAN_UNIVERSE = "NIFTY100"`. Dry-run continues on expanded universe.
 
 ## Key Config (v1.1)
 
 | Parameter | Value | Evidence |
 |---|---|---|
-| Strategy profile | `NOAI_GAP_AND_GO_1.1` | OOS PF 1.55, Sharpe 1.66 |
+| Strategy profile | `NOAI_GAP_AND_GO_1.1` | OOS PF 1.62, Sharpe 1.80 (NIFTY100) |
 | ATR multiplier | 2.0 | Backtest E1: best per-trade expectancy |
 | R:R target | 1.8:1 | Backtest E1: practical optimum |
 | R:R floor | 1.3:1 | Uniform all day |

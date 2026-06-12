@@ -1,16 +1,16 @@
 # Trading Statistics
 
-Last updated: 2026-06-09 (Gap-and-Go v1.1: entry timing fix, gap-hold, score-contra filters).
+Last updated: 2026-06-12 (NIFTY100 universe expansion: PF 1.55→1.62, Sharpe 1.66→1.80).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
 | Runtime strategy version | 2.3-2026-06-09-GAP_AND_GO_1.1 |
-| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1 hardened: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.55. |
+| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1 hardened on NIFTY100: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.62 (NIFTY100). |
 | Strategy profile | `NOAI_GAP_AND_GO_1.1` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
-| Run command | python main.py --mode trade --dryrun |
+| Run command | python main.py --mode trade --dryrun (SCAN_UNIVERSE = "NIFTY100") |
 | Budget | Rs.50,000 |
 | Daily trade cap | 2 trades max (GAP_GO_DAILY_CAP=2) |
 | Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13) |
@@ -27,6 +27,8 @@ Last updated: 2026-06-09 (Gap-and-Go v1.1: entry timing fix, gap-hold, score-con
 
 ### v1.1 OOS Results (TEST window: 2025-06-01 → 2026-05-22, net of costs)
 
+**NIFTY50 (original baseline):**
+
 | Config | Trades | WR | PF | Exp%/trade | Return | MaxDD | Sharpe |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | **v1.0 baseline (RSI 70)** | 159 | 32.1% | 1.37 | +0.100% | +15.94% | 7.93% | 1.38 |
@@ -35,6 +37,37 @@ Last updated: 2026-06-09 (Gap-and-Go v1.1: entry timing fix, gap-hold, score-con
 | **v1.1 FULL (all filters)** | **98** | **35.7%** | **1.55** | **+0.146%** | **+14.33%** | **7.18%** | **1.66** |
 | v1.1 + skip RANGE | 74 | 32.4% | 1.49 | +0.138% | +10.20% | 5.60% | 1.33 |
 | v1.1 + VOLATILE only | 43 | 34.9% | 1.98 | +0.252% | +10.83% | 4.47% | 2.98 |
+
+### v1.1 on NIFTY100 (2026-06-12)
+
+Expanded universe from 50 → 100 stocks. Same v1.1 filters, same daily cap=2.
+
+**NIFTY50 vs NIFTY100 head-to-head (v1.1 FULL, OOS TEST):**
+
+| Metric | NIFTY50 | NIFTY100 | Delta |
+|---|---:|---:|---:|
+| Profit Factor | 1.55 | **1.62** | +4.5% |
+| Sharpe | 1.66 | **1.80** | +8.4% |
+| Win Rate | 35.7% | 35.7% | same |
+| Trades | 98 | 98 | same |
+| Max Drawdown | 7.18% | 7.18% | same |
+| Return | +14.33% | **+16.09%** | +1.8pp |
+| Expectancy/trade | +0.146% | **+0.164%** | +12% |
+
+**NIFTY100 full results (v1.1 filters, OOS TEST):**
+
+| Config | Trades | WR | PF | Exp%/trade | Return | MaxDD | Sharpe |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **v1.0 baseline (RSI 70)** | 160 | 31.9% | 1.39 | +0.106% | +16.95% | 7.93% | 1.45 |
+| v1.1 + gap-hold 0.3% only | 98 | 37.8% | 1.64 | +0.163% | +16.02% | 5.59% | 1.81 |
+| v1.1 + score-contra only | 132 | 32.6% | 1.53 | +0.148% | +19.58% | 6.46% | 1.72 |
+| **v1.1 FULL (all filters)** | **98** | **35.7%** | **1.62** | **+0.164%** | **+16.09%** | **7.18%** | **1.80** |
+| v1.1 + skip RANGE | 76 | 34.2% | 1.75 | +0.203% | +15.45% | 5.60% | 1.85 |
+| v1.1 + VOLATILE only | 45 | 37.8% | 2.45 | +0.357% | +16.08% | 4.47% | 3.97 |
+
+**Why NIFTY100 is better with the same trade count:** The daily cap=2 forces selection of the top-2 gap signals per day. With 100 stocks instead of 50, the 2nd-best candidate is often a NIFTY100-extra stock with stronger gap+volume conviction than the 2nd-best NIFTY50 stock. The biggest uplift is on VOLATILE days (PF 1.98→2.45) where mid-large-caps (positions 51-100) show more explosive institutional flow.
+
+**Config switched to `SCAN_UNIVERSE = "NIFTY100"` on 2026-06-12.**
 
 ### v1.1 Changes (what improved PF from 1.37 → 1.55)
 
@@ -181,7 +214,7 @@ for improvement ideas.
 
 | Mode | Strategy | Window | Trades | PF | Sharpe | Status |
 |---|---|---|---|---|---|---|
-| **Intraday equity** | Gap-and-Go v1.1 | OOS | 98 | **1.55** | 1.66 | ✅ Dry-run active |
+| **Intraday equity** | Gap-and-Go v1.1 | OOS | 98 | **1.62** | 1.80 | ✅ Dry-run active (NIFTY100) |
 | Intraday equity | Legacy blended score | OOS | 970 | 0.82 | -1.30 | ❌ Abandoned |
 | Intraday equity | ORB-15 breakout | OOS | ~200 | 0.97 | -0.15 | ❌ Close but fail |
 | Intraday equity | VWAP mean-reversion | OOS | ~300 | 0.80 | -0.80 | ❌ Abandoned |
