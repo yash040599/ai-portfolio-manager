@@ -625,7 +625,8 @@ python main.py --mode trade --dryrun
 ---
 
 ### Phase 9: Strategy Diversification Research (parallel to Gap-and-Go dry-run)
-**Goal**: Research and backtest new strategies to diversify beyond Gap-and-Go. The system currently depends on a single strategy that fires 0-2 trades/day. On broad-market gap-up days (like 2026-06-12), no trades fire at all. Multiple uncorrelated strategies increase trade frequency and reduce variance.
+**Goal**: Research and backtest new **intraday equity** strategies to diversify beyond Gap-and-Go. The system currently depends on a single strategy that fires 0-2 trades/day. On broad-market gap-up days (like 2026-06-12), no trades fire at all. Multiple uncorrelated strategies increase trade frequency and reduce variance.
+**Scope**: Intraday equity (MIS) only. Options strategies → [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md). Swing/delivery strategies → [SWING_ROADMAP.md](SWING_ROADMAP.md).
 **Status**: RESEARCH — collecting candidates. Gap-and-Go dry-run continues independently.
 **Trigger**: Can start anytime — does not block or depend on Gap-and-Go validation.
 
@@ -653,36 +654,34 @@ python main.py --mode trade --dryrun
 | A.5 | RSI Divergence (not threshold) | Medium | Existing data | LOW |
 | A.7 | Volatility Squeeze (BB inside KC) | Medium | Existing data | LOW |
 | A.8 | ML Entry Classifier (XGBoost) | Medium | Existing data | LOW — only 970 samples |
-| B.2 | Expiry-day theta selling | High | Options chain needed | MEDIUM |
-| B.3 | Volatility-based options | High | Options chain needed | LOW |
+
+> Options ideas (B.2 expiry-day theta selling, B.3 volatility-based options) moved to [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
 
 #### New strategies to research and backtest (2026-06-12)
 
-Sourced from web research, TradingQnA (Zerodha community), Zerodha Varsity, and Indian algo trading forums. Prioritized by: (1) backtestability with existing data, (2) different signal family from Gap-and-Go, (3) evidence of working on Indian markets.
+Sourced from web research, TradingQnA (Zerodha community), Zerodha Varsity, and Indian algo trading forums. Prioritized by: (1) backtestability with existing data, (2) different signal family from Gap-and-Go, (3) evidence of working on Indian markets. **Intraday equity (MIS) only.**
 
 | # | Strategy | Signal family | Why it might work on NSE | Data needed | Effort | Priority |
 |---|---|---|---|---|---|---|
 | **C.1** | **First Hour Range Breakout (FHRB)** | Breakout | Trade the breakout of the first 1-hour range (9:15-10:15). Unlike ORB-15 (PF 0.97), the 1-hour range is wider and filters more noise. Well-documented in India — Zerodha Varsity and multiple Indian algo traders report success. Volume confirmation + ADX>25 filter. Only on TREND/VOLATILE days. | Existing 15-min data | Low | **HIGH** |
 | **C.2** | **NIFTY/BANKNIFTY Futures Momentum** | Index momentum | Trade NIFTY futures instead of 50 individual stocks. Zero STT (only CTT 0.01%), single instrument, our NIFTY trend signal already works. Cost reduction alone may flip PF. India's most liquid instrument. | NIFTY futures data (free via Zerodha API) | Medium | **HIGH** |
-| **C.3** | **Expiry Day Short Straddle (Iron Condor)** | Theta decay | Sell OTM NIFTY strangles on weekly expiry day (Thursday). Theta crush is extreme — OTM options lose 80%+ value on expiry day. Our regime classifier identifies RANGE days (39% of days) which are perfect for premium selling. Well-documented edge in India — the variance risk premium is real. Iron condor caps max loss. | Options chain data (Zerodha API) | High | **HIGH** |
 | **C.4** | **Intraday VWAP Reversion on Earnings Gap** | Mean reversion | Stocks that gap on earnings/results tend to revert toward VWAP by midday. Filter: gap >3% on result day + volume >3x. SELL gaps that overshoot, BUY gaps that undershoot. Different from Gap-and-Go (which trades WITH the gap). Catches the "fade" that our gap-hold filter rejects. | Existing data + earnings calendar | Medium | **MEDIUM** |
 | **C.5** | **Sector Rotation Intraday** | Relative strength | Track which NIFTY sector index (Bank, IT, Pharma, Metal, etc.) is leading in the first 30 min. Buy top sector's strongest stock, sell weakest sector's weakest stock. Captures institutional sector flows. Different from Gap-and-Go (individual stock gaps) and cross-sectional momentum (pure return ranking). | Sector index data (free via Zerodha) | Medium | **MEDIUM** |
 | **C.6** | **Opening Auction Imbalance** | Microstructure | NSE pre-open auction (9:00-9:08) reveals demand/supply imbalance. Stocks with large buy-side imbalance at auction tend to run in the first 15 min. This is "poor man's order flow" — free via pre-open data we already collect. | Existing pre-open data | Low | **MEDIUM** |
-| **C.7** | **Calendar Spread on NIFTY Futures** | Term structure | Buy far-month NIFTY future, sell near-month. Market-neutral. Profits from term structure mean-reversion. Zerodha Varsity Module 10 covers this. Defined risk, low margin. | NIFTY futures data (multiple expiries) | Medium | **LOW** |
-| **C.8** | **Momentum Portfolio Rebalance (Monthly)** | Momentum | Not intraday — monthly rebalance of top-performing stocks from NIFTY200. Zerodha Varsity Module 10 Chapter 16 shows 20%+ CAGR backtested on Indian markets. Rank by 6-12 month returns, buy top 15-20, hold 1 month, repeat. Our swing mode could implement this. | Existing daily data | Low | **LOW** |
+
+> C.3 (Expiry Day Iron Condor), C.7 (Calendar Spread) moved to [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
+> C.8 (Monthly Momentum Portfolio) moved to [SWING_ROADMAP.md](SWING_ROADMAP.md).
 
 #### Phase 9 execution plan
 
 | Step | Action | Status |
 |---|---|---|
-| 9.1 | **Backtest C.1 (FHRB)** — first hour range breakout with volume + ADX filter, walk-forward OOS. Uses existing 15-min data. | TODO |
-| 9.2 | **Fetch NIFTY futures data** — pull 2yr of NIFTY futures 15-min candles from Zerodha. Needed for C.2 and C.7. | TODO |
+| 9.1 | **Backtest C.1 (FHRB)** — first hour range breakout with volume + ADX filter, walk-forward OOS. Uses existing 15-min data. | **DONE — FAIL. OOS PF 0.81.** All param combos (vol 1-3x, RR 1.2-2.0, ADX 0-30, sq-off 13-15) stay below 1.0. Skip-RANGE PF 0.95, VOLATILE-only PF 0.89. The first-hour range on NIFTY100 stocks is too wide — breakout entries get stopped out frequently. Worse than ORB-15 (PF 0.97). |
+| 9.2 | **Fetch NIFTY futures data** — pull 2yr of NIFTY futures 15-min candles from Zerodha. Needed for C.2. | TODO |
 | 9.3 | **Backtest C.2 (NIFTY Futures Momentum)** — apply our existing NIFTY trend signal to futures. Measure cost savings vs equity. | TODO |
 | 9.4 | **Backtest C.6 (Auction Imbalance)** — use pre-open data we already collect. Quick to test. | TODO |
-| 9.5 | **Fetch options chain data** — needed for C.3 (theta selling). Build historical options premium DB. | TODO |
-| 9.6 | **Backtest C.3 (Expiry Day Iron Condor)** — regime-gated (RANGE days only). | TODO |
-| 9.7 | **Backtest C.4 (Earnings Gap Reversion)** — needs earnings calendar. | TODO |
-| 9.8 | **Backtest C.5 (Sector Rotation)** — needs sector index data from Zerodha. | TODO |
-| 9.9 | **Verdict** — rank all strategies by OOS PF. Any that clear 1.15 gate → dry-run. Multiple strategies can run simultaneously on different signals. | TODO |
+| 9.5 | **Backtest C.4 (Earnings Gap Reversion)** — needs earnings calendar. | TODO |
+| 9.6 | **Backtest C.5 (Sector Rotation)** — needs sector index data from Zerodha. | TODO |
+| 9.7 | **Verdict** — rank all strategies by OOS PF. Any that clear 1.15 gate → dry-run. Multiple strategies can run simultaneously on different signals. | TODO |
 
-**Exit criteria**: At least 3 strategies backtested OOS. Any with PF ≥ 1.15 proceed to dry-run alongside Gap-and-Go.
+**Exit criteria**: At least 3 intraday equity strategies backtested OOS. Any with PF ≥ 1.15 proceed to dry-run alongside Gap-and-Go.

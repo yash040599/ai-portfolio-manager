@@ -374,3 +374,14 @@ logged with positive PF.
 | O-4 (dry-run mode) | After O-3 passes gate | Backtested strategy |
 | O-5 (live minimum) | After O-4 passes gate | 30+ dry-run trades |
 | O-6 (selling strategies) | After O-5 Stage 2 | Multi-leg order support |
+
+---
+
+## New Strategy Candidates (from Phase 9 research, 2026-06-12)
+
+Moved here from TRADE_ROADMAP — these are options-mode strategies, not intraday equity.
+
+| # | Strategy | Signal family | Why it might work on NSE | Data needed | Effort | Priority |
+|---|---|---|---|---|---|---|
+| **C.3** | **Expiry Day Short Straddle (Iron Condor)** | Theta decay | Sell OTM NIFTY strangles on weekly expiry day (Thursday). Theta crush is extreme — OTM options lose 80%+ value on expiry day. Our regime classifier identifies RANGE days (39% of days) which are perfect for premium selling. Well-documented edge in India — the variance risk premium is real. Iron condor caps max loss. | Options chain data (Zerodha API) | High | **HIGH** |
+| **C.7** | **Calendar Spread on NIFTY Futures** | Term structure | Buy far-month NIFTY future, sell near-month. Market-neutral. Profits from term structure mean-reversion. Zerodha Varsity Module 10 covers this. Defined risk, low margin. | NIFTY futures data (multiple expiries) | Medium | **LOW** |

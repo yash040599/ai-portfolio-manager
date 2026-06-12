@@ -390,3 +390,13 @@ manual Done / Skip confirmation, open swing book with live prices
 (5 s polling), per-stock AI analyse button, single-stock search
 box, top-right error-toast surface, and realised P&L tracking with
 delivery charges.
+
+---
+
+## New Strategy Candidate (from Phase 9 research, 2026-06-12)
+
+Moved here from TRADE_ROADMAP — this is a swing/delivery strategy, not intraday.
+
+| # | Strategy | Signal family | Why it might work | Data needed | Effort | Priority |
+|---|---|---|---|---|---|---|
+| **C.8** | **Momentum Portfolio Rebalance (Monthly)** | Momentum | Monthly rebalance of top-performing stocks from NIFTY200. Zerodha Varsity Module 10 Chapter 16 shows 20%+ CAGR backtested on Indian markets. Rank by 6-12 month returns, buy top 15-20, hold 1 month, repeat. Fits swing mode's delivery/CNC framework. | Existing daily data | Low | **MEDIUM** |
