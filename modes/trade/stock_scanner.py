@@ -2105,14 +2105,16 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         gap down = SELL).
 
         Version history:
-          1.0: Original. OOS PF 1.28 (ALL), 1.37 (RSI filter).
-          1.1: Entry at 09:30 candle close, gap-hold check, score
+          1.0.0: Original. OOS PF 1.28 (ALL), 1.37 (RSI filter).
+          1.1.0: Entry at 09:30 candle close, gap-hold check, score
                contradiction filter, regime filter, enhanced logging.
+          1.1.1: Universe expanded NIFTY50 → NIFTY100. OOS PF 1.62,
+               Sharpe 1.80. Same filters as 1.1.0.
 
         Returns list[dict] with standard trade plan keys.
         """
         is_v11 = version >= "1.1"
-        profile = f"NOAI_GAP_AND_GO_{version}" if version != "1.0" else "NOAI_GAP_AND_GO"
+        profile = f"NOAI_GAP_AND_GO_{version}" if version not in ("1.0", "1.0.0") else "NOAI_GAP_AND_GO"
         universe = self.get_universe()
         self.last_tape_breadth = None
         self.log.info(f"NoAI strategy profile: {profile} — gap-and-go with volume (v{version})")

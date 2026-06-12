@@ -49,8 +49,8 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
         ],
     },
     "NOAI_GAP_AND_GO": {
-        "label": "NoAI Gap-and-Go v1.0",
-        "desc": "Gap + volume alpha v1.0. Entry at 09:30 LTP, no gap-hold or score checks. OOS PF 1.37.",
+        "label": "NoAI Gap-and-Go v1.0.0",
+        "desc": "Gap + volume alpha v1.0.0. Entry at 09:30 LTP, no gap-hold or score checks. OOS PF 1.37.",
         "config_keys": [
             "SCAN_UNIVERSE",
             "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
@@ -73,8 +73,8 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
     },
 }
 
-# ── Gap-and-Go versioned meta (v1.1+) ────────────────────────────
-# Any NOAI_GAP_AND_GO_X.Y profile gets this meta + version suffix.
+# ── Gap-and-Go versioned meta (v1.1.0+) ────────────────────────────
+# Any NOAI_GAP_AND_GO_X.Y.Z profile gets this meta + version suffix.
 _GAP_GO_VERSIONED_CONFIG_KEYS = [
     "SCAN_UNIVERSE",
     "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
@@ -92,12 +92,18 @@ def _get_strategy_meta(strategy_type: str) -> dict[str, Any]:
     """Look up strategy metadata, with fallback for versioned gap-and-go profiles."""
     if strategy_type in STRATEGY_META:
         return STRATEGY_META[strategy_type]
-    # Versioned gap-and-go: NOAI_GAP_AND_GO_1.1, NOAI_GAP_AND_GO_2.0, etc.
+    # Versioned gap-and-go: NOAI_GAP_AND_GO_1.1.0, NOAI_GAP_AND_GO_1.1.1, etc.
     if strategy_type.startswith("NOAI_GAP_AND_GO_"):
         version = strategy_type.split("NOAI_GAP_AND_GO_")[-1]
+        # Build version-appropriate description
+        parts = version.split(".")
+        if len(parts) == 3 and parts[2] != "0":
+            desc = f"Gap + volume alpha v{version}. OOS PF 1.62 (v1.1.1)."
+        else:
+            desc = f"Gap + volume alpha v{version}. OOS PF 1.55 (v1.1.0)."
         return {
             "label": f"NoAI Gap-and-Go v{version}",
-            "desc": f"Gap + volume alpha v{version}. OOS PF 1.55 (v1.1).",
+            "desc": desc,
             "config_keys": _GAP_GO_VERSIONED_CONFIG_KEYS,
         }
     return {"label": strategy_type, "desc": "", "config_keys": []}

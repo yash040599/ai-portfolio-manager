@@ -4,7 +4,7 @@ A plain-English, newest-first log of how the trading strategy changed over time.
 
 ## Current Direction
 
-As of 2026-06-12, the active strategy is **Gap-and-Go v1.1** (`NOAI_GAP_AND_GO_1.1`) on **NIFTY100**. OOS PF 1.62, Sharpe 1.80. Universe expanded from NIFTY50 to NIFTY100 — backtest showed strictly better metrics (PF +5%, Sharpe +8%) with same trade count. Version scheme: `NOAI_GAP_AND_GO_X.Y` — X = strategy logic change, Y = parameter tuning.
+As of 2026-06-12, the active strategy is **Gap-and-Go v1.1.1** (`NOAI_GAP_AND_GO_1.1.1`) on **NIFTY100**. OOS PF 1.62, Sharpe 1.80. Universe expanded from NIFTY50 to NIFTY100 — backtest showed strictly better metrics (PF +5%, Sharpe +8%) with same trade count. Version scheme: `NOAI_GAP_AND_GO_X.Y.Z` — X = strategy logic change, Y = filter/safeguard changes, Z = config/parameter changes.
 
 ## What Goes Here
 
@@ -37,9 +37,9 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
-| T3.2 | Indicators | NIFTY100 universe expansion (2026-06-12): widened scan from 50 to 100 stocks. Backtest showed strictly better metrics with same trade count (cap=2 selects from wider pool): OOS PF 1.55 → 1.62 (+5%), Sharpe 1.66 → 1.80 (+8%). VOLATILE-only PF jumps 1.98 → 2.45. Mid-large-caps (positions 51-100) provide more explosive gap moves on volatile days. No cost or drawdown increase. |
-| T3.1 | Indicators | Gap-and-Go v1.1 (2026-06-09): three fixes after v1.0 day-1 dry-run failed 0/2. (1) Entry delayed to 09:45 so the 09:30 candle has closed — matches backtest entry price. (2) Gap-hold filter: reject if gap faded >0.3% from open by entry time. (3) Score-contradiction block: reject BUY when composite score is bearish (and vice versa). OOS PF 1.37 → 1.55 (+13%), WR 32.1% → 35.7%, Sharpe 1.38 → 1.66. Fewer trades (159 → 98) but higher quality. |
-| T3.0 | Indicators | Gap-and-Go v1.0 with RSI BUY ceiling (2026-06-08): first strategy to clear OOS PF 1.15 gate. Gap ≥1% + volume ≥2× + RSI <70 for BUYs. OOS PF 1.37, Sharpe 1.38. Daily cap 2, square-off 13:00, trailing disabled. |
+| T3.2 | Indicators | NIFTY100 universe expansion → v1.1.1 (2026-06-12): widened scan from 50 to 100 stocks. Backtest showed strictly better metrics with same trade count (cap=2 selects from wider pool): OOS PF 1.55 → 1.62 (+5%), Sharpe 1.66 → 1.80 (+8%). VOLATILE-only PF jumps 1.98 → 2.45. Mid-large-caps (positions 51-100) provide more explosive gap moves on volatile days. No cost or drawdown increase. Version scheme updated to X.Y.Z (X=strategy, Y=filters, Z=config). |
+| T3.1 | Indicators | Gap-and-Go v1.1.0 (2026-06-09): three fixes after v1.0.0 day-1 dry-run failed 0/2. (1) Entry delayed to 09:45 so the 09:30 candle has closed — matches backtest entry price. (2) Gap-hold filter: reject if gap faded >0.3% from open by entry time. (3) Score-contradiction block: reject BUY when composite score is bearish (and vice versa). OOS PF 1.37 → 1.55 (+13%), WR 32.1% → 35.7%, Sharpe 1.38 → 1.66. Fewer trades (159 → 98) but higher quality. |
+| T3.0 | Indicators | Gap-and-Go v1.0.0 with RSI BUY ceiling (2026-06-08): first strategy to clear OOS PF 1.15 gate. Gap ≥1% + volume ≥2× + RSI <70 for BUYs. OOS PF 1.37, Sharpe 1.38. Daily cap 2, square-off 13:00, trailing disabled. |
 | T2.1 | Infra | Chan evidence framework removed (2026-06-09): chan_daily_evidence.py, chan_page.py, and the report-writer hook deleted. Chan audit files in docs/audit/ preserved for historical reference. |
 | T2.0 | Risk | 62-gate backtest audit completed 2026-05-26: PF improved 0.71 → 0.86. Key changes: ATR 2.0, RR 1.8, K1=2 daily trade cap, 14:00 square-off, all RSI/VWAP gates disabled by evidence, signal-reversal exit enabled, consecutive-SL pause enabled. Stage renamed `BACKTEST_OPTIMIZED`. AI mode (Gemini 2.5 Flash) now selects 2 trades/day from NIFTY50. See docs/audit/ for full results. |
 | T1.7a | Risk | Simple MR research dry-runs no longer inherit legacy rolling-PF, directional-pause, or opposing-thin performance vetoes, and zero-entry scans keep collecting evidence instead of ending the session early. |

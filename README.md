@@ -87,8 +87,8 @@ foundation in flight; D24-D29 dashboard surface in flight).
 Fully automated NSE intraday loop. **NoAI is the default** (zero AI API
 calls, pure indicators); add `--ai` to put the active AI provider in the
 selection loop. Supports multiple strategy profiles via `TRADE_STRATEGY_PROFILE`
-(default: `NOAI_GAP_AND_GO_1.1` — gap-and-go with volume qualification,
-gap-hold confirmation, score-contradiction filter. OOS PF 1.55, Sharpe 1.66).
+(default: `NOAI_GAP_AND_GO_1.1.1` — gap-and-go with volume qualification,
+gap-hold confirmation, score-contradiction filter on NIFTY100. OOS PF 1.62, Sharpe 1.80).
 
 Loop, in plain English:
 

@@ -157,18 +157,21 @@ class Config:
 
     # ── Strategy Profile ─────────────────────────────────────────
     # Controls which alpha-selection logic runs in NoAI mode.
-    # Version scheme: NOAI_GAP_AND_GO_X.Y
+    # Version scheme: NOAI_GAP_AND_GO_X.Y.Z
     #   X = strategy logic change (entry timing, new filters, etc.)
-    #   Y = parameter tuning within the same logic
+    #   Y = significant safeguard/filter changes within the same logic
+    #   Z = config/parameter changes (universe, thresholds, etc.)
     #
     # NOAI_LEGACY_FULL:       blended score from all indicators
-    # NOAI_GAP_AND_GO:        alias for NOAI_GAP_AND_GO_1.0 (backward compat)
-    # NOAI_GAP_AND_GO_1.0:    original gap-and-go (OOS PF 1.28). Enters at
+    # NOAI_GAP_AND_GO:        alias for NOAI_GAP_AND_GO_1.0.0 (backward compat)
+    # NOAI_GAP_AND_GO_1.0.0:  original gap-and-go (OOS PF 1.28). Enters at
     #                         09:30 using LTP. No gap-hold or score checks.
-    # NOAI_GAP_AND_GO_1.1:    hardened gap-and-go. Entry delayed to 09:45
+    # NOAI_GAP_AND_GO_1.1.0:  hardened gap-and-go. Entry delayed to 09:45
     #                         (09:30 candle close), gap-hold confirmation,
     #                         score-contradiction filter, regime filter.
-    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO_1.1"
+    # NOAI_GAP_AND_GO_1.1.1:  universe expanded NIFTY50 → NIFTY100.
+    #                         OOS PF 1.62, Sharpe 1.80. Same filters as 1.1.0.
+    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO_1.1.1"
 
     # ── Gap-and-Go Strategy Config ───────────────────────────────
     # Shared params used by ALL gap-and-go versions (1.0, 1.1, …).
@@ -187,7 +190,7 @@ class Config:
 
     # ── Gap-and-Go 1.1 enhancements ─────────────────────────────
     # These params only apply when TRADE_STRATEGY_PROFILE contains
-    # "NOAI_GAP_AND_GO_1.1" or later. 1.0 ignores them.
+    # "NOAI_GAP_AND_GO_1.1.0" or later. 1.0.0 ignores them.
     #
     # GAP_GO_ENTRY_AFTER_CANDLE_CLOSE: wait for the 09:30 candle to
     #   close before entering (scan at 09:45 not 09:30). Aligns with
@@ -2920,7 +2923,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v2.1-2026-06-09-GAP_AND_GO_1.1"
+    STRATEGY_CONFIG_VERSION: str = "v2.2-2026-06-12-GAP_AND_GO_1.1.1"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Stage ladder (rollout doc)

@@ -1,14 +1,14 @@
 # Trading Statistics
 
-Last updated: 2026-06-12 (NIFTY100 universe expansion: PF 1.55→1.62, Sharpe 1.66→1.80).
+Last updated: 2026-06-12 (Version scheme X.Y.Z. 1.0→1.0.0, 1.1→1.1.0, 1.1.1 = NIFTY100 universe. PF 1.62, Sharpe 1.80).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.3-2026-06-09-GAP_AND_GO_1.1 |
-| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1 hardened on NIFTY100: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.62 (NIFTY100). |
-| Strategy profile | `NOAI_GAP_AND_GO_1.1` (active in config.py) |
+| Runtime strategy version | 2.3-2026-06-12-GAP_AND_GO_1.1.1 |
+| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1.1 on NIFTY100: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.62 (NIFTY100). |
+| Strategy profile | `NOAI_GAP_AND_GO_1.1.1` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun (SCAN_UNIVERSE = "NIFTY100") |
 | Budget | Rs.50,000 |
@@ -17,34 +17,34 @@ Last updated: 2026-06-12 (NIFTY100 universe expansion: PF 1.55→1.62, Sharpe 1.
 | Loser exit | 12:00 IST (auto: sq-off − 1hr) |
 | Trailing stop | DISABLED (sweep: every trail config destroys PF) |
 | RSI BUY ceiling | 70.0 (block overbought gap-up buys) |
-| Gap-hold filter | 0.3% (v1.1: reject if gap faded > 0.3% from open) |
-| Score contradiction | ENABLED (v1.1: reject when score contradicts gap direction) |
-| Entry timing | 09:45 IST (v1.1: after 09:30 candle closes, matching backtest) |
+| Gap-hold filter | 0.3% (v1.1.0+: reject if gap faded > 0.3% from open) |
+| Score contradiction | ENABLED (v1.1.0+: reject when score contradicts gap direction) |
+| Entry timing | 09:45 IST (v1.1.0+: after 09:30 candle closes, matching backtest) |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
-| Note | v1.0 dry-run on 2026-06-09 lost Rs.475 (0/2 wins). Root cause: entry timing mismatch vs backtest + missing gap-hold check. Both fixed in v1.1. |
+| Note | v1.0.0 dry-run on 2026-06-09 lost Rs.475 (0/2 wins). Root cause: entry timing mismatch vs backtest + missing gap-hold check. Both fixed in v1.1.0. |
 
-## 1. Backtest Results — Gap-and-Go v1.1 (2026-06-09)
+## 1. Backtest Results — Gap-and-Go v1.1.x (2026-06-09 → 2026-06-12)
 
-### v1.1 OOS Results (TEST window: 2025-06-01 → 2026-05-22, net of costs)
+### v1.1.0 OOS Results (TEST window: 2025-06-01 → 2026-05-22, net of costs)
 
 **NIFTY50 (original baseline):**
 
 | Config | Trades | WR | PF | Exp%/trade | Return | MaxDD | Sharpe |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| **v1.0 baseline (RSI 70)** | 159 | 32.1% | 1.37 | +0.100% | +15.94% | 7.93% | 1.38 |
-| v1.1 + gap-hold 0.3% only | 98 | 37.8% | 1.57 | +0.146% | +14.26% | 5.59% | 1.67 |
-| v1.1 + score-contra only | 131 | 32.1% | 1.44 | +0.122% | +16.02% | 6.46% | 1.46 |
-| **v1.1 FULL (all filters)** | **98** | **35.7%** | **1.55** | **+0.146%** | **+14.33%** | **7.18%** | **1.66** |
-| v1.1 + skip RANGE | 74 | 32.4% | 1.49 | +0.138% | +10.20% | 5.60% | 1.33 |
-| v1.1 + VOLATILE only | 43 | 34.9% | 1.98 | +0.252% | +10.83% | 4.47% | 2.98 |
+| **v1.0.0 baseline (RSI 70)** | 159 | 32.1% | 1.37 | +0.100% | +15.94% | 7.93% | 1.38 |
+| v1.1.0 + gap-hold 0.3% only | 98 | 37.8% | 1.57 | +0.146% | +14.26% | 5.59% | 1.67 |
+| v1.1.0 + score-contra only | 131 | 32.1% | 1.44 | +0.122% | +16.02% | 6.46% | 1.46 |
+| **v1.1.0 FULL (all filters)** | **98** | **35.7%** | **1.55** | **+0.146%** | **+14.33%** | **7.18%** | **1.66** |
+| v1.1.0 + skip RANGE | 74 | 32.4% | 1.49 | +0.138% | +10.20% | 5.60% | 1.33 |
+| v1.1.0 + VOLATILE only | 43 | 34.9% | 1.98 | +0.252% | +10.83% | 4.47% | 2.98 |
 
-### v1.1 on NIFTY100 (2026-06-12)
+### v1.1.1 on NIFTY100 (2026-06-12)
 
-Expanded universe from 50 → 100 stocks. Same v1.1 filters, same daily cap=2.
+Expanded universe from 50 → 100 stocks. Same v1.1.0 filters, same daily cap=2.
 
-**NIFTY50 vs NIFTY100 head-to-head (v1.1 FULL, OOS TEST):**
+**v1.1.0 (NIFTY50) vs v1.1.1 (NIFTY100) head-to-head (FULL filters, OOS TEST):**
 
-| Metric | NIFTY50 | NIFTY100 | Delta |
+| Metric | v1.1.0 (NIFTY50) | v1.1.1 (NIFTY100) | Delta |
 |---|---:|---:|---:|
 | Profit Factor | 1.55 | **1.62** | +4.5% |
 | Sharpe | 1.66 | **1.80** | +8.4% |
@@ -54,28 +54,28 @@ Expanded universe from 50 → 100 stocks. Same v1.1 filters, same daily cap=2.
 | Return | +14.33% | **+16.09%** | +1.8pp |
 | Expectancy/trade | +0.146% | **+0.164%** | +12% |
 
-**NIFTY100 full results (v1.1 filters, OOS TEST):**
+**v1.1.1 (NIFTY100) full results (v1.1.0 filters, OOS TEST):**
 
 | Config | Trades | WR | PF | Exp%/trade | Return | MaxDD | Sharpe |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| **v1.0 baseline (RSI 70)** | 160 | 31.9% | 1.39 | +0.106% | +16.95% | 7.93% | 1.45 |
-| v1.1 + gap-hold 0.3% only | 98 | 37.8% | 1.64 | +0.163% | +16.02% | 5.59% | 1.81 |
-| v1.1 + score-contra only | 132 | 32.6% | 1.53 | +0.148% | +19.58% | 6.46% | 1.72 |
-| **v1.1 FULL (all filters)** | **98** | **35.7%** | **1.62** | **+0.164%** | **+16.09%** | **7.18%** | **1.80** |
-| v1.1 + skip RANGE | 76 | 34.2% | 1.75 | +0.203% | +15.45% | 5.60% | 1.85 |
-| v1.1 + VOLATILE only | 45 | 37.8% | 2.45 | +0.357% | +16.08% | 4.47% | 3.97 |
+| **v1.0.0 baseline (RSI 70)** | 160 | 31.9% | 1.39 | +0.106% | +16.95% | 7.93% | 1.45 |
+| v1.1.0 + gap-hold 0.3% only | 98 | 37.8% | 1.64 | +0.163% | +16.02% | 5.59% | 1.81 |
+| v1.1.0 + score-contra only | 132 | 32.6% | 1.53 | +0.148% | +19.58% | 6.46% | 1.72 |
+| **v1.1.1 FULL (all filters)** | **98** | **35.7%** | **1.62** | **+0.164%** | **+16.09%** | **7.18%** | **1.80** |
+| v1.1.1 + skip RANGE | 76 | 34.2% | 1.75 | +0.203% | +15.45% | 5.60% | 1.85 |
+| v1.1.1 + VOLATILE only | 45 | 37.8% | 2.45 | +0.357% | +16.08% | 4.47% | 3.97 |
 
-**Why NIFTY100 is better with the same trade count:** The daily cap=2 forces selection of the top-2 gap signals per day. With 100 stocks instead of 50, the 2nd-best candidate is often a NIFTY100-extra stock with stronger gap+volume conviction than the 2nd-best NIFTY50 stock. The biggest uplift is on VOLATILE days (PF 1.98→2.45) where mid-large-caps (positions 51-100) show more explosive institutional flow.
+**Why v1.1.1 (NIFTY100) is better with the same trade count:** The daily cap=2 forces selection of the top-2 gap signals per day. With 100 stocks instead of 50, the 2nd-best candidate is often a NIFTY100-extra stock with stronger gap+volume conviction than the 2nd-best NIFTY50 stock. The biggest uplift is on VOLATILE days (PF 1.98→2.45) where mid-large-caps (positions 51-100) show more explosive institutional flow.
 
-**Config switched to `SCAN_UNIVERSE = "NIFTY100"` on 2026-06-12.**
+**Config switched to `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1.1"` / `SCAN_UNIVERSE = "NIFTY100"` on 2026-06-12.**
 
-### v1.1 Changes (what improved PF from 1.37 → 1.55)
+### v1.1.0 Changes (what improved PF from 1.37 → 1.55)
 
-1. **Entry at 09:30 candle close** (not LTP at 09:30:06): backtest enters at `candles[1]["close"]`, v1.0 entered at live LTP 1 second into the candle — look-ahead bias removed.
+1. **Entry at 09:30 candle close** (not LTP at 09:30:06): backtest enters at `candles[1]["close"]`, v1.0.0 entered at live LTP 1 second into the candle — look-ahead bias removed.
 2. **Gap-hold 0.3%**: reject if LTP faded >0.3% from today's open. Standalone PF 1.57. Swept: 0.3% best (PF 1.57), 0.5% PF 1.44, 0.7% PF 1.47, 1.0% PF 1.31.
 3. **Score-contradiction block**: reject BUY when composite score < 0 (SELL when > 0). Standalone PF 1.44.
 
-### Regime-Conditional Cap Sweep (v1.1, TEST window)
+### Regime-Conditional Cap Sweep (v1.1.0, TEST window)
 
 Tested whether raising daily trade cap on VOLATILE days captures more edge.
 
@@ -88,13 +88,13 @@ Tested whether raising daily trade cap on VOLATILE days captures more edge.
 | VOLATILE cap=8 | 108 | 1.46 | 1.47 | +13.96% |
 | VOLATILE+TREND cap=3 | 100 | 1.54 | 1.65 | +14.56% |
 
-**Verdict: keep cap=2 universally.** Cap=3 on VOLATILE is +2% PF (within noise). Cap=4+ degrades monotonically — the 3rd+ gap stocks are weaker follow-throughs. The v1.1 filters already self-select out bad RANGE-day trades, so the regime skip also hurts (PF 1.55 → 1.49).
+**Verdict: keep cap=2 universally.** Cap=3 on VOLATILE is +2% PF (within noise). Cap=4+ degrades monotonically — the 3rd+ gap stocks are weaker follow-throughs. The v1.1.0 filters already self-select out bad RANGE-day trades, so the regime skip also hurts (PF 1.55 → 1.49).
 
 ### Regime Skip Verdict
 
-Skipping RANGE days makes PF **worse** (1.55 → 1.49) with v1.1 filters. The gap-hold and score-contra filters implicitly remove bad RANGE trades (gaps fade fast → caught by 0.3% hold check; indicators contradict → caught by score filter). Remaining RANGE-day trades that pass all filters are profitable. **Run every day, let the filters do their job.**
+Skipping RANGE days makes PF **worse** (1.55 → 1.49) with v1.1.0 filters. The gap-hold and score-contra filters implicitly remove bad RANGE trades (gaps fade fast → caught by 0.3% hold check; indicators contradict → caught by score filter). Remaining RANGE-day trades that pass all filters are profitable. **Run every day, let the filters do their job.**
 
-### Expected Rs P&L — v1.1 at Rs.50K Budget (OOS backtest)
+### Expected Rs P&L — v1.1.1 at Rs.50K Budget (OOS backtest)
 
 Per-trade sizing: Rs.25K per slot (50K / 2 slots).
 
@@ -151,13 +151,13 @@ The legacy multi-indicator scorer (NOAI_LEGACY_FULL) was audited across 62 gates
 | Total trades (old NoAI baseline) | 184 |
 | Net P&L (old NoAI baseline) | Rs.-3,929 |
 | Charges (old NoAI baseline) | Rs.2,591 |
-| v1.0 dry-run 2026-06-09 | 2 trades, Rs.-476 (0/2 wins) |
+| v1.0.0 dry-run 2026-06-09 | 2 trades, Rs.-476 (0/2 wins) |
 
-Gap-and-Go v1.1 dry-run results will be tracked here starting 2026-06-10.
+Gap-and-Go v1.1.1 dry-run results will be tracked here starting 2026-06-12.
 
 ## 4. Promotion Metrics
 
-Evidence starts from the first v1.1 dry-run session:
+Evidence starts from the first v1.1.1 dry-run session:
 
 | Metric | Target |
 |---|---:|
@@ -214,7 +214,7 @@ for improvement ideas.
 
 | Mode | Strategy | Window | Trades | PF | Sharpe | Status |
 |---|---|---|---|---|---|---|
-| **Intraday equity** | Gap-and-Go v1.1 | OOS | 98 | **1.62** | 1.80 | ✅ Dry-run active (NIFTY100) |
+| **Intraday equity** | Gap-and-Go v1.1.1 | OOS | 98 | **1.62** | 1.80 | ✅ Dry-run active (NIFTY100) |
 | Intraday equity | Legacy blended score | OOS | 970 | 0.82 | -1.30 | ❌ Abandoned |
 | Intraday equity | ORB-15 breakout | OOS | ~200 | 0.97 | -0.15 | ❌ Close but fail |
 | Intraday equity | VWAP mean-reversion | OOS | ~300 | 0.80 | -0.80 | ❌ Abandoned |
@@ -225,6 +225,6 @@ for improvement ideas.
 | **Swing** | 52W dip-buy | 10yr | ~500 | 1.29 CAGR alpha | — | ✅ Report-only |
 
 **Key takeaways:**
-1. Only Gap-and-Go v1.1 passes the 1.15 PF gate — currently in dry-run
+1. Only Gap-and-Go v1.1.1 passes the 1.15 PF gate — currently in dry-run
 2. Options directional buying needs a better signal or pivot to selling
 3. Regime routing is the strongest reusable asset across all modes
