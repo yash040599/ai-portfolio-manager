@@ -64,6 +64,18 @@ Last updated: 2026-06-12 (Version scheme X.Y.Z introduced. 1.0→1.0.0, 1.1→1.
     - **No downside**: same trade count, no cost increase, no drawdown increase (7.18% both), all data already cached.
     - Config switched: `SCAN_UNIVERSE = "NIFTY100"`, `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1.1"`. Dry-run continues on expanded universe.
     - Version scheme updated to **X.Y.Z**: X = strategy logic change, Y = filter/safeguard changes, Z = config/parameter changes. Existing versions renamed: 1.0→1.0.0, 1.1→1.1.0.
+    - **NIFTY150/200 tested — NIFTY100 confirmed optimal.** Fetched 2yr candles for all 200 NIFTY200 stocks and ran identical v1.1.0-filter backtests:
+
+      | Metric | NIFTY50 | **NIFTY100** | NIFTY150 | NIFTY200 |
+      |---|---:|---:|---:|---:|
+      | PF | 1.55 | **1.62** | 1.13 | 1.17 |
+      | Sharpe | 1.66 | **1.80** | 0.59 | 0.74 |
+      | WR | 35.7% | 35.7% | 28.8% | 29.1% |
+      | Trades | 98 | 98 | 170 | 172 |
+      | MaxDD | 7.18% | 7.18% | 16.67% | 14.68% |
+      | Return | +14.33% | **+16.09%** | +7.73% | +9.72% |
+
+      NIFTY150/200 degrade sharply: trade count nearly doubles (more qualifying candidates flood the cap=2 filter), WR drops ~7pp, drawdown doubles. Stocks 101-200 are mid-caps with wider spreads and noisier gap signals — their gaps are "retail noise" not "institutional conviction." **NIFTY100 is the sweet spot. Do not expand further.**
 
 ## Key Config (v1.1.1)
 
