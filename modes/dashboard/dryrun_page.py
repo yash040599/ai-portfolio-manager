@@ -50,7 +50,7 @@ STRATEGY_META: dict[str, dict[str, Any]] = {
     },
     "NOAI_GAP_AND_GO": {
         "label": "NoAI Gap-and-Go v1.0.0",
-        "desc": "Gap + volume alpha v1.0.0. Entry at 09:30 LTP, no gap-hold or score checks. OOS PF 1.37.",
+        "desc": "Gap + volume alpha v1.0.0. Entry at 09:30 LTP, no gap-hold or score checks. Universe NIFTY50. OOS PF 1.37.",
         "config_keys": [
             "SCAN_UNIVERSE",
             "GAP_GO_MIN_GAP_PCT", "GAP_GO_MAX_GAP_PCT",
@@ -82,6 +82,7 @@ _GAP_GO_VERSIONED_CONFIG_KEYS = [
     "GAP_GO_RSI_BUY_CEILING", "GAP_GO_RSI_SELL_FLOOR",
     "GAP_GO_ENTRY_AFTER_CANDLE_CLOSE", "GAP_GO_GAP_HOLD_MIN_PCT",
     "GAP_GO_SCORE_CONTRADICTION_BLOCK", "GAP_GO_USE_CANDLE_CLOSE_PRICE",
+    "GAP_GO_BROAD_GAP_THRESHOLD", "GAP_GO_BROAD_VOL_MULTIPLE",
     "ATR_MULTIPLIER", "RR_TARGET_RATIO", "RR_HARD_FLOOR",
     "GAP_GO_SQUARE_OFF_HOUR", "GAP_GO_SQUARE_OFF_MINUTE",
     "TRAIL_AFTER_RISK_MULTIPLE",
@@ -96,11 +97,14 @@ def _get_strategy_meta(strategy_type: str) -> dict[str, Any]:
     if strategy_type.startswith("NOAI_GAP_AND_GO_"):
         version = strategy_type.split("NOAI_GAP_AND_GO_")[-1]
         # Build version-appropriate description
-        parts = version.split(".")
-        if len(parts) == 3 and parts[2] != "0":
-            desc = f"Gap + volume alpha v{version}. OOS PF 1.62 (v1.1.1)."
+        if version >= "1.2":
+            desc = f"Gap + volume alpha v{version}. Adaptive vol on broad-gap days. NIFTY100. OOS PF 1.30."
+        elif version >= "1.1.1":
+            desc = f"Gap + volume alpha v{version}. Universe expanded to NIFTY100. OOS PF 1.62."
+        elif version >= "1.1":
+            desc = f"Gap + volume alpha v{version}. Entry at candle close, gap-hold, score-contra. NIFTY50. OOS PF 1.55."
         else:
-            desc = f"Gap + volume alpha v{version}. OOS PF 1.55 (v1.1.0)."
+            desc = f"Gap + volume alpha v{version}. NIFTY50. OOS PF 1.28."
         return {
             "label": f"NoAI Gap-and-Go v{version}",
             "desc": desc,
@@ -307,6 +311,11 @@ def _strategy_stats(strategy_type: str) -> dict[str, Any]:
     result["latest_date"] = max(report_dates)
     result["entered_trades"] = len(all_trades)
 
+    # Store the latest report's config for display
+    # (so dashboard shows what was actually used, not current live config)
+    latest_report = max(reports, key=lambda r: r["date"])
+    result["report_config"] = latest_report.get("config") or {}
+
     # Closed = has exit_price
     closed = [t for t in all_trades if t.get("exit_price") is not None]
     open_trades = [t for t in all_trades if t.get("exit_price") is None]
@@ -377,11 +386,39 @@ def _strategy_stats(strategy_type: str) -> dict[str, Any]:
     return result
 
 
-def _current_config_values(keys: list[str]) -> list[dict[str, str]]:
-    """Read current config values for a list of config keys."""
+def _current_config_values(keys: list[str], report_config: dict | None = None) -> list[dict[str, str]]:
+    """Read config values for display.
+
+    When *report_config* is provided (from the latest trading report),
+    values are sourced from what the bot actually ran with — not the
+    current live Config, which may have changed since the dry-run.
+
+    The report stores a flat dict with lowercase keys (e.g. 'universe',
+    'strategy_profile'). We map common config keys to their report
+    equivalents. For keys not found in the report we fall back to
+    the live Config.
+    """
+    # Map Config key names → report JSON key names
+    _REPORT_KEY_MAP: dict[str, str] = {
+        "SCAN_UNIVERSE": "universe",
+        "TRADE_STRATEGY_PROFILE": "strategy_profile",
+        "STRATEGY_CONFIG_VERSION": "strategy_config_version",
+        "MAX_POSITIONS": "max_positions",
+        "DEFAULT_STOP_LOSS_PCT": "stop_loss_pct",
+        "DEFAULT_TARGET_PCT": "target_pct",
+    }
     out = []
     for k in keys:
-        val = getattr(Config, k, "<not set>")
+        val = None
+        if report_config:
+            # Try mapped key first, then lowercase version
+            rk = _REPORT_KEY_MAP.get(k)
+            if rk and rk in report_config:
+                val = report_config[rk]
+            elif k.lower() in report_config:
+                val = report_config[k.lower()]
+        if val is None:
+            val = getattr(Config, k, "<not set>")
         out.append({"key": k, "value": str(val)})
     return out
 
@@ -525,7 +562,8 @@ def render_dryrun_page() -> str:
     for st in strategies:
         meta = _get_strategy_meta(st)
         keys = meta.get("config_keys", [])
-        config_sections[st] = _current_config_values(keys)
+        report_cfg = all_stats[st].get("report_config")
+        config_sections[st] = _current_config_values(keys, report_config=report_cfg)
     config_json = json.dumps(config_sections).replace("</", "<\\/")
 
     # Strategy meta

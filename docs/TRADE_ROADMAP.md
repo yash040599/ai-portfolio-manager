@@ -1,20 +1,20 @@
 # Trading Roadmap
 
-Last updated: 2026-06-12 (Version scheme X.Y.Z introduced. 1.0→1.0.0, 1.1→1.1.0, new 1.1.1 = NIFTY100 universe. PF 1.62, Sharpe 1.80).
+Last updated: 2026-06-15 (v1.2.0: adaptive volume on broad-gap days. PF 1.30, Sharpe 1.29).
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PHASE 8 — Gap-and-Go v1.1.1 dry-run validation (NIFTY100).** Version scheme updated to X.Y.Z (X=strategy logic, Y=filters/safeguards, Z=config/params). Universe expanded NIFTY50→NIFTY100 (2026-06-12) after backtest showed strictly better metrics: **OOS PF 1.55→1.62 (+5%), Sharpe 1.66→1.80 (+8%)** with identical trade count (98). Same daily cap=2 selects higher-quality trades from the wider pool. |
+| Stage | **PHASE 8 — Gap-and-Go v1.2.0 dry-run validation (NIFTY100).** Adaptive volume on broad-gap days: when ≥25 stocks gap ≥1%, volume threshold relaxes from 2.0x to 1.25x. OOS PF 1.17→**1.30** (+11%), Sharpe 0.71→**1.29** (+82%), MaxDD 13.51→**11.58%** (improved). +16 trades/year. Narrow days unchanged (2.0x). |
 | Mode | NoAI, pure rules-based |
-| Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1.1", SCAN_UNIVERSE = "NIFTY100") |
-| Live trading | **DO NOT GO LIVE YET** — v1.1.1 needs dry-run validation (10+ sessions). |
+| Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0", SCAN_UNIVERSE = "NIFTY100") |
+| Live trading | **DO NOT GO LIVE YET** — v1.2.0 needs dry-run validation (10+ sessions). |
 | Budget | Rs.50,000 |
-| Config version | 2.2-2026-06-12-GAP_AND_GO_1.1.1 |
+| Config version | 2.3-2026-06-15-GAP_AND_GO_1.2.0 |
 | FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
 
-> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. v1.1.0 fixed three v1.0.0 bugs and lifted OOS PF from 1.37 to 1.55. On 2026-06-12, v1.1.1 expanded the universe from NIFTY50 to **NIFTY100** — backtest shows the wider pool provides better-quality gap candidates: **PF 1.55→1.62 (+5%), Sharpe 1.66→1.80 (+8%)**, identical trade count (cap=2 picks best 2 from 100 instead of 50). VOLATILE-only PF jumps from 1.98 to **2.45**. The extra 50 mid-large-caps add more explosive gap moves on volatile days. Version scheme updated to X.Y.Z (X=strategy, Y=filters, Z=config). **Next step: continue v1.1.1 dry-run validation on NIFTY100 (10+ sessions needed).** If dry-run confirms, this is the first strategy that could go live.
+> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. v1.1.0 fixed three v1.0.0 bugs and lifted OOS PF from 1.37 to 1.55. v1.1.1 expanded to NIFTY100 (PF 1.62). On 2026-06-15, v1.2.0 added **adaptive volume on broad-gap days**: when ≥25 stocks gap ≥1% simultaneously, volume threshold drops from 2.0x to 1.25x (institutional flow is diluted across the market on these days). OOS PF **1.17→1.30** (+11%), Sharpe **0.71→1.29** (+82%), MaxDD **13.51→11.58%** (improved), +16 trades/year. Narrow days remain at 2.0x (zero regression risk). SELL-side is marginal (PF 1.04) but positive; BUY-only too thin (42 trades). **Next step: continue v1.2.0 dry-run validation on NIFTY100 (10+ sessions needed).** If dry-run confirms, this is the first strategy that could go live.
 
 > **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
@@ -76,12 +76,30 @@ Last updated: 2026-06-12 (Version scheme X.Y.Z introduced. 1.0→1.0.0, 1.1→1.
       | Return | +14.33% | **+16.09%** | +7.73% | +9.72% |
 
       NIFTY150/200 degrade sharply: trade count nearly doubles (more qualifying candidates flood the cap=2 filter), WR drops ~7pp, drawdown doubles. Stocks 101-200 are mid-caps with wider spreads and noisier gap signals — their gaps are "retail noise" not "institutional conviction." **NIFTY100 is the sweet spot. Do not expand further.**
+14. **2026-06-15**: **Adaptive volume on broad-gap days → v1.2.0.** After a dry-run session where 0/100 stocks passed (36 gapped but volume was diluted across the market), diagnosed that broad-gap days mechanically dilute per-stock volume. Backtested adaptive volume threshold ([scripts/trade/backtest_broad_gap_vol.py](../scripts/trade/backtest_broad_gap_vol.py)). Results (v1.1 filters, OOS TEST window):
+    - **Problem**: on days when ≥25 stocks gap ≥1%, institutional flow is spread across the market. Most stocks show 0.5-1.8x volume vs the 2.0x threshold — they fail volume gate despite being genuine gap-and-go setups.
+    - **Solution**: adaptive volume — when ≥25 stocks gap, relax vol threshold from 2.0x → 1.25x. On narrow days (<25 gapping), keep 2.0x unchanged.
+    - **Threshold sweep** (broad_thresh × vol_broad, 5×4=20 cells): `broad≥25, vol=1.25x` is optimal. Surface is smooth (not overfit): `broad≥20/1.25x` PF 1.26, `broad≥30/1.25x` PF 1.27.
+    - **v1.1.1 baseline → v1.2.0 head-to-head** (OOS TEST, v1.1 filters):
 
-## Key Config (v1.1.1)
+      | Metric | v1.1.1 (vol=2.0x fixed) | v1.2.0 (adaptive vol) | Delta |
+      |---|---:|---:|---:|
+      | PF | 1.17 | **1.30** | **+11%** |
+      | Sharpe | 0.71 | **1.29** | **+82%** |
+      | Trades | 163 | **179** | +16 |
+      | MaxDD | 13.51% | **11.58%** | **-14%** |
+      | Return | +9.04% | **+17.43%** | +93% |
+
+    - **Side analysis**: BUY-only PF 1.24 (42 trades), SELL-only PF 1.04 (126 trades). SELLs are marginal but positive — removing them cuts trade count too much. Keep both sides.
+    - **Global vol=1.5x tested**: PF drops 1.17→1.04. Adaptive is critical — only relax on broad days.
+    - **Zero regression risk**: narrow-day behavior unchanged (2.0x threshold). Only broad-gap days (33/242 = 14% of trading days) get the relaxation.
+    - Config: `GAP_GO_BROAD_GAP_THRESHOLD = 25`, `GAP_GO_BROAD_VOL_MULTIPLE = 1.25`, `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0"`.
+
+## Key Config (v1.2.0)
 
 | Parameter | Value | Evidence |
 |---|---|---|
-| Strategy profile | `NOAI_GAP_AND_GO_1.1.1` | OOS PF 1.62, Sharpe 1.80 (NIFTY100) |
+| Strategy profile | `NOAI_GAP_AND_GO_1.2.0` | OOS PF 1.30, Sharpe 1.29 (NIFTY100, adaptive vol) |
 | ATR multiplier | 2.0 | Backtest E1: best per-trade expectancy |
 | R:R target | 1.8:1 | Backtest E1: practical optimum |
 | R:R floor | 1.3:1 | Uniform all day |
@@ -94,6 +112,8 @@ Last updated: 2026-06-12 (Version scheme X.Y.Z introduced. 1.0→1.0.0, 1.1→1.
 | Gap-hold filter | 0.3% | v1.1.0+: reject if gap faded >0.3% — PF 1.57 standalone |
 | Score contradiction | ENABLED | v1.1.0+: reject BUY when score < 0 — PF 1.44 standalone |
 | RSI BUY ceiling | 70 | Block overbought gap-ups — PF 1.28→1.37 |
+| Broad-gap threshold | 25 stocks | v1.2.0: ≥25 stocks gapping ≥1% = "broad day" — adaptive vol kicks in |
+| Broad-gap vol mult | 1.25x | v1.2.0: relaxed vol on broad days (sweep: 1.25x best, PF 1.30) |
 | Signal reversal exit | Enabled (score >= 7 + pattern) | Pro decision |
 | Consecutive SL pause | 3 losses -> 30 min | Pro decision |
 

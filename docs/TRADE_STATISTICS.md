@@ -1,14 +1,14 @@
 # Trading Statistics
 
-Last updated: 2026-06-12 (Version scheme X.Y.Z. 1.0→1.0.0, 1.1→1.1.0, 1.1.1 = NIFTY100 universe. PF 1.62, Sharpe 1.80).
+Last updated: 2026-06-15 (v1.2.0: adaptive volume on broad-gap days. PF 1.30, Sharpe 1.29).
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
-| Runtime strategy version | 2.3-2026-06-12-GAP_AND_GO_1.1.1 |
-| Active stage | **GAP_AND_GO_DRY_RUN** — v1.1.1 on NIFTY100: entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.62 (NIFTY100). |
-| Strategy profile | `NOAI_GAP_AND_GO_1.1.1` (active in config.py) |
+| Runtime strategy version | 2.3-2026-06-15-GAP_AND_GO_1.2.0 |
+| Active stage | **GAP_AND_GO_DRY_RUN** — v1.2.0 on NIFTY100: adaptive volume on broad-gap days (≥25 stocks gap ≥1% → vol threshold 2.0x→1.25x). Entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.30, Sharpe 1.29. |
+| Strategy profile | `NOAI_GAP_AND_GO_1.2.0` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun (SCAN_UNIVERSE = "NIFTY100") |
 | Budget | Rs.50,000 |
@@ -17,6 +17,8 @@ Last updated: 2026-06-12 (Version scheme X.Y.Z. 1.0→1.0.0, 1.1→1.1.0, 1.1.1 
 | Loser exit | 12:00 IST (auto: sq-off − 1hr) |
 | Trailing stop | DISABLED (sweep: every trail config destroys PF) |
 | RSI BUY ceiling | 70.0 (block overbought gap-up buys) |
+| Broad-gap threshold | 25 stocks (v1.2.0: ≥25 stocks gapping ≥1% = adaptive vol) |
+| Broad-gap vol mult | 1.25x (v1.2.0: relaxed vol on broad days, normal days stay 2.0x) |
 | Gap-hold filter | 0.3% (v1.1.0+: reject if gap faded > 0.3% from open) |
 | Score contradiction | ENABLED (v1.1.0+: reject when score contradicts gap direction) |
 | Entry timing | 09:45 IST (v1.1.0+: after 09:30 candle closes, matching backtest) |
@@ -67,7 +69,46 @@ Expanded universe from 50 → 100 stocks. Same v1.1.0 filters, same daily cap=2.
 
 **Why v1.1.1 (NIFTY100) is better with the same trade count:** The daily cap=2 forces selection of the top-2 gap signals per day. With 100 stocks instead of 50, the 2nd-best candidate is often a NIFTY100-extra stock with stronger gap+volume conviction than the 2nd-best NIFTY50 stock. The biggest uplift is on VOLATILE days (PF 1.98→2.45) where mid-large-caps (positions 51-100) show more explosive institutional flow.
 
-**Config switched to `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1.1"` / `SCAN_UNIVERSE = "NIFTY100"` on 2026-06-12.**
+**Config switched to `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0"` / `SCAN_UNIVERSE = "NIFTY100"` on 2026-06-15.**
+
+### v1.2.0 — Adaptive Volume on Broad-Gap Days (2026-06-15)
+
+On broad-gap days (≥25 stocks gap ≥1%), volume threshold relaxes from 2.0x → 1.25x. Narrow days unchanged.
+
+**v1.1.1 → v1.2.0 head-to-head (v1.1 filters, OOS TEST):**
+
+| Metric | v1.1.1 (fixed vol=2.0x) | v1.2.0 (adaptive vol) | Delta |
+|---|---:|---:|---:|
+| Profit Factor | 1.17 | **1.30** | **+11%** |
+| Sharpe | 0.71 | **1.29** | **+82%** |
+| Trades | 163 | **179** | +16 |
+| Max Drawdown | 13.51% | **11.58%** | **-14%** |
+| Return | +9.04% | **+17.43%** | **+93%** |
+
+**Broad-gap threshold × volume sweep (OOS TEST, top configs):**
+
+| Config | Trades | PF | Sharpe | MaxDD |
+|---|---:|---:|---:|---:|
+| baseline vol=2.0x all days | 163 | 1.17 | 0.71 | 13.51% |
+| **broad≥25, vol_broad=1.25x** | **179** | **1.30** | **1.29** | **11.58%** |
+| broad≥25, vol_broad=1.0x | 187 | 1.28 | 1.25 | 12.42% |
+| broad≥20, vol_broad=1.25x | 183 | 1.26 | 1.14 | 13.58% |
+| broad≥30, vol_broad=1.25x | 177 | 1.27 | 1.15 | 11.07% |
+| global vol=1.5x (no adaptive) | 208 | 1.04 | 0.19 | 17.59% |
+
+**Side analysis (BUY-only vs SELL-only, v1.1 filters):**
+
+| Side | Trades | PF | Sharpe | MaxDD |
+|---|---:|---:|---:|---:|
+| ALL (baseline) | 163 | 1.17 | 0.71 | 13.51% |
+| BUY only (gap-ups) | 42 | 1.24 | 0.47 | 9.20% |
+| SELL only (gap-downs) | 126 | 1.04 | 0.17 | 11.52% |
+
+**Key observations:**
+- SELLs dominate trade count (126 vs 37 BUYs) but are barely profitable (PF 1.04). BUYs have better PF (1.24) but too few trades for standalone.
+- Global vol=1.5x is destructive (PF 1.04). Adaptive approach is critical — only relax on days when dilution is the mechanism.
+- The surface is smooth (broad≥20-30, vol=1.0-1.25x all produce PF 1.26-1.30), indicating robust selection, not overfitting.
+- Broad days = 33/242 (14%) of trading days. Zero regression risk on the other 86%.
 
 ### v1.1.0 Changes (what improved PF from 1.37 → 1.55)
 

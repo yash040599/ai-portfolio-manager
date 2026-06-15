@@ -2110,10 +2110,14 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                contradiction filter, regime filter, enhanced logging.
           1.1.1: Universe expanded NIFTY50 → NIFTY100. OOS PF 1.62,
                Sharpe 1.80. Same filters as 1.1.0.
+          1.2.0: Adaptive volume on broad-gap days. When ≥25 stocks
+               gap ≥1%, vol threshold drops 2.0x→1.25x. OOS PF 1.30,
+               Sharpe 1.29 (NIFTY100).
 
         Returns list[dict] with standard trade plan keys.
         """
         is_v11 = version >= "1.1"
+        is_v12 = version >= "1.2"
         profile = f"NOAI_GAP_AND_GO_{version}" if version not in ("1.0", "1.0.0") else "NOAI_GAP_AND_GO"
         universe = self.get_universe()
         self.last_tape_breadth = None
@@ -2133,6 +2137,10 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         use_candle_close = getattr(self.cfg, "GAP_GO_USE_CANDLE_CLOSE_PRICE", False) if is_v11 else False
         skip_range_regime = getattr(self.cfg, "GAP_GO_SKIP_RANGE_REGIME", False) if is_v11 else False
 
+        # ── v1.2 params ──────────────────────────────────────────
+        broad_gap_threshold = getattr(self.cfg, "GAP_GO_BROAD_GAP_THRESHOLD", 25) if is_v12 else 0
+        broad_vol_mult = getattr(self.cfg, "GAP_GO_BROAD_VOL_MULTIPLE", 1.25) if is_v12 else vol_mult
+
         self.log.info(
             f"Gap-and-Go config: gap >= {min_gap_pct}%, "
             f"<= {max_gap_pct}%, vol >= {vol_mult}x 20-day avg, "
@@ -2144,6 +2152,11 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 f"score_contra_block={score_contra_block}, "
                 f"use_candle_close={use_candle_close}, "
                 f"skip_range={skip_range_regime}"
+            )
+        if is_v12:
+            self.log.info(
+                f"  v1.2 enhancements: broad_gap_threshold={broad_gap_threshold} stocks, "
+                f"broad_vol_mult={broad_vol_mult}x (normal={vol_mult}x)"
             )
 
         min_price = self.cfg.SCAN_MIN_PRICE
@@ -2170,6 +2183,39 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 ltp = q.get("last_price", 0) if isinstance(q, dict) else 0
                 if ltp > 0:
                     quotes[key] = q
+
+        # ── v1.2: Count gapping stocks for adaptive volume ─────
+        # On broad-gap days (many stocks gapping), individual volume
+        # is diluted across the market. Lower the volume threshold.
+        is_broad_gap_day = False
+        effective_vol_mult = vol_mult
+        if is_v12 and broad_gap_threshold > 0:
+            gap_count = 0
+            for symbol in universe:
+                key = f"NSE:{symbol}"
+                q = quotes.get(key, {})
+                if not isinstance(q, dict):
+                    continue
+                ohlc = q.get("ohlc", {})
+                prev_close = ohlc.get("close", 0)
+                today_open = ohlc.get("open", 0)
+                if prev_close > 0 and today_open > 0:
+                    gap = abs((today_open - prev_close) / prev_close * 100)
+                    if gap >= min_gap_pct:
+                        gap_count += 1
+            is_broad_gap_day = gap_count >= broad_gap_threshold
+            if is_broad_gap_day:
+                effective_vol_mult = broad_vol_mult
+                self.log.info(
+                    f"  BROAD GAP DAY: {gap_count} stocks gapped >= {min_gap_pct}% "
+                    f"(threshold {broad_gap_threshold}). Vol relaxed "
+                    f"{vol_mult}x → {broad_vol_mult}x"
+                )
+            else:
+                self.log.info(
+                    f"  Narrow gap day: {gap_count} stocks gapped >= {min_gap_pct}% "
+                    f"(< {broad_gap_threshold} threshold). Vol stays at {vol_mult}x"
+                )
 
         # ── Screen for gap + volume ───────────────────────────────
         gap_candidates: list[dict] = []
@@ -2272,7 +2318,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
 
             avg_candle_vol = sum(hist_vols) / len(hist_vols)
             vol_ratio = today_first_vol / avg_candle_vol if avg_candle_vol > 0 else 0
-            if avg_candle_vol <= 0 or today_first_vol < vol_mult * avg_candle_vol:
+            if avg_candle_vol <= 0 or today_first_vol < effective_vol_mult * avg_candle_vol:
                 gap_log_rows.append(
                     f"  {symbol:<14s} gap {gap_pct:+5.1f}%  open {today_open:>9.2f}  "
                     f"ltp {ltp:>9.2f}  vol {vol_ratio:.1f}x  → SKIP (low volume)"

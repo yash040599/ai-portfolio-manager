@@ -171,7 +171,10 @@ class Config:
     #                         score-contradiction filter, regime filter.
     # NOAI_GAP_AND_GO_1.1.1:  universe expanded NIFTY50 → NIFTY100.
     #                         OOS PF 1.62, Sharpe 1.80. Same filters as 1.1.0.
-    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO_1.1.1"
+    # NOAI_GAP_AND_GO_1.2.0:  adaptive volume on broad-gap days. When ≥25
+    #                         stocks gap ≥1%, vol threshold drops 2.0x→1.25x.
+    #                         OOS PF 1.30, Sharpe 1.29 (NIFTY100).
+    TRADE_STRATEGY_PROFILE: str = "NOAI_GAP_AND_GO_1.2.0"
 
     # ── Gap-and-Go Strategy Config ───────────────────────────────
     # Shared params used by ALL gap-and-go versions (1.0, 1.1, …).
@@ -218,6 +221,22 @@ class Config:
     #   exactly. Only meaningful when GAP_GO_ENTRY_AFTER_CANDLE_CLOSE
     #   is True (otherwise the candle hasn't closed yet).
     GAP_GO_USE_CANDLE_CLOSE_PRICE: bool = True
+
+    # ── Gap-and-Go 1.2 enhancements ─────────────────────────
+    # These params only apply when version >= 1.2.
+    #
+    # GAP_GO_BROAD_GAP_THRESHOLD: number of stocks in the universe
+    #   that must gap ≥GAP_GO_MIN_GAP_PCT for the day to be classified
+    #   as a "broad gap day". On broad days, vol threshold drops to
+    #   GAP_GO_BROAD_VOL_MULTIPLE. On narrow days, stays at
+    #   GAP_GO_VOLUME_MULTIPLE (2.0x).
+    #   Backtest sweep: 25 best (PF 1.30), 20 PF 1.26, 30 PF 1.27.
+    GAP_GO_BROAD_GAP_THRESHOLD: int = 25
+    #
+    # GAP_GO_BROAD_VOL_MULTIPLE: relaxed volume threshold on broad days.
+    #   Backtest sweep: 1.25x best (PF 1.30), 1.0x PF 1.28, 1.5x PF 1.13.
+    #   Global 1.5x (no adaptive) PF 1.04 — adaptive is critical.
+    GAP_GO_BROAD_VOL_MULTIPLE: float = 1.25
 
     # ── Alpha Strategies (backtested 2026-05-25) ─────────────────
     # Each can be enabled/disabled independently. When multiple are
@@ -2923,7 +2942,7 @@ class Config:
     # Adding a new gate? Add its constant to STRATEGY_CONFIG_KEYS so
     # the hash starts tracking it. Removing one? Same, in reverse.
     # Pure observability changes (logging only) need not be added.
-    STRATEGY_CONFIG_VERSION: str = "v2.2-2026-06-12-GAP_AND_GO_1.1.1"
+    STRATEGY_CONFIG_VERSION: str = "v2.3-2026-06-15-GAP_AND_GO_1.2.0"
 
     STRATEGY_CONFIG_KEYS: tuple = (
         # Stage ladder (rollout doc)

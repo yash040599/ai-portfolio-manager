@@ -1,12 +1,14 @@
 # Trade Next Ideas — Intraday & Options Research
 
 > **Created:** 2026-06-06 | **Updated:** 2026-06-15
-> **Status:** Gap-and-Go **v1.1.1** (NIFTY100) passes OOS PF 1.62, Sharpe 1.80.
-> Dry-run validation in progress. Phase 9 diversification research complete —
-> 7 additional strategies tested, **all FAIL** (20 total). Intraday equity
-> search space on NSE **conclusively exhausted**.
+> **Status:** Gap-and-Go **v1.2.0** (NIFTY100) — adaptive volume on broad-gap
+> days. OOS PF **1.30**, Sharpe **1.29** (up from v1.1.1 baseline PF 1.17,
+> Sharpe 0.71). Dry-run validation in progress.
+> Phase 9 diversification research complete — 7 additional strategies tested,
+> **all FAIL** (20 total). Intraday equity search space on NSE
+> **conclusively exhausted**.
 > **Context:** Phases 0-9 of intraday equity backtesting complete. Gap-and-Go
-> v1.1.1 remains the only strategy to pass the 1.15 OOS promotion gate.
+> v1.2.0 remains the only strategy to pass the 1.15 OOS promotion gate.
 
 ---
 
@@ -46,7 +48,7 @@ cannot prove it without live data.
 
 ### A.2 Gap-and-Go with Volume Qualification — ✅ TESTED → PASS
 
-> **Result (Phase 7.2, 2026-06-06):** OOS PF **1.28** (ALL, 228 trades), **1.66** (VOLATILE-only). **FIRST STRATEGY TO PASS the 1.15 OOS promotion gate.** Now live as v1.1.1 on NIFTY100 (OOS PF **1.62**, Sharpe **1.80**). See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 7-8 and [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for full results.
+> **Result (Phase 7.2, 2026-06-06):** OOS PF **1.28** (ALL, 228 trades), **1.66** (VOLATILE-only). **FIRST STRATEGY TO PASS the 1.15 OOS promotion gate.** Now live as v1.2.0 on NIFTY100 (OOS PF **1.30**, Sharpe **1.29**). See [TRADE_ROADMAP.md](TRADE_ROADMAP.md) Phase 7-8 and [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for full results.
 
 **What:** Dedicated strategy for stocks that gap >1% on open with >2x average
 volume. Enter in gap direction within first 15 min, target 50-100% of gap
@@ -54,7 +56,9 @@ continuation.
 
 **Why it worked:** Volume qualification filters false breakouts. v1.1.0 added
 gap-hold 0.3% check + score-contradiction block, lifting PF 1.37→1.55. v1.1.1
-expanded to NIFTY100 for better candidate quality (PF 1.55→1.62).
+expanded to NIFTY100 for better candidate quality (PF 1.55→1.62). v1.2.0
+added adaptive volume on broad-gap days (≥25 stocks gapping → vol threshold
+lowered 2.0x→1.25x), lifting PF 1.17→1.30 (+11%), Sharpe 0.71→1.29 (+82%).
 
 ---
 
@@ -174,7 +178,7 @@ ML won't rescue it.
 | EMA pullback | PF 0.65 (edge doesn't survive costs) | Pre-audit |
 | ORB-15 breakout | PF 0.97 (closest, still not enough) | Pre-audit |
 | Cross-sectional momentum | PF 0.81 (ALL), 1.22 (VOL thin) | 7 |
-| **Gap-and-Go** | **PF 1.62 (NIFTY100) — PASS** | **7-8** |
+| **Gap-and-Go** | **PF 1.30 (NIFTY100 v1.2.0) — PASS** | **7-8** |
 | Previous-day breakout | PF 0.87 (ALL), 1.18 (VOL marginal) | 7 |
 | First Hour Range Breakout | PF 0.81 | 9 |
 | Opening Candle Momentum | PF 0.87 (ALL), 1.15 (VOL thin) | 9 |
@@ -200,7 +204,7 @@ expectancy, and budget scaling doesn't help (signal problem, not cost).
 3. **Volatility Squeeze (A.7)** — BB inside KC, untested — LOW priority
 4. **ML Classifier (A.8)** — only 970 samples, overfitting risk — LOW priority
 
-**Recommendation:** Gap-and-Go v1.1.1 is the system. Continue dry-run
+**Recommendation:** Gap-and-Go v1.2.0 is the system. Continue dry-run
 validation. The remaining A.x ideas have low expected value. Research effort
 is better spent on **entirely different domains** (options selling,
 swing/delivery, or non-equity asset classes) rather than more intraday equity

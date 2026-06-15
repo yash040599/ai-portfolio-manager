@@ -3,10 +3,11 @@
 <!-- Maintenance: keep in sync with code changes.  Per-pass history
      lives in commit messages and `docs/TRADE_ROADMAP.md`. -->
 
-> **Active stage (2026-06-12):** `GAP_AND_GO_DRY_RUN` — Gap-and-Go v1.1.1
-> on NIFTY100: entry at 09:30 candle close (matching backtest), gap-hold
-> 0.3% check, score-contradiction block. OOS PF 1.62, Sharpe 1.80.
-> Set `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.1.1"` to activate.
+> **Active stage (2026-06-15):** `GAP_AND_GO_DRY_RUN` — Gap-and-Go v1.2.0
+> on NIFTY100: adaptive volume on broad-gap days (≥25 stocks gap ≥1% →
+> vol threshold 2.0x→1.25x). Entry at 09:30 candle close (matching backtest),
+> gap-hold 0.3% check, score-contradiction block. OOS PF 1.30, Sharpe 1.29.
+> Set `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0"` to activate.
 > Version scheme: X.Y.Z where X = strategy logic, Y = filter/safeguard
 > changes, Z = config/parameter changes.
 > See [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for current results and
