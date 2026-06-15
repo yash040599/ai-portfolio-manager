@@ -377,11 +377,13 @@ logged with positive PF.
 
 ---
 
-## New Strategy Candidates (from Phase 9 research, 2026-06-12)
+## New Strategy Candidates (from Phase 9 + research, 2026-06-12)
 
 Moved here from TRADE_ROADMAP — these are options-mode strategies, not intraday equity.
 
 | # | Strategy | Signal family | Why it might work on NSE | Data needed | Effort | Priority |
 |---|---|---|---|---|---|---|
 | **C.3** | **Expiry Day Short Straddle (Iron Condor)** | Theta decay | Sell OTM NIFTY strangles on weekly expiry day (Thursday). Theta crush is extreme — OTM options lose 80%+ value on expiry day. Our regime classifier identifies RANGE days (39% of days) which are perfect for premium selling. Well-documented edge in India — the variance risk premium is real. Iron condor caps max loss. | Options chain data (Zerodha API) | High | **HIGH** |
+| **D.2** | **Expiry-Day Theta Selling (regime-gated)** | Theta decay + regime | Same concept as C.3 but explicitly gated by our morning regime classifier. On RANGE days (39%): sell OTM strangles/iron condors. On VOLATILE/TREND: skip (gamma risk too high). Complementary to Gap-and-Go which profits on VOLATILE days — this profits on the days Gap-and-Go sits out. Net effect: profitable across ALL regime types. | Options chain historical data (Sensibull/Zerodha) | High | **HIGH** |
 | **C.7** | **Calendar Spread on NIFTY Futures** | Term structure | Buy far-month NIFTY future, sell near-month. Market-neutral. Profits from term structure mean-reversion. Zerodha Varsity Module 10 covers this. Defined risk, low margin. | NIFTY futures data (multiple expiries) | Medium | **LOW** |
+| **D.8** | **Calendar Spread on NIFTY Options** | Theta differential | Sell this-week expiry option, buy next-week expiry at same strike. Profits from near-term theta decaying faster. Market-neutral-ish, defined risk (max loss = net debit). NIFTY weekly options have enough term structure anomaly. | Options chain with Greeks (multi-expiry) | Medium | **LOW** |

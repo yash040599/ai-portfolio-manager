@@ -1,10 +1,10 @@
 # Trade Next Ideas — Intraday & Options Research
 
-> **Created:** 2026-06-06 | **Updated:** 2026-06-12
+> **Created:** 2026-06-06 | **Updated:** 2026-06-15
 > **Status:** Gap-and-Go **v1.1.1** (NIFTY100) passes OOS PF 1.62, Sharpe 1.80.
 > Dry-run validation in progress. Phase 9 diversification research complete —
-> 4 additional strategies tested, **all FAIL**. Intraday equity search space
-> on NSE largely exhausted.
+> 7 additional strategies tested, **all FAIL** (20 total). Intraday equity
+> search space on NSE **conclusively exhausted**.
 > **Context:** Phases 0-9 of intraday equity backtesting complete. Gap-and-Go
 > v1.1.1 remains the only strategy to pass the 1.15 OOS promotion gate.
 
@@ -159,7 +159,7 @@ ML won't rescue it.
 
 ### A.9 Intraday Viability Assessment
 
-**Honest verdict after Phases 0-9 (2026-06-12):**
+**Honest verdict after Phases 0-9 (2026-06-15):**
 
 | What We Tried | Result | Phase |
 |---|---|---|
@@ -180,12 +180,15 @@ ML won't rescue it.
 | Opening Candle Momentum | PF 0.87 (ALL), 1.15 (VOL thin) | 9 |
 | NIFTY Index Momentum | PF 0.25 (13 trades) | 9 |
 | Sector Rotation Intraday | PF 0.78 (472 trades) | 9 |
+| Gap Fade (weak-volume) | PF 0.70 (469 trades) | 9 |
+| EOD VWAP Reversion | PF 0.55 (472 trades) | 9 |
+| Auction Alpha (candle shape) | PF 0.74 (467 trades) | 9 |
 | Options directional buying | PF 0.42-0.64 | Options v1 |
 | Budget scaling (Rs.1L) | Saves only 0.024%/trade — signal problem, not cost | 9 |
 
 **Is intraday equity conclusively dead?**
 
-**For all strategies except Gap-and-Go — yes.** 17 strategies/variants tested
+**For all strategies except Gap-and-Go — yes.** 20 strategies/variants tested
 across 9 phases. Only Gap-and-Go clears the OOS 1.15 gate. The structural
 NSE cost floor (0.05-0.10% round-trip) kills every strategy with <0.10%
 expectancy, and budget scaling doesn't help (signal problem, not cost).
