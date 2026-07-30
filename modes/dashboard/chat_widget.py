@@ -102,12 +102,13 @@ def chat_section_html(scope: str, symbol: str = "") -> str:
     return f"""
 <div class="chat-widget card" data-chat-scope="{scope_attr}"
      data-chat-symbol="{sym_attr}"
-     style="border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;
+     style="border:1px solid var(--line);border-radius:var(--radius);
+            background:var(--card);box-shadow:var(--shadow-sm);
             padding:14px 16px;margin-bottom:16px">
-  <div style="font-size:14px;font-weight:600;margin-bottom:4px">
+  <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--fg)">
     Ask AI {subject}
   </div>
-  <div style="font-size:12px;color:#666;margin-bottom:10px">
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
     Our built-in AI is a free tier. Type your question and we'll build a
     ready-to-paste prompt — packed with <em>your</em> personal position
     data — that you can drop into ChatGPT, Claude or Gemini (free) for a
@@ -117,29 +118,26 @@ def chat_section_html(scope: str, symbol: str = "") -> str:
   <textarea class="chat-question" rows="2"
             placeholder="{html.escape(placeholder)}"
             style="width:100%;box-sizing:border-box;padding:8px;
-                   border:1px solid #ccc;border-radius:6px;font-size:13px;
+                   border-radius:6px;font-size:13px;
                    font-family:inherit;resize:vertical"></textarea>
   <div style="display:flex;gap:8px;align-items:center;margin-top:8px;
               flex-wrap:wrap">
-    <button class="chat-build"
-            style="padding:6px 14px;border-radius:6px;border:1px solid #1a7f37;
-                   background:#1a7f37;color:#fff;cursor:pointer;font-size:13px">
+    <button class="chat-build action"
+            style="padding:6px 14px;font-size:13px">
       Build prompt
     </button>
-    <button class="chat-copy" disabled
-            style="padding:6px 14px;border-radius:6px;border:1px solid #1a7f37;
-                   background:#fff;color:#1a7f37;cursor:pointer;font-size:13px;
-                   opacity:0.5">
+    <button class="chat-copy action alt" disabled
+            style="padding:6px 14px;font-size:13px">
       Copy
     </button>
-    <span class="chat-msg" style="font-size:12px;color:#666"></span>
+    <span class="chat-msg" style="font-size:12px;color:var(--muted)"></span>
   </div>
   <textarea class="chat-output" readonly rows="10"
             placeholder="Your generated prompt will appear here…"
             style="width:100%;box-sizing:border-box;padding:8px;margin-top:10px;
-                   border:1px solid #ccc;border-radius:6px;font-size:12px;
-                   font-family:ui-monospace,Menlo,Consolas,monospace;
-                   background:#fff;resize:vertical;display:none"></textarea>
+                   border-radius:6px;font-size:12px;
+                   font-family:var(--mono);
+                   resize:vertical;display:none"></textarea>
 </div>
 {_chat_section_script()}
 """
@@ -160,7 +158,7 @@ def _chat_section_script() -> str:
 
     buildBtn.addEventListener('click', function(){
       var question = (qBox.value || '').trim();
-      msg.style.color = '#666';
+      msg.style.color = 'var(--muted)';
       msg.textContent = 'Building prompt…';
       buildBtn.disabled = true;
       fetch('/api/chat/prompt', {
@@ -179,15 +177,15 @@ def _chat_section_script() -> str:
           outBox.style.display = 'block';
           copyBtn.disabled = false;
           copyBtn.style.opacity = '1';
-          msg.style.color = '#1a7f37';
+          msg.style.color = 'var(--pos)';
           msg.textContent = 'Prompt ready — copy & paste into ChatGPT / Claude / Gemini.';
         } else {
-          msg.style.color = '#d1242f';
+          msg.style.color = 'var(--neg)';
           msg.textContent = (d && d.error) || 'Could not build prompt.';
         }
       }).catch(function(e){
         buildBtn.disabled = false;
-        msg.style.color = '#d1242f';
+        msg.style.color = 'var(--neg)';
         msg.textContent = 'Error: ' + e;
       });
     });
@@ -195,7 +193,7 @@ def _chat_section_script() -> str:
     copyBtn.addEventListener('click', function(){
       outBox.select();
       var done = function(){
-        msg.style.color = '#1a7f37';
+        msg.style.color = 'var(--pos)';
         msg.textContent = 'Copied to clipboard.';
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {

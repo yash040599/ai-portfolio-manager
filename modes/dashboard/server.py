@@ -24,7 +24,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from config import Config, now_ist
 from modes.dashboard.budget_history import average_budget
@@ -93,6 +93,32 @@ def _parse_float(val: str | None, default: float = 0.0) -> float:
         return float(val)
     except (TypeError, ValueError):
         return default
+
+
+# ── Post-login redirect helpers ───────────────────────────────────
+
+_ALLOWED_NEXT = {"/", "/login", "/portfolio", "/swing", "/us", "/trading",
+                 "/dryrun", "/tax"}
+
+
+def _safe_next(raw: str | None) -> str:
+    """Whitelist the post-login landing page.
+
+    The value arrives from a form field, so echoing it straight into a
+    `Location:` header would be an open redirect (and, with a stray
+    CR/LF, a response-splitting bug).  Only known in-app paths are
+    accepted; anything else falls back to /login.
+    """
+    candidate = (raw or "").strip()
+    return candidate if candidate in _ALLOWED_NEXT else "/login"
+
+
+def _login_target(next_path: str, ok: bool, err: str) -> str:
+    """Build the 303 Location for a login attempt (query-escaped)."""
+    flag = "ok=1" if ok else "err=" + quote(str(err or "Login failed")[:200],
+                                           safe="")
+    sep = "&" if "?" in next_path else "?"
+    return f"{next_path}{sep}{flag}"
 
 
 # ── Payload assembly (shared between / and /api/data) ─────────────
@@ -189,9 +215,9 @@ class _DashboardHandler(BaseHTTPRequestHandler):
 
         try:
             if url.path == "/":
-                self._serve_home()
+                self._serve_home(parse_qs(url.query))
             elif url.path == "/home" or url.path == "/home/":
-                self._serve_home()
+                self._serve_home(parse_qs(url.query))
             elif url.path == "/portfolio" or url.path == "/portfolio/":
                 self._serve_portfolio()
             elif url.path.startswith("/portfolio/"):
@@ -202,6 +228,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_shell()
             elif url.path == "/login" or url.path == "/login/":
                 self._serve_login()
+            elif url.path == "/api/home/summary":
+                self._serve_home_summary(parse_qs(url.query))
             elif url.path == "/api/run_status":
                 self._serve_run_status()
             elif url.path == "/api/portfolio/sections":
@@ -285,9 +313,32 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                     BrokenPipeError):
                 pass
 
-    def _serve_home(self) -> None:
+    def _serve_home(self, qs: dict[str, list[str]] | None = None) -> None:
         from modes.dashboard.home_page import render_home_page
-        self._write_html(render_home_page().encode("utf-8"))
+        qs = qs or {}
+        login_ok = bool(qs.get("ok"))
+        login_err = (qs.get("err") or [""])[0]
+        body = render_home_page(login_ok=login_ok, login_err=login_err)
+        self._write_html(body.encode("utf-8"))
+
+    def _serve_home_summary(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/home/summary[?live=1] — aggregated book summary for
+        the home page.  `live=1` is the only path that touches Zerodha /
+        yfinance; both are already rate-limited in their own modules.
+        Never 500s: a failure returns the error string so the page can
+        show a banner and keep the last snapshot on screen."""
+        from modes.dashboard.home_summary import build_summary
+        live = (qs.get("live") or ["0"])[0] in ("1", "true", "yes")
+        try:
+            payload = build_summary(live=live)
+        except Exception as exc:  # noqa: BLE001 — degrade, don't blank
+            sys.stderr.write(f"[dashboard] home summary failed: {exc!r}\n")
+            self._write_json(
+                json.dumps({"error": str(exc)[:300]}).encode("utf-8"),
+                status=503,
+            )
+            return
+        self._write_json(json.dumps(payload, default=str).encode("utf-8"))
 
     def _serve_dryrun(self) -> None:
         from modes.dashboard.dryrun_page import render_dryrun_page
@@ -2032,12 +2083,13 @@ class _DashboardHandler(BaseHTTPRequestHandler):
     def _serve_login_submit(self) -> None:
         # Read form-urlencoded body; extract redirect_url; exchange
         # for an access token via core.zerodha_client. Always redirect
-        # back to /login so the page re-renders the auth pill.
+        # back to the submitting page so the auth pill re-renders.
         from urllib.parse import parse_qs as _pqs, urlparse as _up
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length).decode("utf-8")
         form = _pqs(raw)
         redirect_url = (form.get("redirect_url") or [""])[0]
+        next_path = _safe_next((form.get("next") or [""])[0])
 
         request_token = ""
         if redirect_url:
@@ -2070,11 +2122,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 _clear_errors()
             except Exception as exc:
                 err = str(exc)[:200]
+        else:
+            err = "No request_token found in the pasted URL"
 
         # 303 redirect with a one-shot query flag for the page to read.
-        target = "/login?ok=1" if ok else f"/login?err={err}"
         self.send_response(303)
-        self.send_header("Location", target)
+        self.send_header("Location", _login_target(next_path, ok, err))
         self.end_headers()
 
     def _serve_login_assisted(self) -> None:
@@ -2084,6 +2137,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8")
         form = _pqs(raw)
         otp = (form.get("otp") or [""])[0].strip()
+        next_path = _safe_next((form.get("next") or [""])[0])
 
         ok = False
         err = ""
@@ -2103,9 +2157,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         else:
             err = "No OTP provided"
 
-        target = "/login?ok=1" if ok else f"/login?err={err}"
         self.send_response(303)
-        self.send_header("Location", target)
+        self.send_header("Location", _login_target(next_path, ok, err))
         self.end_headers()
 
     def _serve_shell(self) -> None:

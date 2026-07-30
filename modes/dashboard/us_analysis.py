@@ -16,6 +16,9 @@ from config import Config, now_ist
 from modes.dashboard import us_config
 from shared.candle_cache import CandleCache
 from modes.swing.signals import classify_setup, compute_swing_indicators
+from modes.swing.conviction import grade as grade_candidate
+from shared.quant_metrics import profile as quant_profile
+from shared.technical_indicators import adx as compute_adx
 
 
 US_SCAN_CACHE_PATH = os.path.join("data", "us_scan_latest.json")
@@ -534,6 +537,35 @@ def _build_analysis(
     if close < ind.get("sma_200", 0) and setup_type != "52W_DIP":
         warnings.append("Price is below SMA-200; trend risk is elevated")
 
+    # Quant profile + conviction/risk grade (2026-07-31). Same engine
+    # the NSE scanner uses, so an Indian and a US candidate carry
+    # directly comparable grades. Benchmark is SPY, risk-free is the US
+    # 10y proxy rather than the Indian G-Sec.
+    quant: dict[str, Any] = {}
+    grade_dict: dict[str, Any] = {}
+    try:
+        quant = quant_profile(candles, spy_candles or None, risk_free_pct=4.5)
+        enriched = dict(ind)
+        try:
+            adx_val = (compute_adx(candles, period=14) or {}).get("adx")
+            if adx_val is not None:
+                enriched["adx"] = float(adx_val)
+        except Exception:
+            pass
+        grade_dict = grade_candidate(
+            enriched, setup_score=float(score), setup_type=setup_type,
+            quant=quant, entry_price=close, stop_price=stop, usd=True,
+        ).to_dict()
+    except Exception:
+        quant, grade_dict = {}, {}
+
+    if grade_dict.get("risk_grade") in ("HIGH", "VERY HIGH"):
+        warnings.append(
+            f"Risk grade {grade_dict['risk_grade']} — "
+            + ("; ".join(grade_dict.get("risk_notes") or [])
+               or "size this one down")
+        )
+
     return {
         "ok": True,
         "symbol": display_symbol,
@@ -547,6 +579,12 @@ def _build_analysis(
         "action": action,
         "setup_type": setup_type,
         "score": round(float(score), 2),
+        "conviction": grade_dict.get("conviction", 0.0),
+        "conviction_grade": grade_dict.get("conviction_grade", ""),
+        "risk_score": grade_dict.get("risk", 0.0),
+        "risk_grade": grade_dict.get("risk_grade", ""),
+        "grade_detail": grade_dict,
+        "quant": quant,
         "trend_signal": {
             "setup_type": trend_setup,
             "score": round(float(trend_score), 2),

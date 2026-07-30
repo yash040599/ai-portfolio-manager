@@ -423,16 +423,21 @@ def _render_pnl_card(
 ) -> str:
     invested = sum(p.managed_qty * p.entry_price for p in positions)
     current_value = 0.0
+    priced_live = 0
     for p in positions:
         lq = live_by_symbol.get(p.symbol, {})
-        lprice = float(lq.get("price") or p.entry_price)
+        lprice = float(lq.get("price") or 0)
+        if lprice:
+            priced_live += 1
+        else:
+            lprice = p.entry_price
         current_value += p.managed_qty * lprice
     unrealised = current_value - invested
     upnl_cls = "pos" if unrealised >= 0 else "neg"
     pnl_cls = "pos" if pnl.get("net_pnl", 0) >= 0 else "neg"
     out: list[str] = []
     out.append('<div class="card">')
-    out.append('<h2>Realised US P&amp;L</h2>')
+    out.append('<h2>US P&amp;L summary</h2>')
     out.append('<table class="kvtable">')
     _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
     out.append(_kv("Gross P&amp;L",
@@ -449,7 +454,14 @@ def _render_pnl_card(
     out.append(_kv("Unrealised P&amp;L",
                    f'<span id="us-open-unrealised-wrap" class="{upnl_cls}">'
                    f'{_money_span(unrealised, signed=True, element_id="us-open-unrealised-pnl")}</span>'))
-    out.append('</table></div>')
+    out.append('</table>')
+    if positions and priced_live == 0:
+        # Snapshot-first render: without live quotes "current" is just
+        # the entry price, so a flat +0.00 unrealised is not real.
+        out.append('<div class="muted" style="font-size:11.5px;margin-top:8px">'
+                   'Current value falls back to entry price until live prices '
+                   'load (yfinance polls a few seconds after the page opens).</div>')
+    out.append('</div>')
     return "".join(out)
 
 
@@ -598,6 +610,9 @@ window.addEventListener('DOMContentLoaded', function() {
             }
             host.innerHTML = String(j.html || '');
             _applyCurrencyToAll();
+            // Open-book rows only exist now, so the P&L card can be
+            // recomputed from them for the first time.
+            _refreshUsOpenBookSummary();
             // Sections just got swapped in — cascade fresh quotes
             // (open first, then watch, then reco) so the user sees
             // their open book light up before the reco list.
@@ -651,6 +666,10 @@ def _render_recommendations(latest_scan: dict, live: dict,
     out.append('<table class="holdings">')
     out.append('<tr>'
                '<th>#</th><th>Symbol</th><th>Name</th><th>Setup</th>'
+               '<th title="Setup strength, trend quality, relative strength vs SPY, '
+               'volume, ADX and volatility fit blended 0-100">Conviction</th>'
+               '<th title="ATR, stop distance, volatility, drawdown, beta '
+               'and liquidity blended 0-100">Risk</th>'
                '<th class="right">% Below 52w</th>'
                '<th class="right">Live Price</th>'
                '<th class="right">Entry</th><th class="right">Stop</th>'
@@ -692,6 +711,8 @@ def _render_recommendations(latest_scan: dict, live: dict,
             f'{html.escape(sym)}</a></td>'
             f'<td><span class="small">{html.escape(stock_name)}</span></td>'
             f'<td><span style="font-size:11px">{html.escape(setup)}</span>{ai_mark}</td>'
+            f'{_grade_cell(r.get("conviction_grade"), r.get("conviction"), "conv", (r.get("grade_detail") or {}).get("notes"))}'
+            f'{_grade_cell(r.get("risk_grade"), r.get("risk_score"), "risk", (r.get("grade_detail") or {}).get("risk_notes"))}'
             f'<td class="right">{dip_cell}</td>'
             f'<td class="right" data-live-field="price_with_change">'
             f'<span class="{chg_cls}">{_money_span(lprice)}</span> '
@@ -892,6 +913,23 @@ def _filter_pnl_for_us(pnl: dict) -> dict:
     return out
 
 
+def _grade_cell(label, score, kind: str, notes) -> str:
+    """Conviction / risk pill for the US tables. A blank grade renders as
+    a dash so scan rows written before grading shipped stay readable."""
+    text = str(label or "").strip()
+    if not text:
+        return '<td><span class="muted">&mdash;</span></td>'
+    try:
+        num = float(score or 0)
+    except (TypeError, ValueError):
+        num = 0.0
+    tip = "; ".join(notes or []) if isinstance(notes, list) else str(notes or "")
+    slug = text.lower().replace(" ", "-")
+    return (f'<td><span class="grade {kind} {kind}-{slug}" '
+            f'title="{html.escape(tip or f"{kind} {num:.0f}/100")}">'
+            f'{html.escape(text)}<em>{num:.0f}</em></span></td>')
+
+
 def _money_span(value, signed: bool = False, element_id: str | None = None) -> str:
     """Render a USD value as a <span class="money" data-usd="..."> so
     the client-side currency toggle can re-render in INR on demand."""
@@ -962,30 +1000,59 @@ def _topnav(here: str, fx: dict) -> str:
 def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
     from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
     from modes.dashboard.swing_page import _ai_md_js
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     rate = float(fx.get("rate") or 0.0)
+    # Keep the nav first in <body>; the AI banner belongs under it.
+    parts = list(body_parts)
+    topnav = ""
+    if parts and parts[0].lstrip().startswith("<nav"):
+        topnav = parts.pop(0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(title)} — AI Portfolio Manager</title>
-<style>{_STYLE}</style>
+{theme_boot_script()}
+<style>{theme_css()}{_STYLE}{theme_overrides_css()}</style>
 <script>window._usdInrRate = {rate};</script>
 </head><body>
 {_ai_md_js()}
+{topnav}
 {ai_banner_html()}
-{''.join(body_parts)}
+{''.join(parts)}
 {ai_banner_script()}
 </body></html>"""
 
 
 _STYLE = """
-:root { --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
-    --card: #ffffff; --line: #e5e7eb;
-    --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
-    --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
-    --soft: #f0f1f3; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+body { font-family: var(--font);
        background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
+
+/* Conviction / risk grade pills (2026-07-31) */
+.grade { display: inline-flex; align-items: baseline; gap: 5px;
+         padding: 2px 9px; border-radius: 999px; font-size: 11px;
+         font-weight: 700; border: 1px solid transparent; white-space: nowrap;
+         cursor: help; }
+.grade em { font-style: normal; font-weight: 600; opacity: .72;
+            font-size: 10px; font-variant-numeric: tabular-nums; }
+.grade.conv-a { background: var(--pos-bg); color: var(--pos);
+                border-color: var(--pos-line); }
+.grade.conv-b { background: var(--accent-soft); color: var(--accent);
+                border-color: var(--accent-line); }
+.grade.conv-c { background: var(--soft); color: var(--muted);
+                border-color: var(--line); }
+.grade.conv-d { background: var(--warn-bg); color: var(--warn-fg);
+                border-color: var(--warn-line); }
+.grade.risk-low { background: var(--pos-bg); color: var(--pos);
+                  border-color: var(--pos-line); }
+.grade.risk-moderate { background: var(--soft); color: var(--muted);
+                       border-color: var(--line); }
+.grade.risk-high { background: var(--warn-bg); color: var(--warn-fg);
+                   border-color: var(--warn-line); }
+.grade.risk-very-high { background: var(--neg-bg, #fdecec);
+                        color: var(--neg); border-color: var(--neg); }
 .wrap { max-width: 1180px; margin: 0 auto; }
 h1.page-title { font-size: 22px; margin: 0 0 4px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
@@ -1324,6 +1391,12 @@ function _usApplyQuotesToNodes(nodes, quotes) {
 function _refreshUsOpenBookSummary() {
     var rows = document.querySelectorAll(
         'tr[data-live-tier="open"][data-entry-price][data-managed-qty]');
+    // The open book is lazy-loaded from /api/us/sections, so on first
+    // paint there are no rows yet. Recomputing from an empty NodeList
+    // would overwrite the server-rendered totals with $0.00 (the
+    // 2026-07-30 "Book Amount $0.00 with 11 open positions" bug), so
+    // bail out and leave the server numbers alone.
+    if (!rows.length) return;
     var invested = 0;
     var current = 0;
     for (var i = 0; i < rows.length; i++) {

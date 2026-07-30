@@ -366,18 +366,18 @@ _TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__TITLE__ — AI Portfolio Manager</title>
+__THEME_BOOT__
 <link rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <style>
-  :root {
-    --bg: #f7f8fa; --fg: #1c1f23; --muted: #6a7280;
-    --card: #ffffff; --line: #e5e7eb; --accent: #1c1f23;
-    --ok: #1b8e3a; --warn: #c62828; --soft: #f0f1f3;
-  }
+  __THEME_CSS__
+  :root { --ok: #1b8e3a; --warn: #c62828; }
+  html[data-theme="dark"] { --ok: #34d39f; --warn: #ff7b72; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  body { font-family: var(--font);
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
@@ -387,15 +387,15 @@ _TEMPLATE = r"""<!doctype html>
                                 text-transform: uppercase; letter-spacing: 0.05em;
                                 margin-right: 8px; }
   nav.topnav select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
-                      border-radius: 5px; background: white; cursor: pointer; }
+                      border-radius: 5px; background: var(--input-bg); cursor: pointer; }
 
   h1.page-title { font-size: 24px; margin: 4px 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 
-  .summary-card { background: linear-gradient(180deg, #ffffff, #fbfcfe);
+  .summary-card { background: var(--card);
                   border: 1px solid var(--line); border-radius: 10px;
                   padding: 22px 26px; margin-bottom: 22px;
-                  box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+                  box-shadow: var(--shadow-sm); }
   .summary-title { font-size: 17px; margin: 0 0 4px; }
   .summary-sub { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
   .summary-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 22px; }
@@ -419,52 +419,52 @@ _TEMPLATE = r"""<!doctype html>
   .empty-live { padding: 18px; background: var(--soft); border-radius: 6px;
                 color: var(--muted); font-size: 13px; }
   .summary-disclaimer { margin-top: 14px; padding: 8px 12px;
-                        background: #fff8e1; border-left: 3px solid #f0c75a;
-                        font-size: 12.5px; color: #5b4a18; border-radius: 0 4px 4px 0; }
+                        background: var(--warn-bg); border-left: 3px solid var(--warn-line);
+                        font-size: 12.5px; color: var(--warn-fg); border-radius: 0 4px 4px 0; }
 
   .doc-section { background: var(--card); border: 1px solid var(--line);
                  border-radius: 10px; padding: 22px 30px; margin-bottom: 24px;
-                 box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+                 box-shadow: var(--shadow-sm); }
   .doc-section > h1:first-child,
   .doc-section > h2:first-child { margin-top: 0; }
   .doc-section h1 { font-size: 22px; border-bottom: 2px solid var(--line);
                     padding-bottom: 6px; margin-top: 28px; }
-  .doc-section h2 { font-size: 18px; margin-top: 24px; color: #2c3138; }
-  .doc-section h3 { font-size: 15px; margin-top: 18px; color: #2c3138; }
+  .doc-section h2 { font-size: 18px; margin-top: 24px; color: var(--fg); }
+  .doc-section h3 { font-size: 15px; margin-top: 18px; color: var(--fg); }
   .doc-section h4 { font-size: 13px; margin-top: 14px; color: var(--muted);
                     text-transform: uppercase; letter-spacing: 0.04em; }
   .doc-section p { margin: 8px 0; }
   .doc-section ul, .doc-section ol { margin: 8px 0; padding-left: 22px; }
   .doc-section li { margin: 3px 0; }
-  .doc-section blockquote { border-left: 3px solid #c7d2fe; background: #eef2ff;
-                            margin: 10px 0; padding: 8px 14px; color: #1c2942;
+  .doc-section blockquote { border-left: 3px solid var(--accent-line); background: var(--accent-soft);
+                            margin: 10px 0; padding: 8px 14px; color: var(--fg);
                             border-radius: 0 4px 4px 0; }
   .doc-section code { background: var(--soft); padding: 1px 6px; border-radius: 3px;
-                      font-size: 12.5px; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .doc-section pre { background: #1c1f23; color: #e5e7eb; padding: 12px 16px;
+                      font-size: 12.5px; font-family: var(--mono); }
+  .doc-section pre { background: #12161f; color: #e5e7eb; padding: 12px 16px;
                      border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
   .doc-section pre code { background: transparent; color: inherit; padding: 0; }
-  .doc-section .math-block { background: #f4f6fa; color: #1c1f23;
-                              border-left: 3px solid #c7d2fe;
+  .doc-section .math-block { background: var(--soft); color: var(--fg);
+                              border-left: 3px solid var(--accent-line);
                               padding: 12px 16px; border-radius: 0 6px 6px 0;
                               margin: 12px 0; overflow-x: auto;
                               text-align: center; font-size: 15px; }
   .doc-section .math-inline { font-size: 14px; padding: 0 1px; }
   .doc-section .katex { font-size: 1em; }
   .doc-section .katex-display { margin: 0; }
-  .doc-section a { color: #1f4ed8; }
+  .doc-section a { color: var(--accent); }
   .doc-section .table-scroll { overflow-x: auto; margin: 12px 0; }
   .doc-section table.md-table { width: 100%; border-collapse: collapse;
                                 font-size: 13.5px;
                                 font-variant-numeric: tabular-nums; }
   .doc-section table.md-table th { text-align: left; padding: 8px 10px;
                                    border-bottom: 2px solid var(--line);
-                                   background: #f7f8fa; font-weight: 600;
-                                   font-size: 12.5px; color: #2c3138; }
+                                   background: var(--card-2); font-weight: 600;
+                                   font-size: 12.5px; color: var(--fg-2); }
   .doc-section table.md-table td { padding: 7px 10px;
                                    border-bottom: 1px solid var(--line);
                                    vertical-align: top; }
-  .doc-section table.md-table tr:hover td { background: #fafbfc; }
+  .doc-section table.md-table tr:hover td { background: var(--soft); }
   .doc-section hr { border: 0; border-top: 1px solid var(--line); margin: 18px 0; }
   .source-banner { font-size: 12px; color: var(--muted);
                    margin-bottom: 12px; padding: 6px 10px;
@@ -472,6 +472,7 @@ _TEMPLATE = r"""<!doctype html>
                    display: inline-block; }
   footer { color: var(--muted); font-size: 12px; margin-top: 32px;
            text-align: center; }
+  __THEME_OVERRIDES__
 </style>
 </head>
 <body>
@@ -571,7 +572,13 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
         + '</select></div>'
     )
 
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     return (_TEMPLATE
+            .replace("__THEME_BOOT__", theme_boot_script())
+            .replace("__THEME_CSS__", theme_css())
+            .replace("__THEME_OVERRIDES__", theme_overrides_css())
             .replace("__TITLE__", html.escape(label))
             .replace("__FILENAME__", html.escape(filename))
             .replace("__TOPNAV_CSS__", topnav_css())

@@ -115,8 +115,14 @@ def render_shell(initial_payload: dict, *, server_mode: bool) -> str:
     """
     initial_json = json.dumps(initial_payload).replace("</", "<\\/")
     server_flag  = "true" if server_mode else "false"
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     return _SHELL_TEMPLATE.replace("__SERVER_FLAG__", server_flag) \
                           .replace("__INITIAL_JSON__", initial_json) \
+                          .replace("__THEME_BOOT__", theme_boot_script()) \
+                          .replace("__THEME_CSS__", theme_css()) \
+                          .replace("__THEME_OVERRIDES__", theme_overrides_css()) \
                           .replace("__TOPNAV_CSS__", topnav_css()) \
                           .replace("__TOPNAV__", render_topnav("/trading"))
 
@@ -143,15 +149,14 @@ _SHELL_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Portfolio Manager — Dashboard</title>
+__THEME_BOOT__
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-  :root {
-    --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
-    --card: #ffffff; --line: #e5e7eb; --soft: #f0f1f3;
-  }
+  __THEME_CSS__
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  body { font-family: var(--font);
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
   .wrap { max-width: 1080px; margin: 0 auto; }
   h1 { font-size: 22px; margin: 0 0 4px; }
@@ -168,10 +173,10 @@ _SHELL_TEMPLATE = r"""<!doctype html>
                     margin-bottom: 4px; }
   .controls input, .controls select, .controls button {
     font: inherit; padding: 6px 10px; border: 1px solid var(--line);
-    border-radius: 5px; background: white; }
-  .controls button { background: #1c1f23; color: white; cursor: pointer;
-                     border-color: #1c1f23; padding: 7px 16px; }
-  .controls button.alt { background: white; color: #1c1f23; }
+    border-radius: 5px; background: var(--input-bg); color: var(--fg); }
+  .controls button { background: var(--accent); color: var(--accent-fg); cursor: pointer;
+                     border-color: var(--accent); padding: 7px 16px; }
+  .controls button.alt { background: var(--card); color: var(--fg); }
   .controls .preset { font-size: 12px; padding: 5px 10px; }
   .verdict { padding: 22px 24px; }
   .verdict .pill { display: inline-block; color: white; font-weight: 700;
@@ -184,13 +189,13 @@ _SHELL_TEMPLATE = r"""<!doctype html>
         border-bottom: 1px dashed var(--line); font-size: 14px; }
   .kv:last-child { border-bottom: none; }
   .kv .v { font-variant-numeric: tabular-nums; font-weight: 500; }
-  .pos { color: #1b8e3a; } .neg { color: #c62828; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px;
            font-size: 12px; font-weight: 600; }
-  .badge.ok   { background: #e6f4ea; color: #1b8e3a; }
-  .badge.warn { background: #fff4e0; color: #b06a00; }
+  .badge.ok   { background: var(--pos-bg); color: var(--pos); }
+  .badge.warn { background: var(--warn-bg); color: var(--warn-fg); }
   ul.dates { margin: 6px 0 0 18px; padding: 0; font-size: 13px; }
-  .fail { background: #fdecec; border: 1px solid #f4c0c0; padding: 10px 14px;
+  .fail { background: var(--risk-bg); border: 1px solid var(--risk-line); padding: 10px 14px;
           border-radius: 6px; margin-top: 10px; font-size: 13px; }
   .fail ul { margin: 4px 0 0 18px; padding: 0; }
   .charts { display: grid; grid-template-columns: 1fr; gap: 18px; }
@@ -200,7 +205,7 @@ _SHELL_TEMPLATE = r"""<!doctype html>
                        text-transform: uppercase; letter-spacing: 0.05em; }
   canvas { max-height: 320px; }
   .bucket-hint { font-size: 12px; color: var(--muted); margin-top: 8px; font-style: italic; }
-  .day-detail { margin-top: 14px; padding: 14px 16px; background: #f8f9fb;
+  .day-detail { margin-top: 14px; padding: 14px 16px; background: var(--card-2);
                 border: 1px solid var(--line); border-radius: 6px; }
   .day-detail .head { display: flex; justify-content: space-between; align-items: center;
                       margin-bottom: 10px; }
@@ -214,22 +219,25 @@ _SHELL_TEMPLATE = r"""<!doctype html>
                    font-weight: 600; color: var(--muted); font-size: 11px;
                    text-transform: uppercase; letter-spacing: 0.04em; }
   .day-detail td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
-  .day-detail tr.win  td:last-child { color: #1b8e3a; font-weight: 600; }
-  .day-detail tr.loss td:last-child { color: #c62828; font-weight: 600; }
-  .day-detail tr.expand-row td { background: #fff; padding: 8px 12px;
+  .day-detail tr.win  td:last-child { color: var(--pos); font-weight: 600; }
+  .day-detail tr.loss td:last-child { color: var(--neg); font-weight: 600; }
+  .day-detail tr.expand-row td { background: var(--card); padding: 8px 12px;
                                  border-bottom: 1px solid var(--line); font-size: 12px;
                                  color: var(--muted); }
   .day-detail tr.trade-row { cursor: pointer; }
-  .day-detail tr.trade-row:hover td { background: #eef2ff; }
-  .day-detail .pending-tag { background: #fff4e0; color: #b06a00; padding: 1px 6px;
+  .day-detail tr.trade-row:hover td { background: var(--accent-soft); }
+  .day-detail .pending-tag { background: var(--warn-bg); color: var(--warn-fg); padding: 1px 6px;
                               border-radius: 3px; font-size: 11px; margin-left: 6px; }
   footer { color: var(--muted); font-size: 12px; margin-top: 32px; text-align: center; }
-  code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
-  .static-banner { background: #fff4e0; border: 1px solid #f0d28a; padding: 8px 14px;
-                   border-radius: 6px; font-size: 13px; margin-bottom: 14px; }
-  .static-banner.reset { background: #eef4ff; border-color: #cfd9eb; color: #1c1f23; }
-  .static-banner.reset strong { color: #1c4ed8; }
+  code { background: var(--soft); padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+  .static-banner { background: var(--warn-bg); border: 1px solid var(--warn-line); padding: 8px 14px;
+                   border-radius: 6px; font-size: 13px; margin-bottom: 14px;
+                   color: var(--warn-fg); }
+  .static-banner.reset { background: var(--info-bg); border-color: var(--info-line);
+                         color: var(--fg); }
+  .static-banner.reset strong { color: var(--info-fg); }
   __TOPNAV_CSS__
+  __THEME_OVERRIDES__
 </style>
 </head>
 <body>

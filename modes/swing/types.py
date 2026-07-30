@@ -138,6 +138,17 @@ class SwingCandidate:
     # Signal reasons (human-readable)
     reasons: list[str] = field(default_factory=list)
 
+    # ── Conviction + risk grading (2026-07-31) ──
+    # `score` above is the raw setup score, which is not comparable
+    # across setup families and says nothing about downside. These are
+    # the two numbers a reader acts on. See modes/swing/conviction.py.
+    conviction: float = 0.0           # 0-100
+    conviction_grade: str = ""        # A | B | C | D
+    risk_score: float = 0.0           # 0-100, higher = riskier
+    risk_grade: str = ""              # LOW | MODERATE | HIGH | VERY HIGH
+    conviction_json: str = ""         # component breakdown + notes
+    quant_json: str = ""              # shared/quant_metrics.profile() snapshot
+
     # AI overlay (None when NoAI)
     ai_overlay_json: str = ""
     broker_instruction_json: str = ""

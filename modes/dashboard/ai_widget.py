@@ -58,7 +58,7 @@ def ai_banner_html() -> str:
     free_line = ""
     if free_tier:
         free_line = (
-            f'<div id="ai-free" style="margin-top:4px;color:#0a8;font-size:12px">'
+            f'<div id="ai-free" style="margin-top:4px;color:var(--pos);font-size:12px">'
             f'Free tier: {html.escape(free_tier)} · No credit card required</div>'
         )
     else:
@@ -66,21 +66,22 @@ def ai_banner_html() -> str:
 
     return (
         '<div class="ai-widget" style="margin-bottom:16px;padding:12px 14px;'
-        'border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa">'
+        'border:1px solid var(--line);border-radius:var(--radius);'
+        'background:var(--card);box-shadow:var(--shadow-sm)">'
         '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-        '<strong style="font-size:14px">AI Model</strong>'
-        f'<select id="ai-provider" style="padding:4px 8px;border-radius:4px;'
-        f'border:1px solid #ccc;font-size:13px">{provider_opts}</select>'
-        f'<select id="ai-plan" style="padding:4px 8px;border-radius:4px;'
-        f'border:1px solid #ccc;font-size:13px">{plan_opts}</select>'
-        '<button id="ai-apply" style="padding:4px 12px;border-radius:4px;'
-        'border:1px solid #1a7f37;background:#1a7f37;color:#fff;cursor:pointer;font-size:13px">Apply</button>'
-        f'<span id="ai-label" style="font-size:13px;color:#555">'
+        '<strong style="font-size:14px;color:var(--fg)">AI Model</strong>'
+        f'<select id="ai-provider" style="padding:4px 8px;border-radius:6px;'
+        f'font-size:13px">{provider_opts}</select>'
+        f'<select id="ai-plan" style="padding:4px 8px;border-radius:6px;'
+        f'font-size:13px">{plan_opts}</select>'
+        '<button id="ai-apply" class="action" style="padding:5px 14px;'
+        'font-size:13px">Apply</button>'
+        f'<span id="ai-label" style="font-size:13px;color:var(--muted)">'
         f'{html.escape(provider.upper())} / {html.escape(model)} · {html.escape(cost)}'
         '</span>'
         '</div>'
         f'{free_line}'
-        '<div id="ai-msg" style="margin-top:4px;font-size:12px;color:#666"></div>'
+        '<div id="ai-msg" style="margin-top:4px;font-size:12px;color:var(--muted)"></div>'
         '</div>'
     )
 

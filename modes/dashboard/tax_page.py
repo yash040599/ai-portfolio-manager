@@ -87,8 +87,14 @@ def render_tax_page(*, other_income: float = 0.0,
     )
     intraday_tax = round(proj_with.total_tax - proj_without.total_tax, 2)
 
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     return (
       _PAGE
+      .replace("__THEME_BOOT__", theme_boot_script())
+      .replace("__THEME_CSS__", theme_css())
+      .replace("__THEME_OVERRIDES__", theme_overrides_css())
       .replace("__TOPNAV_CSS__", topnav_css())
       .replace("__BODY__", _body(
         summary=summary,
@@ -383,7 +389,7 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
     salaried_checked = "checked" if is_salaried else ""
     topnav = render_topnav(
         '/tax',
-        after_links='<span class="muted small">Pure projection � does not file or pay anything.</span>',
+        after_links='<span class="muted small">Pure projection &mdash; does not file or pay anything.</span>',
     )
     return f"""
 {topnav}
@@ -440,16 +446,15 @@ _PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tax — AI Portfolio Manager</title>
+__THEME_BOOT__
 <style>
-  :root {
-    --bg: #f7f8fa; --fg: #1c1f23; --muted: #6a7280;
-    --card: #ffffff; --line: #e5e7eb; --accent: #1c1f23;
-    --ok: #1b8e3a; --warn: #c62828; --soft: #f0f1f3;
-    --hot: #fff8e1;
-  }
+  __THEME_CSS__
+  :root { --ok: #1b8e3a; --warn: #c62828; --hot: #fff8e1; }
+  html[data-theme="dark"] { --ok: #34d39f; --warn: #ff7b72; --hot: #33260f; }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  body { font-family: var(--font);
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
@@ -471,9 +476,9 @@ _PAGE = r"""<!doctype html>
 
   .card { background: var(--card); border: 1px solid var(--line);
           border-radius: 10px; padding: 20px 24px; margin-bottom: 18px;
-          box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
-  .card h2 { font-size: 17px; margin: 0 0 12px; }
-  .card h3 { font-size: 14px; margin: 18px 0 8px; color: #2c3138;
+          box-shadow: var(--shadow-sm); }
+  .card h2 { font-size: 17px; margin: 0 0 12px; color: var(--fg); }
+  .card h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted);
              text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
   .card p  { margin: 6px 0; }
   table.kv { width: 100%; border-collapse: collapse;
@@ -486,8 +491,8 @@ _PAGE = r"""<!doctype html>
                    font-variant-numeric: tabular-nums; }
   table.md-table th { text-align: left; padding: 8px 10px;
                       border-bottom: 2px solid var(--line);
-                      background: #f7f8fa; font-weight: 600;
-                      font-size: 12.5px; color: #2c3138; }
+                      background: var(--card-2); font-weight: 600;
+                      font-size: 12.5px; color: var(--fg-2); }
   table.md-table th.r { text-align: right; }
   table.md-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); }
   table.md-table tr.hot td { background: var(--hot); font-weight: 600; }
@@ -538,6 +543,7 @@ _PAGE = r"""<!doctype html>
 
   footer { color: var(--muted); font-size: 12px; margin-top: 18px;
            text-align: center; }
+  __THEME_OVERRIDES__
 </style>
 </head>
 <body>

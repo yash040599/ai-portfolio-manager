@@ -62,15 +62,36 @@ Three surfaces, one CLI. Pick a mode at the CLI.
   reference files (sector map, dividends, fundamentals seed). Every
   field carries `source` + `as_of` so you know exactly how stale each
   number is.
+- **Quant profile** — 30+ metrics per holding computed from the cached
+  daily candles by [shared/quant_metrics.py](shared/quant_metrics.py):
+  1/3/6/12-month returns, 12-1 momentum, relative strength vs NIFTY at
+  four horizons, annualised volatility (30d/90d), one-year max drawdown,
+  drawdown from the 52-week high, Sharpe, Sortino, beta, correlation,
+  up/down capture, 50/200 trend state with days-since-cross, 52-week
+  range position, ATR%, average daily turnover and volume trend.
+- **Six-pillar factor scorecard**
+  ([modes/analyze/scoring.py](modes/analyze/scoring.py)) turns those
+  metrics into two independent verdicts:
+  - **Rating** — STRONG BUY / BUY / HOLD / REDUCE / SELL from a 0-100
+    composite over trend (22), momentum (24), risk-adjusted return (14),
+    quality (14), valuation (14) and position fit (12).
+  - **Risk grade** — LOW / MODERATE / HIGH / VERY HIGH from volatility,
+    drawdown, beta, downside capture, cap tier, liquidity and
+    single-name concentration.
+  Pillars with no data are dropped and the rest re-weighted, so a missing
+  P/E never scores as a zero; `coverage_pct` reports how much of the
+  model actually had data.
 - `--ai` adds an AI overlay on top of the same NoAI base — long-term
   thesis, qualitative risks, peer comparison, news context — without
   regenerating any of the deterministic numbers. Provider controlled
   by `AI_PROVIDER` in config.py (default: Gemini).
-- Per-stock recommendation (HOLD / BUY MORE / AVERAGE DOWN /
-  PARTIAL EXIT / FULL EXIT) plus a portfolio-wide review with sector
-  gaps, AMFI market-cap tier (LARGE / MID / SMALL / ETF) breakdown,
-  concentration risks, and "what's missing" suggestions
-  (industry-standard portfolio-analyser checks).
+- Per-stock **action** (HOLD / BUY MORE / AVERAGE DOWN / PARTIAL EXIT /
+  FULL EXIT) is a separate layer: it combines the rating with your
+  position size and cost basis, because a STRONG BUY you already hold at
+  22% of the book is still a trim. Plus a portfolio-wide review with
+  sector gaps, AMFI market-cap tier breakdown, concentration risks,
+  risk-bucket and weak-rating concentration checks, and "what's missing"
+  suggestions.
 - Long-term horizon throughout. No orders placed.
 - Surfaced live on the **Dashboard** (`/portfolio` page) — see Phase 3.
 
@@ -121,29 +142,50 @@ python main.py --mode trade --ai      # with AI
 
 The dashboard is the project's **single tool-wide operator surface**.
 It hosts pages for every mode the project exposes — Portfolio analysis,
-Intraday trading P&L, Tax filing, Theory & strategy reference — and is
-independent of every mode's order path. It never places broker orders.
-It may poll Zerodha live quotes for displayed prices/P&L and may write
-local workflow ledgers such as swing confirmations. Default launch
-starts a local web server and opens the default page in your browser;
-the webpage itself is the config surface for date range / source toggles
-/ per-stock drill-down / "Analyse now" buttons, so the CLI is just an
-entry point.
+Swing (India + US), Intraday trading P&L, Dry-run, Tax filing, Theory &
+strategy reference — and is independent of every mode's order path. It
+never places broker orders. It may poll Zerodha live quotes for
+displayed prices/P&L and may write local workflow ledgers such as swing
+confirmations. Default launch starts a local web server and opens the
+home page in your browser; the webpage itself is the config surface for
+date range / source toggles / per-stock drill-down / "Analyse now"
+buttons, so the CLI is just an entry point.
+
+All pages share one design system
+([modes/dashboard/theme.py](modes/dashboard/theme.py)) — one token set
+for colour, radius and shadow, plus a **light / dark theme** toggle in
+the nav that persists in `localStorage` and follows the OS preference by
+default.
 
 Pages:
 
-- **`/portfolio`** (default landing) — Phase 1 analyser surface.
+- **`/`** (default landing) — command centre. Net worth, unrealised
+  P&L, India (Zerodha) and US books, an India-vs-US allocation doughnut,
+  Indian sector weights, the top rows of all three books, realised P&L
+  across swing / US / intraday, and **inline Zerodha login** (TOTP
+  quick-login plus paste-back) so a re-auth never needs a detour. First
+  paint is snapshot-only — SQLite plus cached quotes, no broker calls;
+  the browser then fetches `/api/home/summary?live=1` once, with opt-in
+  auto-refresh.
+  Book boundaries are enforced: net worth = Zerodha holdings + US book.
+  The India swing open book is a *tracking* ledger over shares that
+  already sit inside the Zerodha holdings, so it is shown separately and
+  never summed into net worth.
+- **`/portfolio`** — Phase 1 analyser surface.
   Reads the latest `--mode analyze` run from `data/portfolio_analyses.db`,
-  shows holdings summary + portfolio metrics + "what's missing" panel
-  + a per-stock drill-down with on-demand "Analyse now (NoAI / AI)"
-  buttons. Header carries the most-stale `as_of` across the run so you
-  can see how fresh the analysis is. Displayed current price/P&L should
-  poll Zerodha live quotes when a valid token exists. Login flow
-  integrated for the on-demand runs.
-- **`/swing`** (planned) — delivery swing dashboard. After market close,
-  shows entry recommendations on top, tracks confirmed swing positions
-  below with live Zerodha prices, and lets the user mark Done/Exit for
-  manual broker actions without placing automated orders.
+  shows holdings (with **Rating** and **Risk** columns from the factor
+  scorecard) + portfolio metrics + "what's missing" panel + a per-stock
+  drill-down carrying the six-pillar breakdown and the full quant
+  profile, plus on-demand "Analyse now (NoAI / AI)" buttons. Header
+  carries the most-stale `as_of` across the run so you can see how fresh
+  the analysis is. Displayed current price/P&L polls Zerodha live quotes
+  when a valid token exists.
+- **`/swing`** and **`/us`** — delivery swing dashboards for India and
+  the US. Entry recommendations on top with **Conviction** and **Risk**
+  grade columns, watchlist and open book below with live prices
+  (Zerodha 5s / yfinance 15s), per-stock detail pages, and Add+ /
+  Mark-Exit controls for manual broker actions. `/us` adds a USD/INR
+  currency toggle.
 - **`/trading`** — intraday-trading profitability view (the original
   Phase 3 SPA from D1.1). Two charts (Chart.js via CDN, zero new
   Python deps): cumulative net P&L (line, daily) + per-bucket P&L
@@ -168,6 +210,9 @@ Pages:
   `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a
   theoretical-vs-live snapshot card on top), Trade Strategy reference,
   Strategy Evolution log, India Tax Guide.
+- **`/login`** — standalone Zerodha auth page (the same two flows the
+  home page embeds). Both accept a `next` field so you land back where
+  you started; the value is whitelisted server-side.
 
 Lives in its own [modes/dashboard/](modes/dashboard/) folder, isolated
 from every mode's runtime. Touches no strategy/order code; broker access
@@ -210,6 +255,16 @@ What ships today:
   continuation setups, penalty for mean-reversion), NR7 volume
   contraction (BREAKOUT bonus), sector-rotation bonus (top-3 sectors
   by RS get +0.5).
+- **Conviction + risk grades** — the raw setup score is not comparable
+  across setup families and says nothing about downside, so every
+  candidate also carries two 0-100 grades from
+  [modes/swing/conviction.py](modes/swing/conviction.py):
+  **Conviction A/B/C/D** (setup strength, trend quality, relative
+  strength, volume participation, ADX trend strength, volatility fit)
+  and **Risk LOW..VERY HIGH** (ATR%, stop distance, volatility,
+  drawdown, beta, liquidity, distance below the 52-week high). The same
+  engine grades Indian and US candidates, so the two are directly
+  comparable.
 - **Hard gates** — earnings-blackout filter (T+0..2 calendar days),
   weekly-trend-up requirement on SUPPORT_REVERSAL ("no falling-knife
   entries"), portfolio-level risk + sector caps.
@@ -714,19 +769,27 @@ ai-portfolio-manager/
 │   ├── candle_cache.py              # SQLite cache for candles
 │   ├── candle_patterns.py           # 14 pure-math pattern detectors
 │   ├── market_data.py               # Live prices + history enrichment
+│   ├── quant_metrics.py             # returns / momentum / vol / drawdown / Sharpe / beta / capture
 │   ├── technical_indicators.py      # Indicators + composite scoring
 │   └── tax_db.py                    # tax-ledger DB helpers
 ├── modes/                           # one folder per CLI mode
 │   ├── analyze/                     # `--mode analyze` (read-only long-term review)
 │   │   ├── analyser.py              # 8-step orchestrator (NoAI default; --ai overlay)
 │   │   ├── types.py                 # Field[T] + StockAnalysis + PortfolioMetrics + GapAnalysis + PortfolioSnapshot
-│   │   ├── enrich_noai.py           # deterministic Zerodha + cache + reference-seed enrichment
+│   │   ├── enrich_noai.py           # deterministic Zerodha + cache + reference-seed enrichment + quant profile
 │   │   ├── enrich_ai.py             # AI qualitative overlay (only ai_* slots)
-│   │   ├── recommendation_rules.py  # 7-branch deterministic action engine
+│   │   ├── scoring.py               # six-pillar factor scorecard → rating + risk grade
+│   │   ├── recommendation_rules.py  # rating + position context → action (legacy tree as fallback)
 │   │   ├── metrics.py               # HHI / top-5 / Sharpe / vol / max-DD / CAGR / cash drag / mcap tier
-│   │   ├── gaps.py                  # what's-missing engine + suggested additions
+│   │   ├── gaps.py                  # what's-missing engine + risk/rating concentration checks
 │   │   ├── persistence.py           # data/portfolio_analyses.db (two tables, six read helpers)
 │   │   └── report.py                # .txt + .json output (drops the legacy .tsv)
+│   ├── swing/                       # `--mode swing` (delivery, report-only)
+│   │   ├── scanner.py               # universe scan → setup detection → risk sizing → grading
+│   │   ├── signals.py               # 5 setup detectors + scoring modifiers
+│   │   ├── conviction.py            # conviction A-D + risk grade (shared with the US path)
+│   │   ├── risk.py                  # stop / target / position sizing + portfolio limits
+│   │   └── persistence.py           # data/swing.db (runs, candidates, actions, positions)
 │   ├── trade/                       # `--mode trade` (default; --noai or --ai)
 │   │   ├── manager.py               # day orchestrator (run / run_noai / run_test)
 │   │   ├── stock_scanner.py         # candle + indicator scanner
@@ -743,14 +806,22 @@ ai-portfolio-manager/
 │       ├── metrics.py               # headline P&L, cumulative series (intraday)
 │       ├── budget_history.py        # per-day budget from trading_data_*.json
 │       ├── verdict.py               # capital-ladder traffic-light engine
+│       ├── theme.py                 # shared design tokens + light/dark theme
+│       ├── nav.py                   # shared top nav + theme toggle
+│       ├── home_page.py             # / command centre (net worth, books, inline login)
+│       ├── home_summary.py          # cross-book aggregation for the home page
 │       ├── render_html.py           # /trading Chart.js SPA shell
 │       ├── render_text.py           # plain-text mode (--text)
 │       ├── portfolio_page.py        # /portfolio + /portfolio/<symbol> + /login (D24-D29)
 │       ├── portfolio_actions.py     # background "Analyse now" worker (D26/D27)
+│       ├── swing_page.py            # /swing + /swing/<symbol>
+│       ├── us_page.py               # /us + /us/<symbol> (USD/INR toggle)
+│       ├── us_analysis.py           # yfinance scan + grading for the US book
+│       ├── dryrun_page.py           # /dryrun per-strategy P&L
 │       ├── theory_page.py           # /theory/<slug> renderer
 │       ├── tax_page.py              # /tax FY-summary + projection
 │       ├── tax/                     # FY tax sub-package (slabs, fy_summary)
-│       └── docs/DASHBOARD_ROADMAP.md # D1+D1.1+D13+D16+D17+D24-D29 done; D2-D23 pending
+│       └── docs/DASHBOARD_ROADMAP.md # D1+D1.1+D13+D16+D17+D24-D31 done; D2-D23 pending
 ├── scripts/
 │   ├── trade/                       # trade-mode CLIs (see Section 9)
 │   └── shared/                      # cross-mode CLIs (see Section 10)

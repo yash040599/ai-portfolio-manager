@@ -23,7 +23,7 @@ import json
 import os
 import sqlite3
 
-from config import Config
+from config import Config, now_ist
 from modes.analyze.persistence import (
     history_for_symbol,
     latest_for_symbol,
@@ -58,7 +58,9 @@ def _auth_pill() -> str:
          though the date stamp is today — IP-bound session killed,
          API key mismatch, manual revocation, etc.).
     """
-    today = datetime.date.today().isoformat()
+    # Kite expires the token at midnight IST, so the comparison must be
+    # made in IST — `date.today()` would be a day off on a non-IST box.
+    today = now_ist().date().isoformat()
     valid = False
     try:
         if os.path.exists(_TOKEN_PATH):
@@ -104,14 +106,8 @@ def _topnav(here: str) -> str:
 
 
 _STYLE = r"""
-:root { --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
-        --card: #ffffff; --line: #e5e7eb;
-        --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
-        --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
-        --risk-bg: #fdecec; --risk-fg: #c62828; --risk-line: #f4c0c0;
-        --soft: #f0f1f3; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+body { font-family: var(--font);
        background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
 .wrap { max-width: 1180px; margin: 0 auto; }
 h1.page-title { font-size: 22px; margin: 0 0 4px; }
@@ -242,6 +238,60 @@ code { background: #f0f1f3; padding: 1px 6px; border-radius: 3px; font-size: 12p
                                margin-top: 4px; }
 .sugg-grid .card-mini .why { font-size: 12px; margin-top: 6px;
                               color: var(--fg); }
+
+/* Scorecard pills (rating + risk grade) */
+.pill { display: inline-block; padding: 2px 9px; border-radius: 999px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+        white-space: nowrap; border: 1px solid transparent; }
+.pill.rating-strong-buy { background: var(--pos-bg); color: var(--pos);
+                          border-color: var(--pos-line); }
+.pill.rating-buy        { background: var(--pos-bg); color: var(--pos);
+                          border-color: var(--pos-line); opacity: .85; }
+.pill.rating-hold       { background: var(--soft); color: var(--muted);
+                          border-color: var(--line); }
+.pill.rating-reduce     { background: var(--warn-bg); color: var(--warn-fg);
+                          border-color: var(--warn-line); }
+.pill.rating-sell       { background: var(--risk-bg); color: var(--risk-fg);
+                          border-color: var(--risk-line); }
+.pill.risk-low          { background: var(--pos-bg); color: var(--pos);
+                          border-color: var(--pos-line); }
+.pill.risk-moderate     { background: var(--soft); color: var(--muted);
+                          border-color: var(--line); }
+.pill.risk-high         { background: var(--warn-bg); color: var(--warn-fg);
+                          border-color: var(--warn-line); }
+.pill.risk-very-high    { background: var(--risk-bg); color: var(--risk-fg);
+                          border-color: var(--risk-line); }
+
+/* Factor scorecard panel (drill-down) */
+.scorecard { display: grid; gap: 14px;
+             grid-template-columns: minmax(0, 260px) minmax(0, 1fr); }
+@media (max-width: 760px) { .scorecard { grid-template-columns: 1fr; } }
+.scorecard .headline { text-align: center; padding: 6px 0; }
+.scorecard .headline .big { font-size: 40px; font-weight: 700;
+                            line-height: 1.1; font-variant-numeric: tabular-nums; }
+.scorecard .headline .cap { font-size: 11px; text-transform: uppercase;
+                            letter-spacing: 0.08em; color: var(--muted); }
+.pillars { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.pillars li { display: grid; grid-template-columns: 128px 1fr 42px;
+              align-items: center; gap: 10px; font-size: 12.5px; }
+.pillars .p-name { font-weight: 600; color: var(--fg-2); }
+.pillars .p-bar { height: 9px; border-radius: 999px; background: var(--soft);
+                  overflow: hidden; position: relative; }
+.pillars .p-bar i { display: block; height: 100%; border-radius: 999px;
+                    background: linear-gradient(90deg, #d0342c 0%, #c9a227 45%,
+                                                #0b8a5b 100%);
+                    background-size: 240px 100%; }
+.pillars .p-val { text-align: right; font-variant-numeric: tabular-nums;
+                  color: var(--muted); }
+.pillars .p-drivers { grid-column: 1 / -1; font-size: 11.5px;
+                      color: var(--muted); margin: -4px 0 2px 128px; }
+.quant-grid { display: grid; gap: 6px 18px;
+              grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+              font-size: 12.5px; }
+.quant-grid .q { display: flex; justify-content: space-between; gap: 10px;
+                 padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.quant-grid .q .k { color: var(--muted); }
+.quant-grid .q .v { font-weight: 600; font-variant-numeric: tabular-nums; }
 """
 
 
@@ -688,6 +738,15 @@ def _render_gaps(g: GapAnalysis) -> str:
 """
 
 
+def _rating_pill(value: str | None, kind: str = "rating") -> str:
+    """Colour-coded pill for a scorecard rating or risk grade."""
+    label = (value or "").strip()
+    if not label:
+        return '<span class="muted">&mdash;</span>'
+    slug = label.lower().replace(" ", "-")
+    return f'<span class="pill {kind} {kind}-{slug}">{html.escape(label)}</span>'
+
+
 def _render_holdings_table(snap: PortfolioSnapshot) -> str:
     rows = []
     for s in snap.holdings:
@@ -701,6 +760,10 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
         cap = (s.market_cap_tier.value
                if s.market_cap_tier and s.market_cap_tier.value
                else "—") or "—"
+        rating = _v_str(getattr(s, "rule_rating", None), "")
+        risk = _v_str(getattr(s, "rule_risk_grade", None), "")
+        score = _v(getattr(s, "rule_score", None))
+        risk_score = _v(getattr(s, "rule_risk_score", None))
         # Price-bearing cells get data-live-* markers consumed by the
         # JS poller (see `_runs_polling_script()`'s _pollLivePrices).
         # Avg / qty / sector / cap are static between scans so they
@@ -722,6 +785,8 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
             f'<td class="right">{weight:.1f}%</td>'
             f'<td class="right {cls}" data-live-field="pnl">'
             f'{sign}Rs.{abs(pnl):,.0f} ({pnl_pct:+.2f}%)</td>'
+            f'<td title="Composite {score:.0f}/100">{_rating_pill(rating)}</td>'
+            f'<td title="Risk {risk_score:.0f}/100">{_rating_pill(risk, "risk")}</td>'
             f'<td>{html.escape(action)}</td>'
             "</tr>"
         )
@@ -733,10 +798,20 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
       <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th>
       <th class="right">Avg</th><th class="right">LTP</th>
       <th class="right">Value</th><th class="right">Weight</th>
-      <th class="right">P&amp;L</th><th>Rule action</th>
+      <th class="right">P&amp;L</th>
+      <th title="Six-pillar factor scorecard: trend, momentum, risk-adjusted
+return, quality, valuation, position context">Rating</th>
+      <th title="Volatility, drawdown, beta, liquidity, concentration">Risk</th>
+      <th>Action</th>
     </tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
+  <p class="muted" style="font-size:11.5px;margin:8px 4px 4px">
+    <strong>Rating</strong> grades the security (STRONG BUY &rarr; SELL).
+    <strong>Action</strong> is what to do with the shares you already hold,
+    which also accounts for your position size and cost basis.
+    Open a symbol for the full pillar breakdown.
+  </p>
 </div>
 """
 
@@ -834,6 +909,8 @@ def render_stock_drilldown(symbol: str) -> str:
         else:
             body.append(_render_drilldown_wishlist_card(sym))
         body.append(_render_drilldown_market(s))
+        body.append(_render_drilldown_scorecard(s))
+        body.append(_render_drilldown_quant(s))
         body.append(_render_drilldown_chart(sym, s))
         body.append(_render_drilldown_rule(s))
         body.append(_render_drilldown_ai(s))
@@ -1056,6 +1133,166 @@ def _render_drilldown_actions(sym: str) -> str:
 """
 
 
+# ── Factor scorecard + quant profile (drill-down) ────────────────
+
+_PILLAR_LABELS = {
+    "trend": "Trend",
+    "momentum": "Momentum",
+    "risk_adjusted": "Risk-adj. return",
+    "quality": "Quality",
+    "valuation": "Valuation",
+    "position": "Position fit",
+}
+
+
+def _render_drilldown_scorecard(s: StockAnalysis) -> str:
+    """Six-pillar breakdown behind the rating — the "why" the holdings
+    table only has room to summarise."""
+    card = s.rule_scorecard.value if (s.rule_scorecard and s.rule_scorecard.value) else None
+    if not isinstance(card, dict) or not card.get("pillars"):
+        return """
+<h2>Factor scorecard</h2>
+<div class="card"><p class="muted">No scorecard on file for this symbol.
+Re-run the analyser to generate one.</p></div>
+"""
+
+    composite = float(card.get("composite") or 0)
+    rating = str(card.get("rating") or "")
+    risk_score = float(card.get("risk_score") or 0)
+    risk_grade = str(card.get("risk_grade") or "")
+    coverage = float(card.get("coverage_pct") or 0)
+
+    rows = []
+    for p in card.get("pillars") or []:
+        if not p.get("covered"):
+            continue
+        name = _PILLAR_LABELS.get(p.get("name", ""), str(p.get("name", "")))
+        score = float(p.get("score") or 0)
+        rows.append(
+            f'<li><span class="p-name">{html.escape(name)}</span>'
+            f'<span class="p-bar"><i style="width:{max(2.0, min(100.0, score)):.0f}%"></i></span>'
+            f'<span class="p-val">{score:.0f}</span>'
+            + (f'<span class="p-drivers">{html.escape("; ".join(p.get("drivers") or []))}</span>'
+               if p.get("drivers") else "")
+            + "</li>"
+        )
+
+    risk_drivers = card.get("risk_drivers") or []
+    risk_html = (
+        f'<p class="muted" style="font-size:12px;margin-top:12px">'
+        f'<strong>Risk flags:</strong> {html.escape("; ".join(risk_drivers))}</p>'
+        if risk_drivers else
+        '<p class="muted" style="font-size:12px;margin-top:12px">'
+        'No elevated risk flags.</p>'
+    )
+
+    return f"""
+<h2>Factor scorecard</h2>
+<div class="card">
+  <div class="scorecard">
+    <div>
+      <div class="headline">
+        <div class="big">{composite:.0f}<span class="muted"
+          style="font-size:18px">/100</span></div>
+        <div class="cap">Composite</div>
+        <div style="margin-top:10px">{_rating_pill(rating)}
+          {_rating_pill(risk_grade, "risk")}</div>
+        <div class="cap" style="margin-top:8px">Risk {risk_score:.0f}/100
+          &middot; coverage {coverage:.0f}%</div>
+      </div>
+    </div>
+    <div>
+      <ul class="pillars">{"".join(rows)}</ul>
+      {risk_html}
+    </div>
+  </div>
+  <p class="muted" style="font-size:11.5px;margin-top:12px">
+    Each pillar is scored 0-100 and weighted
+    (trend 22, momentum 24, risk-adjusted return 14, quality 14,
+    valuation 14, position fit 12). Pillars with no data are dropped and
+    the rest re-weighted, so a missing P/E never counts as a zero.
+  </p>
+</div>
+"""
+
+
+# Display metadata for the quant profile: (label, unit, decimals).
+_QUANT_ROWS: list[tuple[str, str, str, int]] = [
+    ("return_1m_pct", "1-month return", "%", 1),
+    ("return_3m_pct", "3-month return", "%", 1),
+    ("return_6m_pct", "6-month return", "%", 1),
+    ("return_12m_pct", "12-month return", "%", 1),
+    ("momentum_12_1_pct", "12-1 momentum", "%", 1),
+    ("rs_3m_pct", "vs NIFTY (3m)", "pp", 1),
+    ("rs_12m_pct", "vs NIFTY (12m)", "pp", 1),
+    ("volatility_30d_pct", "Volatility (30d, ann.)", "%", 1),
+    ("volatility_90d_pct", "Volatility (90d, ann.)", "%", 1),
+    ("max_drawdown_1y_pct", "Max drawdown (1y)", "%", 1),
+    ("drawdown_from_high_pct", "Below 52w high", "%", 1),
+    ("sharpe_1y", "Sharpe (1y)", "", 2),
+    ("sortino_1y", "Sortino (1y)", "", 2),
+    ("beta", "Beta", "", 2),
+    ("correlation", "Correlation to NIFTY", "", 2),
+    ("up_capture_pct", "Up capture", "%", 0),
+    ("down_capture_pct", "Down capture", "%", 0),
+    ("range_position_pct", "52w range position", "%", 0),
+    ("atr_pct", "ATR (% of price)", "%", 2),
+    ("volume_trend_ratio", "Volume trend (20d/60d)", "x", 2),
+    ("days_since_ma_cross", "Days since 50/200 cross", "d", 0),
+]
+
+
+def _render_drilldown_quant(s: StockAnalysis) -> str:
+    """The raw metrics behind the pillars. See shared/quant_metrics.py."""
+    quant = s.quant.value if (getattr(s, "quant", None) and s.quant.value) else None
+    if not isinstance(quant, dict) or not quant:
+        return ""
+
+    cells = []
+    for key, label, unit, places in _QUANT_ROWS:
+        val = quant.get(key)
+        if val is None:
+            continue
+        try:
+            num = float(val)
+        except (TypeError, ValueError):
+            continue
+        text = f"{num:,.{places}f}{unit}"
+        cells.append(
+            f'<div class="q"><span class="k">{html.escape(label)}</span>'
+            f'<span class="v">{text}</span></div>'
+        )
+
+    state = quant.get("trend_state")
+    if state:
+        cells.insert(0, (
+            '<div class="q"><span class="k">Trend structure</span>'
+            f'<span class="v">{html.escape(str(state).replace("_", " ").title())}'
+            "</span></div>"
+        ))
+    turnover = quant.get("avg_turnover")
+    if turnover:
+        cells.append(
+            '<div class="q"><span class="k">Avg daily turnover</span>'
+            f'<span class="v">Rs.{float(turnover) / 1e7:,.2f} cr</span></div>'
+        )
+
+    if not cells:
+        return ""
+    bars = quant.get("bars") or 0
+    return f"""
+<h2>Quant profile</h2>
+<div class="card">
+  <div class="quant-grid">{"".join(cells)}</div>
+  <p class="muted" style="font-size:11.5px;margin-top:10px">
+    Computed from {bars} daily bars. "pp" = percentage points of excess
+    return over NIFTY. Up/down capture above 100% means the stock moves
+    more than the index in that direction.
+  </p>
+</div>
+"""
+
+
 def _render_drilldown_chart(sym: str, s: StockAnalysis | None) -> str:
     """Embed a 1-year price chart for `sym`. Data is fetched async via
     `/api/stock_chart?symbol=X`. Renders a horizontal line at the
@@ -1143,7 +1380,7 @@ def _render_drilldown_chart(sym: str, s: StockAnalysis | None) -> str:
 # ── /login (D28 — Zerodha auth on the dashboard) ────────────────
 
 def render_login_page(*, ok: bool = False, err: str = "") -> str:
-    today = datetime.date.today().isoformat()
+    today = now_ist().date().isoformat()
     valid_until_today = False
     cached_at = None
     try:
@@ -1208,12 +1445,12 @@ def render_login_page(*, ok: bool = False, err: str = "") -> str:
   <form method="post" action="/api/login_assisted" style="margin-top: 10px;">
     <div style="display:flex;gap:8px;align-items:center">
       <input type="text" name="otp" required
-        placeholder="6-digit code"
+        placeholder="000000"
         pattern="[0-9]{{6}}" maxlength="6" inputmode="numeric"
         autocomplete="one-time-code"
-        style="width: 140px; padding: 8px 10px; font: inherit; font-size: 18px;
-               letter-spacing: 4px; text-align: center;
-               border: 1px solid #cfd9eb; border-radius: 5px;" />
+        aria-label="Six digit authenticator code"
+        style="width: 170px; padding: 8px 10px; font: inherit; font-size: 20px;
+               letter-spacing: 6px; text-align: center;" />
       <button class="action" type="submit">Login</button>
     </div>
   </form>
@@ -1594,6 +1831,9 @@ def _wrap(title: str, here: str, body: str,
           *, holdings_count: int = 0) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
     from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     ai_plan = Config.ai()
     input_m = ai_plan.get("input_cost_per_m", 0)
     output_m = ai_plan.get("output_cost_per_m", 0)
@@ -1604,9 +1844,11 @@ def _wrap(title: str, here: str, body: str,
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Portfolio Manager — {html.escape(title)}</title>
+{theme_boot_script()}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<style>{_STYLE}</style>
+<style>{theme_css()}{_STYLE}{theme_overrides_css()}</style>
 </head>
 <body data-holdings="{holdings_count}" data-ai-per-call="{per_call:.2f}">
 {error_toast_html()}

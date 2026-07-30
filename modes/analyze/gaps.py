@@ -44,6 +44,13 @@ DEFENSIVE_SECTORS         = {"FMCG", "PHARMA"}
 CYCLICAL_SECTORS          = {"AUTO", "METALS", "ENERGY", "INFRA", "CAPGOODS"}
 HELD_SUGGESTION_BLOCKLIST = True   # never suggest a stock the user already holds
 
+# Scorecard-driven checks (2026-07-31). Both use the per-stock rating /
+# risk grade produced by modes/analyze/scoring.py.
+HIGH_RISK_BUCKET_MAX_PCT  = 35.0   # weight in HIGH + VERY HIGH risk names
+WEAK_RATING_BUCKET_MAX_PCT = 25.0  # weight in REDUCE + SELL rated names
+WEAK_RATINGS              = {"REDUCE", "SELL"}
+HIGH_RISK_GRADES          = {"HIGH", "VERY HIGH"}
+
 
 # ── Public entry ───────────────────────────────────────────────
 
@@ -187,6 +194,58 @@ def analyse_gaps(
                 suggested_symbols=[],
             ))
 
+    # ── Risk-bucket concentration (2026-07-31) ──
+    # Sector and single-name limits say nothing about *what kind* of
+    # names you hold. A book that is well diversified across sectors but
+    # entirely in high-beta, high-drawdown small caps is still fragile.
+    risk_bucket = _weight_where(
+        holdings, lambda h: _grade(h, "rule_risk_grade") in HIGH_RISK_GRADES)
+    if risk_bucket["weight"] > HIGH_RISK_BUCKET_MAX_PCT:
+        flags.append(GapFlag(
+            severity="RISK",
+            category="RISK_CONCENTRATION",
+            headline=(
+                f"{risk_bucket['weight']:.1f}% of the book sits in HIGH or "
+                f"VERY HIGH risk names ({risk_bucket['count']} holdings)"
+            ),
+            detail=(
+                f"Risk grade blends annualised volatility, one-year max "
+                f"drawdown, beta, downside capture, market-cap tier and "
+                f"traded liquidity. Above {HIGH_RISK_BUCKET_MAX_PCT:.0f}% in "
+                f"the top two buckets the portfolio's drawdown in a market "
+                f"correction will materially exceed the index. Names: "
+                f"{', '.join(risk_bucket['symbols'][:8])}"
+                + (" ..." if len(risk_bucket["symbols"]) > 8 else "")
+                + ". Trim the weakest-rated of these first, or offset with "
+                  "large-cap defensives."
+            ),
+            suggested_symbols=[],
+        ))
+
+    # ── Weak-rating concentration (2026-07-31) ──
+    weak = _weight_where(
+        holdings, lambda h: _grade(h, "rule_rating") in WEAK_RATINGS)
+    if weak["weight"] > WEAK_RATING_BUCKET_MAX_PCT:
+        flags.append(GapFlag(
+            severity="WARN",
+            category="WEAK_RATINGS",
+            headline=(
+                f"{weak['weight']:.1f}% of the book is rated REDUCE or SELL "
+                f"({weak['count']} holdings)"
+            ),
+            detail=(
+                f"The six-pillar scorecard puts these names in the bottom two "
+                f"bands on trend, momentum, quality and valuation combined: "
+                f"{', '.join(weak['symbols'][:8])}"
+                + (" ..." if len(weak["symbols"]) > 8 else "")
+                + ". Carrying more than "
+                  f"{WEAK_RATING_BUCKET_MAX_PCT:.0f}% in low-rated positions is "
+                  "usually inertia rather than a decision. Review each one "
+                  "against its original thesis and either add conviction or cut."
+            ),
+            suggested_symbols=[],
+        ))
+
     # Sort flags by severity (RISK > WARN > INFO) for the report.
     sev_rank = {"RISK": 0, "WARN": 1, "INFO": 2}
     flags.sort(key=lambda f: sev_rank.get(f.severity, 99))
@@ -195,6 +254,42 @@ def analyse_gaps(
 
 
 # ── Helpers ────────────────────────────────────────────────────
+
+def _grade(holding: StockAnalysis, attr: str) -> str:
+    """Read a scorecard Field off a holding, tolerating older snapshots
+    that pre-date the scorecard entirely."""
+    f = getattr(holding, attr, None)
+    if f is None or getattr(f, "value", None) is None:
+        return ""
+    return str(f.value).upper()
+
+
+def _weight_where(holdings: list[StockAnalysis], predicate) -> dict:
+    """Total portfolio weight, count and symbols matching `predicate`."""
+    symbols: list[str] = []
+    weight = 0.0
+    for h in holdings:
+        try:
+            if not predicate(h):
+                continue
+        except Exception:
+            continue
+        symbols.append(h.symbol)
+        w = getattr(h, "weight_in_portfolio_pct", None)
+        if w is not None and getattr(w, "value", None) is not None:
+            try:
+                weight += float(w.value)
+            except (TypeError, ValueError):
+                pass
+    # Heaviest first so the truncated list in the flag names the ones
+    # that actually matter.
+    symbols.sort(
+        key=lambda s: next(
+            (float(getattr(h.weight_in_portfolio_pct, "value", 0) or 0)
+             for h in holdings if h.symbol == s), 0.0),
+        reverse=True,
+    )
+    return {"weight": weight, "count": len(symbols), "symbols": symbols}
 
 def _pick_suggestions(pool: list[dict], held: set[str],
                       n: int = 3) -> list[dict]:

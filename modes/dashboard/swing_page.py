@@ -272,15 +272,28 @@ def render_swing_page() -> str:
     # ── P&L summary ────────────────────────────────────────────
     invested = sum(p.managed_qty * p.entry_price for p in positions)
     current_value = 0.0
+    priced_live = 0
     for p in positions:
         lq = live.get(p.symbol, {})
-        lprice = lq.get("price", 0) or p.entry_price
+        lprice = lq.get("price", 0) or 0
+        if lprice:
+            priced_live += 1
+        else:
+            lprice = p.entry_price
         current_value += p.managed_qty * float(lprice)
     unrealised = current_value - invested
     upnl_cls = "pos" if unrealised >= 0 else "neg"
+    # Snapshot-first render means "current" falls back to entry price
+    # until the user loads live prices. Say so, otherwise a flat
+    # Rs.+0.00 unrealised reads as a real (and wrong) number.
+    stale_note = ""
+    if positions and priced_live == 0:
+        stale_note = ('<div class="muted" style="font-size:11.5px;margin-top:8px">'
+                      'Current value falls back to entry price until you press '
+                      '<strong>Load live prices</strong> above.</div>')
 
     body.append('<div class="card">')
-    body.append('<h2>Realised Swing P&amp;L</h2>')
+    body.append('<h2>Swing P&amp;L summary</h2>')
     body.append('<table class="kvtable">')
     _kv = lambda k, v: f'<tr><td>{k}</td><td>{v}</td></tr>'
     pnl_cls = "pos" if pnl["net_pnl"] >= 0 else "neg"
@@ -297,7 +310,9 @@ def render_swing_page() -> str:
                     f'<span id="swing-open-current-amount">Rs.{current_value:,.2f}</span>'))
     body.append(_kv("Unrealised P&amp;L",
                     f'<span id="swing-open-unrealised-pnl" class="{upnl_cls}">Rs.{unrealised:+,.2f}</span>'))
-    body.append('</table></div>')
+    body.append('</table>')
+    body.append(stale_note)
+    body.append('</div>')
 
     # ── Scan controls ──────────────────────────────────────────
     body.append('<div class="card">')
@@ -757,6 +772,46 @@ def render_swing_page() -> str:
     return _wrap("Swing", body)
 
 
+def _grade_pill(label: str, score: float, kind: str, title: str) -> str:
+    """Colour-coded conviction / risk pill. Empty grade renders as a
+    dash so an older candidate row (scanned before grading shipped)
+    degrades quietly instead of showing a fake zero."""
+    if not label:
+        return '<td><span class="muted">&mdash;</span></td>'
+    slug = label.lower().replace(" ", "-")
+    return (f'<td><span class="grade {kind} {kind}-{slug}" '
+            f'title="{html.escape(title)}">{html.escape(label)}'
+            f'<em>{score:.0f}</em></span></td>')
+
+
+def _conviction_cell(cand) -> str:
+    grade = str(getattr(cand, "conviction_grade", "") or "") if cand else ""
+    score = float(getattr(cand, "conviction", 0.0) or 0.0) if cand else 0.0
+    notes = ""
+    raw = getattr(cand, "conviction_json", "") if cand else ""
+    if raw:
+        try:
+            notes = "; ".join(json.loads(raw).get("notes") or [])
+        except (ValueError, TypeError):
+            notes = ""
+    return _grade_pill(grade, score, "conv",
+                       notes or f"Conviction {score:.0f}/100")
+
+
+def _risk_cell(cand) -> str:
+    grade = str(getattr(cand, "risk_grade", "") or "") if cand else ""
+    score = float(getattr(cand, "risk_score", 0.0) or 0.0) if cand else 0.0
+    notes = ""
+    raw = getattr(cand, "conviction_json", "") if cand else ""
+    if raw:
+        try:
+            notes = "; ".join(json.loads(raw).get("risk_notes") or [])
+        except (ValueError, TypeError):
+            notes = ""
+    return _grade_pill(grade, score, "risk",
+                       notes or f"Risk {score:.0f}/100")
+
+
 def _render_action_table(actions: list, live: dict,
                          candidates_by_symbol: dict,
                          show_setup_as: str = "Setup") -> str:
@@ -773,6 +828,10 @@ def _render_action_table(actions: list, live: dict,
     parts.append('<tr>'
                  '<th>#</th><th>Symbol</th><th>Name</th>'
                  '<th>' + html.escape(show_setup_as) + '</th>'
+                 '<th title="Setup strength, trend quality, relative strength, '
+                 'volume, ADX and volatility fit blended 0-100">Conviction</th>'
+                 '<th title="ATR, stop distance, volatility, drawdown, beta '
+                 'and liquidity blended 0-100">Risk</th>'
                  '<th class="right">% Below 52w High</th>'
                  '<th class="right">Live Price</th>'
                  '<th class="right">Entry</th><th class="right">Stop</th>'
@@ -828,6 +887,8 @@ def _render_action_table(actions: list, live: dict,
             f'<td><span style="font-size:11px;color:var(--muted)">'
             f'{html.escape(stock_name)}</span></td>'
             f'<td><span style="font-size:11px">{setup_html}</span></td>'
+            f'{_conviction_cell(cand)}'
+            f'{_risk_cell(cand)}'
             f'<td class="right">{dip_cell}</td>'
             f'<td class="right" data-live-field="price_with_change">'
             f'<span class="{chg_cls}">Rs.{lprice:,.2f}</span>'
@@ -1122,6 +1183,47 @@ def render_swing_detail(symbol: str) -> str:
     body.append(_kv("Composite Score",
                      f'{cand.score:.1f} {score_unit}{rank_html}'
                      f'{family_note}'))
+
+    # Conviction + risk grade (2026-07-31). The composite score above is
+    # the raw setup score, which is not comparable across setup families
+    # and says nothing about downside; these two are.
+    conv_grade = str(getattr(cand, "conviction_grade", "") or "")
+    risk_grade_v = str(getattr(cand, "risk_grade", "") or "")
+    if conv_grade or risk_grade_v:
+        conv_score = float(getattr(cand, "conviction", 0.0) or 0.0)
+        risk_score_v = float(getattr(cand, "risk_score", 0.0) or 0.0)
+        detail: dict = {}
+        try:
+            detail = json.loads(getattr(cand, "conviction_json", "") or "{}")
+        except (ValueError, TypeError):
+            detail = {}
+        body.append(_kv(
+            "Conviction",
+            f'<span class="grade conv conv-{conv_grade.lower()}">'
+            f'{html.escape(conv_grade)}<em>{conv_score:.0f}</em></span>'
+            f'<span class="muted" style="margin-left:8px;font-size:11px">'
+            f'{html.escape("; ".join(detail.get("notes") or [])[:180])}</span>'
+        ))
+        body.append(_kv(
+            "Risk grade",
+            f'<span class="grade risk risk-{risk_grade_v.lower().replace(" ", "-")}">'
+            f'{html.escape(risk_grade_v)}<em>{risk_score_v:.0f}</em></span>'
+            f'<span class="muted" style="margin-left:8px;font-size:11px">'
+            f'{html.escape("; ".join(detail.get("risk_notes") or [])[:180] or "no elevated risk flags")}</span>'
+        ))
+        comps = detail.get("components") or {}
+        if comps:
+            labels = {
+                "setup": "Setup", "trend": "Trend",
+                "relative_strength": "Rel. strength", "volume": "Volume",
+                "trend_strength": "ADX", "volatility_fit": "Volatility fit",
+            }
+            bits = " &middot; ".join(
+                f'{html.escape(labels.get(k, k))} {float(v):.0f}'
+                for k, v in comps.items()
+            )
+            body.append(_kv("Conviction breakdown",
+                            f'<span style="font-size:11.5px">{bits}</span>'))
     # 52-week high context — useful regardless of setup type so the
     # detail page mirrors the unified table column. Despite the
     # legacy "ath_*" field name the value held since S22 is the
@@ -1721,16 +1823,27 @@ var _aiMdToHtml = window._aiMdToHtml;
 def _wrap(title: str, body_parts: list[str]) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
     from modes.dashboard.ai_widget import ai_banner_html, ai_banner_script
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
+    # The nav must stay the first thing in <body>; pages build it as
+    # body_parts[0], so lift it out and slot the AI banner underneath.
+    parts = list(body_parts)
+    topnav = ""
+    if parts and parts[0].lstrip().startswith("<nav"):
+        topnav = parts.pop(0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — AI Portfolio Manager</title>
-<style>{_STYLE}</style>
+{theme_boot_script()}
+<style>{theme_css()}{_STYLE}{theme_overrides_css()}</style>
 </head><body>
 {error_toast_html()}
 {_ai_md_js()}
+{topnav}
 {ai_banner_html()}
-{"".join(body_parts)}
+{"".join(parts)}
 {ai_banner_script()}
 {error_toast_script()}
 </body></html>"""
@@ -2189,6 +2302,10 @@ function _refreshSwingOpenBookSummary() {
     var rows = document.querySelectorAll(
         'tr[data-entry-price][data-managed-qty]'
     );
+    // No open-book rows in the DOM (empty book, or a section that has
+    // not been swapped in yet) — keep the server-rendered totals
+    // rather than zeroing them out.
+    if (!rows.length) return;
     var invested = 0;
     var current = 0;
 
@@ -2836,14 +2953,33 @@ window.addEventListener('DOMContentLoaded', function () {
 
 
 _STYLE = r"""
-:root { --bg: #fafbfc; --fg: #1c1f23; --muted: #6a7280;
-        --card: #ffffff; --line: #e5e7eb;
-        --accent: #1c1f23; --pos: #1b8e3a; --neg: #c62828;
-        --warn-bg: #fff4e0; --warn-fg: #b06a00; --warn-line: #f0d28a;
-        --soft: #f0f1f3; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+body { font-family: var(--font);
        background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
+
+/* Conviction / risk grade pills (2026-07-31) */
+.grade { display: inline-flex; align-items: baseline; gap: 5px;
+         padding: 2px 9px; border-radius: 999px; font-size: 11px;
+         font-weight: 700; border: 1px solid transparent; white-space: nowrap;
+         cursor: help; }
+.grade em { font-style: normal; font-weight: 600; opacity: .72;
+            font-size: 10px; font-variant-numeric: tabular-nums; }
+.grade.conv-a { background: var(--pos-bg); color: var(--pos);
+                border-color: var(--pos-line); }
+.grade.conv-b { background: var(--accent-soft); color: var(--accent);
+                border-color: var(--accent-line); }
+.grade.conv-c { background: var(--soft); color: var(--muted);
+                border-color: var(--line); }
+.grade.conv-d { background: var(--warn-bg); color: var(--warn-fg);
+                border-color: var(--warn-line); }
+.grade.risk-low { background: var(--pos-bg); color: var(--pos);
+                  border-color: var(--pos-line); }
+.grade.risk-moderate { background: var(--soft); color: var(--muted);
+                       border-color: var(--line); }
+.grade.risk-high { background: var(--warn-bg); color: var(--warn-fg);
+                   border-color: var(--warn-line); }
+.grade.risk-very-high { background: var(--risk-bg, #fdecec);
+                        color: var(--neg); border-color: var(--neg); }
 .wrap { max-width: 1180px; margin: 0 auto; }
 h1.page-title { font-size: 22px; margin: 0 0 4px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;

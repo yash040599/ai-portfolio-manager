@@ -185,6 +185,24 @@ class StockAnalysis:
     # cleanly without a schema migration.
     market_cap_tier: Field[str] | None = None   # 'LARGE' | 'MID' | 'SMALL' | 'ETF' | 'UNKNOWN'
 
+    # ── Quant profile (2026-07-31) ──
+    # Everything `shared/quant_metrics.profile()` produces, kept as one
+    # Field[dict] rather than 25 separate slots so adding a metric never
+    # needs a dataclass or DB change. Keys are documented in that module.
+    quant: Field[dict] | None = None
+
+    # ── Multi-factor scorecard (2026-07-31, modes/analyze/scoring.py) ──
+    # `rule_action` above stays the *portfolio instruction* (what to do
+    # with the shares you already hold). These add the analyst-style
+    # view of the security itself, which is a different question:
+    #   rating      — STRONG BUY | BUY | HOLD | REDUCE | SELL
+    #   risk_grade  — LOW | MODERATE | HIGH | VERY HIGH
+    rule_rating:      Field[str] | None = None
+    rule_score:       Field[float] | None = None    # composite 0-100
+    rule_risk_grade:  Field[str] | None = None
+    rule_risk_score:  Field[float] | None = None    # 0-100, higher = riskier
+    rule_scorecard:   Field[dict] | None = None     # full pillar breakdown
+
     # ── Methods ──
 
     def all_fields(self) -> list[Field]:

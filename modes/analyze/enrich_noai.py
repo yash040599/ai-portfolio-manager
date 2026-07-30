@@ -39,6 +39,7 @@ from modes.analyze.types import (
     SRC_YFINANCE,
     SRC_ZERODHA_API,
 )
+from shared.quant_metrics import profile as quant_profile
 
 
 # ── Reference data loaders (cached at import-time) ──────────────
@@ -220,6 +221,7 @@ def enrich_holdings(
 
     # ── 2. NIFTY daily candles for beta (one fetch per run) ─────
     nifty_closes: list[float] = []
+    nifty_candles: list[dict] = []
     try:
         one_year_ago = now_ist().date() - datetime.timedelta(days=400)
         nifty_hist = zerodha.get_historical(
@@ -227,7 +229,8 @@ def enrich_holdings(
             from_date=one_year_ago, to_date=now_ist().date(),
             interval="day",
         )
-        nifty_closes = [float(c.get("close", 0)) for c in nifty_hist if c.get("close")]
+        nifty_candles = list(nifty_hist or [])
+        nifty_closes = [float(c.get("close", 0)) for c in nifty_candles if c.get("close")]
         log.info(f"NIFTY daily history: {len(nifty_closes)} candles")
     except Exception as e:
         log.warning(f"NIFTY history fetch failed: {e} \u2014 beta will fall back to 1.0")
@@ -245,14 +248,16 @@ def enrich_holdings(
                 refs=refs,
                 zerodha=zerodha,
                 nifty_closes=nifty_closes,
+                nifty_candles=nifty_candles,
                 log=log,
             )
-            apply_rules(stock)
             results.append(stock)
         except Exception as e:
             log.warning(f"Failed to enrich {symbol}: {e} \u2014 skipping")
 
     # ── 4. Compute weight-in-portfolio (derived) ───────────────
+    # Must run BEFORE apply_rules(): the scorecard's position pillar and
+    # the single-name overweight guard both read this weight.
     total_value = sum(_v(s.current_value) for s in results)
     if total_value > 0:
         ts = now_ist()
@@ -262,6 +267,13 @@ def enrich_holdings(
                 value=round(cv / total_value * 100, 2),
                 source=SRC_DERIVED, as_of=ts,
             )
+
+    # ── 5. Score + recommend ───────────────────────────────────
+    for s in results:
+        try:
+            apply_rules(s)
+        except Exception as e:
+            log.warning(f"Scoring failed for {s.symbol}: {e}")
 
     log.success(f"Enriched {len(results)} stocks (NoAI)")
     return results
@@ -278,6 +290,7 @@ def _enrich_one(
     refs: dict,
     zerodha: ZerodhaClient,
     nifty_closes: list[float],
+    nifty_candles: list[dict],
     log: Logger,
 ) -> StockAnalysis:
     """Build one fully-enriched StockAnalysis. Each field's source +
@@ -428,6 +441,29 @@ def _enrich_one(
             else (fund.get("source_note") or "PE not applicable"),
         )
 
+    # Quant profile — returns, momentum, relative strength, volatility,
+    # drawdown, Sharpe/Sortino, up-down capture, trend structure and
+    # liquidity. One dict so new metrics never need a schema change.
+    # See shared/quant_metrics.py for every formula.
+    quant_f: Field | None = None
+    if daily_candles:
+        try:
+            prof = quant_profile(
+                daily_candles,
+                nifty_candles or None,
+                risk_free_pct=float(getattr(
+                    Config, "ANALYZE_RISK_FREE_RATE_PCT", 6.5)),
+            )
+            prof["rsi_daily"] = round(rsi, 1)
+            quant_f = Field(value=_round_floats(prof),
+                            source=SRC_DERIVED, as_of=candle_at,
+                            note=f"{prof.get('bars', 0)} daily bars")
+        except Exception as e:
+            log.debug(f"Quant profile failed for {symbol}: {e}")
+            quant_f = Field.missing(note=f"quant profile error: {e}")
+    else:
+        quant_f = Field.missing(note="no daily candles")
+
     # Build the record. Rule fields are set later by apply_rules().
     placeholder = Field(value=None, source=SRC_RULE_ENGINE_PLACEHOLDER, as_of=now_ist())
     return StockAnalysis(
@@ -458,7 +494,20 @@ def _enrich_one(
         rule_target_price=placeholder,
         rule_reasoning=placeholder,
         market_cap_tier=cap_tier_f,
+        quant=quant_f,
     )
+
+
+def _round_floats(d: dict, places: int = 4) -> dict:
+    """Round every float in the quant profile so the persisted JSON stays
+    readable and diffable between runs."""
+    out: dict = {}
+    for k, v in d.items():
+        if isinstance(v, float):
+            out[k] = round(v, places)
+        else:
+            out[k] = v
+    return out
 
 
 # Sentinel source label for rule fields BEFORE the rule engine runs.

@@ -22,6 +22,7 @@ from modes.trade.stock_scanner import (
     NIFTY50, NIFTY100_EXTRA, NIFTY150_EXTRA, NIFTY200_EXTRA, SECTOR_MAP,
 )
 from modes.swing.signals import compute_swing_indicators, classify_setup
+from modes.swing.conviction import grade as grade_candidate
 from modes.swing.risk import (
     compute_entry_risk, check_portfolio_limits, generate_broker_instruction,
     earnings_blackout_symbols,
@@ -30,6 +31,63 @@ from modes.swing.types import (
     SwingCandidate, SwingAction, ACTION_ENTRY, STATUS_PENDING,
     SETUP_52W_DIP,
 )
+from shared.quant_metrics import profile as quant_profile
+from shared.technical_indicators import adx as compute_adx
+
+
+# ── Conviction + risk grading ───────────────────────────────────
+
+def _attach_grades(candidate: SwingCandidate, *, ind: dict,
+                   candles: list[dict], nifty_candles: list[dict] | None,
+                   setup_score: float, setup_type: str,
+                   usd: bool = False) -> None:
+    """Compute the quant profile + conviction/risk grade and stamp them
+    onto `candidate`. Failure-silent: a grading error must never drop an
+    otherwise valid candidate, it just leaves the grade blank."""
+    try:
+        quant = quant_profile(
+            candles, nifty_candles or None,
+            risk_free_pct=4.5 if usd else 6.5,
+        )
+    except Exception:
+        quant = {}
+
+    # ADX is the one indicator the swing detectors never computed, and
+    # it is the standard way to tell a real trend from chop.
+    enriched = dict(ind)
+    try:
+        adx_val = (compute_adx(candles, period=14) or {}).get("adx")
+        if adx_val is not None:
+            enriched["adx"] = float(adx_val)
+            candidate.reasons = list(candidate.reasons or [])
+    except Exception:
+        pass
+
+    try:
+        result = grade_candidate(
+            enriched,
+            setup_score=setup_score,
+            setup_type=setup_type,
+            quant=quant,
+            entry_price=candidate.entry_price or candidate.close_price,
+            stop_price=candidate.stop_price,
+            usd=usd,
+        )
+    except Exception:
+        return
+
+    candidate.conviction = round(result.conviction, 1)
+    candidate.conviction_grade = result.conviction_grade
+    candidate.risk_score = round(result.risk, 1)
+    candidate.risk_grade = result.risk_grade
+    try:
+        candidate.conviction_json = json.dumps(result.to_dict())
+        candidate.quant_json = json.dumps(
+            {k: (round(v, 4) if isinstance(v, float) else v)
+             for k, v in quant.items()}
+        )
+    except (TypeError, ValueError):
+        pass
 
 
 # ── Universe builder ────────────────────────────────────────────
@@ -228,6 +286,11 @@ class SwingScanner:
                     ath_price=round(_ath_price, 2),
                     dip_from_ath_pct=round(_dip_pct, 2),
                     reasons=reasons,
+                )
+                _attach_grades(
+                    c, ind=ind, candles=candles,
+                    nifty_candles=nifty_candles, setup_score=score,
+                    setup_type=setup_type,
                 )
                 is_add_more = symbol in open_symbols
                 if is_add_more:
@@ -585,6 +648,10 @@ class SwingScanner:
             ath_price=round(_ath_price, 2),
             dip_from_ath_pct=round(_dip_pct, 2),
             reasons=reasons,
+        )
+        _attach_grades(
+            cand, ind=ind, candles=candles, nifty_candles=nifty_candles,
+            setup_score=score, setup_type=setup_type,
         )
 
         if symbol in open_symbols:

@@ -346,8 +346,11 @@ def _strategy_stats(strategy_type: str) -> dict[str, Any]:
         result["avg_loss"] = round(
             sum(losses_list) / len(losses_list), 2
         ) if losses_list else None
-        result["max_win"] = round(max(pnl_values), 2)
-        result["max_loss"] = round(min(pnl_values), 2)
+        # Best/worst must come from the winning/losing buckets, not the
+        # whole P&L list — otherwise a strategy with zero wins reports a
+        # negative "Max win" (seen on the NoAI Gap-and-Go v1.0.0 card).
+        result["max_win"] = round(max(wins_list), 2) if wins_list else None
+        result["max_loss"] = round(min(losses_list), 2) if losses_list else None
 
         total_wins = sum(wins_list)
         total_losses = -sum(losses_list)
@@ -667,13 +670,18 @@ window.OPTIONS_BT = {options_bt_json};
 
 def _wrap(title: str, body: str) -> str:
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
+    from modes.dashboard.theme import (
+        theme_boot_script, theme_css, theme_overrides_css,
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI Portfolio Manager - {html.escape(title)}</title>
+{theme_boot_script()}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<style>{_STYLE}</style>
+<style>{theme_css()}{_STYLE}{theme_overrides_css()}</style>
 </head>
 <body>
 {error_toast_html()}
@@ -688,11 +696,10 @@ def _wrap(title: str, body: str) -> str:
 
 
 _STYLE = r"""
-:root { --bg:#f7f8fa; --fg:#1c1f23; --muted:#6a7280; --card:#ffffff;
-        --line:#e5e7eb; --ok:#1b8e3a; --warn:#b06a00; --neg:#c62828;
-        --blue:#1c4ed8; --soft:#f0f1f3; }
+:root { --ok:#1b8e3a; --warn:#b06a00; --blue:#1c4ed8; }
+html[data-theme="dark"] { --ok:#34d39f; --warn:#f0b45e; --blue:#93b4ff; }
 * { box-sizing: border-box; }
-body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+body { font-family: var(--font);
        background:var(--bg); color:var(--fg); margin:0; padding:24px;
        line-height:1.5; }
 .wrap { max-width:1180px; margin:0 auto; }
@@ -705,7 +712,7 @@ nav.topnav a, nav.topnav button.nav-back { color:var(--fg);
 nav.topnav a:hover { text-decoration:underline; }
 nav.topnav button.nav-back { font:inherit; padding:4px 9px;
              border:1px solid var(--line); border-radius:5px;
-             background:white; cursor:pointer; }
+             background:var(--card); cursor:pointer; }
 nav.topnav button.nav-back:hover { background:var(--soft); }
 nav.topnav .here { color:var(--muted); }
 nav.topnav .sep { color:var(--muted); }
@@ -723,7 +730,7 @@ h1.page-title { font-size:24px; margin:0 0 4px; }
 .selector-row { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
 .selector-row select { font:inherit; font-size:15px; padding:8px 12px;
                        border:1px solid var(--line); border-radius:6px;
-                       background:white; min-width:300px; }
+                       background:var(--input-bg); min-width:300px; }
 .strategy-desc { color:var(--muted); font-size:13px; }
 .metric-label { display:block; color:var(--muted); font-size:11px;
                 text-transform:uppercase; letter-spacing:.06em; }
@@ -752,9 +759,9 @@ footer { text-align:center; color:var(--muted); font-size:12px;
 .pill { display:inline-block; padding:3px 9px; border-radius:999px;
         font-size:11px; font-weight:700; background:var(--soft);
         color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-.pill.ok { background:#e6f4ea; color:var(--ok); }
-.pill.warn { background:#fff4e0; color:var(--warn); }
-.pill.neg { background:#fce4ec; color:var(--neg); }
+.pill.ok { background:var(--pos-bg); color:var(--ok); }
+.pill.warn { background:var(--warn-bg); color:var(--warn); }
+.pill.neg { background:var(--neg-bg); color:var(--neg); }
 """
 
 
