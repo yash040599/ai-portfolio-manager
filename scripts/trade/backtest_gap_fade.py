@@ -45,8 +45,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -124,7 +123,7 @@ def simulate_gap_fade(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -199,7 +198,7 @@ def simulate_gap_fade(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, gap_mag, candles, atr_val, prev_close in selected:
+        for sym, side, _gap_mag, candles, atr_val, prev_close in selected:
             entry_candle = candles[ENTRY_CANDLE_IDX]
             entry_price = entry_candle["close"]
             if entry_price <= 0:
@@ -343,7 +342,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  D.3 — Gap Fade (weak-volume gap mean-reversion)")
+    print("\n  D.3 — Gap Fade (weak-volume gap mean-reversion)")
     print(f"  Gap {args.gap_min}%-{args.gap_max}%, Volume < {args.vol_ceil}x avg, "
           f"cap={args.daily_cap}")
     print(f"  Target: {'RR-based' if args.no_prev_close_target else 'previous close'}")
@@ -383,12 +382,12 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy ──────────────────────────────────────────
     print(f"\n  {'='*100}")
-    print(f"  Walk-forward results (net of cost)")
+    print("  Walk-forward results (net of cost)")
     print(f"  {'='*100}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -417,7 +416,7 @@ def main() -> None:
             _print_table(f"{route_name}", m)
 
     # ── Parameter sweep ──────────────────────────────────────
-    print(f"\n  ── Parameter sweep (TEST window, ALL regimes) ──")
+    print("\n  ── Parameter sweep (TEST window, ALL regimes) ──")
     for gp in [0.3, 0.5, 0.7, 1.0, 1.5]:
         for vc in [0.5, 0.8, 1.0, 1.2]:
             trades = simulate_gap_fade(
@@ -432,7 +431,7 @@ def main() -> None:
             _print_table(f"gap>={gp}% vol<{vc}x", m)
 
     # ── Square-off time sweep ────────────────────────────────
-    print(f"\n  ── Square-off time sweep (TEST, ALL) ──")
+    print("\n  ── Square-off time sweep (TEST, ALL) ──")
     for sq_h in [12, 13, 14, 15]:
         trades = simulate_gap_fade(
             all_symbol_days, regime_labels,
@@ -447,7 +446,7 @@ def main() -> None:
         _print_table(f"sq-off {sq_h}:00", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === D.3 GAP FADE VERDICT ===")
+    print("\n  === D.3 GAP FADE VERDICT ===")
     test_trades = simulate_gap_fade(
         all_symbol_days, regime_labels,
         gap_min_pct=args.gap_min,

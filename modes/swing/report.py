@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 
 from config import now_ist
-from modes.swing.types import SwingCandidate, SwingAction, SwingPosition, SwingRunResult
+from modes.swing.types import SwingRunResult
 
 
 REPORT_DIR = os.path.join("reports", "swing")

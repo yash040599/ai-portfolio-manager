@@ -246,7 +246,7 @@ class ReportWriter:
         f.write(f"Claude plan    : {self.cfg.CLAUDE_PLAN.upper()}  ({plan['model']})\n")
         f.write(f"Zerodha plan   : {self.cfg.ZERODHA_PLAN.upper()}\n")
         f.write(f"Price source   : {zrd['price_source'].upper()}\n")
-        f.write(f"Managed budget : Dynamic (from Zerodha account funds)\n\n")
+        f.write("Managed budget : Dynamic (from Zerodha account funds)\n\n")
 
     def _write_summary_section(
         self, f, portfolio, analyses, skipped,
@@ -776,12 +776,12 @@ class ReportWriter:
                 f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
                 f.write(f"  Profit after tax      : Rs.{profit_after_tax:+,.2f}\n")
             else:
-                f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
-                f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
+                f.write("  Estimated tax         : Rs.0.00 (no tax on losses)\n")
+                f.write("  Loss can be carried forward for 4 years (speculative only)\n")
             f.write("\n")
 
             f.write(f"  FYI: Zerodha Kite Connect subscription is Rs.{self.cfg.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
-            f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
+            f.write("  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
             # ── Turnover Details ──────────────────────────────────
             f.write("TURNOVER DETAILS\n")
@@ -848,40 +848,6 @@ class ReportWriter:
 
         self.log.success(f"Trading report : {txt_path}")
         self.log.success(f"Trading data   : {json_path}")
-
-        # ── Auto-fill dry-run analysis ledger for simulated days ──
-        dryrun_analysis_updated = False
-        if dry_run:
-            expected_closed = sum(
-                1
-                for p in positions
-                if p.get("status") == "CLOSED"
-                and str(p.get("order_id") or "").startswith("DRY_RUN")
-            )
-            try:
-                from scripts.trade.fill_dryrun_analysis import fill_reports
-                stats = fill_reports(date_from=str(today), date_to=str(today))
-                dryrun_analysis_updated = True
-                closed = int(stats.get("closed_positions", 0) or 0)
-                inserted = int(stats.get("inserted", 0) or 0)
-                skipped = int(stats.get("skipped", 0) or 0)
-                self.log.info(
-                    "Dry-run analysis DB: "
-                    f"{closed} closed simulated trade(s), {inserted} inserted, "
-                    f"{skipped} already present"
-                )
-                if expected_closed and closed < expected_closed:
-                    self.log.warning(
-                        "Dry-run analysis DB incomplete: "
-                        f"report has {expected_closed} closed dry-run position(s), "
-                        f"fill saw {closed}"
-                    )
-            except ModuleNotFoundError:
-                # fill_dryrun_analysis was retired with the dry-run data
-                # overhaul — DB auto-fill is intentionally unavailable.
-                pass
-            except Exception as e:
-                self.log.warning(f"Dry-run analysis auto-fill skipped: {e}")
 
         # ── Auto-fill intraday tax ledger for live trading days ───
         if not dry_run:

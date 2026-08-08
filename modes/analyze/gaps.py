@@ -20,15 +20,12 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 from modes.analyze.enrich_noai import load_reference_data
 from modes.analyze.types import (
     GapAnalysis,
     GapFlag,
     PortfolioMetrics,
-    SectorWeight,
     StockAnalysis,
 )
 

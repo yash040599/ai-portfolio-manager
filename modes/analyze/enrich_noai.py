@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import datetime
 import json
-import os
 from pathlib import Path
 
 from config              import Config, now_ist
@@ -34,7 +33,6 @@ from modes.analyze.types import (
     SRC_DERIVED,
     SRC_DIVIDENDS,
     SRC_FUNDAMENTALS,
-    SRC_MISSING,
     SRC_SECTOR_MAP,
     SRC_YFINANCE,
     SRC_ZERODHA_API,

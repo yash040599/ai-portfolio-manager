@@ -287,7 +287,7 @@ class OptionsManager:
         day_pnl = sum(p.get("pnl", 0) for p in closed)
         self.log.info("")
         self.log.info("=" * 60)
-        self.log.info(f"  OPTIONS DAY SUMMARY")
+        self.log.info("  OPTIONS DAY SUMMARY")
         self.log.info(f"  Trades: {len(closed)} | Day P&L: Rs.{day_pnl:+,.2f}")
         if summary.get("total_trades", 0) > 0:
             self.log.info(
@@ -309,7 +309,7 @@ class OptionsManager:
         self.log.info(f"  Index: {self.cfg.OPTIONS_INDEX} | "
                        f"Budget: Rs.{self.cfg.OPTIONS_BUDGET_INR:,} | "
                        f"Max lots: {self.cfg.OPTIONS_MAX_LOTS}")
-        self.log.info(f"  Strategy: Directional Buying (Phase O-4)")
+        self.log.info("  Strategy: Directional Buying (Phase O-4)")
         self.log.info(f"  Square-off: {self.cfg.OPTIONS_SQUARE_OFF_HOUR}:"
                        f"{self.cfg.OPTIONS_SQUARE_OFF_MINUTE:02d} IST")
         self.log.info("=" * 60)

@@ -358,7 +358,6 @@ def _merge_table(
         # NULL key fields (e.g. legacy trades with no entry_time) still
         # match each other and don't duplicate on every sync.
         key_cols = APPEND_TABLES[table]
-        key_cols_sql = ", ".join(key_cols)
         placeholders_key = " AND ".join(f"{c} IS ?" for c in key_cols)
         all_placeholders = ", ".join("?" for _ in cols)
 
@@ -508,7 +507,7 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool,
         if prefer:
             print(f"    <-> upsert:  data/trades.db ({prefer} wins on key collisions)")
         else:
-            print(f"    <-> merge:   data/trades.db (would merge rows from both sides)")
+            print("    <-> merge:   data/trades.db (would merge rows from both sides)")
         return True
 
     total_inserted = 0
@@ -707,12 +706,12 @@ def canonical_trades_replace(dry_run: bool) -> int:
             print(line)
 
         if local_hash == remote_hash and remote_hash != "<missing>":
-            print(f"      -> already in sync, no replace needed.\n")
+            print("      -> already in sync, no replace needed.\n")
             continue
 
         overall_changes += 1
         if dry_run:
-            print(f"      [DRY RUN] would back up remote and replace.\n")
+            print("      [DRY RUN] would back up remote and replace.\n")
             continue
 
         # Real replace.
@@ -725,7 +724,7 @@ def canonical_trades_replace(dry_run: bool) -> int:
                 shutil.copy2(remote_path, bak_path)
                 print(f"      -> backed up remote to: {os.path.basename(bak_path)}")
             shutil.copy2(local_path, remote_path)
-            print(f"      -> replaced remote with local.")
+            print("      -> replaced remote with local.")
         except (PermissionError, OSError) as e:
             print(
                 f"      ! file copy failed: {e}\n"
@@ -821,12 +820,12 @@ def main():
         if result.returncode != 0:
             print(f"  \u2717 Clone failed: {result.stderr.strip()}")
             if args.ssh:
-                print(f"  Make sure your SSH key is added to GitHub.")
+                print("  Make sure your SSH key is added to GitHub.")
             else:
-                print(f"  Make sure you're authenticated with GitHub (run: gh auth login)")
-                print(f"  On Linux VMs with SSH keys, use: python scripts/shared/backup_data.py --ssh")
+                print("  Make sure you're authenticated with GitHub (run: gh auth login)")
+                print("  On Linux VMs with SSH keys, use: python scripts/shared/backup_data.py --ssh")
             sys.exit(1)
-        print(f"  ok Cloned successfully.")
+        print("  ok Cloned successfully.")
 
     if not os.path.isdir(os.path.join(BACKUP_ROOT, ".git")):
         print(f"\n  {BACKUP_ROOT} exists but is not a git repo.")
@@ -910,7 +909,7 @@ def main():
 
         print(f"\n  Summary: {copied} file(s) copied {direction}")
         if not args.dry_run and args.all_local:
-            if git_push(f"sync: full overwrite from local"):
+            if git_push("sync: full overwrite from local"):
                 print("  ok Pushed to remote.\n")
             else:
                 print()
@@ -1001,11 +1000,11 @@ def main():
                 choice = ask_conflict(rel)
                 if choice == "l":
                     copy_file(local_files[rel], os.path.join(BACKUP_ROOT, rel), False)
-                    print(f"      -> kept local")
+                    print("      -> kept local")
                     copied_to_remote += 1
                 else:
                     copy_file(remote_files[rel], os.path.join(PROJECT_ROOT, rel), False)
-                    print(f"      <- kept remote")
+                    print("      <- kept remote")
                     copied_to_local += 1
 
     # Summary

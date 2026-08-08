@@ -29,7 +29,6 @@ from config              import now_ist
 from core.logger         import Logger
 from modes.analyze.types import (
     Field,
-    GapFlag,
     PortfolioSnapshot,
     StockAnalysis,
 )
@@ -279,21 +278,21 @@ def _render_one_stock(s: StockAnalysis, *, mode: str) -> str:
     lines.append("")
     if mode == "AI" and s.ai_thesis_long_term and s.ai_thesis_long_term.value:
         lines.append("  AI OVERLAY (Claude):")
-        lines.append(f"  Thesis (long-term)")
+        lines.append("  Thesis (long-term)")
         for ln in str(s.ai_thesis_long_term.value).splitlines():
             lines.append(f"      {ln}")
         if s.ai_qualitative_risks and s.ai_qualitative_risks.value:
-            lines.append(f"  Risks")
+            lines.append("  Risks")
             for r in (s.ai_qualitative_risks.value or []):
                 lines.append(f"      - {r}")
         if s.ai_peer_comparison and s.ai_peer_comparison.value:
-            lines.append(f"  Peer comparison")
+            lines.append("  Peer comparison")
             lines.append(f"      {s.ai_peer_comparison.value}")
         if s.ai_news_context and s.ai_news_context.value:
-            lines.append(f"  Recent news (30d)")
+            lines.append("  Recent news (30d)")
             lines.append(f"      {s.ai_news_context.value}")
         if s.ai_change_vs_prior and s.ai_change_vs_prior.value:
-            lines.append(f"  Change vs prior")
+            lines.append("  Change vs prior")
             lines.append(f"      {s.ai_change_vs_prior.value}")
         if s.ai_action and s.ai_action.value:
             lines.append(

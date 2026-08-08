@@ -27,7 +27,6 @@ from config import Config, now_ist
 from modes.analyze.persistence import (
     history_for_symbol,
     latest_for_symbol,
-    latest_run,
     latest_snapshot,
 )
 from modes.analyze.types import (
@@ -37,7 +36,7 @@ from modes.analyze.types import (
     PortfolioSnapshot,
     StockAnalysis,
 )
-from modes.dashboard.portfolio_actions import estimate_ai_cost, latest_status
+from modes.dashboard.portfolio_actions import latest_status
 from modes.dashboard.nav import render_topnav
 
 
@@ -1076,7 +1075,6 @@ def _render_drilldown_history(sym: str, history: list[StockAnalysis]) -> str:
         when = h.most_stale_at().strftime("%Y-%m-%d %H:%M")
         action = h.effective_action()
         pnl_pct = (h.pnl_pct.value or 0) if h.pnl_pct else 0
-        cls = "pos" if pnl_pct >= 0 else "neg"
         tiles.append(
             f'<div class="tile">'
             f'<div class="when">{html.escape(when)}</div>'
@@ -1772,12 +1770,7 @@ document.addEventListener('visibilitychange', function () {
 
 
 def _ai_toggle_html() -> str:
-    """Shared AI/NoAI toggle. Read by `runAnalysis()` JS.
-
-    Hint text inlines the *real* per-call cost from Config so a plan
-    upgrade (free → pro → max) is reflected without a code change.
-    """
-    per_call = float(getattr(Config, "CLAUDE_COST_PER_CALL", 3.0))
+    """Shared AI/NoAI toggle. Read by `runAnalysis()` JS."""
     from modes.dashboard.ai_widget import ai_toggle_label
     return ai_toggle_label("ai-toggle-input")
 

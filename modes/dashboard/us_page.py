@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import html
 import json
-from typing import Any
 
-from config import Config, now_ist
 from modes.dashboard import us_config
 from modes.dashboard.us_analysis import (
-    analyse_us_symbol, analyse_us_universe, latest_us_scan,
+    analyse_us_symbol, latest_us_scan,
     cached_us_live_quotes, get_us_live_quotes,
     get_us_stock_name, cached_usd_inr_rate, get_usd_inr_rate,
     build_us_health_checks,
@@ -519,7 +517,7 @@ def _render_scan_card(default_ticket: float,
 
 
 def _render_single_stock_card(default_ticket: float) -> str:
-    return f"""
+    return """
 <div class="card">
     <h2>Analyse a Single Stock</h2>
     <p class="muted" style="margin-top:0;font-size:13px">
@@ -530,7 +528,7 @@ def _render_single_stock_card(default_ticket: float) -> str:
                      style="width:180px;padding:8px 10px;font:inherit;
                   border:1px solid #cfd9eb;border-radius:5px;
                   text-transform:uppercase"
-           onkeydown="if(event.key==='Enter'){{analyseUsStock();}}" />
+           onkeydown="if(event.key==='Enter'){analyseUsStock();}" />
     <button class="action" onclick="analyseUsStock()">Analyse</button>
         <label class="ai-toggle" title="Run AI overlay for this one stock">
       <input type="checkbox" id="us-single-ai-toggle">

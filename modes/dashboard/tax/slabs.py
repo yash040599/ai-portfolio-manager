@@ -133,6 +133,12 @@ def _slab_tax(taxable: float, slabs: list[Slab]) -> tuple[float, float]:
 
 
 def _surcharge(tax: float, taxable: float) -> float:
+    """Surcharge on ``tax`` for the band ``taxable`` falls in.
+
+    Simplification: surcharge *marginal relief* (the cap that applies just
+    above Rs.50L / 1Cr / 2Cr) is not modelled, so estimates for incomes
+    sitting a few thousand rupees above a band edge read slightly high.
+    """
     rate = 0.0
     for upper, r in _SURCHARGE_BANDS:
         if upper is None or taxable <= upper:
@@ -183,6 +189,12 @@ def compute_tax(
     rebate = 0.0
     if taxable <= rebate_ceiling:
         rebate = slab_tax
+    else:
+        # Marginal relief (proviso to s.87A): just above the ceiling the
+        # slab tax may not exceed the income earned above it, otherwise a
+        # Rs.1 raise would cost Rs.60,000 in tax. Relief phases out on its
+        # own once slab_tax <= (taxable - ceiling).
+        rebate = max(0.0, slab_tax - (taxable - rebate_ceiling))
     tax_after_rebate = slab_tax - rebate
 
     # Capital-gains flat-rate tax (Budget 2024 rates, applied from 23-Jul-2024).

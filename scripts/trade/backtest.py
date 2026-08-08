@@ -946,7 +946,7 @@ def main():
         peak = max(peak, cum)
         max_dd = max(max_dd, peak - cum)
 
-    print(f"\n  ── Summary ────────────────────────────────────────")
+    print("\n  ── Summary ────────────────────────────────────────")
     status_counts = _count_by(candidates, "status")
     rejection_counts = _count_by(
         [row for row in candidates if row.get("status") == "REJECTED"],

@@ -25,7 +25,7 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-from shared.tax_db import get_db, indian_fy, fy_label
+from shared.tax_db import get_db
 from config import now_ist
 
 ZERODHA_DIR = os.path.join(PROJECT_ROOT, "data", "ZerodhaTaxPL")
@@ -667,7 +667,7 @@ def _write_verified_txt(
     with open(txt_path, "w", encoding="utf-8") as f:
         # ── Verified header ───────────────────────────────────
         f.write(f"{'=' * 58}\n")
-        f.write(f"  VERIFIED -- Data corrected from Zerodha Tax P&L\n")
+        f.write("  VERIFIED -- Data corrected from Zerodha Tax P&L\n")
         f.write(f"  Updated on: {verified_on}\n")
         f.write(f"{'=' * 58}\n\n")
 
@@ -776,12 +776,12 @@ def _write_verified_txt(
             f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
             f.write(f"  Profit after tax      : Rs.{pnl['profit_after_tax']:+,.2f}\n")
         else:
-            f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
-            f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
+            f.write("  Estimated tax         : Rs.0.00 (no tax on losses)\n")
+            f.write("  Loss can be carried forward for 4 years (speculative only)\n")
         f.write("\n")
 
         f.write(f"  FYI: Zerodha Kite Connect subscription is Rs.{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
-        f.write(f"  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
+        f.write("  Track cumulative daily profits to ensure they cover this monthly cost.\n\n")
 
         # ── Turnover Details ──────────────────────────────────
         f.write("TURNOVER DETAILS\n")
@@ -867,7 +867,7 @@ def _process_xlsx(xlsx_path: str):
 
     # ── Intraday verification ─────────────────────────────────
     if intraday:
-        print(f"\n  Verifying intraday trades ...")
+        print("\n  Verifying intraday trades ...")
         stats = _verify_intraday(conn, intraday)
         print(f"  ok Verified: {stats['verified']}  |  "
               f"Corrected: {stats['corrected']}  |  "
@@ -882,7 +882,7 @@ def _process_xlsx(xlsx_path: str):
                  if stats.get('reconciled_mismatch') else ""))
 
         # ── Update JSON / TXT trading reports ─────────────────
-        print(f"\n  Updating trading reports ...")
+        print("\n  Updating trading reports ...")
         report_stats = _update_trading_reports(intraday, conn)
         if report_stats["updated"]:
             print(f"  ok Reports updated for: {', '.join(report_stats['updated'])}")
@@ -901,7 +901,7 @@ def _process_xlsx(xlsx_path: str):
         print(f"  ok Long-term:  {n} trade(s) imported ({len(long_term) - n} already existed)")
 
     conn.close()
-    print(f"\n  Done.\n")
+    print("\n  Done.\n")
 
 
 def main():
@@ -937,7 +937,7 @@ def main():
             fy_label_str = f"FY {args.fy}-{str(args.fy + 1)[2:]}"
             print(f"\n  No {fy_label_str} sheet found in data/ZerodhaTaxPL/.")
             print(f"  Please download the {fy_label_str} Tax P&L xlsx from Zerodha Console")
-            print(f"  (https://console.zerodha.com/reports/taxpnl) and place it in:")
+            print("  (https://console.zerodha.com/reports/taxpnl) and place it in:")
             print(f"    {ZERODHA_DIR}/")
             print(f"  Expected filename pattern: taxpnl-*-{args.fy}_{args.fy + 1}-*.xlsx")
             return
@@ -948,8 +948,8 @@ def main():
     # ── No args: process all sheets ───────────────────────────
     sheets = _find_all_sheets()
     if not sheets:
-        print(f"\n  No Zerodha xlsx files found in data/ZerodhaTaxPL/.")
-        print(f"  Download from https://console.zerodha.com/reports/taxpnl")
+        print("\n  No Zerodha xlsx files found in data/ZerodhaTaxPL/.")
+        print("  Download from https://console.zerodha.com/reports/taxpnl")
         return
     print(f"\n  Found {len(sheets)} sheet(s) in data/ZerodhaTaxPL/")
     for sheet in sheets:

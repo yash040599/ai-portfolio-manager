@@ -91,10 +91,10 @@ class ZerodhaClient:
         if interactive:
             self.log.info("Zerodha login required (token expired or missing).")
             print()
-            print(f"  Choose login method:")
-            print(f"    b = Open browser on this machine (default)")
-            print(f"    m = Manual / headless (paste URL from another device)")
-            print(f"    q = Quit")
+            print("  Choose login method:")
+            print("    b = Open browser on this machine (default)")
+            print("    m = Manual / headless (paste URL from another device)")
+            print("    q = Quit")
             try:
                 answer = input("  Choice [b/m/q]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
@@ -195,26 +195,26 @@ class ZerodhaClient:
         and pastes the redirect URL back into the terminal.
         """
         print()
-        print(f"  ┌─ MANUAL LOGIN ──────────────────────────────────────")
-        print(f"  │")
-        print(f"  │  1. Open this URL in any browser (phone/laptop):")
-        print(f"  │")
+        print("  ┌─ MANUAL LOGIN ──────────────────────────────────────")
+        print("  │")
+        print("  │  1. Open this URL in any browser (phone/laptop):")
+        print("  │")
         print(f"  │     {login_url}")
-        print(f"  │")
-        print(f"  │  2. Log in to Zerodha (credentials + TOTP)")
-        print(f"  │")
-        print(f"  │  3. After login, the browser will show an error page")
-        print(f"  │     (localhost refused to connect) — that's normal.")
-        print(f"  │     Copy the FULL URL from the browser address bar")
-        print(f"  │     and paste it below.")
-        print(f"  │")
-        print(f"  └────────────────────────────────────────────────────")
+        print("  │")
+        print("  │  2. Log in to Zerodha (credentials + TOTP)")
+        print("  │")
+        print("  │  3. After login, the browser will show an error page")
+        print("  │     (localhost refused to connect) — that's normal.")
+        print("  │     Copy the FULL URL from the browser address bar")
+        print("  │     and paste it below.")
+        print("  │")
+        print("  └────────────────────────────────────────────────────")
         print()
 
         try:
             redirect_url = input("  Paste redirect URL: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            raise RuntimeError("User cancelled manual login.")
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise RuntimeError("User cancelled manual login.") from exc
 
         # Extract request_token from the pasted URL
         params = parse_qs(urlparse(redirect_url).query)
@@ -250,8 +250,8 @@ class ZerodhaClient:
         """
         try:
             import requests   # only required for the programmatic flow
-        except ImportError:
-            raise RuntimeError("`requests` not installed (pip install requests)")
+        except ImportError as exc:
+            raise RuntimeError("`requests` not installed (pip install requests)") from exc
 
         session = requests.Session()
         session.headers.update({"User-Agent": "Mozilla/5.0 (kite-login)"})
@@ -330,8 +330,8 @@ class ZerodhaClient:
 
         try:
             import requests
-        except ImportError:
-            raise RuntimeError("`requests` not installed (pip install requests)")
+        except ImportError as exc:
+            raise RuntimeError("`requests` not installed (pip install requests)") from exc
 
         session = requests.Session()
         session.headers.update({"User-Agent": "Mozilla/5.0 (kite-login)"})
@@ -392,8 +392,8 @@ class ZerodhaClient:
         if mode == "AUTO":
             try:
                 import pyotp
-            except ImportError:
-                raise RuntimeError("AUTO mode needs pyotp (pip install pyotp)")
+            except ImportError as exc:
+                raise RuntimeError("AUTO mode needs pyotp (pip install pyotp)") from exc
             return pyotp.TOTP(totp_seed).now()
 
         # ASSISTED — prompt for 6 digits
@@ -404,8 +404,8 @@ class ZerodhaClient:
         for _attempt in range(3):
             try:
                 code = input("  Enter 6-digit code: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                raise RuntimeError("user cancelled assisted login")
+            except (EOFError, KeyboardInterrupt) as exc:
+                raise RuntimeError("user cancelled assisted login") from exc
             if code.isdigit() and len(code) == 6:
                 return code
             print(f"  -> '{code}' is not 6 digits, try again.")
@@ -1445,7 +1445,7 @@ class ZerodhaClient:
 # ================================================================
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 
 @dataclass

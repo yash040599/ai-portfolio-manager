@@ -358,9 +358,6 @@ def simulate_trades(
         return trades
 
     # Pre-compute rolling indicators on the full continuous series
-    closes = [c["close"] for c in all_candles]
-    ema9 = _ema(closes, 9)
-    ema21 = _ema(closes, 21)
 
     for date_str in dates:
         start_idx, end_idx = day_boundaries[date_str]
@@ -383,7 +380,6 @@ def simulate_trades(
             c = all_candles[gi]
             hour = c["ts"].hour
             minute = c["ts"].minute
-            li = gi - start_idx  # local index within day
 
             # ── Running intraday VWAP (Phase 3 trail) ─────────
             _tp = (c["high"] + c["low"] + c["close"]) / 3

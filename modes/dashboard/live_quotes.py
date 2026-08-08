@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any
 
 from config import Config, now_ist
 from core.logger import Logger
@@ -46,7 +45,7 @@ def get_live_quotes(symbols: list[str],
     when called faster than the rate limit. Returns empty dicts for
     symbols that fail.
     """
-    global _last_poll_time, _cached_quotes
+    global _last_poll_time   # _cached_quotes is mutated in place, not rebound
 
     if not symbols:
         return {}

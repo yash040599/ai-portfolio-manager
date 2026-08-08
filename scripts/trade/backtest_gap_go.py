@@ -34,8 +34,6 @@ Read-only. Out-of-sample by construction. Never touches capital.
 from __future__ import annotations
 
 import argparse
-import datetime
-import math
 import os
 import sys
 from collections import defaultdict
@@ -50,8 +48,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _rsi, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _rsi, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -139,7 +136,7 @@ def simulate_gap_go(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -252,7 +249,7 @@ def simulate_gap_go(
             effective_cap = regime_cap_overrides[regime]
         selected = candidates[:effective_cap]
 
-        for sym, side, gap_mag, candles, atr_val in selected:
+        for sym, side, _gap_mag, candles, atr_val in selected:
             entry_candle = candles[ENTRY_CANDLE_IDX]
             entry_price = entry_candle["close"]
             if entry_price <= 0:
@@ -403,7 +400,7 @@ def main() -> None:
         args.rsi_contra_buy = 70.0
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 7.2 — Gap-and-Go with Volume Qualification")
+    print("\n  Phase 7.2 — Gap-and-Go with Volume Qualification")
     print(f"  Gap >= {args.gap_pct}%, Volume >= {args.vol_mult}x 20-day avg, "
           f"daily cap = {args.daily_cap}")
     print(f"  Loading {len(symbols)} symbols...")
@@ -444,7 +441,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy across windows × regime routing ──────────
@@ -480,11 +477,11 @@ def main() -> None:
 
             if win_name == "TEST" and m.get("by_reason"):
                 reasons = m["by_reason"]
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
     # ── Parameter sweep on TEST window ────────────────────────
-    print(f"\n  ── Parameter sweep (TEST window, ALL regimes) ──")
+    print("\n  ── Parameter sweep (TEST window, ALL regimes) ──")
     for gp in [0.5, 1.0, 1.5, 2.0]:
         for vm in [1.5, 2.0, 3.0]:
             trades = simulate_gap_go(
@@ -498,8 +495,8 @@ def main() -> None:
 
     # ── RSI contra-momentum sweep (if requested) ───────────────
     if args.sweep_rsi:
-        print(f"\n  ── RSI contra-momentum sweep (TEST window, ALL regimes) ──")
-        print(f"  Baseline first, then sweep SELL floor and BUY ceiling")
+        print("\n  ── RSI contra-momentum sweep (TEST window, ALL regimes) ──")
+        print("  Baseline first, then sweep SELL floor and BUY ceiling")
 
         rsi_base = simulate_gap_go(
             all_symbol_days, regime_labels,
@@ -530,7 +527,7 @@ def main() -> None:
             _print_table(f"BUY blocked RSI>{thresh}", compute_metrics(trades, f"RSI-buy-{thresh}", True))
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 7.2 VERDICT ===")
+    print("\n  === PHASE 7.2 VERDICT ===")
     test_trades = simulate_gap_go(
         all_symbol_days, regime_labels,
         gap_pct=args.gap_pct,
@@ -555,7 +552,7 @@ def main() -> None:
 
     # ── v1.1 comparison (gap-hold + score-contra sweep) ───────
     print(f"\n  {'='*100}")
-    print(f"  v1.1 Filter Comparison (TEST window)")
+    print("  v1.1 Filter Comparison (TEST window)")
     print(f"  {'='*100}")
 
     # Baseline v1.0 (no new filters)
@@ -633,8 +630,8 @@ def main() -> None:
 
     # ── Regime-conditional cap sweep (VOLATILE days get more trades) ──
     print(f"\n  {'='*100}")
-    print(f"  Regime-Conditional Cap Sweep (v1.1 filters, TEST window)")
-    print(f"  Base cap=2 on TREND/RANGE, varying VOLATILE cap")
+    print("  Regime-Conditional Cap Sweep (v1.1 filters, TEST window)")
+    print("  Base cap=2 on TREND/RANGE, varying VOLATILE cap")
     print(f"  {'='*100}")
 
     _print_table("  baseline cap=2 all days", compute_metrics(v11_all, "base", True))

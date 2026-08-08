@@ -410,7 +410,6 @@ class SwingScanner:
         open_symbols = {p.get("symbol", "") for p in existing_positions}
 
         # Pre-flight: earnings blackout (one symbol only — cheap).
-        from datetime import date as _date
         scan_date = candle_to_date or now_ist().date()
         from modes.swing.risk import earnings_blackout_symbols
         blackout = earnings_blackout_symbols(today=scan_date, cfg=self.cfg)

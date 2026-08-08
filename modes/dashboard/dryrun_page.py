@@ -15,10 +15,8 @@ from __future__ import annotations
 import glob
 import html
 import json
-import os
 import sqlite3
-from collections import Counter, defaultdict
-from contextlib import closing
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -318,7 +316,6 @@ def _strategy_stats(strategy_type: str) -> dict[str, Any]:
 
     # Closed = has exit_price
     closed = [t for t in all_trades if t.get("exit_price") is not None]
-    open_trades = [t for t in all_trades if t.get("exit_price") is None]
     result["closed_trades"] = len(closed)
     result["trades"] = all_trades  # show all (including open)
 

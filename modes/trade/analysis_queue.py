@@ -19,7 +19,6 @@
 import json
 import re
 import time
-import datetime
 
 from config             import Config, now_ist
 from core.logger        import Logger
@@ -257,7 +256,7 @@ class AnalysisQueue:
             symbol = entry["stock"]["symbol"]
             print(f"  \033[91m✗ \033[1m{symbol}\033[0m")
             print(f"    Reason  : {entry['error']}")
-            print(f"    Options : \033[1mr\033[0m retry  \033[1ms\033[0m skip  \033[1mq\033[0m skip all remaining")
+            print("    Options : \033[1mr\033[0m retry  \033[1ms\033[0m skip  \033[1mq\033[0m skip all remaining")
 
             while True:
                 try:
@@ -273,7 +272,7 @@ class AnalysisQueue:
                         break
                     else:
                         self.log.error(f"{symbol} failed again: {error}")
-                        print(f"    Options : \033[1mr\033[0m retry  \033[1ms\033[0m skip  \033[1mq\033[0m skip all")
+                        print("    Options : \033[1mr\033[0m retry  \033[1ms\033[0m skip  \033[1mq\033[0m skip all")
                         continue
 
                 elif choice == "s":

@@ -216,7 +216,7 @@ def _momentum_pillar(m: dict) -> PillarScore:
         parts.append((_linear(mom, -35.0, 55.0), 1.4))
         drivers.append(f"12-1 momentum {mom:+.1f}%")
 
-    for key, label, weight in (("return_3m_pct", "3M", 0.9),
+    for key, _label, weight in (("return_3m_pct", "3M", 0.9),
                                ("return_6m_pct", "6M", 0.8)):
         val = m.get(key)
         if val is not None:

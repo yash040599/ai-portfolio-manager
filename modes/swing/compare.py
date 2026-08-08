@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from modes.swing.types import (
-    SwingCandidate, SETUP_52W_DIP, DIP_SETUP_TYPES,
+    SwingCandidate, DIP_SETUP_TYPES,
 )
 
 

@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import datetime
-import math
 from dataclasses import dataclass
 
 from config import Config
@@ -250,7 +249,7 @@ def generate_broker_instruction(
         },
         "steps": [
             f"1. Open Zerodha → search {symbol} on {exchange}",
-            f"2. BUY with product CNC (delivery). NOT MIS/F&O.",
+            "2. BUY with product CNC (delivery). NOT MIS/F&O.",
             f"3. Qty: {qty}",
             f"4. Limit price: Rs.{entry_price:,.2f} (adjust to market if needed)",
             f"5. Set stop/GTT at Rs.{stop_price:,.2f}",

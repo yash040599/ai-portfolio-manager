@@ -10,7 +10,6 @@
 
 import os
 import sqlite3
-import json
 import datetime
 
 from config      import Config, now_ist

@@ -15,11 +15,10 @@ from __future__ import annotations
 import datetime
 import sqlite3
 from dataclasses import dataclass
-from typing import Iterable
 
 # Reuse the project's single source of truth for the DB path so we
 # don't drift if it ever moves. tax_db.py also handles schema migration.
-from shared.tax_db import DB_PATH, get_db
+from shared.tax_db import get_db
 
 
 @dataclass(frozen=True)

@@ -40,8 +40,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _make_trade,
-    CAPITAL,
+    compute_metrics, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -105,7 +104,7 @@ def simulate_eod_vwap(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -173,7 +172,7 @@ def simulate_eod_vwap(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, dist_s, vwap, sigma, candles, entry_ci in selected:
+        for sym, side, _dist_s, vwap, _sigma, candles, entry_ci in selected:
             entry_candle = candles[entry_ci]
             entry_price = entry_candle["close"]
             if entry_price <= 0:
@@ -286,7 +285,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  D.4 — End-of-Day VWAP Reversion")
+    print("\n  D.4 — End-of-Day VWAP Reversion")
     print(f"  Entry at 14:30, Target=VWAP, σ threshold={args.sigma}, "
           f"SL={args.sl_mult}x dist, cap={args.daily_cap}")
     print(f"  Loading {len(symbols)} symbols from {args.universe}...")
@@ -324,12 +323,12 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy ──────────────────────────────────────────
     print(f"\n  {'='*100}")
-    print(f"  Walk-forward results (net of cost)")
+    print("  Walk-forward results (net of cost)")
     print(f"  {'='*100}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -355,7 +354,7 @@ def main() -> None:
             _print_table(f"{route_name}", m)
 
     # ── Sigma threshold sweep ────────────────────────────────
-    print(f"\n  ── Sigma threshold sweep (TEST, ALL) ──")
+    print("\n  ── Sigma threshold sweep (TEST, ALL) ──")
     for sig in [1.0, 1.2, 1.5, 2.0, 2.5, 3.0]:
         trades = simulate_eod_vwap(
             all_symbol_days, regime_labels,
@@ -382,7 +381,7 @@ def main() -> None:
         _print_table(f"entry {eh}:{em:02d}", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === D.4 EOD VWAP REVERSION VERDICT ===")
+    print("\n  === D.4 EOD VWAP REVERSION VERDICT ===")
     test_trades = simulate_eod_vwap(
         all_symbol_days, regime_labels,
         sigma_thresh=args.sigma,

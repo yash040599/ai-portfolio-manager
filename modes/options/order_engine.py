@@ -16,8 +16,6 @@
 #   - Square-off at OPTIONS_SQUARE_OFF_HOUR
 # ================================================================
 
-import datetime
-import time
 
 from config              import Config, now_ist
 from core.logger         import Logger

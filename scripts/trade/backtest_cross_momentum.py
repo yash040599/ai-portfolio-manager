@@ -31,8 +31,6 @@ Read-only. Out-of-sample by construction. Never touches capital.
 from __future__ import annotations
 
 import argparse
-import datetime
-import math
 import os
 import sys
 from collections import defaultdict
@@ -47,8 +45,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -105,7 +102,7 @@ def simulate_cross_momentum(
 
     # Collect all trading dates present across symbols
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -299,7 +296,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy across windows × regime routing ──────────
@@ -330,7 +327,7 @@ def main() -> None:
             # Exit reason breakdown for TEST window
             if win_name == "TEST" and m.get("by_reason"):
                 reasons = m["by_reason"]
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
     # ── Also try SELL side (bottom K) ─────────────────────────
@@ -347,7 +344,7 @@ def main() -> None:
     _print_table("SELL ALL regimes", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 7.1 VERDICT ===")
+    print("\n  === PHASE 7.1 VERDICT ===")
     # Run TEST/ALL as the primary result
     test_trades = simulate_cross_momentum(
         all_symbol_days, regime_labels,
@@ -380,7 +377,7 @@ def _simulate_sell_side(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 

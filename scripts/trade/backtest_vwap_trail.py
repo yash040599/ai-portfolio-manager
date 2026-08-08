@@ -156,7 +156,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in labels.values():
         dist[r] += 1
-    print(f"  Regime days: " + ", ".join(
+    print("  Regime days: " + ", ".join(
         f"{r} {dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     keep_sets = {
@@ -167,9 +167,9 @@ def main() -> None:
 
     results = {}
     for name, keep in keep_sets.items():
-        print(f"\n  ============================================================")
+        print("\n  ============================================================")
         print(f"  REGIME KEEP-SET: {name}")
-        print(f"  ============================================================")
+        print("  ============================================================")
         fixed = _run_mode(per_symbol_days, labels, keep, vwap_trail=False)
         vtrail = _run_mode(per_symbol_days, labels, keep, vwap_trail=True)
         rf = _print_block("Mode A  FIXED target (current)", fixed)

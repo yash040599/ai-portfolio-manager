@@ -7,7 +7,6 @@ dataclass instead of printing.
 
 from __future__ import annotations
 
-import datetime
 import os
 import sys
 from dataclasses import dataclass, field

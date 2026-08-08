@@ -41,7 +41,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import math
 import os
@@ -53,8 +52,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from backtest_gates import DAILY_DB, INTRADAY_DB, CAPITAL  # noqa: E402
-from regime_analysis import label_regimes  # noqa: E402
+from backtest_gates import DAILY_DB  # noqa: E402
 
 # ── Walk-forward windows ──────────────────────────────────────
 WINDOWS = {
@@ -283,8 +281,6 @@ def simulate_option_day(
 
     # Premium change ≈ delta × NIFTY_% × entry_price_per_point
     # Simplified: premium_change% ≈ delta × nifty_move% × (nifty / premium)
-    leverage = o / entry_premium if entry_premium > 0 else 1
-
     premium_at_best = entry_premium + delta * best_nifty_move / 100 * o - intraday_theta
     premium_at_worst = entry_premium + delta * worst_nifty_move / 100 * o - intraday_theta
     premium_at_close = entry_premium + delta * close_nifty_move / 100 * o - intraday_theta
@@ -533,7 +529,7 @@ def _print_report(result: dict):
     print()
 
     params = result.get("params", {})
-    print(f"  Strategy:    Regime-Gated Directional Option Buying")
+    print("  Strategy:    Regime-Gated Directional Option Buying")
     print(f"  SL:          {params.get('sl_pct')}% of premium")
     print(f"  Target:      {params.get('target_pct')}% gain on premium")
     print(f"  DTE:         {params.get('dte')} days")
@@ -568,14 +564,14 @@ def _print_report(result: dict):
     print()
 
     # Exit reasons
-    print(f"  Exit Breakdown:")
+    print("  Exit Breakdown:")
     for reason, count in sorted(result.get("exit_reasons", {}).items()):
         pct = count / result["total_trades"] * 100
         print(f"    {reason:<20} {count:>5} ({pct:.1f}%)")
     print()
 
     # Regime breakdown
-    print(f"  Regime Distribution (all days):")
+    print("  Regime Distribution (all days):")
     for regime, count in sorted(result.get("regime_counts", {}).items()):
         print(f"    {regime:<12} {count:>5} days")
     print(f"    Skipped RANGE:   {result.get('skipped_range', 0)}")
@@ -584,7 +580,7 @@ def _print_report(result: dict):
 
     regime_stats = result.get("regime_stats", {})
     if regime_stats:
-        print(f"  Per-Regime Performance:")
+        print("  Per-Regime Performance:")
         print(f"    {'Regime':<12} {'Trades':>7} {'WR':>7} {'PF':>7} {'P&L':>12}")
         for regime, stats in sorted(regime_stats.items()):
             rpnl = stats["total_pnl"]
@@ -669,7 +665,7 @@ def main():
 
         # Run best with full report
         if best_params:
-            print(f"  Running best params with full report...")
+            print("  Running best params with full report...")
             print()
             run_backtest(
                 start=start, end=end,

@@ -110,29 +110,29 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
     positions = data.get("positions", [])
     closed = [p for p in positions if p.get("status") == "CLOSED"]
     if not closed:
-        print(f"\n  ⊘ No closed positions to verify")
+        print("\n  ⊘ No closed positions to verify")
         return {"skipped": "no closed positions"}
 
     # ── Connect to Zerodha ────────────────────────────────────
     log = Logger("verify")
     zerodha = ZerodhaClient(Config, log)
 
-    print(f"\n  Connecting to Zerodha...")
+    print("\n  Connecting to Zerodha...")
     try:
         zerodha.login(interactive=False)
     except Exception as e:
         print(f"\n  ❌ Cannot login to Zerodha: {e}")
-        print(f"     The bot must have logged in today for the token to be valid.")
+        print("     The bot must have logged in today for the token to be valid.")
         return {"errors": [f"Login failed: {e}"]}
 
     # ── Fetch Zerodha data ────────────────────────────────────
-    print(f"  Fetching trades and positions from Zerodha...")
+    print("  Fetching trades and positions from Zerodha...")
 
     z_trades = zerodha.get_todays_trades()
     z_positions = zerodha.get_todays_positions()
 
     if not z_trades and not z_positions:
-        print(f"\n  ⚠ No trade data from Zerodha API (token may be expired)")
+        print("\n  ⚠ No trade data from Zerodha API (token may be expired)")
         return {"errors": ["No data from Zerodha"]}
 
     # ── Build lookups ─────────────────────────────────────────
@@ -181,7 +181,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
     for symbol, pos_list in sym_positions.items():
         zp = z_pos_by_sym.get(symbol)
         if not zp:
-            for pos in pos_list:
+            for _pos in pos_list:
                 stats["no_match"] += 1
                 print(f"    ? {symbol}: no Zerodha position data")
             continue
@@ -226,7 +226,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
             # Multiple trades for same symbol — use aggregate P&L
             # to distribute corrections.
             # First, recalculate each trade's P&L from current entry/exit
-            for pos in pos_list:
+            for _pos in pos_list:
                 qty = pos.get("qty", 0)
                 if pos["side"] == "BUY":
                     pos["pnl"] = round((pos["exit_price"] - pos["entry_price"]) * qty, 2)
@@ -238,7 +238,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
 
             if abs(diff) <= 0.10:
                 # Close enough — consider verified
-                for pos in pos_list:
+                for _pos in pos_list:
                     stats["verified"] += 1
                     print(f"    ✓ {symbol} ({pos.get('entry_time','?')}): matches Zerodha")
             else:
@@ -277,7 +277,7 @@ def verify_today(date_str: str | None = None, force: bool = False) -> dict:
     # Use Zerodha's actual turnover data for accurate charge calculation
     total_buy = 0.0
     total_sell = 0.0
-    for sym, zp in z_pos_by_sym.items():
+    for zp in z_pos_by_sym.values():
         b_qty = zp.get("buy_quantity", 0)
         s_qty = zp.get("sell_quantity", 0)
         b_price = zp.get("buy_price", 0)
@@ -605,7 +605,7 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write(f"{SEP_MAJOR}\n")
-        f.write(f"  ✓ VERIFIED — Data verified via Zerodha API (same-day)\n")
+        f.write("  ✓ VERIFIED — Data verified via Zerodha API (same-day)\n")
         f.write(f"  Updated on: {verified_on}\n")
         f.write(f"{SEP_MAJOR}\n\n")
 
@@ -708,14 +708,14 @@ def _write_verified_txt(txt_path: str, data: dict, verified_on: str):
             f.write(f"  Estimated tax         : Rs.{estimated_tax:,.2f}\n")
             f.write(f"  Profit after tax      : Rs.{pnl['profit_after_tax']:+,.2f}\n")
         else:
-            f.write(f"  Estimated tax         : Rs.0.00 (no tax on losses)\n")
-            f.write(f"  Loss can be carried forward for 4 years (speculative only)\n")
+            f.write("  Estimated tax         : Rs.0.00 (no tax on losses)\n")
+            f.write("  Loss can be carried forward for 4 years (speculative only)\n")
         f.write("\n")
 
         f.write(f"  FYI: Zerodha Kite Connect subscription is "
                 f"Rs.{Config.ZERODHA_MONTHLY_COST:,.0f}/month (not deducted above).\n")
-        f.write(f"  Track cumulative daily profits to ensure they cover "
-                f"this monthly cost.\n\n")
+        f.write("  Track cumulative daily profits to ensure they cover "
+                "this monthly cost.\n\n")
 
         f.write("TURNOVER DETAILS\n")
         f.write(f"{SEP_MINOR}\n")
@@ -761,7 +761,7 @@ def main():
         _show_status()
         return
 
-    print(f"\n  🔍 Zerodha Trade Verification")
+    print("\n  🔍 Zerodha Trade Verification")
     print(f"  {'─' * 40}")
 
     stats = verify_today(args.date, force=args.force)

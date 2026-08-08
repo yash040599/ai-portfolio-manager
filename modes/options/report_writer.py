@@ -90,12 +90,12 @@ class OptionsReportWriter:
         lines.append("")
 
         # ── Config ────────────────────────────────────────────────
-        dry = "YES" if self.cfg.OPTIONS_DRY_RUN else "NO"
+
         lines.append(f"  Mode:     {'DRY RUN' if self.cfg.OPTIONS_DRY_RUN else 'LIVE'}")
         lines.append(f"  Budget:   Rs.{self.cfg.OPTIONS_BUDGET_INR:,}")
         lines.append(f"  Max lots: {self.cfg.OPTIONS_MAX_LOTS}")
         lines.append(f"  Index:    {self.cfg.OPTIONS_INDEX}")
-        lines.append(f"  Strategy: Directional Buying (Phase O-4)")
+        lines.append("  Strategy: Directional Buying (Phase O-4)")
         lines.append("")
 
         # ── Market context ────────────────────────────────────────

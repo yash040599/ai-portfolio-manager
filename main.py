@@ -48,7 +48,6 @@
 import sys
 from config              import Config
 from core.logger         import Logger
-from core.zerodha_client import ZerodhaClient
 from modes.analyze.analyser  import PortfolioAnalyser
 from modes.trade.manager   import PortfolioManager
 
@@ -369,7 +368,7 @@ def main():
                 f.write(report)
             with open("reports/backtest/ath_backtest.json", "w") as f:
                 json.dump(matrix.to_dict(), f, indent=2, default=str)
-            print(f"  Saved: reports/backtest/ath_backtest.txt + .json")
+            print("  Saved: reports/backtest/ath_backtest.txt + .json")
 
         else:
             # Default: run the swing scan

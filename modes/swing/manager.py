@@ -33,8 +33,8 @@ from modes.swing.persistence import (
 )
 from modes.swing.report import save_report
 from modes.swing.types import (
-    SwingRunResult, SwingAction, SwingCandidate, SwingPosition,
-    ACTION_ENTRY, STATUS_PENDING, DIP_SETUP_TYPES,
+    SwingRunResult, SwingAction, SwingPosition,
+    DIP_SETUP_TYPES,
 )
 
 
@@ -128,7 +128,7 @@ class SwingManager:
                           f"{yesterday} (today's incomplete candle excluded).")
             print(f"\n  Note: Market is still open. Using completed data "
                   f"through {yesterday}.")
-            print(f"  Today's partial candle is excluded.\n")
+            print("  Today's partial candle is excluded.\n")
 
         # 3. Validate config + login
         missing = self.cfg.validate(require_claude=self.use_ai)

@@ -44,7 +44,6 @@ deliberate review, never inline)
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import os
 import sqlite3
@@ -222,7 +221,7 @@ def main():
             print(f"  Expectancy         : Rs.{m['expectancy_inr']}/trade")
             print(f"  Net P&L            : Rs.{m['net_pnl_inr']}")
             print(f"  Max drawdown       : Rs.{m['max_dd_inr']}  ({m['max_dd_pct_of_capital']}% of avg cap)")
-            print(f"\n  Checks:")
+            print("\n  Checks:")
             for c in result["checks"]:
                 tag = "PASS" if c["pass"] else "FAIL"
                 print(f"    [{tag}] {c['name']:<25} actual={c['actual']} {c['op']} {c['threshold']}")

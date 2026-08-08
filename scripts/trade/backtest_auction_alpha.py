@@ -41,8 +41,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _rsi, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _rsi, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -131,7 +130,7 @@ def simulate_auction_alpha(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -221,7 +220,7 @@ def simulate_auction_alpha(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, conviction, candles, atr_val in selected:
+        for sym, side, _conviction, candles, atr_val in selected:
             signal_candle = candles[FIRST_CANDLE_IDX]
             entry_candle = candles[ENTRY_CANDLE_IDX]
             entry_price = entry_candle["close"]
@@ -356,7 +355,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  D.5 — Pre-Open Auction Alpha (first candle shape + volume)")
+    print("\n  D.5 — Pre-Open Auction Alpha (first candle shape + volume)")
     print(f"  Body ratio >= {args.body_ratio}, Volume >= {args.vol_mult}x avg, "
           f"RR={args.rr}, cap={args.daily_cap}")
     print(f"  Gap confirm: {'ON' if args.gap_confirm else 'OFF'}")
@@ -395,12 +394,12 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy ──────────────────────────────────────────
     print(f"\n  {'='*100}")
-    print(f"  Walk-forward results (net of cost)")
+    print("  Walk-forward results (net of cost)")
     print(f"  {'='*100}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -428,7 +427,7 @@ def main() -> None:
             _print_table(f"{route_name}", m)
 
     # ── Parameter sweep ──────────────────────────────────────
-    print(f"\n  ── Parameter sweep (TEST, ALL) ──")
+    print("\n  ── Parameter sweep (TEST, ALL) ──")
     for br in [0.4, 0.5, 0.6, 0.7]:
         for vm in [1.0, 1.5, 2.0]:
             trades = simulate_auction_alpha(
@@ -442,7 +441,7 @@ def main() -> None:
             _print_table(f"body>={br} vol>={vm}x", m)
 
     # ── Gap confirm variant ──────────────────────────────────
-    print(f"\n  ── Gap confirm variant (TEST, ALL) ──")
+    print("\n  ── Gap confirm variant (TEST, ALL) ──")
     for gap_conf in [False, True]:
         for rsi_ceil in [0, 70]:
             trades = simulate_auction_alpha(
@@ -459,7 +458,7 @@ def main() -> None:
             _print_table(label, m)
 
     # ── Square-off time sweep ────────────────────────────────
-    print(f"\n  ── Square-off time sweep (TEST, ALL) ──")
+    print("\n  ── Square-off time sweep (TEST, ALL) ──")
     for sq_h in [12, 13, 14, 15]:
         trades = simulate_auction_alpha(
             all_symbol_days, regime_labels,
@@ -473,7 +472,7 @@ def main() -> None:
         _print_table(f"sq-off {sq_h}:00", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === D.5 AUCTION ALPHA VERDICT ===")
+    print("\n  === D.5 AUCTION ALPHA VERDICT ===")
     test_trades = simulate_auction_alpha(
         all_symbol_days, regime_labels,
         body_ratio_min=args.body_ratio,

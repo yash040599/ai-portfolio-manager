@@ -75,7 +75,7 @@ def list_available_dates():
     if not files:
         print("No portfolio report files found.")
         return
-    print(f"\n  Available portfolio report dates:\n")
+    print("\n  Available portfolio report dates:\n")
     for f in files:
         # Extract date from path: .../portfolio/YYYY/MM/portfolio_data_DD.json
         parts = f.replace("\\", "/").split("/")
@@ -251,8 +251,9 @@ def main():
     if new_recs:
         print(f"📋 Found {len(new_recs)} new stock recommendations in report data")
     elif portfolio_review:
-        # Old report without pre-parsed recs — extract via Claude
-        print(f"🤖 Extracting new stock recommendations from portfolio review (1 API call)...")
+        # Old report without pre-parsed recs — extract via the LLM
+        print(f"🤖 Extracting new stock recommendations from {ai_label} "
+              f"portfolio review (1 API call)...")
         rec_prompt = (
             "Extract all specific stock recommendations from this portfolio review text.\n"
             "For each recommended stock, return a JSON object with:\n"
@@ -263,12 +264,7 @@ def main():
             "If no specific stocks are recommended, return [].\n\n"
             f"REVIEW TEXT:\n{portfolio_review}"
         )
-        rec_response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": rec_prompt}],
-        )
-        rec_raw = rec_response.content[0].text.strip()
+        rec_raw = llm.call(rec_prompt).strip()
         try:
             new_recs = json.loads(rec_raw)
         except json.JSONDecodeError:
@@ -309,7 +305,7 @@ def main():
             f.write("\t".join(row) + "\n")
 
     print(f"✅ Spreadsheet saved: {tsv_path}")
-    print(f"   Open in Excel/Sheets or copy-paste directly.")
+    print("   Open in Excel/Sheets or copy-paste directly.")
 
 
 if __name__ == "__main__":

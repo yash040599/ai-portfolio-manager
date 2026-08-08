@@ -18,7 +18,6 @@
 # ================================================================
 
 import datetime
-import math
 
 from config              import Config, now_ist
 from core.logger         import Logger

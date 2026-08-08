@@ -208,7 +208,6 @@ def has_auth_invalid() -> bool:
 def clear() -> None:
     """Wipe the sink. Useful from `/login` after a successful
     re-auth so stale toasts don't reappear."""
-    global _next_id
     with _lock:
         _errors.clear()
         # NB: don't reset _next_id — the JS poller relies on monotonic

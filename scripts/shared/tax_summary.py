@@ -92,7 +92,7 @@ def _intraday_summary(fy_start: int) -> bool:
     # ── Print ─────────────────────────────────────────────────
     print(f"\n{'=' * W}")
     print(f"  INTRADAY / SPECULATIVE INCOME  —  {label}")
-    print(f"  Section 43(5)  |  ITR-3 → Schedule BP")
+    print("  Section 43(5)  |  ITR-3 → Schedule BP")
     print(f"{'=' * W}")
 
     print(f"\n  Trading days              : {len(day_map)}")
@@ -107,7 +107,7 @@ def _intraday_summary(fy_start: int) -> bool:
 
     _section("SPECULATIVE TURNOVER")
     print(f"  Turnover (for ITR)        : Rs.{spec_turnover:>12,.2f}")
-    print(f"    (absolute sum of per-trade P&L)")
+    print("    (absolute sum of per-trade P&L)")
 
     _section("ESTIMATED TAX")
     print(f"  Rate: {Config.TAX_RATE_PCT}% + {Config.TAX_CESS_PCT}% cess = {eff:.2f}%")
@@ -116,7 +116,7 @@ def _intraday_summary(fy_start: int) -> bool:
         _divider()
         print(f"  PROFIT AFTER TAX          : Rs.{pat:>+12,.2f}")
     else:
-        print(f"  Estimated tax             : Rs.        0.00  (loss)")
+        print("  Estimated tax             : Rs.        0.00  (loss)")
         print(f"  Carry-forward loss        : Rs.{abs(net_after_claude):>12,.2f}  (4 yr, speculative only)")
         _divider()
         print(f"  NET LOSS                  : Rs.{net_after_claude:>+12,.2f}")
@@ -180,7 +180,7 @@ def _capital_gains_summary(fy_start: int) -> bool:
 
     print(f"\n{'=' * W}")
     print(f"  CAPITAL GAINS  —  {label}")
-    print(f"  ITR-3 → Schedule CG")
+    print("  ITR-3 → Schedule CG")
     print(f"{'=' * W}")
 
     if st:
@@ -192,7 +192,7 @@ def _capital_gains_summary(fy_start: int) -> bool:
         if st_profit > 0:
             print(f"  Estimated STCG tax        : Rs.{stcg_tax:>12,.2f}")
         else:
-            print(f"  Estimated STCG tax        : Rs.        0.00  (loss)")
+            print("  Estimated STCG tax        : Rs.        0.00  (loss)")
         # Per-symbol breakdown
         _section("STCG BY SYMBOL")
         syms: dict[str, float] = {}

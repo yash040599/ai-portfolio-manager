@@ -39,7 +39,6 @@ Read-only. Out-of-sample by construction. Never touches capital.
 from __future__ import annotations
 
 import argparse
-import datetime
 import itertools
 import math
 import os
@@ -89,7 +88,7 @@ def _ols_beta(x: list[float], y: list[float]) -> float:
         return 0.0
     mx, my = _mean(x), _mean(y)
     sxx = sum((xi - mx) ** 2 for xi in x)
-    sxy = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y))
+    sxy = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y, strict=True))
     return sxy / sxx if sxx > 0 else 0.0
 
 
@@ -100,7 +99,7 @@ def _corr(x: list[float], y: list[float]) -> float:
     mx, my = _mean(x), _mean(y)
     sxx = sum((xi - mx) ** 2 for xi in x)
     syy = sum((yi - my) ** 2 for yi in y)
-    sxy = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y))
+    sxy = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y, strict=True))
     den = math.sqrt(sxx * syy)
     return sxy / den if den > 0 else 0.0
 
@@ -401,7 +400,7 @@ def main() -> None:
     _print_row(metrics(all_train, "TRAIN (in-samp)"))
     _print_row(metrics(all_test, "TEST  (OOS)"))
 
-    print(f"\n  === PER-PAIR (TEST/OOS) ===")
+    print("\n  === PER-PAIR (TEST/OOS) ===")
     print("  " + hdr)
     print("  " + "-" * (len(hdr)))
     for _, m in sorted(per_pair, key=lambda x: -x[1]["pf"]):
@@ -413,15 +412,15 @@ def main() -> None:
     print(f"  Portfolio OOS: PF {te['pf']}, expectancy {te['exp']}%/trade, "
           f"{te['trades']} trades, Sharpe {te['sharpe']}, net Rs.{te['net']:.0f}")
     if te["pf"] >= GATE_PF and te["exp"] > 0:
-        print(f"  RESULT: CLEARS the gate. Market-neutral edge survives "
-              f"two-leg costs OOS. Candidate for dry-run + sizing study.")
+        print("  RESULT: CLEARS the gate. Market-neutral edge survives "
+              "two-leg costs OOS. Candidate for dry-run + sizing study.")
     elif te["pf"] >= 1.0:
         print(f"  RESULT: POSITIVE but below gate (PF {te['pf']} < {GATE_PF}). "
               f"Edge exists net of cost but thin — worth tuning (entry-z, "
               f"top-n, pair filters) before accept/reject.")
     else:
-        print(f"  RESULT: Below 1.0 OOS. Two-leg cost drag swamps the relative "
-              f"edge at these params. Tune or reject.")
+        print("  RESULT: Below 1.0 OOS. Two-leg cost drag swamps the relative "
+              "edge at these params. Tune or reject.")
     print()
 
 

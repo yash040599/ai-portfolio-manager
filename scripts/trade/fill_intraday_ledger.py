@@ -23,7 +23,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 from config import Config
-from shared.tax_db import get_db, indian_fy, fy_label, fy_date_range, current_fy
+from shared.tax_db import get_db, indian_fy, fy_label, current_fy
 
 REPORTS_DIR = os.path.join(PROJECT_ROOT, "reports", "trading")
 
@@ -265,7 +265,7 @@ def main():
         if n:
             print(f"  ✓ Inserted {n} trade(s).")
         else:
-            print(f"  · Already up-to-date (or no live data).")
+            print("  · Already up-to-date (or no live data).")
 
 
 if __name__ == "__main__":

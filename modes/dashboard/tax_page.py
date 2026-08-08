@@ -19,14 +19,11 @@ import json
 
 from modes.dashboard.nav import render_topnav, topnav_css
 from modes.dashboard.tax import (
-    CESS_RATE,
-    REBATE_CEILING_BY_FY,
     SLABS_BY_FY,
     STD_DEDUCTION_SALARY,
     TaxComputation,
     compute_fy_summary,
     compute_tax,
-    latest_known_fy,
     rebate_ceiling_for_fy,
     slabs_for_fy,
 )

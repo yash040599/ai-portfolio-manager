@@ -48,7 +48,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_metrics, _atr, _rsi, _make_trade, CAPITAL,
+    compute_metrics, _rsi, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -200,7 +200,7 @@ def simulate_ocm(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, score, candles in selected:
+        for sym, side, _score, candles in selected:
             c0 = candles[0]
             entry_price = c0["close"]  # enter at 9:15 candle close = 9:30
             if entry_price <= 0:
@@ -332,11 +332,11 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 9.4 — Opening Candle Momentum (OCM)")
+    print("\n  Phase 9.4 — Opening Candle Momentum (OCM)")
     print(f"  Vol >= {args.vol_mult}x, Body >= {args.min_body}, Move >= {args.min_move}%, "
           f"RR = {args.rr}, cap = {args.daily_cap}, sq-off = {args.sq_off}:00")
     if args.gap_confirm:
-        print(f"  Gap confirmation: ON")
+        print("  Gap confirmation: ON")
     if args.rsi_buy > 0:
         print(f"  RSI BUY ceiling: {args.rsi_buy}")
     print(f"  Loading {len(symbols)} symbols...")
@@ -372,12 +372,12 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Walk-forward ──────────────────────────────────────────
     print(f"\n  {'='*120}")
-    print(f"  Walk-forward results (net of cost)")
+    print("  Walk-forward results (net of cost)")
     print(f"  {'='*120}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -396,11 +396,11 @@ def main() -> None:
             m = compute_metrics(trades, f"{win_name}/{route_name}", with_costs=True)
             _print_table(route_name, m)
             if win_name == "TEST" and m.get("by_reason"):
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(m["by_reason"].items())))
 
     # ── Parameter sweep ───────────────────────────────────────
-    print(f"\n  ── Parameter sweep (TEST, ALL regimes) ──")
+    print("\n  ── Parameter sweep (TEST, ALL regimes) ──")
     for vm in [1.5, 2.0, 3.0]:
         for br in [0.4, 0.5, 0.6, 0.7]:
             for rr in [1.2, 1.5, 1.8]:
@@ -416,7 +416,7 @@ def main() -> None:
                     _print_table(f"vol>={vm}x body>={br} RR={rr}", m)
 
     # ── Gap confirmation test ─────────────────────────────────
-    print(f"\n  ── Gap confirmation filter (TEST, ALL regimes) ──")
+    print("\n  ── Gap confirmation filter (TEST, ALL regimes) ──")
     for gc in [False, True]:
         trades = simulate_ocm(
             all_symbol_days, regime_labels,
@@ -430,7 +430,7 @@ def main() -> None:
         _print_table(label, compute_metrics(trades, f"gap-{gc}", True))
 
     # ── RSI filter ────────────────────────────────────────────
-    print(f"\n  ── RSI BUY ceiling sweep (TEST, ALL regimes) ──")
+    print("\n  ── RSI BUY ceiling sweep (TEST, ALL regimes) ──")
     for rsi in [0, 65, 70, 75]:
         trades = simulate_ocm(
             all_symbol_days, regime_labels,
@@ -444,7 +444,7 @@ def main() -> None:
         _print_table(label, compute_metrics(trades, f"rsi-{rsi}", True))
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 9.4 VERDICT ===")
+    print("\n  === PHASE 9.4 VERDICT ===")
     test_trades = simulate_ocm(
         all_symbol_days, regime_labels,
         vol_mult=args.vol_mult, min_body_ratio=args.min_body,

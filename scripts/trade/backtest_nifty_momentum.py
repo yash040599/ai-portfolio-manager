@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
 import os
 import sys
 from collections import defaultdict
@@ -38,7 +37,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_metrics, _atr, _make_trade, CAPITAL,
+    compute_metrics, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -285,7 +284,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 9.3 — NIFTY Index Momentum (simulated futures)")
+    print("\n  Phase 9.3 — NIFTY Index Momentum (simulated futures)")
     print(f"  Building index from {len(symbols)} stocks...")
 
     all_symbol_days: dict[str, dict] = {}
@@ -311,13 +310,13 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
-    print(f"  Cost model: futures (no STT, CTT ~0.015%/side)")
+    print("  Cost model: futures (no STT, CTT ~0.015%/side)")
 
     # ── Signal A: Gap-and-Go on NIFTY ────────────────────────
     print(f"\n  {'='*120}")
-    print(f"  Signal A: Gap-and-Go on NIFTY index (futures cost)")
+    print("  Signal A: Gap-and-Go on NIFTY index (futures cost)")
     print(f"  {'='*120}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -331,11 +330,11 @@ def main() -> None:
             m = compute_metrics(trades, f"{win_name}/{route_name}", with_costs=False)
             _print_table(route_name, m)
             if win_name == "TEST" and m.get("by_reason"):
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(m["by_reason"].items())))
 
     # ── Parameter sweep ───────────────────────────────────────
-    print(f"\n  ── Gap-and-Go param sweep (TEST, ALL regimes) ──")
+    print("\n  ── Gap-and-Go param sweep (TEST, ALL regimes) ──")
     for gp in [0.2, 0.3, 0.5, 0.7]:
         for vm in [1.0, 1.5, 2.0]:
             for rr in [1.2, 1.5, 1.8, 2.0]:
@@ -349,7 +348,7 @@ def main() -> None:
                     _print_table(f"gap>={gp}% vol>={vm}x RR={rr}", m)
 
     # ── Square-off sweep ──────────────────────────────────────
-    print(f"\n  ── Square-off time sweep (TEST, ALL regimes) ──")
+    print("\n  ── Square-off time sweep (TEST, ALL regimes) ──")
     for sq in [13, 14, 15]:
         trades = simulate_index_gap_go(
             index_days, regime_labels,
@@ -360,7 +359,7 @@ def main() -> None:
                       compute_metrics(trades, f"sq{sq}", with_costs=False))
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 9.3 VERDICT ===")
+    print("\n  === PHASE 9.3 VERDICT ===")
     test_trades = simulate_index_gap_go(
         index_days, regime_labels,
         start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
@@ -373,7 +372,7 @@ def main() -> None:
         print(f"  MARGINAL — OOS PF {pf} >= 1.0 but < {GATE_PF}.")
     else:
         print(f"  FAIL — OOS PF {pf} < 1.0.")
-    print(f"  Note: costs already embedded in trade P&L (futures: ~0.03% round-trip)")
+    print("  Note: costs already embedded in trade P&L (futures: ~0.03% round-trip)")
 
 
 if __name__ == "__main__":

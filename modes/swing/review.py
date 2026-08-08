@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime
 
-from modes.swing.signals import compute_swing_indicators, _atr
+from modes.swing.signals import compute_swing_indicators
 from modes.swing.types import (
     SwingAction, SwingPosition,
     ACTION_HOLD, ACTION_TIGHTEN_STOP, ACTION_PARTIAL_EXIT,

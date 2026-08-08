@@ -283,11 +283,11 @@ def main() -> None:
               f"{m['expectancy']:>9}{m['total_return']:>9}{m['sharpe']:>8}")
 
     # Verdict
-    print(f"\n  === PHASE 1.2 VERDICT ===")
+    print("\n  === PHASE 1.2 VERDICT ===")
     profitable = {r: m for r, m in regime_metrics.items() if m["pf"] >= 1.0}
     if profitable:
         best = max(profitable.items(), key=lambda kv: kv[1]["pf"])
-        print(f"  Profitable regime(s): " +
+        print("  Profitable regime(s): " +
               ", ".join(f"{r} (PF {m['pf']}, {m['trades']} trades)"
                         for r, m in profitable.items()))
         print(f"  => Regime ROUTING has potential. Best: {best[0]} "
@@ -297,9 +297,9 @@ def main() -> None:
     else:
         worst_pf = max((m['pf'] for m in regime_metrics.values()), default=0)
         print(f"  No regime reaches PF >= 1.0 (best = {worst_pf}).")
-        print(f"  => Regime routing ALONE will not create edge. The scorer is")
-        print(f"     negative-expectancy in every regime — needs a different")
-        print(f"     entry signal, not just better timing.")
+        print("  => Regime routing ALONE will not create edge. The scorer is")
+        print("     negative-expectancy in every regime — needs a different")
+        print("     entry signal, not just better timing.")
     print()
 
 

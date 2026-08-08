@@ -215,7 +215,6 @@ def simulate_orb15(candles_by_day: dict[str, list[dict]],
         t2_price = 0.0
         entry_ts = None
         partial_exited = False
-        trail_sl = 0.0
         entry_qty_factor = 1.0  # 1.0 = full, 0.5 = after partial
 
         for i in range(1, len(day_candles)):
@@ -251,7 +250,6 @@ def simulate_orb15(candles_by_day: dict[str, list[dict]],
                         entry_qty_factor = 1.0 - PARTIAL_EXIT_PCT
                         # Move SL to breakeven
                         sl_price = entry_price
-                        trail_sl = entry_price
                         continue
 
                     # T2: full exit
@@ -353,9 +351,6 @@ def simulate_orb15_daily(daily_candles: list[dict], symbol: str) -> list[dict]:
         orb_range_est = prev["close"] * 0.003
         if orb_range_est < 0.5:
             continue
-
-        # ATR for context
-        atr = _atr(daily_candles[max(0, i-15):i+1])
 
         # Volume check: today's volume > 1.5x 20-day avg
         avg_vol = sum(daily_candles[j]["volume"] for j in range(i-20, i)) / 20
@@ -568,7 +563,7 @@ def main():
 
     # -- Intraday (15-min) ------------------------------------
     if args.mode in ("intraday", "both"):
-        print(f"\n  === INTRADAY (15-min candles) ===")
+        print("\n  === INTRADAY (15-min candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {INTRADAY_DB}")
         all_trades = []
         for i, sym in enumerate(symbols):
@@ -594,7 +589,7 @@ def main():
 
     # -- Daily -------------------------------------------------
     if args.mode in ("daily", "both"):
-        print(f"\n  === DAILY (simulated intraday from daily candles) ===")
+        print("\n  === DAILY (simulated intraday from daily candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {DAILY_DB}")
         all_trades_d = []
         for i, sym in enumerate(symbols):

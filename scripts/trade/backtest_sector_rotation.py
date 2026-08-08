@@ -35,7 +35,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_metrics, _make_trade, CAPITAL,
+    compute_metrics, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -272,7 +272,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 9.6 — Sector Rotation Intraday")
+    print("\n  Phase 9.6 — Sector Rotation Intraday")
     print(f"  SL={args.sl}%, RR={args.rr}, min sector spread={args.min_spread}%")
     print(f"  Loading {len(symbols)} symbols...")
 
@@ -296,12 +296,12 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Walk-forward ──────────────────────────────────────────
     print(f"\n  {'='*120}")
-    print(f"  Walk-forward results (net of cost)")
+    print("  Walk-forward results (net of cost)")
     print(f"  {'='*120}")
 
     for win_name, (w_start, w_end) in WINDOWS.items():
@@ -317,11 +317,11 @@ def main() -> None:
             m = compute_metrics(trades, f"{win_name}/{route_name}", with_costs=True)
             _print_table(route_name, m)
             if win_name == "TEST" and m.get("by_reason"):
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(m["by_reason"].items())))
 
     # ── Parameter sweep ───────────────────────────────────────
-    print(f"\n  ── Param sweep (TEST, ALL regimes) ──")
+    print("\n  ── Param sweep (TEST, ALL regimes) ──")
     for sl in [1.0, 1.5, 2.0]:
         for rr in [1.0, 1.5, 2.0]:
             for ms in [0.2, 0.3, 0.5]:
@@ -336,7 +336,7 @@ def main() -> None:
                     _print_table(f"SL={sl}% RR={rr} spread>={ms}%", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 9.6 VERDICT ===")
+    print("\n  === PHASE 9.6 VERDICT ===")
     test_trades = simulate_sector_rotation(
         all_symbol_days, regime_labels,
         sl_pct=args.sl, rr_ratio=args.rr,

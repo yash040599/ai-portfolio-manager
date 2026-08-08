@@ -70,11 +70,11 @@ def db_file_for_interval(interval: str) -> str:
     """Return the SQLite filename for a given Zerodha interval."""
     try:
         return INTERVAL_DB_FILES[interval]
-    except KeyError:
+    except KeyError as exc:
         raise SystemExit(
             f"Unsupported interval '{interval}'. "
             f"Choose one of: {', '.join(INTERVAL_DB_FILES)}"
-        )
+        ) from exc
 
 
 def ensure_db(db_path: str) -> None:

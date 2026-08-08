@@ -94,6 +94,16 @@ def _parse_int(val: str) -> int:
         return 0
 
 
+def _extract_field(block: str, field: str) -> str:
+    """Pull ``FIELD: value`` out of one LLM response block (case-insensitive).
+
+    Returns "" when the field is absent, so callers can treat missing and
+    blank identically.
+    """
+    match = re.search(rf"(?i){field}\s*:\s*(.+)", block)
+    return match.group(1).strip() if match else ""
+
+
 
 # ── extra constants/helpers from the former v2 module ──
 # V2 stock scanner: candle-pattern + technical-indicator pre-filter
@@ -123,9 +133,6 @@ def _parse_int(val: str) -> int:
 #   - Claude can see real-time pattern formations on open positions
 
 
-from config                          import Config, now_ist
-from core.logger                     import Logger
-from core.claude_client              import ClaudeClient
 from core.zerodha_client             import ZerodhaClient
 from shared.candle_patterns        import (
     detect_all,
@@ -136,8 +143,7 @@ from shared.candle_patterns        import (
     INDECISION_PATTERNS,
 )
 from shared.technical_indicators   import (
-    compute_technical_score, prev_day_sr_score,
-    vwap, rsi, ema_crossover, supertrend, stoch_rsi,
+    compute_technical_score, vwap, rsi, ema_crossover, stoch_rsi,
 )
 from shared.candle_cache           import CandleCache
 from modes.trade.candidate_telemetry    import CandidateTelemetry
@@ -649,7 +655,6 @@ class StockScanner:
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
         default_sl     = self.cfg.DEFAULT_STOP_LOSS_PCT
-        default_target = self.cfg.DEFAULT_TARGET_PCT
 
         # Time-of-day context
         hour = now_ist().hour
@@ -980,9 +985,7 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         Returns None if critical fields are missing.
         """
         def extract(field: str) -> str:
-            pattern = rf"(?i){field}\s*:\s*(.+)"
-            match = re.search(pattern, block)
-            return match.group(1).strip() if match else ""
+            return _extract_field(block, field)
 
         symbol = extract("SYMBOL")
         side   = extract("SIDE").upper()
@@ -1138,16 +1141,11 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
                 continue
 
             # Otherwise it's a position review
-            def extract(field: str) -> str:
-                pattern = rf"(?i){field}\s*:\s*(.+)"
-                match = re.search(pattern, block)
-                return match.group(1).strip() if match else ""
-
-            symbol = extract("SYMBOL")
-            action = extract("ACTION").upper()
-            new_sl = extract("NEW_SL")
-            new_target = extract("NEW_TARGET")
-            reason = extract("REASON")
+            symbol = _extract_field(block, "SYMBOL")
+            action = _extract_field(block, "ACTION").upper()
+            new_sl = _extract_field(block, "NEW_SL")
+            new_target = _extract_field(block, "NEW_TARGET")
+            reason = _extract_field(block, "REASON")
 
             if symbol and action:
                 actions.append({
@@ -3327,7 +3325,6 @@ RATIONALE: [1-2 sentences — setup type, R:R ratio, why worth the late-day risk
         max_positions  = self.cfg.MAX_POSITIONS
         max_pct        = self.cfg.MAX_POSITION_PCT
         default_sl     = self.cfg.DEFAULT_STOP_LOSS_PCT
-        default_target = self.cfg.DEFAULT_TARGET_PCT
 
         # Time-of-day context for strategy adaptation
         hour = now_ist().hour

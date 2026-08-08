@@ -249,7 +249,6 @@ class PortfolioManager:
         # If the bot crashed or was stopped while positions were open,
         # resume monitoring them instead of starting fresh.
         resumed = 0
-        recovered_closed = 0
         if not self.cfg.DRY_RUN:
             resumed = self.engine.load_existing_positions()
             if resumed > 0:
@@ -262,7 +261,7 @@ class PortfolioManager:
             # Without this, day_pnl() resets to 0 on restart even when
             # Zerodha holds the truth, breaking the MTM-aware circuit
             # breaker (#197) and adaptive sizing.
-            recovered_closed = self.engine.recover_prior_session_fills()
+            self.engine.recover_prior_session_fills()
 
         # ── Step 5b': Multi-day pause arming (#251 + #253) ──────
         # Query the canonical intraday_tax_ledger for the trailing
@@ -426,7 +425,6 @@ class PortfolioManager:
 
                 if now < floor_time:
                     wait_sec = (floor_time - now).total_seconds()
-                    target_time = floor_time.strftime("%H:%M")
                     self.log.info(
                         f"Waiting {wait_sec/60:.0f} min for "
                         f"{'09:30 candle close at 09:45' if self._gap_go_wait_candle_close else '09:15 candle close at 09:30'}..."
@@ -1287,7 +1285,6 @@ class PortfolioManager:
         - Enhanced Claude review with position candle context
         """
         if self._noai:
-            profile = getattr(self.cfg, "TRADE_STRATEGY_PROFILE", "NOAI_LEGACY_FULL")
             if self._gap_go:
                 self.log.section("MONITORING — Gap-and-Go (SL/target only)")
             else:
@@ -1386,8 +1383,8 @@ class PortfolioManager:
                     if self.engine.is_sl_paused():
                         self._clear_status_line()
                         self.log.info(
-                            f"All positions closed but SL pause active — "
-                            f"waiting for pause to expire before re-scanning"
+                            "All positions closed but SL pause active — "
+                            "waiting for pause to expire before re-scanning"
                         )
                         time.sleep(base_poll)
                         continue
@@ -2176,13 +2173,13 @@ class PortfolioManager:
                     vix_text = f"\n  India VIX (Volatility Index): {vix_price:.2f} ({vix_regime})"
                     if vix_regime == "HIGH":
                         vix_text += (
-                            f" — HIGH FEAR: reduce position sizes, widen SLs, "
-                            f"only high-conviction setups"
+                            " — HIGH FEAR: reduce position sizes, widen SLs, "
+                            "only high-conviction setups"
                         )
                     elif vix_regime == "LOW":
                         vix_text += (
-                            f" — LOW VIX: market is calm, breakout strategies "
-                            f"favoured, tighter targets work"
+                            " — LOW VIX: market is calm, breakout strategies "
+                            "favoured, tighter targets work"
                         )
 
                     # Detect intraday VIX spike
@@ -2271,7 +2268,7 @@ class PortfolioManager:
                     if abs(d["gap_pct"]) >= self.cfg.PREOPEN_GAP_SIGNIFICANT_PCT
                 ]
                 if sig_gaps:
-                    preopen_text = f"\n  Pre-open significant gaps:"
+                    preopen_text = "\n  Pre-open significant gaps:"
                     for sym, d in sig_gaps[:8]:
                         arrow = "↑" if d["gap_pct"] > 0 else "↓"
                         preopen_text += (
@@ -2878,19 +2875,19 @@ class PortfolioManager:
         print(f"  → {zrd['note']}")
         print()
         if self._noai:
-            print(f"  AI model       : NONE (pure technical signals)")
+            print("  AI model       : NONE (pure technical signals)")
         print(f"  Price source   : {zrd['price_source'].upper()}")
         if self._live_trading_paused():
-            print(f"  Live trading   : PAUSED (TRADE_LIVE_TRADING_PAUSED=True)")
+            print("  Live trading   : PAUSED (TRADE_LIVE_TRADING_PAUSED=True)")
         print()
         print(f"  \033[96m★ Trade Strategy\033[0m : {strategy_profile or 'Candle patterns + Technical indicators'}")
         if stage_name:
             print(f"    Stage       : {stage_name}  (see docs/TRADE_STRATEGY_ROLLOUT.md)")
-        print(f"    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(7,2.0)")
-        print(f"    Patterns    : Hammer, Engulfing, Morning/Evening Star, etc.")
-        print(f"    Dynamic poll: faster near SL/target zones")
+        print("    Pre-filter  : EMA(9/21), RSI(14), VWAP, SuperTrend(7,2.0)")
+        print("    Patterns    : Hammer, Engulfing, Morning/Evening Star, etc.")
+        print("    Dynamic poll: faster near SL/target zones")
         if self._noai:
-            print(f"    AI calls    : ZERO — fully rule-based trading")
+            print("    AI calls    : ZERO — fully rule-based trading")
         print(f"{'='*58}\n")
 
     def _compute_run_number(self) -> int:
@@ -2985,14 +2982,14 @@ class PortfolioManager:
         print(f"  Total trades     : {len(self.engine.closed_positions())}")
         print(f"  Gross P&L        : Rs.{pnl['gross_pnl']:+,.2f}")
         print(f"{'─'*58}")
-        print(f"  CHARGES & TAXES:")
+        print("  CHARGES & TAXES:")
         print(f"    Brokerage      : Rs.{charges['brokerage']:,.2f}")
         print(f"    STT            : Rs.{charges['stt']:,.2f}")
         print(f"    Exchange txn   : Rs.{charges['exchange_txn']:,.2f}")
         print(f"    GST            : Rs.{charges['gst']:,.2f}")
         print(f"    SEBI charges   : Rs.{charges['sebi_charges']:,.4f}")
         print(f"    Stamp duty     : Rs.{charges['stamp_duty']:,.2f}")
-        print(f"    ────────────────────────────")
+        print("    ────────────────────────────")
         print(f"    Total tax+chrg : Rs.{charges['total_tax_and_charges']:,.2f}")
         print(f"{'─'*58}")
         print(f"  Total all costs  : Rs.{charges['total_costs']:,.2f}")
@@ -3074,8 +3071,8 @@ class PortfolioManager:
         mode_label = "NoAI" if noai else "V2"
         print(f"\n{'='*58}")
         print(f"  {mode_label} STRATEGY ANALYSIS — TEST MODE")
-        print(f"  Shows how the bot analyses and selects trades.")
-        print(f"  No Claude calls. No trades. No cost.")
+        print("  Shows how the bot analyses and selects trades.")
+        print("  No Claude calls. No trades. No cost.")
         print(f"{'='*58}\n")
 
         print("  STRATEGY PIPELINE:")
@@ -3252,7 +3249,7 @@ class PortfolioManager:
                     s = ps["strongest"]
                     print(f"  Strongest: {s['pattern']}  ({s['signal']}, strength: {s['strength']})")
             else:
-                print(f"  Patterns : none detected")
+                print("  Patterns : none detected")
 
             print(f"  Candles  : {r['candle_count']} (15-min candles used)")
 
@@ -3260,7 +3257,7 @@ class PortfolioManager:
         would_drop_bear = sum(1 for s in filtered if s["combined_score"] > 0 and abs(s["combined_score"]) < 3)
         would_drop_bull = sum(1 for s in filtered if s["combined_score"] < 0 and abs(s["combined_score"]) < 3)
         if would_drop_bear or would_drop_bull:
-            print(f"\n  Nifty hard filter impact (if applied):")
+            print("\n  Nifty hard filter impact (if applied):")
             if would_drop_bear:
                 print(f"    BEARISH market → would drop {would_drop_bear} weak BUY signals (score < 3)")
             if would_drop_bull:
@@ -3310,8 +3307,8 @@ class PortfolioManager:
                 print(f"           {' | '.join(rationale_parts)}")
                 print()
 
-            print(f"  ℹ️  In live NoAI mode, ATR-based SL/target would override")
-            print(f"      the defaults shown above with volatility-adapted levels.")
+            print("  ℹ️  In live NoAI mode, ATR-based SL/target would override")
+            print("      the defaults shown above with volatility-adapted levels.")
         else:
             snapshot = self.scanner._build_enriched_snapshot(top, quotes)
             if snapshot:
@@ -3333,14 +3330,14 @@ class PortfolioManager:
         print(f"  Top candidates : {len(top)} (max {MAX_CANDIDATES})")
         print(f"  Bullish setups : {bulls}")
         print(f"  Bearish setups : {bears}")
-        print(f"\n  Claude calls   : 0  (test mode — no API cost)")
-        print(f"  Orders placed  : 0  (test mode — no trades)")
+        print("\n  Claude calls   : 0  (test mode — no API cost)")
+        print("  Orders placed  : 0  (test mode — no trades)")
         if noai:
-            print(f"\n  To run NoAI live : python main.py --mode trade --noai")
-            print(f"  To dry-run first : python main.py --mode trade --noai --dryrun")
+            print("\n  To run NoAI live : python main.py --mode trade --noai")
+            print("  To dry-run first : python main.py --mode trade --noai --dryrun")
         else:
-            print(f"\n  To run V2 live   : python main.py --mode trade")
-            print(f"  To dry-run first : python main.py --mode trade --dryrun")
+            print("\n  To run V2 live   : python main.py --mode trade")
+            print("  To dry-run first : python main.py --mode trade --dryrun")
         print()
 
     # ================================================================

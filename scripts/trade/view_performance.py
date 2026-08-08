@@ -15,10 +15,8 @@ Usage
 
 import argparse
 import datetime
-import json
 import sqlite3
 import os
-import sys
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -266,7 +264,7 @@ def main():
 
     if not os.path.exists(DB_PATH):
         print(f"\n  No database found at {DB_PATH}")
-        print(f"  Run the bot first to generate trade data.\n")
+        print("  Run the bot first to generate trade data.\n")
         return
 
     rows = get_trades(date_filter=args.date, last_n_days=args.days)

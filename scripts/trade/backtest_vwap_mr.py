@@ -374,7 +374,6 @@ def simulate_vwap_mr_daily(daily_candles: list[dict], symbol: str) -> list[dict]
         if adx_proxy >= ADX_MAX:
             continue
 
-        tp = (c["high"] + c["low"] + c["close"]) / 3
         lower_band = vwap_est - VWAP_BAND_ENTRY * std_est
         upper_band = vwap_est + VWAP_BAND_ENTRY * std_est
 
@@ -590,7 +589,7 @@ def main():
 
     # ── Intraday (15-min) backtest ────────────────────────────
     if args.mode in ("intraday", "both"):
-        print(f"\n  === INTRADAY (15-min candles) ===")
+        print("\n  === INTRADAY (15-min candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {INTRADAY_DB}")
         all_trades = []
         for i, sym in enumerate(symbols):
@@ -617,7 +616,7 @@ def main():
 
     # ── Daily backtest ────────────────────────────────────────
     if args.mode in ("daily", "both"):
-        print(f"\n  === DAILY (simulated intraday from daily candles) ===")
+        print("\n  === DAILY (simulated intraday from daily candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {DAILY_DB}")
         all_trades_d = []
         for i, sym in enumerate(symbols):

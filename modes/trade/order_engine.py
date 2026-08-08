@@ -451,7 +451,7 @@ class OrderEngine:
             if not sym:
                 continue
             idx.setdefault(sym, []).append(t)
-        for sym, fills in idx.items():
+        for fills in idx.values():
             fills.sort(key=lambda f: str(f.get("fill_timestamp")
                                          or f.get("order_timestamp") or ""))
         return idx
@@ -964,7 +964,7 @@ class OrderEngine:
                             f"is the only defence. REVIEW IMMEDIATELY."
                         )
                         self._log_action("SL_M_UNPROTECTED", sym, txn, p["qty"], trig,
-                                         f"Resize failed — software SL only")
+                                         "Resize failed — software SL only")
                 continue
 
             # Not matched to any position on (symbol, side)
@@ -979,7 +979,7 @@ class OrderEngine:
                         f"no matching open position"
                     )
                     self._log_action("SL_M_CANCEL", sym, txn, qty, trig,
-                                     f"Orphan SL-M cancelled (no matching position)")
+                                     "Orphan SL-M cancelled (no matching position)")
                 except Exception as e:
                     self.log.error(
                         f"SL-M reconcile: failed to cancel orphan {oid}: {e}"
@@ -1681,8 +1681,10 @@ class OrderEngine:
             # Don't return early on first partial fill — give the
             # exchange time to fill the remaining shares.
             filled_qty = 0
-            for sec in range(timeout):
+            waited_sec = 0
+            while waited_sec < timeout:
                 time.sleep(1)
+                waited_sec += 1
                 filled_qty = self.zerodha.get_order_filled_qty(order_id) or 0
                 if filled_qty >= qty:
                     break  # fully filled before timeout
@@ -1693,7 +1695,7 @@ class OrderEngine:
                 self.log.success(
                     f"LIMIT fill: {side} {filled_qty}x {symbol} "
                     f"@ Rs.{fill_price or limit_price:.2f} "
-                    f"(attempt {attempt}, {sec + 1}s)"
+                    f"(attempt {attempt}, {waited_sec}s)"
                 )
                 return str(order_id)
 
@@ -2957,7 +2959,7 @@ class OrderEngine:
         if self.cfg.DRY_RUN:
             self._dry_run_counter += 1
             order_id = f"DRY_RUN_{self._dry_run_counter:04d}"
-            tag = f"\033[96m[DRY RUN]\033[0m"
+            tag = "\033[96m[DRY RUN]\033[0m"
             self.log.info(
                 f"{tag} {side} {qty}x {symbol} @ Rs.{entry:.2f} | "
                 f"SL: Rs.{sl:.2f} | Target: Rs.{target:.2f} | "
@@ -3420,7 +3422,7 @@ class OrderEngine:
                 position["_sl_order_id"] = None
 
         if self.cfg.DRY_RUN:
-            tag = f"\033[96m[DRY RUN]\033[0m"
+            tag = "\033[96m[DRY RUN]\033[0m"
             pnl_color = "\033[92m" if pnl >= 0 else "\033[91m"
             self.log.info(
                 f"{tag} EXIT {exit_side} {qty}x {symbol} @ Rs.{exit_price:.2f} | "
@@ -3580,7 +3582,7 @@ class OrderEngine:
         exit_side = "SELL" if side == "BUY" else "BUY"
 
         if self.cfg.DRY_RUN:
-            tag = f"\033[96m[DRY RUN]\033[0m"
+            tag = "\033[96m[DRY RUN]\033[0m"
             self.log.info(
                 f"{tag} PARTIAL EXIT {exit_side} {qty}x {symbol} @ Rs.{price:.2f} | "
                 f"Reason: {reason}"
@@ -3667,15 +3669,11 @@ class OrderEngine:
             self._adjust_target_for_time(pos)
             target = pos["target_price"]  # re-read after possible adjustment
 
-            # Calculate unrealised P&L and distances
+            # Calculate unrealised P&L
             if side == "BUY":
-                unrealised   = (current_price - entry) * qty
-                sl_distance  = (current_price - sl) / current_price * 100
-                tgt_distance = (target - current_price) / current_price * 100
+                unrealised = (current_price - entry) * qty
             else:
-                unrealised   = (entry - current_price) * qty
-                sl_distance  = (sl - current_price) / current_price * 100
-                tgt_distance = (current_price - target) / current_price * 100
+                unrealised = (entry - current_price) * qty
 
             # ── Post-entry momentum kill (Roadmap #198) ───────────
             # Slow-bleed-to-SL is the dominant loss pattern: trade
@@ -3903,7 +3901,6 @@ class OrderEngine:
             # ── Partial profit taking (once, at first trail trigger) ──
             if not pos.get("_partial_taken") and pos["qty"] >= 3:
                 partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
-                remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((current_price - entry) * partial_qty, 2)
 
                 self.log.success(
@@ -3951,7 +3948,6 @@ class OrderEngine:
             # ── Partial profit taking (once, at first trail trigger) ──
             if not pos.get("_partial_taken") and pos["qty"] >= 3:
                 partial_qty = max(1, pos["qty"] // 3)  # exit 1/3, keep 2/3 running
-                remaining_qty = pos["qty"] - partial_qty
                 partial_pnl = round((entry - current_price) * partial_qty, 2)
 
                 self.log.success(
@@ -5815,7 +5811,6 @@ class OrderEngine:
             z_sell_qty   = zp.get("sell_quantity", 0)
             z_buy_price  = zp.get("buy_price", 0)
             z_sell_price = zp.get("sell_price", 0)
-            z_pnl        = zp.get("pnl", 0)
 
             # Determine Zerodha's entry/exit based on our trade side
             if pos["side"] == "BUY":

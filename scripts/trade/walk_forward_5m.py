@@ -184,7 +184,7 @@ def main() -> None:
             drift = round(train["pf"] - pf, 2)
             print(f"  PF drift train->test: {drift:+.2f}  "
                   f"({'STABLE' if abs(drift) <= 0.15 else 'UNSTABLE / regime-dependent'})")
-        print(f"  vs 15-min baseline OOS PF 0.82")
+        print("  vs 15-min baseline OOS PF 0.82")
         print(f"  Promotion gate (PF>={GATE_PF}, expectancy>0): "
               f"{'PASS' if passed else 'FAIL — DO NOT GO LIVE'}")
     else:

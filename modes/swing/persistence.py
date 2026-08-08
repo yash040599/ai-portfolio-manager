@@ -20,7 +20,7 @@ from typing import Iterator
 from config import now_ist
 from modes.swing.types import (
     SwingAction, SwingCandidate, SwingPosition, SwingRunResult,
-    STATUS_PENDING, POS_OPEN, POS_CLOSED,
+    STATUS_PENDING,
 )
 
 

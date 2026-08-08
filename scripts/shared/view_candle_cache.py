@@ -54,7 +54,7 @@ def main():
     if args.candles:
         if not args.symbol:
             print("\n  Use --symbol with --candles to see individual candles.")
-            print(f"  Example: python scripts/shared/view_candle_cache.py --symbol RELIANCE --candles")
+            print("  Example: python scripts/shared/view_candle_cache.py --symbol RELIANCE --candles")
             conn.close()
             return
 
@@ -97,7 +97,7 @@ def main():
         ).fetchall()
 
         if not rows:
-            print(f"\n  No matching data.")
+            print("\n  No matching data.")
             conn.close()
             return
 

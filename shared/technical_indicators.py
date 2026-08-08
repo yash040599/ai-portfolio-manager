@@ -716,8 +716,8 @@ def macd_histogram(candles: list[dict], fast: int = 12, slow: int = 26, signal_p
     fast_ema = ema(candles, fast)
     slow_ema = ema(candles, slow)
 
-    # MACD line = fast EMA - slow EMA
-    macd_line = [f - s for f, s in zip(fast_ema, slow_ema)]
+    # MACD line = fast EMA - slow EMA (ema() always returns len(candles) values)
+    macd_line = [f - s for f, s in zip(fast_ema, slow_ema, strict=True)]
 
     # Signal line = EMA(9) of MACD line (manual computation)
     if len(macd_line) < signal_period:

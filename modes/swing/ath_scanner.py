@@ -201,7 +201,6 @@ class DipBuyScanner:
                     continue
 
                 closes = [c["close"] for c in candles]
-                highs = [c["high"] for c in candles]
                 current = closes[-1]
 
                 # Reference high = rolling max-CLOSE over the last

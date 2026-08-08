@@ -32,8 +32,6 @@ Read-only. Out-of-sample by construction. Never touches capital.
 from __future__ import annotations
 
 import argparse
-import datetime
-import math
 import os
 import sys
 from collections import defaultdict
@@ -48,8 +46,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _adx, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _adx, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -128,7 +125,7 @@ def simulate_prev_day_breakout(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -342,7 +339,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 7.3 — Previous-Day High/Low Breakout")
+    print("\n  Phase 7.3 — Previous-Day High/Low Breakout")
     print(f"  ADX >= {args.adx_min}, Volume >= {args.vol_mult}x avg, "
           f"daily cap = {args.daily_cap}")
     print(f"  Loading {len(symbols)} symbols...")
@@ -383,7 +380,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Run strategy across windows × regime routing ──────────
@@ -416,11 +413,11 @@ def main() -> None:
 
             if win_name == "TEST" and m.get("by_reason"):
                 reasons = m["by_reason"]
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
     # ── Parameter sweep on TEST window ────────────────────────
-    print(f"\n  ── Parameter sweep (TEST window, ALL regimes) ──")
+    print("\n  ── Parameter sweep (TEST window, ALL regimes) ──")
     for adx in [15.0, 20.0, 25.0, 30.0]:
         for vm in [1.0, 1.5, 2.0]:
             trades = simulate_prev_day_breakout(
@@ -433,7 +430,7 @@ def main() -> None:
             _print_table(f"ADX>={adx} vol>={vm}x", m)
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 7.3 VERDICT ===")
+    print("\n  === PHASE 7.3 VERDICT ===")
     test_trades = simulate_prev_day_breakout(
         all_symbol_days, regime_labels,
         adx_min=args.adx_min,

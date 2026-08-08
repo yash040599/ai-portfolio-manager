@@ -22,13 +22,13 @@ from typing import Any
 
 from config import Config, now_ist
 from modes.swing.persistence import (
-    init_db, open_positions, pending_actions, realised_pnl_summary,
-    latest_run_for_date, latest_run, actions_for_run,
+    init_db, open_positions, realised_pnl_summary,
+    latest_run, actions_for_run,
     candidate_by_symbol, dip_candidate_by_symbol, candidates_for_run,
     latest_full_scan_rank_by_symbol,
-    get_watchlist, WatchlistItem,
+    get_watchlist,
 )
-from modes.swing.types import SwingAction, SwingPosition, DIP_SETUP_TYPES
+from modes.swing.types import SwingAction, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import cached_live_quotes, get_live_quotes
 from modes.dashboard.nav import render_topnav
 from modes.dashboard.swing_actions import latest_swing_status
@@ -163,7 +163,6 @@ def render_swing_page() -> str:
     """Render the full /swing HTML page."""
     init_db()
 
-    today = now_ist().date().isoformat()
     # Use the most recent run for display — may be for yesterday if
     # the scan ran before market close.
     latest_run_row = latest_run()

@@ -630,7 +630,7 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
 
     if args.mode in ("intraday", "both"):
-        print(f"\n  === INTRADAY (15-min candles) ===")
+        print("\n  === INTRADAY (15-min candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {INTRADAY_DB}")
         all_trades = []
         for i, sym in enumerate(symbols):
@@ -660,21 +660,19 @@ def main():
 
         # Add costs to each trade
         for t in all_trades:
-            entry_val = t.get("entry_price", 0) * (CAPITAL / 3 / max(t.get("entry_price", 1), 1))
-            turnover = entry_val * 2  # buy + sell
             cost_pct = 0.10  # ~0.10% round-trip for NSE intraday
             t["cost_pct"] = cost_pct
             t["net_pnl_pct"] = round(t["pnl_pct"] - cost_pct, 4)
 
         m = compute_metrics(all_trades, "15-min Intraday (OPTIMIZED)")
-        print(f"\n  --- RAW (before costs) ---")
+        print("\n  --- RAW (before costs) ---")
         print_summary(m)
 
         # Re-compute with costs
         for t in all_trades:
             t["pnl_pct"] = t["net_pnl_pct"]
         m_costs = compute_metrics(all_trades, "15-min Intraday (WITH COSTS)")
-        print(f"\n  --- AFTER COSTS (~0.10% round-trip) ---")
+        print("\n  --- AFTER COSTS (~0.10% round-trip) ---")
         print_summary(m_costs)
 
         out_path = os.path.join(OUT_DIR, "ema_pullback_intraday_trades.json")
@@ -684,7 +682,7 @@ def main():
         print(f"  Saved: {out_path}")
 
     if args.mode in ("daily", "both"):
-        print(f"\n  === DAILY (simulated from daily candles) ===")
+        print("\n  === DAILY (simulated from daily candles) ===")
         print(f"  Symbols: {len(symbols)}, Source: {DAILY_DB}")
         all_trades_d = []
         for i, sym in enumerate(symbols):

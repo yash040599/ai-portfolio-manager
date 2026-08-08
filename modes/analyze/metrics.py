@@ -251,7 +251,7 @@ def compute_metrics(
         if xirr is not None:
             xirr_f = Field(value=round(xirr, 2),
                            source=SRC_DERIVED, as_of=headline_as_of,
-                           note=f"money-weighted, anchor = oldest snapshot")
+                           note="money-weighted, anchor = oldest snapshot")
 
     # ── Cash position + drag ──
     cash_f = drag_f = None
@@ -264,7 +264,7 @@ def compute_metrics(
                        note="Zerodha funds.live_balance")
         drag_f = Field(value=round(drag_pct, 2),
                        source=SRC_DERIVED, as_of=headline_as_of,
-                       note=f"cash / (cash + invested_value)")
+                       note="cash / (cash + invested_value)")
 
     # ── Market-cap tier breakdown (P9) ──
     # Sums weights into LARGE / MID / SMALL / ETF / UNKNOWN buckets.

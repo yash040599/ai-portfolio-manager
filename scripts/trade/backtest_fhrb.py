@@ -45,7 +45,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_metrics, _atr, _adx, _make_trade, CAPITAL,
+    compute_metrics, _adx, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -114,7 +114,7 @@ def simulate_fhrb(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -205,7 +205,7 @@ def simulate_fhrb(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, range_pct_val, fh_high, fh_low, candles, breakout_ci in selected:
+        for sym, side, _range_pct_val, fh_high, fh_low, candles, breakout_ci in selected:
             breakout_candle = candles[breakout_ci]
 
             if side == "BUY":
@@ -335,7 +335,7 @@ def main() -> None:
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
-    print(f"\n  Phase 9.1 — First Hour Range Breakout (FHRB)")
+    print("\n  Phase 9.1 — First Hour Range Breakout (FHRB)")
     print(f"  Vol >= {args.vol_mult}x 20-day avg, RR = {args.rr}, "
           f"daily cap = {args.daily_cap}, sq-off = {args.sq_off}:00")
     print(f"  Range filter: {args.min_range}% - {args.max_range}%")
@@ -378,7 +378,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     # ── Walk-forward results ──────────────────────────────────
@@ -413,11 +413,11 @@ def main() -> None:
 
             if win_name == "TEST" and m.get("by_reason"):
                 reasons = m["by_reason"]
-                print(f"    Exit reasons: " +
+                print("    Exit reasons: " +
                       ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
 
     # ── Parameter sweep ───────────────────────────────────────
-    print(f"\n  ── Parameter sweep (TEST window, ALL regimes) ──")
+    print("\n  ── Parameter sweep (TEST window, ALL regimes) ──")
     for vm in [1.0, 1.5, 2.0, 3.0]:
         for rr in [1.2, 1.5, 1.8, 2.0]:
             trades = simulate_fhrb(
@@ -448,7 +448,7 @@ def main() -> None:
         _print_table(label, compute_metrics(trades, f"ADX-{adx}", True))
 
     # ── Square-off time sweep ─────────────────────────────────
-    print(f"\n  ── Square-off time sweep (TEST window, ALL regimes) ──")
+    print("\n  ── Square-off time sweep (TEST window, ALL regimes) ──")
     for sq in [13, 14, 15]:
         trades = simulate_fhrb(
             all_symbol_days, regime_labels,
@@ -463,7 +463,7 @@ def main() -> None:
         _print_table(f"Sq-off {sq}:00", compute_metrics(trades, f"sq{sq}", True))
 
     # ── Verdict ───────────────────────────────────────────────
-    print(f"\n  === PHASE 9.1 VERDICT ===")
+    print("\n  === PHASE 9.1 VERDICT ===")
     test_trades = simulate_fhrb(
         all_symbol_days, regime_labels,
         vol_mult=args.vol_mult, rr_ratio=args.rr,

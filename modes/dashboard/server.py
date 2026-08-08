@@ -1229,7 +1229,6 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         data = json.loads(raw)
 
         from modes.swing.persistence import open_positions, confirm_action, _connect, _ensure_schema
-        from modes.swing.types import SwingAction, ACTION_FULL_EXIT, STATUS_PENDING
         from config import now_ist as _now
 
         # Find the position
@@ -1798,7 +1797,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         from core.zerodha_client import ZerodhaClient
         from modes.swing.scanner import SwingScanner
         from modes.swing.persistence import (
-            init_db, save_run, open_positions, latest_candidate_row_id_by_symbol,
+            save_run, open_positions, latest_candidate_row_id_by_symbol,
             update_candidate_ai_overlay,
         )
         from modes.swing.types import SwingRunResult

@@ -12,9 +12,7 @@
 from __future__ import annotations
 
 import datetime
-import math
 from dataclasses import dataclass, field
-from typing import Any
 
 from config import now_ist
 from core.logger import Logger
@@ -338,7 +336,7 @@ def format_backtest_report(m: BacktestMatrix) -> str:
         lines.append(f"    • {a}")
 
     # CAGR matrix
-    lines.append(f"\n  CAGR (%) Matrix — Dip X% (rows) × Target Y% (columns)")
+    lines.append("\n  CAGR (%) Matrix — Dip X% (rows) × Target Y% (columns)")
     lines.append(f"  {'':>6s}" + "".join(f"{y:>8d}%" for y in m.target_range))
     lines.append("  " + "-" * (6 + 9 * len(m.target_range)))
     for x in m.dip_range:

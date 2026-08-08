@@ -745,17 +745,14 @@ def force_refresh_us_candles(symbol: str | None = None) -> None:
     if symbol is None:
         _download_daily_candles.cache_clear()
         return
-    yf_sym = _normalise_yfinance_symbol(symbol)
-    # lru_cache has no per-key invalidation; we simulate it by
-    # snapshotting every other cached entry, clearing, and replaying.
+    # lru_cache has no per-key invalidation. We only call this for the
+    # active single-stock symbol, so clearing everything is cheap enough.
     try:
         info = _download_daily_candles.cache_info()
     except Exception:
         return
     if info.currsize == 0:
         return
-    # Simplest correct fallback: clear everything.  We only call this
-    # for the active single-stock symbol so the blast radius is small.
     _download_daily_candles.cache_clear()
 
 
@@ -789,7 +786,7 @@ def _download_daily_candles(symbol: str, force_network: bool = False) -> list[di
     for period in _PERIOD_FALLBACKS:
         try:
             import yfinance as yf
-        except ImportError as exc:  # pragma: no cover - depends on env
+        except ImportError:  # pragma: no cover - depends on env
             last_err = RuntimeError("yfinance is required for US analysis")
             break
         try:

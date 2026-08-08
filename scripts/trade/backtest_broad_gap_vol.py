@@ -14,8 +14,6 @@ Read-only. Out-of-sample by construction. Never touches capital.
 """
 from __future__ import annotations
 
-import datetime
-import math
 import os
 import sys
 from collections import defaultdict
@@ -30,8 +28,7 @@ if PROJECT_ROOT not in sys.path:
 
 from backtest_gates import (  # noqa: E402
     INTRADAY_DB, DAILY_DB, load_15m, load_daily, group_by_day,
-    compute_charges, compute_metrics, _atr, _rsi, _make_trade,
-    CAPITAL,
+    compute_metrics, _atr, _rsi, _make_trade,
 )
 from regime_analysis import label_regimes  # noqa: E402
 from shared.nifty_universe import get_universe  # noqa: E402
@@ -114,7 +111,7 @@ def simulate_gap_go_adaptive(
         skip_regimes = set()
 
     all_dates: set[str] = set()
-    for sym, sdata in all_symbol_days.items():
+    for sdata in all_symbol_days.values():
         for d in sdata["days"]:
             all_dates.add(d)
 
@@ -134,7 +131,7 @@ def simulate_gap_go_adaptive(
 
         # ── IDEA 2: Count how many stocks gap >=1% today ──────
         gap_count = 0
-        for sym, sdata in all_symbol_days.items():
+        for sdata in all_symbol_days.values():
             candles = sdata["days"].get(date_str)
             if not candles:
                 continue
@@ -241,7 +238,7 @@ def simulate_gap_go_adaptive(
         candidates.sort(key=lambda x: x[2], reverse=True)
         selected = candidates[:daily_cap]
 
-        for sym, side, gap_mag, candles, atr_val in selected:
+        for sym, side, _gap_mag, candles, atr_val in selected:
             entry_candle = candles[ENTRY_CANDLE_IDX]
             entry_price = entry_candle["close"]
             if entry_price <= 0:
@@ -376,7 +373,7 @@ def _print_table(label: str, metrics: dict) -> None:
 def main() -> None:
     universe = "NIFTY100"
     symbols = get_universe(universe)
-    print(f"\n  Broad-Gap Adaptive Volume + Side Analysis Backtest")
+    print("\n  Broad-Gap Adaptive Volume + Side Analysis Backtest")
     print(f"  Universe: {universe}, Loading {len(symbols)} symbols...")
 
     # Load data
@@ -414,7 +411,7 @@ def main() -> None:
     dist = defaultdict(int)
     for r in regime_labels.values():
         dist[r] += 1
-    print(f"  Regime distribution: "
+    print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
 
     w_start, w_end = WINDOWS["TEST"]
@@ -423,7 +420,7 @@ def main() -> None:
     # IDEA 4: BUY-only vs SELL-only analysis
     # ══════════════════════════════════════════════════════════
     print(f"\n  {'='*100}")
-    print(f"  IDEA 4: Gap Direction Analysis (TEST window, v1.1 filters)")
+    print("  IDEA 4: Gap Direction Analysis (TEST window, v1.1 filters)")
     print(f"  {'='*100}")
 
     for side_label, side_filter in [("ALL (baseline)", "ALL"), ("BUY only (gap-ups)", "BUY"), ("SELL only (gap-downs)", "SELL")]:
@@ -436,7 +433,7 @@ def main() -> None:
         _print_table(side_label, m)
         if m.get("by_reason"):
             reasons = m["by_reason"]
-            print(f"    Exit reasons: " +
+            print("    Exit reasons: " +
                   ", ".join(f"{k}={v}" for k, v in sorted(reasons.items())))
         print(f"    Stats: BUY={st['buy_trades']}, SELL={st['sell_trades']}, "
               f"broad_days={st['broad_days']}, narrow_days={st['narrow_days']}")
@@ -445,12 +442,12 @@ def main() -> None:
     # IDEA 2: Adaptive volume on broad-gap days
     # ══════════════════════════════════════════════════════════
     print(f"\n  {'='*100}")
-    print(f"  IDEA 2: Adaptive Volume on Broad-Gap Days (TEST window, v1.1 filters)")
-    print(f"  Broad = >=N stocks gapping >=1%. Lower vol from 2.0x to 1.5x on broad days only.")
+    print("  IDEA 2: Adaptive Volume on Broad-Gap Days (TEST window, v1.1 filters)")
+    print("  Broad = >=N stocks gapping >=1%. Lower vol from 2.0x to 1.5x on broad days only.")
     print(f"  {'='*100}")
 
     # Baseline: vol=2.0x everywhere
-    print(f"\n  ── Baseline (vol=2.0x all days) ──")
+    print("\n  ── Baseline (vol=2.0x all days) ──")
     trades_base, st_base = simulate_gap_go_adaptive(
         all_symbol_days, regime_labels,
         start=w_start, end=w_end,
@@ -462,7 +459,7 @@ def main() -> None:
           f"broad_trades={st_base['broad_trades']}, narrow_trades={st_base['narrow_trades']}")
 
     # Sweep broad-gap threshold and vol_mult_broad
-    print(f"\n  ── Broad-gap threshold sweep ──")
+    print("\n  ── Broad-gap threshold sweep ──")
     for broad_thresh in [10, 15, 20, 25, 30]:
         for vol_broad in [1.0, 1.25, 1.5, 1.75]:
             trades, st = simulate_gap_go_adaptive(
@@ -482,7 +479,7 @@ def main() -> None:
                       f"broad_days={st['broad_days']}, broad_trades={st['broad_trades']}")
 
     # ── Combined: adaptive vol + BUY-only (best of both) ──────
-    print(f"\n  ── Combined: Adaptive vol + BUY-only ──")
+    print("\n  ── Combined: Adaptive vol + BUY-only ──")
     for broad_thresh in [15, 20]:
         for vol_broad in [1.25, 1.5]:
             trades, st = simulate_gap_go_adaptive(
@@ -497,7 +494,7 @@ def main() -> None:
             _print_table(f"BUY-only + broad>={broad_thresh} vol_broad={vol_broad}x", m)
 
     # ── Global vol=1.5x comparison (no adaptive) ──────────────
-    print(f"\n  ── Global vol=1.5x (no adaptive, for comparison) ──")
+    print("\n  ── Global vol=1.5x (no adaptive, for comparison) ──")
     trades_15, st_15 = simulate_gap_go_adaptive(
         all_symbol_days, regime_labels,
         start=w_start, end=w_end,
@@ -507,7 +504,7 @@ def main() -> None:
     _print_table("vol=1.5x all days", m_15)
     print(f"    Stats: trades={m_15.get('trades', 0)} (vs baseline {m_base.get('trades', 0)})")
 
-    print(f"\n  Done.")
+    print("\n  Done.")
 
 
 if __name__ == "__main__":

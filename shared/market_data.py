@@ -169,6 +169,7 @@ class MarketData:
                             hist["Low"].tolist(),
                             hist["Close"].tolist(),
                             hist["Volume"].tolist(),
+                            strict=True,
                         )
                     ]
                     self._apply_history_stats(stock, hist_records)

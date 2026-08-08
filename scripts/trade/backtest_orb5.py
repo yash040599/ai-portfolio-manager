@@ -172,7 +172,7 @@ def main():
     symbols = [args.symbol.upper()] if args.symbol else get_universe(args.universe)
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    print(f"\n  === ORB-5 (5-min candles) ===")
+    print("\n  === ORB-5 (5-min candles) ===")
     print(f"  Symbols    : {len(symbols)}")
     print(f"  Source     : {INTRADAY_DB}")
     print(f"  OOS split  : TRAIN < {args.split_date} <= TEST")

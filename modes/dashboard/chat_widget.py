@@ -293,7 +293,7 @@ def _portfolio_detail_block(sym: str) -> str:
     lines = [f"Stock: {s.symbol} ({getattr(s, 'exchange', 'NSE')}) — Indian equity"]
     if held:
         lines += [
-            f"- I HOLD this stock.",
+            "- I HOLD this stock.",
             f"- Quantity: {_qty_str(s.qty)} shares",
             f"- My average buy price: Rs.{_num(s.avg_buy_price):,.2f}",
             f"- Total invested: Rs.{_num(s.invested_value):,.0f}",
@@ -518,11 +518,6 @@ def _us_overview_block() -> str:
         positions = _us_positions()
     except Exception:
         positions = []
-    try:
-        from modes.swing.persistence import realised_pnl_summary
-        pnl = realised_pnl_summary() or {}
-    except Exception:
-        pnl = {}
 
     fx_note = ""
     try:
