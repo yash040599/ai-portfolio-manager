@@ -446,7 +446,7 @@ class Config:
     # ── Budget & sizing ───────────────────────────────────────────
     OPTIONS_BUDGET_INR:           int   = 15_000    # Start small (1 lot ~5K-15K premium)
     OPTIONS_MAX_LOTS:             int   = 1         # Scale up with evidence only
-    OPTIONS_NIFTY_LOT_SIZE:       int   = 25        # NIFTY lot size (fixed by NSE)
+    OPTIONS_NIFTY_LOT_SIZE:       int   = 65        # Kite-reported 2026-08-08; was wrongly 25
     OPTIONS_INDEX:                str   = "NIFTY"   # Only NIFTY for now
 
     # ── Risk management ───────────────────────────────────────────
@@ -457,7 +457,7 @@ class Config:
     # ── Strike selection ──────────────────────────────────────────
     OPTIONS_NIFTY_STRIKE_STEP:    int   = 50        # NIFTY strikes at 50-pt intervals
     OPTIONS_STRIKE_OFFSET_STEPS:  int   = 0         # 0 = ATM, 1 = 1 strike OTM
-    OPTIONS_EXPIRY_PREFERENCE:    str   = "WEEKLY"  # Thursday weekly expiry
+    OPTIONS_EXPIRY_PREFERENCE:    str   = "WEEKLY"  # Tuesday weekly expiry (NSE moved it from Thursday)
     OPTIONS_MIN_DTE:              int   = 1         # Min days to expiry (skip 0-DTE)
 
     # ── VIX filter ────────────────────────────────────────────────

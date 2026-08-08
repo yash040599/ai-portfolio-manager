@@ -40,6 +40,7 @@ class ZerodhaClient:
         # NFO (F&O) instrument cache — loaded by load_nfo_instruments()
         self._nfo_tokens: dict | None = None
         self._nfo_lot_sizes: dict = {}         # symbol → lot_size
+        self._nfo_contracts: list | None = None  # full records (expiry/strike/type)
 
         # Rate-limit throttle for historical API (Zerodha ~3 req/sec)
         self._last_historical_call: float = 0.0
@@ -760,6 +761,9 @@ class ZerodhaClient:
                 i["tradingsymbol"]: i["instrument_token"]
                 for i in nfo_instruments
             }
+            # Keep the full records too: expiry/strike/instrument_type are
+            # what `get_option_chain()` needs and the token map throws away.
+            self._nfo_contracts = nfo_instruments
             # Cache tick sizes and lot sizes for NFO
             for i in nfo_instruments:
                 sym = i["tradingsymbol"]
@@ -768,6 +772,100 @@ class ZerodhaClient:
             self.log.info(f"NFO instruments loaded: {len(self._nfo_tokens)} contracts.")
 
         return self._nfo_tokens
+
+    def list_option_expiries(self, name: str = "NIFTY") -> list[datetime.date]:
+        """Sorted expiry dates with listed option contracts for `name`.
+
+        Kite only publishes *live* contracts, so this never returns an
+        expired series — which is exactly why historical option premiums
+        cannot be back-filled and must be recorded going forward.
+        """
+        self.load_nfo_instruments()
+        expiries = set()
+        for c in self._nfo_contracts or []:
+            if c.get("name") != name or c.get("instrument_type") not in ("CE", "PE"):
+                continue
+            exp = c.get("expiry")
+            if isinstance(exp, datetime.datetime):
+                exp = exp.date()
+            if isinstance(exp, datetime.date):
+                expiries.add(exp)
+        return sorted(expiries)
+
+    def get_option_chain(
+        self,
+        name: str = "NIFTY",
+        expiry: datetime.date | None = None,
+        spot: float | None = None,
+        strike_window: float = 0.06,
+        with_quotes: bool = True,
+    ) -> list[dict]:
+        """Option chain for one underlying/expiry, optionally with live quotes.
+
+        Args:
+            expiry:        defaults to the nearest listed expiry.
+            spot:          centre of the strike window; required to trim.
+            strike_window: keep strikes within +/- this fraction of spot.
+                           Full NIFTY chains run to hundreds of strikes and
+                           Kite caps a quote call at 500 instruments.
+            with_quotes:   merge last_price / OI / volume / depth.
+
+        Returns one dict per contract, sorted by (strike, type).
+        """
+        self.load_nfo_instruments()
+
+        if expiry is None:
+            expiries = self.list_option_expiries(name)
+            if not expiries:
+                return []
+            expiry = expiries[0]
+
+        rows: list[dict] = []
+        for c in self._nfo_contracts or []:
+            if c.get("name") != name:
+                continue
+            if c.get("instrument_type") not in ("CE", "PE"):
+                continue
+            exp = c.get("expiry")
+            if isinstance(exp, datetime.datetime):
+                exp = exp.date()
+            if exp != expiry:
+                continue
+            strike = float(c.get("strike") or 0)
+            if spot and strike_window > 0:
+                if abs(strike - spot) > spot * strike_window:
+                    continue
+            rows.append({
+                "tradingsymbol": c["tradingsymbol"],
+                "instrument_token": c["instrument_token"],
+                "strike": strike,
+                "option_type": c["instrument_type"],
+                "expiry": expiry.isoformat(),
+                "lot_size": c.get("lot_size", 1),
+            })
+
+        rows.sort(key=lambda r: (r["strike"], r["option_type"]))
+
+        if with_quotes and rows:
+            quotes = self.get_quotes_safe(
+                [{"symbol": r["tradingsymbol"], "exchange": "NFO"} for r in rows]
+            ) or {}
+            for r in rows:
+                q = quotes.get(f"NFO:{r['tradingsymbol']}")
+                if not isinstance(q, dict):
+                    continue
+                depth = q.get("depth") if isinstance(q.get("depth"), dict) else {}
+                buy = (depth.get("buy") or [{}])[0]
+                sell = (depth.get("sell") or [{}])[0]
+                r.update({
+                    "last_price": q.get("last_price", 0) or 0,
+                    "volume": q.get("volume", 0) or 0,
+                    "oi": q.get("oi", 0) or 0,
+                    "bid": buy.get("price", 0) or 0,
+                    "ask": sell.get("price", 0) or 0,
+                })
+
+        return rows
 
     def get_nfo_lot_size(self, symbol: str) -> int:
         """Return the lot size for an NFO symbol (loads cache if needed)."""

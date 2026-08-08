@@ -213,28 +213,37 @@ class OptionScanner:
 
     def _find_nearest_weekly_expiry(self) -> datetime.date | None:
         """
-        Find the nearest Thursday (NIFTY weekly expiry).
-        If today is Thursday and before square-off, use today.
-        Otherwise use next Thursday.
-        Skips if DTE < OPTIONS_MIN_DTE.
+        Nearest listed NIFTY expiry, read from Kite's instrument dump.
+
+        Previously this computed "next Thursday" arithmetically, which
+        silently broke when NSE moved index weeklies to Tuesday: it would
+        return a date on which no contract exists. Asking the broker means
+        holidays and any future weekday change are handled for free.
+        Falls back to the arithmetic rule only if the dump is unavailable.
         """
         today = now_ist().date()
-        # Thursday = weekday 3
-        days_ahead = (3 - today.weekday()) % 7
-        if days_ahead == 0:
-            # It's Thursday — use today if before square-off
+
+        try:
+            expiries = self.zerodha.list_option_expiries(self.cfg.OPTIONS_INDEX)
+        except Exception as exc:
+            self.log.warning(f"Could not read listed expiries ({exc}); "
+                             "falling back to weekday arithmetic.")
+            expiries = []
+
+        if expiries:
             now = now_ist()
             sqoff = now.replace(
                 hour=self.cfg.OPTIONS_SQUARE_OFF_HOUR,
                 minute=self.cfg.OPTIONS_SQUARE_OFF_MINUTE,
                 second=0, microsecond=0,
             )
-            if now < sqoff:
-                return today
-            else:
-                # After square-off on Thursday → next week
-                return today + datetime.timedelta(days=7)
-        return today + datetime.timedelta(days=days_ahead)
+            for exp in expiries:
+                if exp > today or (exp == today and now < sqoff):
+                    return exp
+            return None
+
+        days_ahead = (3 - today.weekday()) % 7
+        return today + datetime.timedelta(days=days_ahead or 7)
 
     # ================================================================
     # INTERNAL: Strike selection

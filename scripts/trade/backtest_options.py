@@ -82,28 +82,24 @@ SKIP_REGIMES = {"RANGE"}  # Only trade on VOLATILE + TREND days
 # SEBI fee: 0.0001% of turnover
 # GST on brokerage: 18% of Rs.40 (flat brokerage per order) = Rs.7.2
 # Stamp duty: 0.003% of buy side premium × qty
+# ── NSE Option charges ────────────────────────────────────────
+# Rates live in option_pricing.py so the directional and condor
+# backtests cannot drift apart. See compute_option_charges() below.
 BROKERAGE_PER_ORDER = 20.0  # Zerodha flat fee per order
-GST_ON_BROKERAGE = 0.18
-STT_SELL_PCT = 0.0625       # STT on option sell-side premium
-EXCHANGE_TXN_PCT = 0.053    # Exchange transaction charges both sides
-SEBI_FEE_PCT = 0.0001
-STAMP_DUTY_PCT = 0.003
 
 
 def compute_option_charges(buy_premium: float, sell_premium: float,
                            qty: int) -> float:
-    """Compute total charges for an option round-trip trade."""
-    buy_turnover = buy_premium * qty
-    sell_turnover = sell_premium * qty
+    """Total charges for one option round-trip.
 
-    brokerage = BROKERAGE_PER_ORDER * 2  # buy + sell
-    gst = brokerage * GST_ON_BROKERAGE
-    stt = sell_turnover * STT_SELL_PCT / 100
-    exchange = (buy_turnover + sell_turnover) * EXCHANGE_TXN_PCT / 100
-    sebi = (buy_turnover + sell_turnover) * SEBI_FEE_PCT / 100
-    stamp = buy_turnover * STAMP_DUTY_PCT / 100
-
-    return round(brokerage + gst + stt + exchange + sebi + stamp, 2)
+    Delegates to option_pricing.Leg so there is a single charge model in
+    the repo. The local copy this replaced still used the pre-Oct-2024 STT
+    rate of 0.0625% and taxed GST on brokerage only, so it under-charged
+    every trade in the v1.0 result.
+    """
+    from option_pricing import Leg, leg_charges
+    return round(leg_charges(
+        Leg("CE", 0.0, "BUY", buy_premium, sell_premium, qty)), 2)
 
 
 def synthetic_premium(nifty_price: float, vol_pct: float,

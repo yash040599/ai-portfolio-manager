@@ -1,8 +1,10 @@
 # Options Mode — Roadmap
 
-> **Created:** 2026-06-06 | **Updated:** 2026-06-09
-> **Status:** Code complete (Phase O-4). Backtest v1.0 ran — PF 0.42 (FAIL).
-> Strategy needs improvement before dry-run.
+> **Created:** 2026-06-06 | **Updated:** 2026-08-08
+> **Status:** **SHELVED.** Both backtested strategies FAIL on real-data-validated
+> premiums. NIFTY carries a genuine variance risk premium (+1.77 vol points
+> median, positive 81% of the time) but it is too small for any defined-risk
+> structure to capture once protection is bought.
 > **Context:** Intraday equity Gap-and-Go v1.1 passes OOS PF 1.55.
 > Options mode built as a separate engine (`--mode options`).
 > See [OPTIONS_GUIDE.md](OPTIONS_GUIDE.md) for plain-English primer.
@@ -13,13 +15,201 @@
 
 | Area | Status |
 |---|---|
-| Stage | **Phase O-4 — Code complete, backtest FAIL** |
+| Stage | **Phase O-3 — two strategies tested, both FAIL. Real data pipeline now live.** |
 | Code | `modes/options/` — manager, scanner, order engine, tracker, report writer |
-| Backtest | v1.0 directional buying: PF 0.42 FULL, PF 0.64 OOS (FAIL) |
+| Backtest 1 | v1.0 directional buying: PF 0.42 FULL, 0.64 OOS (FAIL). 30-combo sweep max 0.53 |
+| Backtest 2 | O-3.2 iron condor: PF 0.71 FULL, 0.46 OOS (FAIL). 144-combo sweep max 1.02 |
+| Premium model | **Validated against real quotes 2026-08-08 — median 0.90x actual.** Verdicts stand |
+| Data | ✅ `option_candles` in `data/options.db` — real premiums, backfilled from Kite |
 | Dashboard | Dry-run page has Intraday/Options mode switcher |
 | CLI | `python main.py --mode options` (dry-run default) |
-| Next step | Improve signal (OFI, momentum, VWAP) or pivot to selling |
+| **Next step** | **SHELVED — needs a NIFTY-level edge, not another structure** |
 | Capital | **Rs.0 — no live trading until strategy passes 1.15 gate** |
+
+### O-2.5 answered (2026-08-08)
+
+`record_option_chain.py --probe` settled the data question, and the answer was
+better than assumed:
+
+| Question | Answer |
+|---|---|
+| Historical option candles from Kite? | **Yes** — daily, 15-minute and 1-minute all return for listed contracts, back to listing date |
+| Expired contracts? | **No** — absent from `instruments("NFO")`, no resolvable token, unreachable forever |
+| Practical consequence | Backfill the **full life** of every listed contract before it expires. Weeklies list ~1 month ahead, so one run captures the whole premium path |
+| NIFTY weekly expiry weekday | **Tuesday** (not Thursday) |
+| NIFTY lot size (Kite-reported) | **65** |
+
+So the pipeline is not limited to daily snapshots: `--backfill` pulls complete
+OHLC history per contract. It remains strictly forward-only overall — anything
+not captured before expiry is lost permanently.
+
+### Premium model validated (2026-08-08)
+
+`validate_premium_model.py` priced 2,006 real OTM observations with the same
+model the backtests used:
+
+| Moneyness | CE | PE |
+|---|---|---|
+| 0-1% OTM | 1.02x | 0.88x |
+| 1-2% OTM | 0.99x | 0.92x |
+| 2-3% OTM | 0.68x | 1.03x |
+| 3%+ OTM | 0.42x | 1.24x |
+| **Overall median** | **0.90x** | |
+
+Near the money — where the condor's short strikes sit — the model is accurate
+to within a few percent. It under-prices far-OTM calls, which is where condor
+*protection* is bought, so the modelled net credit was if anything **too
+generous**. The PF 0.46 verdict is therefore optimistic, not pessimistic.
+
+Caveat: ~1 month of data across 2 expiries in a single volatility regime.
+Indicative, not definitive.
+
+### Why the next step is an edge, not another structure
+
+Both failures now survive their own robustness checks:
+
+- The condor sensitivity sweep stays under PF 1.0 even at an implausible 1.8x
+  IV uplift, so the result is not a calibration artefact.
+- Its model-free diagnostic shows the pricer is calibrated: 43.7% observed
+  breach rate vs ~40% implied by 0.20-delta shorts.
+- The premium model now checks out against real quotes at 0.90x median.
+- Correcting the lot size (25 -> 65) and the expiry weekday (Thu -> Tue) moved
+  OOS PF from 0.45 to 0.46 — i.e. the conclusion is insensitive to both.
+
+The structures are not the problem. At 1 DTE the sellable corridor is +/-0.68%
+while NIFTY's median move to settlement is 0.50% and its p80 is 1.12% — NIFTY
+weekly options are priced roughly efficiently.
+
+---
+
+## Variance risk premium — measured on REAL premiums (2026-08-08)
+
+`analyse_vrp.py` inverts Black-Scholes on the recorded premiums to get implied
+vol, then compares it with the realised vol that actually followed. This is the
+only structural reason option selling makes money anywhere, so it is the
+decisive question for options mode.
+
+| Metric | Value |
+|---|---|
+| Mean implied vol | 11.86% |
+| Mean realised vol | 9.23% |
+| Mean VRP | **+2.63 vol points** |
+| Median VRP | **+1.77 vol points** |
+| Observations with VRP > 0 | **34/42 = 81%** |
+
+**There IS a positive variance risk premium on NIFTY.** Implied exceeds
+subsequent realised four times out of five, by a median of 1.77 vol points —
+in line with global equity-index norms.
+
+Coverage caveat: 42 observations, almost all at 11-30 DTE. Only 3 fall in the
+6-10 DTE bucket and none at 2-5 DTE, which is where the condor traded. The
+number above is a longer-tenor premium and must not be assumed to hold at 1-2
+DTE where gamma dominates theta.
+
+### But the condor cannot capture it
+
+Two follow-up tests, both on the corrected model:
+
+| Test | Result |
+|---|---|
+| Tenor sweep (DTE 1/3/5/10/15/20, hold to expiry) | OOS PF 0.49 / 0.47 / 0.50 / **0.77** / 0.66 / 0.76 — improves at longer tenors, never reaches 1.15 |
+| Size sweep (1 / 3 / 10 / 30 lots at DTE 10) | OOS PF 0.77 / 0.81 / 0.83 / **0.84** — plateaus |
+
+The size test matters: ~95% of a condor's charges are the fixed Rs.20-per-order
+brokerage across 8 orders, so scaling notional amortises them almost entirely.
+PF still stalls at 0.84. **Transaction costs are not the binding constraint —
+the structure is.**
+
+The arithmetic: a 0.20-delta condor with 200-point wings collects ~Rs.36 credit
+against ~Rs.164 max loss, i.e. 1:4.5. Break-even needs an ~82% win rate; the
+observed rate is 70%. A 2.6-vol-point premium is simply too small to fund that
+risk:reward once wings are bought.
+
+### Verdict for options mode
+
+The premium is real but **small**, and every defined-risk structure available to
+us gives most of it away buying protection. Naked selling — the only structure
+that keeps the whole premium — is permanently hard-blocked, correctly.
+
+Options mode is therefore **SHELVED**, not merely paused, pending one of:
+
+1. **A NIFTY-level directional or volatility-forecasting signal.** The VRP tells
+   us *when* selling is favoured on average; a forecast would tell us *which*
+   weeks, which is what turns a 2.6-point premium into a tradable edge.
+2. **Delta-hedged short volatility using NIFTY futures.** This harvests the VRP
+   directly rather than through a payoff structure that taxes it, but needs
+   continuous hedging and futures margin.
+3. **More recorded data at 2-10 DTE**, which would test whether short-tenor VRP
+   is materially richer than the longer-tenor number measured here.
+
+Keep `record_option_chain.py --backfill` running weekly regardless: the dataset
+is forward-only, costs nothing to accumulate, and is the prerequisite for all
+three paths above.
+
+---
+
+## Tooling added 2026-08-08
+
+| Script | Purpose |
+|---|---|
+| `scripts/trade/option_pricing.py` | European Black-Scholes + volatility smile + the single NSE charge model shared by every options backtest |
+| `scripts/trade/backtest_options_condor.py` | O-3.2 condor backtest — walk-forward, `--sweep`, `--sensitivity`, `--diagnose` |
+| `scripts/trade/record_option_chain.py` | `--probe` (O-2.5), `--backfill` (full contract history), daily snapshot, `--summary` |
+| `scripts/trade/validate_premium_model.py` | Scores the synthetic model against recorded real premiums |
+| `scripts/trade/analyse_vrp.py` | Measures the NIFTY variance risk premium from recorded premiums |
+| `ZerodhaClient.get_option_chain()` / `.list_option_expiries()` | O-2.2, previously marked done but never written |
+
+---
+
+## Backtest Results — O-3.2 Iron Condor (2026-08-08)
+
+**Strategy:** Regime-gated short iron condor into weekly expiry, entered 1 day
+before expiry at the 0.20-delta wings with 200-point protection, squared off at
+the expiry close (never exercised — STT on ITM exercise is 0.125% of intrinsic).
+
+| Window | Trades | Win Rate | PF | Sharpe | Net P&L |
+|---|---|---|---|---|---|
+| FULL | 89 | 55.1% | 0.70 | -1.06 | -Rs.55,055 |
+| TRAIN | 45 | 64.4% | 1.02 | 0.15 | +Rs.1,414 |
+| TEST (OOS) | 44 | 45.5% | **0.45** | -2.46 | -Rs.56,469 |
+
+**Sweep:** 144 combinations (DTE 0-3 x delta 0.10-0.30 x wing 100-300 x SL
+0/1.5/2.5). Best OOS PF **1.02** — nothing reaches the 1.15 gate.
+
+**Sensitivity:** PF climbs with the IV assumption but plateaus below break-even
+— 1.0x uplift -> 0.14, 1.35x -> 0.44, 1.8x -> 0.94. Skew is near-irrelevant.
+The failure is therefore not a calibration artefact.
+
+**Why it failed — the model-free explanation:**
+At 1 DTE the 0.20-delta shorts sit only +/-0.68% from spot, but NIFTY's move
+from entry open to expiry close has a median of 0.58% and an 80th percentile of
+1.20%. The corridor you can sell is narrower than the distribution of moves, and
+the credit does not compensate. Settlement landed outside the corridor 43.8% of
+the time versus ~40% implied — i.e. **NIFTY weekly options are priced roughly
+efficiently**, so there is no free theta to harvest without a real edge.
+
+**Reproduce:**
+```bash
+python scripts/trade/backtest_options_condor.py --diagnose
+python scripts/trade/backtest_options_condor.py --sensitivity
+python scripts/trade/backtest_options_condor.py --sweep
+```
+
+---
+
+## Corrections found while building O-3.2 (2026-08-08)
+
+| Item | Was | Should be | Impact |
+|---|---|---|---|
+| `config.OPTIONS_NIFTY_LOT_SIZE` | 25 | **65** (Kite-reported 2026-08-08) | 2.6x position-sizing error in live/dry-run — **still needs fixing in config.py** |
+| Expiry weekday assumption | Thursday | **Tuesday** (NSE moved index weeklies) | Mis-dated every simulated trade; `--expiry-switch` now handles the changeover |
+| STT on option sale | 0.0625% | **0.1%** (Oct 2024) | Under-charged every v1.0 trade |
+| GST base | brokerage only | brokerage + exchange + SEBI | Under-charged every v1.0 trade |
+| O-2.2 `get_option_chain()` | marked ✅ | did not exist | Now implemented in `ZerodhaClient` |
+
+Charge rates now live in one place (`scripts/trade/option_pricing.py`) so the
+two backtests cannot drift apart. Re-running v1.0 with the corrected model left
+its verdict unchanged at PF 0.42.
 
 ---
 
@@ -239,13 +429,23 @@ loses money, do NOT proceed to code.
 | Step | Action | Done? |
 |---|---|---|
 | O-2.1 | Add `instruments("NFO")` to ZerodhaClient, cache NFO tokens | ✅ |
-| O-2.2 | Build `get_option_chain(index, expiry)` → returns strikes, premiums, OI | ✅ |
-| O-2.3 | Store option chain snapshots in `data/options.db` | ✅ |
-| O-2.4 | Fetch NIFTY weekly option chain daily for 2+ weeks (build history) | |
-| O-2.5 | Verify: can we get historical option premiums from Zerodha API? | |
+| O-2.2 | Build `get_option_chain(index, expiry)` → returns strikes, premiums, OI | ✅ real implementation 2026-08-08 (was wrongly marked done) |
+| O-2.3 | Store option chain snapshots in `data/options.db` | ✅ `record_option_chain.py` |
+| O-2.4 | Fetch NIFTY weekly option chain daily for 2+ weeks (build history) | ⏳ **START NOW — time-sensitive** |
+| O-2.5 | Verify: can we get historical option premiums from Zerodha API? | ⏳ run `record_option_chain.py --probe` |
 
 **Exit criteria:** Option chain data flowing to SQLite. Historical data
 available for backtesting.
+
+**How to run O-2.4/O-2.5:**
+```bash
+python scripts/trade/record_option_chain.py --probe     # answers O-2.5 once
+python scripts/trade/record_option_chain.py             # daily snapshot
+python scripts/trade/record_option_chain.py --summary   # accumulated history
+```
+Schedule the plain form once per trading day (ideally near the close). ~40
+trading days of snapshots are needed before a measured-premium backtest means
+anything.
 
 ---
 
@@ -256,13 +456,18 @@ available for backtesting.
 | Step | Action | Done? |
 |---|---|---|
 | O-3.1 | Backtest Strategy 1 (directional buying on VOLATILE days) | ✅ PF 0.42 FAIL |
-| O-3.2 | Backtest Strategy 2 (iron condor on RANGE expiry days) | |
-| O-3.3 | Walk-forward: train on first half, test on second half | |
-| O-3.4 | Calculate P&L net of ALL option costs (brokerage, STT, exchange, GST) | |
-| O-3.5 | **Verdict:** any strategy OOS PF ≥ 1.15? | |
+| O-3.2 | Backtest Strategy 2 (iron condor on RANGE expiry days) | ✅ PF 0.45 OOS FAIL |
+| O-3.3 | Walk-forward: train on first half, test on second half | ✅ both strategies |
+| O-3.4 | Calculate P&L net of ALL option costs (brokerage, STT, exchange, GST) | ✅ unified in `option_pricing.py` |
+| O-3.5 | **Verdict:** any strategy OOS PF ≥ 1.15? | ❌ **No.** Best of 174 tested combos = 1.02 |
+| O-3.6 | Re-run both on RECORDED premiums once O-2.4 has ~40 days | ⏳ blocked on data |
 
 **Exit criteria:** At least one strategy passes OOS PF ≥ 1.15 after costs,
 OR both fail and options mode is shelved.
+
+**Status:** both fail on synthetic premiums. Options mode is **paused, not
+shelved** — paused pending real data, because the synthetic premium is the
+weakest link in both verdicts.
 
 ---
 

@@ -17,8 +17,20 @@
 # ================================================================
 
 import os
+import sys
 import logging
 from logging.handlers import RotatingFileHandler
+
+
+# Windows consoles default to cp1252, which cannot encode the status glyphs
+# below — without this, the first Logger.success() call anywhere raises
+# UnicodeEncodeError and kills the process. Fall back to ASCII symbols when
+# stdout genuinely cannot be switched to UTF-8.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    _UNICODE_OK = True
+except (AttributeError, OSError, ValueError):
+    _UNICODE_OK = (getattr(sys.stdout, "encoding", "") or "").lower().startswith("utf")
 
 
 class Logger:
@@ -29,6 +41,11 @@ class Logger:
     _RED    = "\033[91m"
     _BOLD   = "\033[1m"
     _RESET  = "\033[0m"
+
+    # Status glyphs, degraded to ASCII on legacy code pages
+    _SYM_OK   = "\u2713" if _UNICODE_OK else "+"
+    _SYM_WARN = "\u26a0" if _UNICODE_OK else "!"
+    _SYM_ERR  = "\u2717" if _UNICODE_OK else "x"
 
     # Shared rotating file handler — created once, reused by all instances
     _file_handler: RotatingFileHandler | None = None
@@ -77,19 +94,19 @@ class Logger:
     def success(self, message: str):
         """Green ✓ — for completed actions."""
         self._clear_status_line()
-        self._print(self._GREEN, "✓", message)
+        self._print(self._GREEN, self._SYM_OK, message)
         self._logger.info(f"SUCCESS — {message}")
 
     def warning(self, message: str):
         """Yellow ⚠ — for non-fatal issues."""
         self._clear_status_line()
-        self._print(self._YELLOW, "⚠", message)
+        self._print(self._YELLOW, self._SYM_WARN, message)
         self._logger.warning(message)
 
     def error(self, message: str):
         """Red ✗ — for failures."""
         self._clear_status_line()
-        self._print(self._RED, "✗", message)
+        self._print(self._RED, self._SYM_ERR, message)
         self._logger.error(message)
 
     def section(self, title: str):
