@@ -1,10 +1,24 @@
-anthropic
-google-genai
-openai
-kiteconnect>=5.1.0
-python-dotenv
-openpyxl
-tzdata
-requests
-pyotp
-yfinance
+# Runtime dependencies.
+#
+# Bounded rather than free-floating: a breaking major release must never
+# land silently mid-market. Lower bounds are the versions the test suite
+# was last verified against (2026-08-08).
+#
+# Refresh with:
+#   pip install -U -r requirements.txt && python -m unittest discover -s tests
+
+# ── AI providers (only the one in Config.AI_PROVIDER is required) ──
+google-genai>=2.6.0,<3        # Gemini — default provider
+openai>=2.38.0,<3             # GPT — optional
+anthropic>=0.104.0,<1         # Claude — optional
+
+# ── Broker ────────────────────────────────────────────────────────
+kiteconnect>=5.2.0,<6         # >=5.1.0 needed for market_protection
+
+# ── Core utilities ────────────────────────────────────────────────
+python-dotenv>=1.2.2,<2
+requests>=2.34.2,<3
+pyotp>=2.9.0,<3               # TOTP for programmatic Zerodha login
+tzdata>=2026.2                # IST zoneinfo on Windows
+openpyxl>=3.1.5,<4            # Zerodha tax P&L .xlsx import
+yfinance>=1.3.0,<2            # US swing book + fallback quotes
