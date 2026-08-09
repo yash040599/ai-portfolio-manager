@@ -181,7 +181,8 @@ button.action[disabled] { opacity: 0.55; cursor: not-allowed; }
 .banner.error { background: #fff0f0; border: 1px solid #e8b4b4;
                 color: #b91c1c; }
 .sectorbar { display: inline-block; height: 8px; background: #1c1f23;
-             vertical-align: middle; margin-left: 6px; border-radius: 2px; }
+             vertical-align: middle; margin-left: 6px; border-radius: 2px;
+             max-width: 100%; }
 .history-strip { display: flex; gap: 10px; flex-wrap: wrap; }
 .history-strip .tile { flex: 1 1 140px; padding: 10px 12px; background: var(--card);
                        border: 1px solid var(--line); border-radius: 6px;
@@ -577,11 +578,20 @@ def _render_charts(snap: PortfolioSnapshot) -> str:
 """
 
 
+def _bar_px(pct: float) -> int:
+    """Pixel width for a weight bar, capped so it cannot overflow a phone.
+
+    A table cell grows to fit an inline-block, so a CSS max-width cannot
+    rescue an 87%-weight bar drawn at 4px per point (348px). Cap here.
+    """
+    return max(2, min(int(round(pct * 4)), 200))
+
+
 def _render_metrics(m: PortfolioMetrics) -> str:
     if m.sector_weights:
         bars = []
         for sw in m.sector_weights:
-            w = max(2, int(round(sw.weight_pct * 4)))
+            w = _bar_px(sw.weight_pct)
             bars.append(
                 f'<tr><td>{html.escape(sw.sector)}</td>'
                 f'<td>{sw.weight_pct:.1f}% '
@@ -677,7 +687,7 @@ def _render_metrics(m: PortfolioMetrics) -> str:
             pct = m.cap_tier_weights.value.get(tier)
             if pct is None:
                 continue
-            w = max(2, int(round(pct * 4)))
+            w = _bar_px(pct)
             tag = ""
             if tier == "UNKNOWN":
                 tag = (' <span class="src" style="color:var(--warn-fg)">⚠ '
@@ -792,6 +802,7 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
     return f"""
 <h2>Holdings ({len(snap.holdings)})</h2>
 <div class="card" style="padding: 8px 12px;">
+  <div class="table-scroll">
   <table class="holdings">
     <thead><tr>
       <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th>
@@ -805,6 +816,7 @@ return, quality, valuation, position context">Rating</th>
     </tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
+  </div>
   <p class="muted" style="font-size:11.5px;margin:8px 4px 4px">
     <strong>Rating</strong> grades the security (STRONG BUY &rarr; SELL).
     <strong>Action</strong> is what to do with the shares you already hold,

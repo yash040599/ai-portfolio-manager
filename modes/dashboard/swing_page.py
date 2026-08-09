@@ -631,6 +631,7 @@ def render_swing_page() -> str:
                 'or remove back to recommendations.</p>')
 
     if watchlist:
+        body.append('<div class="table-scroll">')
         body.append('<table class="holdings">')
         body.append('<tr>'
                     '<th>Symbol</th>'
@@ -689,7 +690,7 @@ def render_swing_page() -> str:
                 f'</td>'
                 f'</tr>'
             )
-        body.append('</table>')
+        body.append('</table></div>')
     else:
         body.append('<div class="muted">No stocks in watchlist. '
                     'Click Add+ on a recommendation to watch it.</div>')
@@ -700,6 +701,7 @@ def render_swing_page() -> str:
     body.append(f'<h2>Open Swing Book ({len(positions)})</h2>')
 
     if positions:
+        body.append('<div class="table-scroll">')
         body.append('<table class="holdings">')
         body.append('<tr>'
                     '<th>Symbol</th><th>Name</th>'
@@ -757,7 +759,7 @@ def render_swing_page() -> str:
                 f'</td>'
                 f'</tr>'
             )
-        body.append('</table>')
+        body.append('</table></div>')
     else:
         body.append('<div class="muted">No open swing positions. '
                     'Confirm an entry recommendation above to start tracking.</div>')
@@ -823,6 +825,7 @@ def _render_action_table(actions: list, live: dict,
     52-week high, not the all-time high).
     """
     parts: list[str] = []
+    parts.append('<div class="table-scroll">')
     parts.append('<table class="holdings">')
     parts.append('<tr>'
                  '<th>#</th><th>Symbol</th><th>Name</th>'
@@ -897,7 +900,7 @@ def _render_action_table(actions: list, live: dict,
             f'<td class="right">Rs.{a.suggested_target:,.2f}</td>'
             f'<td class="right">{a.suggested_qty}</td>'
             f'<td class="right">{_rr(a):.1f}</td>'
-            f'<td style="font-size:11px;max-width:200px">'
+            f'<td class="reason" style="font-size:11px">'
             f'{html.escape(short_reason)}</td>'
             # Single Add+ button (S46, 2026-05-14): the table widened
             # after the % Below 52w High + dip-buy columns landed, so
@@ -923,7 +926,7 @@ def _render_action_table(actions: list, live: dict,
             f'</td>'
             f'</tr>'
         )
-    parts.append('</table>')
+    parts.append('</table></div>')
     return "\n".join(parts)
 
 

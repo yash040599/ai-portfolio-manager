@@ -661,6 +661,7 @@ def _render_recommendations(latest_scan: dict, live: dict,
                    'Click <em>Run Scan</em> above to analyse the universe.</div>')
         out.append('</details></div>')
         return "".join(out)
+    out.append('<div class="table-scroll">')
     out.append('<table class="holdings">')
     out.append('<tr>'
                '<th>#</th><th>Symbol</th><th>Name</th><th>Setup</th>'
@@ -731,7 +732,7 @@ def _render_recommendations(latest_scan: dict, live: dict,
             f'</select></td>'
             f'</tr>'
         )
-    out.append('</table>')
+    out.append('</table></div>')
     out.append('</details></div>')
     return "".join(out)
 
@@ -752,6 +753,7 @@ def _render_watchlist(watchlist, live: dict,
                    'Use Add+ on a recommendation to watch it.</div>')
         out.append('</details></div>')
         return "".join(out)
+    out.append('<div class="table-scroll">')
     out.append('<table class="holdings">')
     out.append('<tr>'
                '<th>Symbol</th><th>Name</th><th>Setup</th>'
@@ -804,7 +806,7 @@ def _render_watchlist(watchlist, live: dict,
             f'style="padding:4px 8px;font-size:12px">Remove</button>'
             f'</td></tr>'
         )
-    out.append('</table>')
+    out.append('</table></div>')
     out.append('</details></div>')
     return "".join(out)
 
@@ -820,6 +822,7 @@ def _render_positions(positions: list[SwingPosition],
                    'Confirm an entry recommendation above to start tracking.</div>')
         out.append('</div>')
         return "".join(out)
+    out.append('<div class="table-scroll">')
     out.append('<table class="holdings">')
     out.append('<tr>'
                '<th>Symbol</th><th>Name</th>'
@@ -877,7 +880,7 @@ def _render_positions(positions: list[SwingPosition],
             f'</td>'
             f'</tr>'
         )
-    out.append('</table>')
+    out.append('</table></div>')
     out.append('</div>')
     return "".join(out)
 

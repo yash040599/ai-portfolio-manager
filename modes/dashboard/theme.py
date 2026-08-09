@@ -342,6 +342,29 @@ table.holdings td { border-bottom: 1px solid var(--line) !important; }
 table.holdings tr:hover td { background: var(--soft) !important; }
 table.kvtable td { border-bottom: 1px dashed var(--line) !important; }
 
+/* Wide tables (entry recommendations, open book) carry 12-15 columns and
+   cannot compress below ~1100px without the cells colliding. Without a
+   scroll container they burst out of the card instead, which is worse on
+   small screens. Wrap those in .table-scroll. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Bleed to the card edges so the scrollbar is not inset awkwardly. */
+  margin-inline: -18px;
+  padding-inline: 18px;
+}
+.table-scroll > table.holdings { min-width: 1100px; }
+.table-scroll > table.holdings th,
+.table-scroll > table.holdings td { white-space: nowrap; }
+/* Reason is free text and the only column that should wrap; capping it
+   stops one long reason from stretching the whole table. */
+.table-scroll > table.holdings td.reason {
+  white-space: normal; min-width: 180px; max-width: 260px;
+}
+/* A horizontal scroll container also traps vertical sticky positioning,
+   so drop the sticky header rather than have it pin to the wrong box. */
+.table-scroll > table.holdings th { position: static; }
+
 /* ── Banners / flags ─────────────────────────────────────────── */
 .banner { border-radius: var(--radius-sm); }
 .banner.info { background: var(--info-bg) !important; border: 1px solid var(--info-line) !important;
@@ -495,10 +518,24 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 /* Charts read these via getComputedStyle in page scripts */
 .chart-card canvas { max-height: 300px; }
 
-@media (max-width: 760px) {
+@media (max-width: 820px) {
   body { padding: 14px 12px 40px; }
   nav.topnav { position: static; }
   h1, h1.page-title { font-size: 21px; }
+  /* The nav is a flex row whose link group defaults to min-width:auto, so
+     it refused to shrink below its max-content width and alone forced
+     ~500px of horizontal page scroll even after the tables were fixed.
+     `display:flex` is restated here because pages that predate nav.py's
+     stylesheet (swing) render .nav-links as a plain block, where
+     flex-wrap would silently do nothing. */
+  nav.topnav { flex-wrap: wrap; row-gap: 6px; }
+  nav.topnav .nav-links {
+    display: flex; flex-wrap: wrap; row-gap: 6px;
+    min-width: 0; max-width: 100%;
+  }
+  nav.topnav .spacer { flex-basis: 100%; height: 0; }
+  .card { padding: 12px 12px; }
+  .table-scroll { margin-inline: -12px; padding-inline: 12px; }
 }
 """
 

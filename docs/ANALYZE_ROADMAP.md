@@ -28,6 +28,29 @@ Scope:
 
 ---
 
+## Current Posture (2026-08-10)
+
+| Area | Status |
+|---|---|
+| Stage | **Working and in regular use.** 17 analyse runs, 613 stock analyses recorded in `data/portfolio_analyses.db`. |
+| Trading cost | **Zero** — read-only, places no orders, needs no subscription beyond the data plan already paid for. |
+| Standing | Across the four modes this is the one with a positive contribution and no open blocker. |
+
+Worth stating plainly, because the trading modes absorb most of the attention:
+this mode's leverage scales with the size of the existing holding, not with a
+trade edge. A 1% better allocation decision on the demat book is worth more than
+a year of intraday Gap-and-Go at Rs.50K (see
+[TRADE_ROADMAP.md](TRADE_ROADMAP.md) unit economics), and it costs nothing to
+run. Keep it current.
+
+Known limitation recorded 2026-08-10 while writing
+[`tests/test_scoring.py`](../tests/test_scoring.py): `coverage_pct` is measured
+per **pillar**, not per input. The valuation pillar counts as fully covered on
+dividend yield alone with no P/E, so "100% coverage" overstates how much data
+the model actually had. Not yet fixed — changing it moves displayed scores.
+
+---
+
 ## Design Principles
 
 These principles bind every Pending and Completed item below.

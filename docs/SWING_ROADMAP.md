@@ -36,6 +36,34 @@ Sister docs:
 
 ---
 
+## How this mode is actually used (clarified 2026-08-10)
+
+Recorded here because an automated review misread the usage pattern as a
+malfunction and proposed "fixes" that would have been wrong.
+
+Swing mode is used as a **market study surface**, not an execution queue:
+
+- The operator reads the scan to research the market, then buys on Kite and
+  logs the fill via **Add+**. Those holdings also appear in the Zerodha
+  portfolio fetch.
+- **Open positions are frequently held well past the nominal 8-week window on
+  purpose**, because the operator has decided to convert them to long-term
+  holdings. Age alone is not a defect.
+- `FULL_EXIT` recommendations (including time-stop hits) are **advisory**. A
+  standing pile of PENDING exit actions is the expected state, not a backlog
+  to be cleared, and not evidence that anything failed to fire.
+- Consequently: **do not add exit nagging, auto-close, or alerting** on the
+  basis that positions look stale. Considered and explicitly declined
+  2026-08-10.
+
+The consequence to be aware of: because positions are deliberately held rather
+than closed on signal, `swing_positions` carries no realised P&L, so there is
+no live track record for this mode and its 10-year backtest
+(CAGR 21.52%, +1.29% alpha) remains unvalidated against live execution. That is
+an accepted trade-off of using the mode this way, not a bug to fix.
+
+---
+
 ## Design Principles
 
 ### 1. Swing is its own mode, not intraday with a longer timer

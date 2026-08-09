@@ -1,13 +1,67 @@
 # Options Mode — Roadmap
 
-> **Created:** 2026-06-06 | **Updated:** 2026-08-08
-> **Status:** **SHELVED.** Both backtested strategies FAIL on real-data-validated
-> premiums. NIFTY carries a genuine variance risk premium (+1.77 vol points
-> median, positive 81% of the time) but it is too small for any defined-risk
-> structure to capture once protection is bought.
+> **Created:** 2026-06-06 | **Updated:** 2026-08-10
+> **Status:** **SHELVED for the tested structures; ONE candidate left to test.**
+> Both backtested strategies FAIL on real-data-validated premiums. NIFTY carries
+> a genuine variance risk premium (+1.77 vol points median, positive 81% of the
+> time) but it is too small for a symmetric defined-risk structure to capture
+> once protection is bought. Next and probably final test: **calendar spread on
+> recorded real premiums**.
 > **Context:** Intraday equity Gap-and-Go v1.1 passes OOS PF 1.55.
 > Options mode built as a separate engine (`--mode options`).
 > See [OPTIONS_GUIDE.md](OPTIONS_GUIDE.md) for plain-English primer.
+
+---
+
+## Market structure — who actually makes money (SEBI, 2026-08-10 review)
+
+Before any further work, the base rates. From SEBI's own studies:
+
+| Finding | Source |
+|---|---|
+| **93%** of 1.13 crore individual F&O traders lost money FY22-FY24; aggregate loss **Rs.1.81 lakh crore** | [SEBI PR 22/2024](https://www.sebi.gov.in/media-and-notifications/press-releases/sep-2024/updated-sebi-study-reveals-93-of-individual-traders-incurred-losses-in-equity-fando-between-fy22-and-fy24-aggregate-losses-exceed-1-8-lakh-crores-over-three-years_86906.html) |
+| Only **1%** of individuals earned profits above Rs.1 lakh after costs | ibid. |
+| Individuals spent **Rs.26,000 each** on transaction costs in FY24 alone (Rs.50,000 crore over three years) | ibid. |
+| FY24-25: **91%** lost, net **Rs.1.05 lakh crore**, up 41% YoY, average loss Rs.1.1 lakh | SEBI FY24-25 study |
+| Prop desks made **Rs.33,000 cr** and FPIs **Rs.28,000 cr** gross in FY24, against individuals' **-Rs.61,000 cr** | SEBI PR 22/2024 |
+| **96% of proprietary profits and 97% of FPI profits came from ALGORITHMIC trading** | ibid. |
+
+**Reading:** "People make money in options" is true and almost entirely describes
+colocated algorithmic desks, funded by retail losses plus retail transaction
+costs. We will not compete with them on latency or execution. Any edge we claim
+must come from something they are not competing for — realistically, patience and
+holding period, not speed.
+
+This does not by itself forbid trading options. It does set the prior: assume no
+edge until a backtest on **real** premiums says otherwise, and treat any thin
+result as noise.
+
+---
+
+## Candidate strategies — tested vs untested
+
+### Tested and rejected
+
+| Strategy | Result |
+|---|---|
+| Directional buying (regime + gap signal) | PF 0.42; 30-combo sweep max 0.53 |
+| Short iron condor, symmetric | PF 0.46 OOS; 144-combo sweep max 1.02 |
+| — across tenor (1/3/5/10/15/20 DTE) | best OOS 0.77 |
+| — across size (1/3/10/30 lots) | plateaus 0.84 — costs are *not* the constraint |
+
+### Untested, ranked by expected value
+
+| # | Idea | Why it might work where the condor failed | Testable now? |
+|---|---|---|---|
+| **1** | **Calendar spread** — sell near weekly, buy far weekly, same strike | Fails differently. Net **long vega**, so a vol spike helps rather than kills; max loss capped at the debit. Monetises the *term structure* of theta (near-dated decays ~1/sqrt(T) faster) instead of betting the index stays in a corridor. | **Yes** — 15,314 same-strike near/far pairs recorded, 5,096 at the 7-day gap. Real premiums, no model. |
+| 2 | IV-percentile conditional selling | Our condor sold **unconditionally**, every expiry. VRP is regime-dependent — fat when IV is high, can be negative when low. Selling only in the top IV quartile is standard professional practice and is a genuine omission in what we tested. | Partially — ~7 months of recorded IV; more needed |
+| 3 | Delta-hedged short straddle on NIFTY futures | The mechanism prop desks actually use: harvest VRP directly instead of through a payoff shape that taxes it. | Needs futures data + daily rehedge model |
+| 4 | Ratio / broken-wing structures | Asymmetric R:R; can be built for positive credit with no risk on one side. | Yes, same data |
+
+**Next action:** build `backtest_options_condor.py`'s sibling for calendars and
+run it on the recorded premiums. Coverage of weeklies is currently ~1-2 months,
+enough for a directional read but **not** a promotion decision — keep backfilling
+weekly and re-run on a fuller sample before any dry-run.
 
 ---
 
@@ -23,7 +77,7 @@
 | Data | ✅ `option_candles` in `data/options.db` — real premiums, backfilled from Kite |
 | Dashboard | Dry-run page has Intraday/Options mode switcher |
 | CLI | `python main.py --mode options` (dry-run default) |
-| **Next step** | **SHELVED — needs a NIFTY-level edge, not another structure** |
+| **Next step** | **Calendar spread backtest on recorded real premiums** |
 | Capital | **Rs.0 — no live trading until strategy passes 1.15 gate** |
 
 ### O-2.5 answered (2026-08-08)

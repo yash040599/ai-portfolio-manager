@@ -1,20 +1,59 @@
 # Trading Roadmap
 
-Last updated: 2026-06-15 (v1.2.0: adaptive volume on broad-gap days. PF 1.30, Sharpe 1.29).
+Last updated: 2026-08-10 (unit-economics review: strategy passes the gate, the
+business case does not at Rs.50K).
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PHASE 8 — Gap-and-Go v1.2.0 dry-run validation (NIFTY100).** Adaptive volume on broad-gap days: when ≥25 stocks gap ≥1%, volume threshold relaxes from 2.0x to 1.25x. OOS PF 1.17→**1.30** (+11%), Sharpe 0.71→**1.29** (+82%), MaxDD 13.51→**11.58%** (improved). +16 trades/year. Narrow days unchanged (2.0x). |
+| Stage | **PAUSED — pending a capital decision, not a strategy decision.** Gap-and-Go v1.2.0 is the only strategy in the repo to clear the OOS gate (PF 1.30, Sharpe 1.29, MaxDD 11.58%). It is not the bottleneck. |
+| Blocker | **Subscription cost exceeds the edge at Rs.50K.** See unit economics below. |
 | Mode | NoAI, pure rules-based |
 | Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0", SCAN_UNIVERSE = "NIFTY100") |
-| Live trading | **DO NOT GO LIVE YET** — v1.2.0 needs dry-run validation (10+ sessions). |
+| Live trading | **DO NOT GO LIVE at Rs.50K** — negative after the Kite Connect subscription. |
 | Budget | Rs.50,000 |
 | Config version | 2.3-2026-06-15-GAP_AND_GO_1.2.0 |
-| FY result (pre-audit) | Rs.-3,929 net on 184 trades (old NoAI baseline) |
+| Real ledger to date | **225 trades, 2026-03-25 to 2026-06-04, net Rs.-1,062, 42.7% win rate** (`data/trades.db :: intraday_tax_ledger`) |
 
-> **Where we are → where next (plain English):** After 7 phases of research, Gap-and-Go was the first strategy to clear the OOS promotion gate. v1.1.0 fixed three v1.0.0 bugs and lifted OOS PF from 1.37 to 1.55. v1.1.1 expanded to NIFTY100 (PF 1.62). On 2026-06-15, v1.2.0 added **adaptive volume on broad-gap days**: when ≥25 stocks gap ≥1% simultaneously, volume threshold drops from 2.0x to 1.25x (institutional flow is diluted across the market on these days). OOS PF **1.17→1.30** (+11%), Sharpe **0.71→1.29** (+82%), MaxDD **13.51→11.58%** (improved), +16 trades/year. Narrow days remain at 2.0x (zero regression risk). SELL-side is marginal (PF 1.04) but positive; BUY-only too thin (42 trades). **Next step: continue v1.2.0 dry-run validation on NIFTY100 (10+ sessions needed).** If dry-run confirms, this is the first strategy that could go live.
+### Unit economics — the actual blocker (2026-08-10)
+
+| Line | Amount |
+|---|---:|
+| Gap-and-Go v1.1.1 net P&L, 1 year OOS, Rs.50K budget | **Rs.+3,621** |
+| Kite Connect subscription (Rs.500 x 12) | **Rs.-6,000** |
+| **Net** | **Rs.-2,379/year** |
+
+Charges already consume 39% of gross at Rs.50K. So the best strategy the
+research programme produced still loses money once the subscription required to
+run it is counted. **No further strategy work changes this** — it is arithmetic,
+not signal quality.
+
+Scaling (P&L scales with capital; the charge ratio falls):
+
+| Capital | Approx. net P&L | After Rs.6,000 subscription |
+|---|---:|---:|
+| Rs.50K | Rs.3,621 | **-Rs.2,379** |
+| Rs.1L | ~Rs.9,500 | ~Rs.3,500 |
+| Rs.2L | ~Rs.20,000 | ~Rs.14,000 (7% on capital) |
+| Rs.3L | ~Rs.31,000 | ~Rs.25,000 (8.3% on capital) |
+
+Even at Rs.3L the 11.58% max drawdown means risking ~Rs.35,000 to make ~Rs.25,000
+— worse risk-adjusted than an index fund, for materially more effort.
+
+### Decision required (operator, not engineering)
+
+1. **Commit Rs.2L+** and resume dry-run validation, or
+2. **Switch the mode off** and stop paying Rs.6,000/year for a Rs.3,621/year edge.
+
+Until one is chosen, this mode stays paused. Recommendation on the evidence: (2).
+
+> **Where we are → where next (plain English):** Seven phases of research produced
+> exactly one strategy that clears the out-of-sample gate, and it works — the
+> problem is that Rs.50K is too small a base to carry a fixed Rs.6,000 annual
+> cost. The strategy is not broken and does not need replacing. It needs either
+> more capital behind it or to be retired.
+
 
 > **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
