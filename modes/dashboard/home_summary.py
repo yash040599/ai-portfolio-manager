@@ -348,6 +348,59 @@ def swing_india_book(*, live: bool) -> dict[str, Any]:
     return out
 
 
+# ── Mutual funds (Coin + externally-held) ────────────────────────
+
+def mf_book(*, live: bool) -> dict[str, Any]:
+    """Mutual funds: Coin holdings plus funds tracked at other brokers.
+
+    `live` only controls whether Coin is re-fetched. A fund is always
+    marked to its last published NAV — there is no intraday price to
+    upgrade to, which is why `nav_as_of` travels with the money.
+    """
+    out: dict[str, Any] = {
+        "available": False, "schemes": 0, "invested": 0.0, "current": 0.0,
+        "pnl": 0.0, "pnl_pct": 0.0, "nav_as_of": "", "rows": [],
+        "monthly_sip": 0.0, "active_sips": 0, "paused_sips": 0,
+        "external_count": 0, "unpriced": 0,
+    }
+    try:
+        from modes.mf.book import build_book
+        book = build_book(live=live)
+    except Exception:
+        return out
+
+    if not book.holdings:
+        return out
+
+    out["available"] = True
+    out["schemes"] = len(book.schemes)
+    out["invested"] = book.invested_value
+    out["current"] = book.current_value
+    out["pnl"] = book.pnl
+    out["pnl_pct"] = book.pnl_pct
+    out["nav_as_of"] = book.nav_as_of
+    out["monthly_sip"] = book.monthly_sip_outflow
+    out["active_sips"] = len(book.active_sips)
+    out["paused_sips"] = len(book.paused_sips)
+    out["external_count"] = sum(1 for h in book.holdings
+                                if h.source != "COIN")
+    out["unpriced"] = book.unpriced_count
+    out["rows"] = [
+        {
+            "fund": s.fund,
+            "scheme_code": s.scheme_code,
+            "units": s.units,
+            "value": s.current_value,
+            "pnl": s.pnl,
+            "pnl_pct": s.pnl_pct,
+            "priced": s.nav > 0,
+            "brokers": len(s.brokers),
+        }
+        for s in book.schemes[:6]
+    ]
+    return out
+
+
 def us_book(*, live: bool) -> dict[str, Any]:
     """US positions — this IS the US portfolio (RSU lots + swing buys)."""
     out = {"positions": 0, "invested_usd": 0.0, "current_usd": 0.0,
@@ -438,15 +491,19 @@ def build_summary(*, live: bool = False) -> dict[str, Any]:
     india = india_book(live=live)
     swing_in = swing_india_book(live=live)
     us = us_book(live=live)
+    mf = mf_book(live=live)
     intraday = intraday_book()
 
     us_inr = us["current_usd"] * rate if rate > 0 else 0.0
     india_inr = india["current"]
-    net_worth = india_inr + us_inr
+    mf_inr = mf["current"]
+    # Coin units are not in the demat equity list, so adding the fund
+    # book here cannot double-count anything in `india_book`.
+    net_worth = india_inr + mf_inr + us_inr
 
     india_cost = india["invested"]
     us_cost_inr = us["invested_usd"] * rate if rate > 0 else 0.0
-    total_cost = india_cost + us_cost_inr
+    total_cost = india_cost + mf["invested"] + us_cost_inr
     total_pnl = net_worth - total_cost
 
     return {
@@ -458,16 +515,19 @@ def build_summary(*, live: bool = False) -> dict[str, Any]:
         "india": india,
         "swing_india": swing_in,
         "us": us,
+        "mf": mf,
         "intraday": intraday,
         "totals": {
             "net_worth_inr": net_worth,
             "india_inr": india_inr,
+            "mf_inr": mf_inr,
             "us_inr": us_inr,
             "invested_inr": total_cost,
             "unrealised_inr": total_pnl,
             "unrealised_pct": ((net_worth / total_cost - 1) * 100)
                               if total_cost > 0 else 0.0,
             "india_share_pct": (india_inr / net_worth * 100) if net_worth > 0 else 0.0,
+            "mf_share_pct": (mf_inr / net_worth * 100) if net_worth > 0 else 0.0,
             "us_share_pct": (us_inr / net_worth * 100) if net_worth > 0 else 0.0,
             "realised_inr": (swing_in["realised_net"]
                              + intraday["net_pnl"]
@@ -476,4 +536,4 @@ def build_summary(*, live: bool = False) -> dict[str, Any]:
     }
 
 
-__all__ = ["auth_state", "build_summary", "market_state"]
+__all__ = ["auth_state", "build_summary", "market_state", "mf_book"]

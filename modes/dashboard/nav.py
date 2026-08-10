@@ -11,6 +11,7 @@ from modes.dashboard.theme import theme_toggle_html
 NAV_ITEMS = [
     ("Home", "/", "Overview of every book"),
     ("Portfolio", "/portfolio", "Zerodha holdings, gaps and analyse runs"),
+    ("Mutual Funds", "/mf", "Coin funds plus funds held at other brokers"),
     ("Swing", "/swing", "Indian swing scan, watchlist and open book"),
     ("US", "/us", "US scan, watchlist and open book"),
     ("Intraday", "/trading", "Live intraday P&L"),
@@ -23,6 +24,8 @@ NAV_ITEMS = [
 _LABEL_ALIASES = {
     "home": "/",
     "portfolio": "/portfolio",
+    "mutual funds": "/mf",
+    "mf": "/mf",
     "swing": "/swing",
     "us": "/us",
     "trading": "/trading",

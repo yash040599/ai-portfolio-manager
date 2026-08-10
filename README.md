@@ -98,10 +98,50 @@ Three surfaces, one CLI. Pick a mode at the CLI.
 ```
 python main.py --mode analyze         # NoAI (default)
 python main.py --mode analyze --ai    # with AI (Gemini by default)
+python main.py --mode portfolio                 # same as --mode analyze
+python main.py --mode portfolio --type stocks   # explicit stock book
+python main.py --mode portfolio --type mf       # mutual-fund book
 ```
 
 Full plan: [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) (P1-P7
 foundation in flight; D24-D29 dashboard surface in flight).
+
+### Phase 1b — Mutual funds (Coin + other brokers)
+
+Mutual funds are tracked separately from equities because an
+open-ended scheme has no intraday price — it has an end-of-day NAV
+published by the AMC. Every rupee on this surface is marked to that
+NAV and stamped with the date it belongs to, so it never reads as a
+live number.
+
+- **Coin holdings** come from `kite.mf_holdings()`, along with the SIP
+  book (active *and* paused) and recent orders. P&L is derived locally
+  because Kite returns `pnl` and `xirr` as zero.
+- **Funds held elsewhere** are hand-entered into `data/mf.db`. You pick
+  the scheme from the Coin catalogue (~7.6k schemes), so the NAV
+  resolves automatically even though the units sit at another broker.
+- **The same scheme at two brokers** merges into one position with a
+  unit-weighted average NAV — the view no broker statement can give you.
+- Allocation by asset class, AMC, plan (direct vs regular) and broker,
+  plus concentration HHI and NAV history charts (AMFI scheme map +
+  MFapi daily series).
+- **Every Coin fetch is stored locally**, so the page and the home
+  net-worth open on the last known book without calling the broker. A
+  sync that fails (expired token) falls back to that stored book and
+  shows the error, instead of blanking to zero.
+- Adds to net worth and unrealised P&L on the home page. Coin units are
+  not in the demat equity list, so nothing is double-counted.
+
+```
+python main.py --mode portfolio --type mf                    # full book
+python main.py --mode portfolio --type mf --offline          # stored book, no broker call
+python main.py --mode portfolio --type mf --sips             # active + paused SIPs
+python main.py --mode portfolio --type mf --search "parag parikh"
+python main.py --mode portfolio --type mf --add --scheme INF879O01027 \
+               --units 120.5 --nav 84.9 --broker "Groww"
+python main.py --mode portfolio --type mf --list-external
+python main.py --mode portfolio --type mf --remove 3
+```
 
 ### Phase 2 — Intraday trading (V2, default)
 
@@ -160,17 +200,17 @@ default.
 Pages:
 
 - **`/`** (default landing) — command centre. Net worth, unrealised
-  P&L, India (Zerodha) and US books, an India-vs-US allocation doughnut,
-  Indian sector weights, the top rows of all three books, realised P&L
+  P&L, India (Zerodha), mutual-fund and US books, a book-mix doughnut,
+  Indian sector weights, the top rows of all four books, realised P&L
   across swing / US / intraday, and **inline Zerodha login** (TOTP
   quick-login plus paste-back) so a re-auth never needs a detour. First
   paint is snapshot-only — SQLite plus cached quotes, no broker calls;
   the browser then fetches `/api/home/summary?live=1` once, with opt-in
   auto-refresh.
-  Book boundaries are enforced: net worth = Zerodha holdings + US book.
-  The India swing open book is a *tracking* ledger over shares that
-  already sit inside the Zerodha holdings, so it is shown separately and
-  never summed into net worth.
+  Book boundaries are enforced: net worth = Zerodha holdings + mutual
+  funds + US book. The India swing open book is a *tracking* ledger over
+  shares that already sit inside the Zerodha holdings, so it is shown
+  separately and never summed into net worth.
 - **`/portfolio`** — Phase 1 analyser surface.
   Reads the latest `--mode analyze` run from `data/portfolio_analyses.db`,
   shows holdings (with **Rating** and **Risk** columns from the factor
@@ -180,6 +220,18 @@ Pages:
   carries the most-stale `as_of` across the run so you can see how fresh
   the analysis is. Displayed current price/P&L polls Zerodha live quotes
   when a valid token exists.
+- **`/mf`** — mutual-fund book. Coin holdings, funds held at other
+  brokers (add / edit / remove inline, with a scheme picker driven by
+  the Coin catalogue), and a combined table that merges the same
+  scheme across brokers into one unit-weighted position. Asset-class
+  and AMC doughnuts, direct-vs-regular and per-broker splits, SIP table
+  showing active *and* paused instalments with the monthly commitment,
+  recent Coin orders, and a click-through NAV history chart per fund.
+  Everything is marked to the last published NAV, shown as a `NAV as of`
+  chip; funds with no resolvable NAV are flagged and held at cost rather
+  than valued at zero. First paint replays the last stored Coin fetch
+  (`Coin synced <ts>` chip) so the page never opens empty — the Refresh
+  button is for pulling a newer NAV, not for making the page work.
 - **`/swing`** and **`/us`** — delivery swing dashboards for India and
   the US. Entry recommendations on top with **Conviction** and **Risk**
   grade columns, watchlist and open book below with live prices

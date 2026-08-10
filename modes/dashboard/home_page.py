@@ -40,6 +40,7 @@ from modes.dashboard.theme import (
 
 _TILES = [
     ("Portfolio", "/portfolio", "Holdings, gap analysis, analyse runs.", "in"),
+    ("Mutual Funds", "/mf", "Coin funds, external folios, SIPs.", "mf"),
     ("Swing (India)", "/swing", "Daily scan, watchlist, open book.", "in"),
     ("US", "/us", "US scan, watchlist, FX toggle, open book.", "us"),
     ("Intraday", "/trading", "Live intraday P&L and day drill-down.", "id"),
@@ -149,9 +150,14 @@ def _hero(data: dict) -> str:
 def _kpis(data: dict) -> str:
     t = data["totals"]
     ind, us = data["india"], data["us"]
-    net_tip = ("Zerodha holdings + US book, converted at the live USD/INR rate. "
-               "The India swing tracker is excluded on purpose — those shares "
-               "already sit inside the Zerodha holdings.")
+    mf = data.get("mf") or {}
+    net_tip = ("Zerodha holdings + mutual funds + US book, converted at the live "
+               "USD/INR rate. The India swing tracker is excluded on purpose — "
+               "those shares already sit inside the Zerodha holdings.")
+    mf_tip = ("Coin units plus funds you track at other brokers. Valued on the "
+              "last published NAV"
+              + (f", as of {mf.get('nav_as_of')}" if mf.get("nav_as_of") else "")
+              + " — mutual funds have no intraday price.")
     # Until yfinance answers, US positions are held at cost, so a
     # "+$0.00" P&L would be fiction. Show a dash instead.
     if us.get("live"):
@@ -168,6 +174,7 @@ def _kpis(data: dict) -> str:
     <div class="k-label">Net worth <span class="k-info" title="{html.escape(net_tip)}">?</span></div>
     <div class="k-value" id="kpi-networth" title="{_inr(t['net_worth_inr'])}">{_inr_compact(t['net_worth_inr'])}</div>
     <div class="k-foot"><span id="kpi-networth-split">India {t['india_share_pct']:.0f}%
+      &middot; MF {t.get('mf_share_pct', 0):.0f}%
       &middot; US {t['us_share_pct']:.0f}%</span></div>
   </article>
 
@@ -185,6 +192,13 @@ def _kpis(data: dict) -> str:
     <div class="k-value" id="kpi-india" title="{_inr(ind['current'])}">{_inr_compact(ind['current'])}</div>
     <div class="k-foot"><span class="{_cls(ind['pnl'])}" id="kpi-india-pnl">{_inr_compact(ind['pnl'], signed=True)}
       ({_pct(ind['pnl_pct'])})</span> &middot; <span id="kpi-india-count">{ind['holdings']}</span> holdings</div>
+  </article>
+
+  <article class="kpi">
+    <div class="k-label">Mutual funds <span class="k-info" title="{html.escape(mf_tip)}">?</span></div>
+    <div class="k-value" id="kpi-mf" title="{_inr(mf.get('current', 0))}">{_inr_compact(mf.get('current', 0))}</div>
+    <div class="k-foot"><span class="{_cls(mf.get('pnl', 0))}" id="kpi-mf-pnl">{_inr_compact(mf.get('pnl', 0), signed=True)}
+      ({_pct(mf.get('pnl_pct', 0))})</span> &middot; <span id="kpi-mf-count">{mf.get('schemes', 0)}</span> schemes</div>
   </article>
 
   <article class="kpi">
@@ -282,7 +296,7 @@ def _allocation(data: dict) -> str:
 <h2 class="t-section-title">Allocation <span class="hint">where the money actually sits</span></h2>
 <section class="split">
   <div class="t-card">
-    <h3>Geography</h3>
+    <h3>Book mix</h3>
     <div class="donut-wrap"><canvas id="chart-geo" height="190"></canvas></div>
     <ul class="legend" id="geo-legend"></ul>
   </div>
@@ -321,8 +335,39 @@ def _rows_html(rows, *, currency: str, href: str) -> str:
     return "".join(out)
 
 
+def _mf_rows_html(rows) -> str:
+    """Fund rows for the home mini-table.
+
+    Funds get their own renderer because the row key is a scheme name,
+    not a ticker, and units are fractional.
+    """
+    if not rows:
+        return ('<tr><td colspan="4" class="muted pad">'
+                'No mutual funds tracked yet.</td></tr>')
+    out = []
+    for r in rows:
+        split = (f'<span class="sub-pct">{int(r["brokers"])} brokers</span>'
+                 if int(r.get("brokers") or 1) > 1 else "")
+        if r.get("priced", True):
+            pnl_cell = (f'<td class="num right {_cls(r["pnl"])}">'
+                        f'{_inr(r["pnl"], signed=True)}'
+                        f'<span class="sub-pct">{_pct(r["pnl_pct"])}</span></td>')
+        else:
+            pnl_cell = ('<td class="num right muted" '
+                        'title="No NAV resolved — shown at cost">&mdash;</td>')
+        out.append(
+            f'<tr><td><a href="/mf" title="{html.escape(str(r["fund"]))}">'
+            f'{html.escape(str(r["fund"])[:38])}</a>{split}</td>'
+            f'<td class="num right">{_num(r["units"]):,.2f}</td>'
+            f'<td class="num right">{_inr(r["value"])}</td>'
+            f'{pnl_cell}</tr>'
+        )
+    return "".join(out)
+
+
 def _books(data: dict) -> str:
     ind, us, sw = data["india"], data["us"], data["swing_india"]
+    mf = data.get("mf") or {}
 
     if not ind.get("available"):
         stale = '<span class="t-chip warn">no analysis run yet</span>'
@@ -337,6 +382,15 @@ def _books(data: dict) -> str:
     swing_unreal = (_inr_compact(sw['unrealised'], signed=True)
                     if sw.get('live') else 'no live price')
 
+    mf_stamp = (f'<span class="t-chip" title="Funds are marked to the last '
+                f'published NAV, not a live price.">NAV '
+                f'{html.escape(str(mf.get("nav_as_of") or ""))}</span>'
+                if mf.get("nav_as_of") else
+                '<span class="t-chip warn">no NAV yet</span>')
+    mf_foot = (f'{mf.get("schemes", 0)} schemes &middot; '
+               f'{mf.get("external_count", 0)} tracked outside Coin &middot; '
+               f'{_inr_compact(mf.get("monthly_sip", 0))}/mo SIP')
+
     return f"""
 <h2 class="t-section-title">Books</h2>
 <section class="books">
@@ -348,6 +402,17 @@ def _books(data: dict) -> str:
     <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>
       <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
       <tbody id="book-india">{_rows_html(ind.get('top') or [], currency='inr', href='/portfolio/')}</tbody></table>
+  </div>
+
+  <div class="t-card book">
+    <div class="book-head">
+      <h3>Mutual funds</h3>{mf_stamp}
+      <span class="spacer"></span><a class="more" href="/mf">Open &#8594;</a>
+    </div>
+    <table class="mini"><thead><tr><th>Fund</th><th class="right">Units</th>
+      <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
+      <tbody id="book-mf">{_mf_rows_html(mf.get('rows') or [])}</tbody></table>
+    <div class="book-foot muted"><span id="mf-foot">{mf_foot}</span></div>
   </div>
 
   <div class="t-card book">
@@ -456,13 +521,18 @@ def _fallback_payload(err: str) -> dict:
         "us": {"positions": 0, "invested_usd": 0.0, "current_usd": 0.0,
                "pnl_usd": 0.0, "pnl_pct": 0.0, "realised_usd": 0.0,
                "closed": 0, "watchlist": 0, "rows": []},
+        "mf": {"available": False, "schemes": 0, "invested": 0.0,
+               "current": 0.0, "pnl": 0.0, "pnl_pct": 0.0, "nav_as_of": "",
+               "rows": [], "monthly_sip": 0.0, "active_sips": 0,
+               "paused_sips": 0, "external_count": 0, "unpriced": 0},
         "intraday": {"net_pnl": 0.0, "gross_pnl": 0.0, "charges": 0.0,
                      "trades": 0, "days": 0, "window": "", "best_day": None,
                      "worst_day": None},
-        "totals": {"net_worth_inr": 0.0, "india_inr": 0.0, "us_inr": 0.0,
-                   "invested_inr": 0.0, "unrealised_inr": 0.0,
+        "totals": {"net_worth_inr": 0.0, "india_inr": 0.0, "mf_inr": 0.0,
+                   "us_inr": 0.0, "invested_inr": 0.0, "unrealised_inr": 0.0,
                    "unrealised_pct": 0.0, "india_share_pct": 0.0,
-                   "us_share_pct": 0.0, "realised_inr": 0.0},
+                   "mf_share_pct": 0.0, "us_share_pct": 0.0,
+                   "realised_inr": 0.0},
     }
 
 
@@ -660,6 +730,7 @@ table.mini .sub-pct { display: block; font-size: 10.5px; opacity: .78; font-weig
 .tile::after { content: ""; position: absolute; top: 0; left: 0; right: 0;
                height: 3px; background: var(--accent); }
 .tile.k-in::after { background: linear-gradient(90deg, #ff9933, #138808); }
+.tile.k-mf::after { background: linear-gradient(90deg, #0b8a5b, #41a05e); }
 .tile.k-us::after { background: linear-gradient(90deg, #3c3b6e, #b22234); }
 .tile.k-id::after { background: linear-gradient(90deg, #2f5fe0, #6d5ae0); }
 .tile.k-dr::after { background: linear-gradient(90deg, #64748b, #94a3b8); }
@@ -771,13 +842,40 @@ _SCRIPT = r"""
     }).join('');
   }
 
+  function mfRowsHtml(rows) {
+    if (!rows || !rows.length) {
+      return '<tr><td colspan="4" class="muted pad">' +
+        'No mutual funds tracked yet.</td></tr>';
+    }
+    return rows.map(function (r) {
+      var split = (Number(r.brokers) || 1) > 1
+        ? '<span class="sub-pct">' + Number(r.brokers) + ' brokers</span>' : '';
+      var pnlCell;
+      if (r.priced === false) {
+        pnlCell = '<td class="num right muted" ' +
+          'title="No NAV resolved \u2014 shown at cost">\u2014</td>';
+      } else {
+        pnlCell = '<td class="num right ' + cls(r.pnl) + '">' + inr(r.pnl, true) +
+          '<span class="sub-pct">' + signedPct(r.pnl_pct) + '</span></td>';
+      }
+      return '<tr><td><a href="/mf" title="' + esc(r.fund) + '">' +
+        esc(String(r.fund).slice(0, 38)) + '</a>' + split + '</td>' +
+        '<td class="num right">' +
+        (Number(r.units) || 0).toLocaleString('en-IN',
+          { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td>' +
+        '<td class="num right">' + inr(r.value) + '</td>' + pnlCell + '</tr>';
+    }).join('');
+  }
+
   // ── render ───────────────────────────────────────────────
   function apply(d) {
     if (!d) return;
     var t = d.totals || {}, ind = d.india || {}, us = d.us || {}, sw = d.swing_india || {};
+    var mf = d.mf || {};
 
     set('kpi-networth', inrC(t.net_worth_inr), null, inr(t.net_worth_inr));
     set('kpi-networth-split', 'India ' + Math.round(t.india_share_pct || 0) +
+        '% \u00B7 MF ' + Math.round(t.mf_share_pct || 0) +
         '% \u00B7 US ' + Math.round(t.us_share_pct || 0) + '%');
     set('kpi-unrealised', inrC(t.unrealised_inr, true), cls(t.unrealised_inr),
         inr(t.unrealised_inr, true));
@@ -786,6 +884,10 @@ _SCRIPT = r"""
     set('kpi-india-pnl', inrC(ind.pnl, true) + ' (' + signedPct(ind.pnl_pct) + ')',
         cls(ind.pnl));
     set('kpi-india-count', String(ind.holdings || 0));
+    set('kpi-mf', inrC(mf.current), null, inr(mf.current));
+    set('kpi-mf-pnl', inrC(mf.pnl, true) + ' (' + signedPct(mf.pnl_pct) + ')',
+        cls(mf.pnl));
+    set('kpi-mf-count', String(mf.schemes || 0));
     set('kpi-us', usd(us.current_usd));
     var usPnl = document.getElementById('kpi-us-pnl');
     if (us.live) {
@@ -810,6 +912,11 @@ _SCRIPT = r"""
     if (bu) bu.innerHTML = rowsHtml(us.rows, 'usd', '/us/');
     var bs = document.getElementById('book-swing');
     if (bs) bs.innerHTML = rowsHtml(sw.rows, 'inr', '/swing/');
+    var bm = document.getElementById('book-mf');
+    if (bm) bm.innerHTML = mfRowsHtml(mf.rows);
+    set('mf-foot', (mf.schemes || 0) + ' schemes \u00B7 ' +
+        (mf.external_count || 0) + ' tracked outside Coin \u00B7 ' +
+        inrC(mf.monthly_sip) + '/mo SIP');
     set('swing-foot', (sw.positions || 0) + ' open \u00B7 ' +
         (sw.live ? inrC(sw.unrealised, true) : 'no live price') +
         ' unrealised \u00B7 ' + (sw.watchlist || 0) + ' on watchlist');
@@ -835,34 +942,36 @@ _SCRIPT = r"""
     var canvas = document.getElementById('chart-geo');
     if (!canvas || typeof Chart === 'undefined') return;
     var india = Math.max(0, Number(t.india_inr) || 0);
+    var mf = Math.max(0, Number(t.mf_inr) || 0);
     var us = Math.max(0, Number(t.us_inr) || 0);
     var legend = document.getElementById('geo-legend');
-    var colours = ['#2f5fe0', '#f0913a'];
+    var colours = ['#2f5fe0', '#41a05e', '#f0913a'];
+    var labels = ['India equity (Zerodha)', 'Mutual funds', 'US book'];
+    var values = [india, mf, us];
 
-    if (india + us <= 0) {
+    if (india + mf + us <= 0) {
       if (geoChart) { geoChart.destroy(); geoChart = null; }
       if (legend) legend.innerHTML = '<li class="muted">No positions to chart yet.</li>';
       return;
     }
-    var total = india + us;
+    var total = india + mf + us;
     if (legend) {
-      legend.innerHTML =
-        '<li><i style="background:' + colours[0] + '"></i>India <b>' +
-          inrC(india) + '</b> (' + pct(india / total * 100) + ')</li>' +
-        '<li><i style="background:' + colours[1] + '"></i>US <b>' +
-          inrC(us) + '</b> (' + pct(us / total * 100) + ')</li>';
+      legend.innerHTML = values.map(function (v, i) {
+        return '<li><i style="background:' + colours[i] + '"></i>' +
+          labels[i] + ' <b>' + inrC(v) + '</b> (' + pct(v / total * 100) + ')</li>';
+      }).join('');
     }
     if (geoChart) {
-      geoChart.data.datasets[0].data = [india, us];
+      geoChart.data.datasets[0].data = values;
       geoChart.update();
       return;
     }
     geoChart = new Chart(canvas.getContext('2d'), {
       type: 'doughnut',
       data: {
-        labels: ['India (Zerodha)', 'US book'],
+        labels: labels,
         datasets: [{
-          data: [india, us],
+          data: values,
           backgroundColor: colours,
           borderColor: cssVar('--card') || '#fff',
           borderWidth: 3,

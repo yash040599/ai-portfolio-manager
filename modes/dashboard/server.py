@@ -97,7 +97,7 @@ def _parse_float(val: str | None, default: float = 0.0) -> float:
 
 # ── Post-login redirect helpers ───────────────────────────────────
 
-_ALLOWED_NEXT = {"/", "/login", "/portfolio", "/swing", "/us", "/trading",
+_ALLOWED_NEXT = {"/", "/login", "/portfolio", "/mf", "/swing", "/us", "/trading",
                  "/dryrun", "/tax"}
 
 
@@ -224,6 +224,14 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 # /portfolio/<symbol> drill-down (D26 + D29).
                 symbol = url.path[len("/portfolio/"):].strip("/")
                 self._serve_portfolio_drilldown(symbol)
+            elif url.path == "/mf" or url.path == "/mf/":
+                self._serve_mf()
+            elif url.path == "/api/mf/sections":
+                self._serve_mf_sections(parse_qs(url.query))
+            elif url.path == "/api/mf/search":
+                self._serve_mf_search(parse_qs(url.query))
+            elif url.path == "/api/mf/nav_history":
+                self._serve_mf_nav_history(parse_qs(url.query))
             elif url.path == "/trading" or url.path == "/trading/":
                 self._serve_shell()
             elif url.path == "/login" or url.path == "/login/":
@@ -400,6 +408,12 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 self._serve_swing_position_exit(url.path)
             elif url.path == "/api/swing/positions/add":
                 self._serve_swing_position_add()
+            elif url.path == "/api/mf/external/add":
+                self._serve_mf_external_add()
+            elif url.path.startswith("/api/mf/external/") and url.path.endswith("/edit"):
+                self._serve_mf_external_edit(url.path)
+            elif url.path.startswith("/api/mf/external/") and url.path.endswith("/remove"):
+                self._serve_mf_external_remove(url.path)
             elif url.path == "/api/us/positions/add":
                 self._serve_swing_position_add(
                     default_exchange="NASDAQ",
@@ -458,6 +472,129 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    # ── Mutual funds ────────────────────────────────────────────
+
+    def _serve_mf(self) -> None:
+        from modes.dashboard.mf_page import render_mf_page
+        self._serve_cached_html("page:mf", render_mf_page)
+
+    def _serve_mf_sections(self, qs: dict[str, list[str]]) -> None:
+        """GET /api/mf/sections[?live=1].
+
+        `live=1` is the only path that calls Coin; the cached path is
+        what the page renders on first paint, so a missing Zerodha
+        session never blocks the book.
+        """
+        from modes.dashboard.mf_page import render_mf_sections_json
+        live = (qs.get("live") or ["0"])[0] in ("1", "true", "yes")
+        if live:
+            try:
+                body = render_mf_sections_json(live=True).encode("utf-8")
+            except Exception as exc:  # noqa: BLE001 — degrade to cache
+                sys.stderr.write(f"[dashboard] mf live sections failed: {exc!r}\n")
+                self._write_json(
+                    json.dumps({"ok": False, "error": str(exc)[:300]}).encode("utf-8"),
+                    status=503,
+                )
+                return
+            # The sync rewrote the stored book; drop renders built on the old one.
+            _invalidate_render_cache("json:mf")
+            _invalidate_render_cache("page:mf")
+            self._write_json(body)
+            return
+        self._serve_cached_json(
+            "json:mf:sections",
+            lambda: render_mf_sections_json(live=False),
+        )
+
+    def _serve_mf_search(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.mf_page import render_mf_search_json
+        query = (qs.get("q") or [""])[0][:120]
+        self._write_json(render_mf_search_json(query).encode("utf-8"))
+
+    def _serve_mf_nav_history(self, qs: dict[str, list[str]]) -> None:
+        from modes.dashboard.mf_page import render_mf_nav_history_json
+        scheme = (qs.get("scheme") or [""])[0][:32]
+        days = _parse_int((qs.get("days") or [""])[0]) or 365
+        body = render_mf_nav_history_json(scheme, days=max(30, min(days, 3650)))
+        self._write_json(body.encode("utf-8"))
+
+    def _mf_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        # Manual-entry forms are tiny; refuse anything that isn't.
+        if length > 64 * 1024:
+            raise ValueError("Request body too large")
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object")
+        return data
+
+    def _serve_mf_external_add(self) -> None:
+        """POST /api/mf/external/add — track a fund held outside Coin."""
+        from modes.mf.persistence import add_external_holding
+        try:
+            data = self._mf_json_body()
+            holding_id = add_external_holding(
+                scheme_code=str(data.get("scheme_code") or ""),
+                fund=str(data.get("fund") or "")[:200],
+                units=float(data.get("units") or 0),
+                avg_nav=float(data.get("avg_nav") or 0),
+                broker=str(data.get("broker") or "Other")[:80],
+                folio=str(data.get("folio") or "")[:60],
+                notes=str(data.get("notes") or "")[:300],
+            )
+        except (TypeError, ValueError) as exc:
+            self._write_json(
+                json.dumps({"ok": False, "error": str(exc)[:200]}).encode("utf-8"),
+                status=400,
+            )
+            return
+        _invalidate_render_cache("json:mf")
+        self._write_json(
+            json.dumps({"ok": True, "holding_id": holding_id}).encode("utf-8"))
+    def _serve_mf_external_edit(self, path: str) -> None:
+        """POST /api/mf/external/<id>/edit — correct units or average NAV."""
+        from modes.mf.persistence import edit_external_holding
+        parts = path.strip("/").split("/")
+        try:
+            holding_id = int(parts[3])
+            data = self._mf_json_body()
+            ok = edit_external_holding(
+                holding_id=holding_id,
+                units=float(data.get("units") or 0),
+                avg_nav=float(data.get("avg_nav") or 0),
+                broker=(str(data["broker"])[:80] if "broker" in data else None),
+                folio=(str(data["folio"])[:60] if "folio" in data else None),
+                notes=(str(data["notes"])[:300] if "notes" in data else None),
+            )
+        except (IndexError, TypeError, ValueError) as exc:
+            self._write_json(
+                json.dumps({"ok": False, "error": str(exc)[:200]}).encode("utf-8"),
+                status=400,
+            )
+            return
+        _invalidate_render_cache("json:mf")
+        self._write_json(json.dumps({"ok": ok}).encode("utf-8"),
+                         status=200 if ok else 404)
+
+    def _serve_mf_external_remove(self, path: str) -> None:
+        """POST /api/mf/external/<id>/remove — stop tracking a fund."""
+        from modes.mf.persistence import remove_external_holding
+        parts = path.strip("/").split("/")
+        try:
+            holding_id = int(parts[3])
+        except (IndexError, ValueError):
+            self._write_json(
+                json.dumps({"ok": False, "error": "Invalid holding id"}).encode("utf-8"),
+                status=400,
+            )
+            return
+        ok = remove_external_holding(holding_id)
+        _invalidate_render_cache("json:mf")
+        self._write_json(json.dumps({"ok": ok}).encode("utf-8"),
+                         status=200 if ok else 404)
 
     def _serve_login(self) -> None:
         from modes.dashboard.portfolio_page import render_login_page

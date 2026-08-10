@@ -4,6 +4,9 @@
 # Entry point. Run this file to start the portfolio manager.
 #
 # Usage:
+#   python main.py --mode portfolio                ← long-term portfolio analysis (stocks, default)
+#   python main.py --mode portfolio --type stocks  ← same as above (explicit)
+#   python main.py --mode portfolio --type mf      ← mutual-fund book (Coin + other brokers)
 #   python main.py --mode analyze                 ← long-term portfolio analysis (NoAI default)
 #   python main.py --mode analyze --ai            ← analyse + AI qualitative overlay
 #   python main.py --mode trade                   ← NoAI intraday trading (default)
@@ -51,7 +54,70 @@ from core.logger         import Logger
 from modes.analyze.analyser  import PortfolioAnalyser
 from modes.trade.manager   import PortfolioManager
 
-VALID_MODES = {"analyze", "trade", "swing", "options", "login", "dashboard"}
+VALID_MODES = {"analyze", "portfolio", "trade", "swing", "options", "login",
+               "dashboard"}
+VALID_TYPES = {"stocks", "mf"}
+
+
+def _arg_value(flag: str) -> str | None:
+    """Value that follows `flag` on the command line, if any."""
+    if flag not in sys.argv:
+        return None
+    try:
+        return sys.argv[sys.argv.index(flag) + 1]
+    except IndexError:
+        return None
+
+
+def _run_mf_mode() -> None:
+    """`--mode portfolio --type mf` and its sub-commands."""
+    from modes.mf.manager import MFManager
+
+    runner = MFManager(Config)
+
+    if "--search" in sys.argv:
+        query = _arg_value("--search")
+        if not query:
+            print("\n  Error: --search requires a query, e.g. --search \"hdfc small cap\"")
+            sys.exit(1)
+        runner.search(query)
+
+    elif "--add" in sys.argv:
+        scheme = _arg_value("--scheme")
+        broker = _arg_value("--broker") or "Other"
+        folio = _arg_value("--folio") or ""
+        try:
+            units = float(_arg_value("--units") or 0)
+            nav = float(_arg_value("--nav") or 0)
+        except ValueError:
+            print("\n  Error: --units and --nav must be numbers")
+            sys.exit(1)
+        if not scheme or units <= 0 or nav <= 0:
+            print("\n  Error: --add needs --scheme <code> --units N --nav X")
+            print("  Find the scheme code with: --mode portfolio --type mf --search \"<name>\"")
+            sys.exit(1)
+        runner.add_external(scheme_code=scheme, units=units, avg_nav=nav,
+                            broker=broker, folio=folio)
+
+    elif "--remove" in sys.argv:
+        try:
+            holding_id = int(_arg_value("--remove") or 0)
+        except ValueError:
+            print("\n  Error: --remove requires a numeric holding id")
+            sys.exit(1)
+        runner.remove_external(holding_id)
+
+    elif "--list-external" in sys.argv:
+        runner.list_external()
+
+    elif "--sips" in sys.argv:
+        runner.list_sips()
+
+    elif "--refresh-codes" in sys.argv:
+        runner.refresh_scheme_codes()
+
+    else:
+        runner.run(live="--offline" not in sys.argv)
 
 
 def main():
@@ -76,6 +142,19 @@ def main():
     use_noai   = "--noai"   in sys.argv
     use_ai     = "--ai"     in sys.argv
     use_dryrun = "--dryrun" in sys.argv
+
+    # Parse --type (portfolio/analyze only). Stocks stay the default so
+    # every existing `--mode analyze` invocation behaves unchanged.
+    asset_type = "stocks"
+    if "--type" in sys.argv:
+        try:
+            asset_type = sys.argv[sys.argv.index("--type") + 1].strip().lower()
+        except (IndexError, ValueError):
+            asset_type = ""
+        if asset_type not in VALID_TYPES:
+            print(f"\n  Error: invalid --type '{asset_type}'.")
+            print("  Usage: --type stocks (default) | --type mf")
+            sys.exit(1)
 
     # Parse --max budget override (e.g. --max 30000 or --max 30_000)
     max_budget = None
@@ -122,7 +201,16 @@ def main():
         sys.exit(1)
 
     if mode not in VALID_MODES:
-        print("Usage: python main.py --mode [analyze|trade|swing|options|login|dashboard] [flags]")
+        print("Usage: python main.py --mode [portfolio|analyze|trade|swing|options|login|dashboard] [flags]")
+        print()
+        print("  portfolio                     — long-term analysis, stocks (default)")
+        print("  portfolio --type mf           — mutual-fund book (Coin + other brokers)")
+        print("  portfolio --type mf --sips    — SIPs, active and paused")
+        print("  portfolio --type mf --search \"hdfc small cap\"")
+        print("                                — find a scheme code in the Coin catalogue")
+        print("  portfolio --type mf --add --scheme <code> --units N --nav X --broker \"B\"")
+        print("                                — track a fund held outside Coin")
+        print("  portfolio --type mf --list-external | --remove <id>")
         print()
         print("  analyze                       — long-term portfolio analysis (NoAI, default)")
         print("  analyze --ai                  — analyse + AI qualitative overlay")
@@ -152,7 +240,10 @@ def main():
         print("  dashboard                     — launch the web dashboard")
         sys.exit(1)
 
-    if mode == "analyze":
+    if mode in ("analyze", "portfolio"):
+        if asset_type == "mf":
+            _run_mf_mode()
+            return
         # Default flow is NoAI (zero AI cost). --ai opts in to the
         # AI qualitative overlay on top of the same NoAI base.
         runner = PortfolioAnalyser(Config, use_ai=use_ai)

@@ -23,6 +23,30 @@ from config     import Config, now_ist
 from core.logger import Logger
 
 
+def _as_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_iso_date(value) -> str:
+    """Kite hands back date / datetime objects for some MF fields and
+    plain strings for others. Normalise both to an ISO string."""
+    if not value:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).strip()
+
+
 class ZerodhaClient:
 
     TOKEN_FILE = os.path.join("data", "access_token.json")
@@ -453,6 +477,129 @@ class ZerodhaClient:
             })
 
         return holdings
+
+    # ================================================================
+    # MUTUAL FUNDS (Coin)
+    # ================================================================
+    # Coin funds are NOT quotable instruments: an open-ended scheme has
+    # no intraday tick, only an end-of-day NAV that the AMC publishes
+    # each evening. Every method below therefore returns `nav_date` so
+    # callers can show how old the mark is instead of implying it is
+    # live. Units are fractional, so quantities stay float throughout.
+    # ================================================================
+
+    def get_mf_holdings(self) -> list[dict]:
+        """Returns mutual-fund units held via Coin.
+
+        Each dict contains: scheme_code (ISIN), fund, folio, units,
+        avg_nav, nav, nav_date, invested_value, current_value, pnl,
+        pnl_percent.
+        """
+        self._require_login()
+        raw = self._kite.mf_holdings()
+
+        holdings = []
+        for h in raw:
+            units = _as_float(h.get("quantity"))
+            avg   = _as_float(h.get("average_price"))
+            nav   = _as_float(h.get("last_price"))
+            invested = units * avg
+            current  = units * nav
+
+            holdings.append({
+                "scheme_code":    str(h.get("tradingsymbol") or "").strip(),
+                "fund":           str(h.get("fund") or "").strip(),
+                "folio":          str(h.get("folio") or "").strip(),
+                "units":          round(units, 4),
+                "avg_nav":        round(avg, 4),
+                "nav":            round(nav, 4),
+                "nav_date":       _as_iso_date(h.get("last_price_date")),
+                "pledged_units":  _as_float(h.get("pledged_quantity")),
+                "invested_value": round(invested, 2),
+                "current_value":  round(current, 2),
+                "pnl":            round(current - invested, 2),
+                "pnl_percent":    round((current / invested - 1) * 100, 2)
+                                  if invested > 0 else 0.0,
+            })
+
+        return holdings
+
+    def get_mf_instruments(self) -> list[dict]:
+        """Returns the full Coin scheme catalogue (~10k rows).
+
+        This is the lookup table used to resolve a NAV for a fund that
+        is held at another broker — the scheme exists on Coin even when
+        the user owns no units of it there.
+        """
+        self._require_login()
+        raw = self._kite.mf_instruments()
+
+        out = []
+        for i in raw:
+            out.append({
+                "scheme_code":  str(i.get("tradingsymbol") or "").strip(),
+                "name":         str(i.get("name") or "").strip(),
+                "amc":          str(i.get("amc") or "").strip(),
+                "scheme_type":  str(i.get("scheme_type") or "").strip(),
+                "plan":         str(i.get("plan") or "").strip(),
+                "dividend_type": str(i.get("dividend_type") or "").strip(),
+                "nav":          _as_float(i.get("last_price")),
+                "nav_date":     _as_iso_date(i.get("last_price_date")),
+                "purchase_allowed":   bool(i.get("purchase_allowed")),
+                "redemption_allowed": bool(i.get("redemption_allowed")),
+                "min_purchase": _as_float(i.get("minimum_purchase_amount")),
+            })
+        return out
+
+    def get_mf_sips(self) -> list[dict]:
+        """Returns every Coin SIP with its ACTIVE / PAUSED / CANCELLED state."""
+        self._require_login()
+        raw = self._kite.mf_sips()
+
+        out = []
+        for s in raw:
+            out.append({
+                "sip_id":        str(s.get("sip_id") or "").strip(),
+                "scheme_code":   str(s.get("tradingsymbol") or "").strip(),
+                "fund":          str(s.get("fund") or "").strip(),
+                "status":        str(s.get("status") or "").strip().upper(),
+                "frequency":     str(s.get("frequency") or "").strip(),
+                "instalment_amount":     _as_float(s.get("instalment_amount")),
+                "instalment_day":        _as_int(s.get("instalment_day")),
+                "instalments":           _as_int(s.get("instalments")),
+                "completed_instalments": _as_int(s.get("completed_instalments")),
+                "pending_instalments":   _as_int(s.get("pending_instalments")),
+                "next_instalment": _as_iso_date(s.get("next_instalment")),
+                "last_instalment": _as_iso_date(s.get("last_instalment")),
+                "created":         _as_iso_date(s.get("created")),
+                "step_up":         s.get("step_up") or {},
+                "tag":             str(s.get("tag") or "").strip(),
+            })
+        return out
+
+    def get_mf_orders(self) -> list[dict]:
+        """Returns the Coin order book (purchases and redemptions)."""
+        self._require_login()
+        raw = self._kite.mf_orders()
+
+        out = []
+        for o in raw:
+            out.append({
+                "order_id":     str(o.get("order_id") or "").strip(),
+                "scheme_code":  str(o.get("tradingsymbol") or "").strip(),
+                "fund":         str(o.get("fund") or "").strip(),
+                "folio":        str(o.get("folio") or "").strip(),
+                "transaction_type": str(o.get("transaction_type") or "").strip().upper(),
+                "status":       str(o.get("status") or "").strip().upper(),
+                "amount":       _as_float(o.get("amount")),
+                "units":        _as_float(o.get("quantity")),
+                "avg_nav":      _as_float(o.get("average_price")),
+                "placed_at":    _as_iso_date(o.get("order_timestamp")),
+                "purchase_type": str(o.get("purchase_type") or "").strip(),
+                "status_message": str(o.get("status_message") or "").strip(),
+                "tag":          str(o.get("tag") or "").strip(),
+            })
+        return out
 
     # ================================================================
     # LIVE QUOTES
