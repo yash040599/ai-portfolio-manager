@@ -307,10 +307,55 @@ def nav_history(isin: str, *, days: int = 365) -> dict:
     }
 
 
+def refresh_nav_history(scheme_codes: list[str], *, days: int = 1825,
+                        max_age_days: int = 7,
+                        log: Logger | None = None) -> dict:
+    """Download and store daily NAV series for the given schemes.
+
+    One HTTP call per scheme, so it is rate-limited by `max_age_days`:
+    a series already fetched this week is left alone. Schemes with no
+    published history are recorded as failures so they are not retried
+    on every render.
+    """
+    from modes.mf.persistence import nav_history_meta, save_nav_history
+
+    log = log or Logger("MF")
+    meta = nav_history_meta()
+    today = now_ist().date()
+    fetched = skipped = failed = 0
+
+    for code in scheme_codes:
+        code = (code or "").strip().upper()
+        if not code:
+            continue
+        row = meta.get(code) or {}
+        stamp = str(row.get("fetched_at") or "")
+        if stamp:
+            try:
+                age = (today - datetime.datetime.fromisoformat(stamp).date()).days
+                if age <= max_age_days:
+                    skipped += 1
+                    continue
+            except ValueError:
+                pass
+
+        result = nav_history(code, days=days)
+        if result.get("ok"):
+            save_nav_history(code, result["points"], ok=True)
+            fetched += 1
+        else:
+            save_nav_history(code, [], ok=False)
+            failed += 1
+
+    log.info(f"NAV history: {fetched} fetched, {skipped} still fresh, "
+             f"{failed} unavailable")
+    return {"fetched": fetched, "skipped": skipped, "failed": failed}
+
+
 __all__ = [
     "CATALOG_PATH", "SCHEME_MAP_PATH",
     "cached_catalog", "catalog_as_of", "refresh_catalog", "ensure_catalog",
     "scheme_by_code", "search_catalog",
     "refresh_scheme_map", "cached_scheme_map", "amfi_code_for_isin",
-    "nav_history",
+    "nav_history", "refresh_nav_history",
 ]

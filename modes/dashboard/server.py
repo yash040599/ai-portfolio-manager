@@ -544,6 +544,7 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 broker=str(data.get("broker") or "Other")[:80],
                 folio=str(data.get("folio") or "")[:60],
                 notes=str(data.get("notes") or "")[:300],
+                sip_amount=float(data.get("sip_amount") or 0),
             )
         except (TypeError, ValueError) as exc:
             self._write_json(
@@ -568,6 +569,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
                 broker=(str(data["broker"])[:80] if "broker" in data else None),
                 folio=(str(data["folio"])[:60] if "folio" in data else None),
                 notes=(str(data["notes"])[:300] if "notes" in data else None),
+                sip_amount=(float(data["sip_amount"]) if "sip_amount" in data
+                            else None),
             )
         except (IndexError, TypeError, ValueError) as exc:
             self._write_json(

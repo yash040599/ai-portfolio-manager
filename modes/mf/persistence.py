@@ -133,7 +133,31 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             synced_at   TEXT NOT NULL DEFAULT '',
             holdings    INTEGER NOT NULL DEFAULT 0
         );
+
+        -- Daily NAV series per scheme, used for the risk/correlation
+        -- analytics. Cached because the source is a public API and the
+        -- analysis re-reads the full series on every render.
+        CREATE TABLE IF NOT EXISTS mf_nav_history (
+            scheme_code  TEXT NOT NULL,
+            nav_date     TEXT NOT NULL,
+            nav          REAL NOT NULL,
+            PRIMARY KEY (scheme_code, nav_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS mf_nav_history_meta (
+            scheme_code  TEXT PRIMARY KEY,
+            fetched_at   TEXT NOT NULL DEFAULT '',
+            points       INTEGER NOT NULL DEFAULT 0,
+            ok           INTEGER NOT NULL DEFAULT 0
+        );
     """)
+
+    # Added after the first release; existing books need the column.
+    cols = {r["name"] for r in conn.execute(
+        "PRAGMA table_info(mf_external_holdings)").fetchall()}
+    if "sip_amount" not in cols:
+        conn.execute("ALTER TABLE mf_external_holdings "
+                     "ADD COLUMN sip_amount REAL NOT NULL DEFAULT 0")
 
 
 def init_db(path: str = DB_PATH) -> None:
@@ -152,6 +176,7 @@ def add_external_holding(
     broker: str = "Other",
     folio: str = "",
     notes: str = "",
+    sip_amount: float = 0.0,
     path: str = DB_PATH,
 ) -> int:
     """Insert (or merge into) an externally-held fund leg.
@@ -182,20 +207,21 @@ def add_external_holding(
                        / total_units) if total_units > 0 else avg_nav
             conn.execute(
                 "UPDATE mf_external_holdings "
-                "SET units = ?, avg_nav = ?, fund = ?, notes = ?, updated_at = ? "
+                "SET units = ?, avg_nav = ?, fund = ?, notes = ?, "
+                "    sip_amount = ?, updated_at = ? "
                 "WHERE holding_id = ?",
                 (round(total_units, 4), round(blended, 4), fund or row["fund"],
-                 notes, stamp, int(row["holding_id"])),
+                 notes, max(0.0, float(sip_amount)), stamp, int(row["holding_id"])),
             )
             return int(row["holding_id"])
 
         cur = conn.execute(
             "INSERT INTO mf_external_holdings "
             "(scheme_code, fund, broker, folio, units, avg_nav, notes, "
-            " created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " sip_amount, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (scheme_code, fund, broker, folio, round(units, 4),
-             round(avg_nav, 4), notes, stamp, stamp),
+             round(avg_nav, 4), notes, max(0.0, float(sip_amount)), stamp, stamp),
         )
         return int(cur.lastrowid or 0)
 
@@ -208,6 +234,7 @@ def edit_external_holding(
     broker: str | None = None,
     folio: str | None = None,
     notes: str | None = None,
+    sip_amount: float | None = None,
     path: str = DB_PATH,
 ) -> bool:
     if units <= 0 or avg_nav <= 0:
@@ -217,7 +244,8 @@ def edit_external_holding(
     with _connect(path) as conn:
         _ensure_schema(conn)
         row = conn.execute(
-            "SELECT broker, folio, notes FROM mf_external_holdings WHERE holding_id = ?",
+            "SELECT broker, folio, notes, sip_amount FROM mf_external_holdings "
+            "WHERE holding_id = ?",
             (int(holding_id),),
         ).fetchone()
         if not row:
@@ -225,12 +253,14 @@ def edit_external_holding(
         cur = conn.execute(
             "UPDATE mf_external_holdings "
             "SET units = ?, avg_nav = ?, broker = ?, folio = ?, notes = ?, "
-            "    updated_at = ? "
+            "    sip_amount = ?, updated_at = ? "
             "WHERE holding_id = ?",
             (round(units, 4), round(avg_nav, 4),
              (broker.strip() if broker is not None else row["broker"]) or "Other",
              folio.strip() if folio is not None else row["folio"],
              notes if notes is not None else row["notes"],
+             max(0.0, float(sip_amount)) if sip_amount is not None
+             else float(row["sip_amount"] or 0),
              stamp, int(holding_id)),
         )
         return cur.rowcount > 0
@@ -263,6 +293,7 @@ def external_holdings(path: str = DB_PATH) -> list[MFHolding]:
             broker=str(r["broker"]),
             holding_id=int(r["holding_id"]),
             notes=str(r["notes"]),
+            sip_amount=float(r["sip_amount"] or 0),
         )
         for r in rows
     ]
@@ -452,10 +483,70 @@ def cached_navs(scheme_codes: list[str] | None = None,
         return {str(r["scheme_code"]): dict(r) for r in rows}
 
 
+# ── NAV history ─────────────────────────────────────────────────
+
+def save_nav_history(scheme_code: str, points: list[dict], *, ok: bool = True,
+                     path: str = DB_PATH) -> int:
+    """Upsert a daily NAV series for one scheme.
+
+    `ok=False` records a failed lookup so the analytics do not retry a
+    scheme with no published history on every single render.
+    """
+    code = (scheme_code or "").strip().upper()
+    if not code:
+        return 0
+    stamp = now_ist().isoformat(timespec="seconds")
+    rows = [(code, str(p.get("date") or ""), float(p.get("nav") or 0))
+            for p in (points or [])
+            if p.get("date") and float(p.get("nav") or 0) > 0]
+
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        if rows:
+            conn.executemany(
+                "INSERT INTO mf_nav_history (scheme_code, nav_date, nav) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(scheme_code, nav_date) DO UPDATE SET "
+                "  nav = excluded.nav",
+                rows,
+            )
+        conn.execute(
+            "INSERT INTO mf_nav_history_meta (scheme_code, fetched_at, points, ok) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(scheme_code) DO UPDATE SET "
+            "  fetched_at = excluded.fetched_at, points = excluded.points, "
+            "  ok = excluded.ok",
+            (code, stamp, len(rows), 1 if (ok and rows) else 0),
+        )
+    return len(rows)
+
+
+def nav_series(scheme_code: str, path: str = DB_PATH) -> list[tuple[str, float]]:
+    """Stored NAV series, oldest first. Never contacts the network."""
+    code = (scheme_code or "").strip().upper()
+    if not code:
+        return []
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT nav_date, nav FROM mf_nav_history WHERE scheme_code = ? "
+            "ORDER BY nav_date",
+            (code,),
+        ).fetchall()
+    return [(str(r["nav_date"]), float(r["nav"])) for r in rows]
+
+
+def nav_history_meta(path: str = DB_PATH) -> dict[str, dict]:
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        rows = conn.execute("SELECT * FROM mf_nav_history_meta").fetchall()
+    return {str(r["scheme_code"]): dict(r) for r in rows}
+
+
 __all__ = [
     "DB_PATH", "init_db",
     "add_external_holding", "edit_external_holding", "remove_external_holding",
     "external_holdings", "cache_navs", "cached_navs",
     "save_coin_snapshot", "coin_holdings", "coin_sips", "coin_orders",
-    "last_synced_at",
+    "last_synced_at", "save_nav_history", "nav_series", "nav_history_meta",
 ]

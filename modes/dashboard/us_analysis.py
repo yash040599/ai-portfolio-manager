@@ -94,8 +94,14 @@ def analyse_us_symbol(
     use_ai: bool = False,
     benchmark_candles: list[dict] | None = None,
     force_refresh: bool = False,
+    with_fundamentals: bool = False,
 ) -> dict[str, Any]:
-    """Analyse one US ticker using cached/Yahoo daily candles."""
+    """Analyse one US ticker for the long-term book.
+
+    `with_fundamentals=True` fetches the company profile on demand — used
+    by the single-symbol path, where one extra HTTP call is acceptable.
+    The universe scan warms the cache in bulk instead.
+    """
     display_symbol = symbol.strip().upper()
     yf_symbol = _normalise_yfinance_symbol(display_symbol)
     if not yf_symbol:
@@ -103,6 +109,13 @@ def analyse_us_symbol(
 
     if force_refresh:
         force_refresh_us_candles(display_symbol)
+
+    if with_fundamentals:
+        try:
+            from modes.us.fundamentals import ensure as ensure_fundamentals
+            ensure_fundamentals([display_symbol])
+        except Exception:  # noqa: BLE001 — fall back to a chart-only score
+            pass
 
     ticket = _ticket(ticket_amount)
     candles = _download_daily_candles(yf_symbol, force_refresh)
@@ -130,6 +143,15 @@ def analyse_us_universe(
     started = now_ist().isoformat()
     benchmark = _download_daily_candles("SPY")
 
+    # Fundamentals drive most of the long-term score, so warm them for
+    # the whole universe before scoring. Cached for a fortnight, so
+    # this is a no-op on a repeat scan.
+    try:
+        from modes.us.fundamentals import ensure as ensure_fundamentals
+        ensure_fundamentals(symbols)
+    except Exception:  # noqa: BLE001 — scan still runs chart-only
+        pass
+
     rows: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for symbol in symbols:
@@ -139,7 +161,10 @@ def analyse_us_universe(
                 ticket_amount=ticket,
                 benchmark_candles=benchmark,
             )
-            if row["action"] != "NO_SETUP" or row["dip_signal"]["qualified"]:
+            # Long-term list: keep anything worth owning or tracking.
+            # AVOID rows are dropped rather than ranked last — an idea
+            # list is not improved by a tail of names to not buy.
+            if row["action"] in ("ACCUMULATE", "WATCH", "HOLD"):
                 rows.append(row)
         except Exception as exc:
             errors.append({"symbol": symbol, "error": str(exc)[:180]})
@@ -526,45 +551,46 @@ def _build_analysis(
         target = close + (stop_distance * 2.0)
     qty = round(ticket / close, 4) if close > 0 else 0.0
     rr_ratio = ((target - close) / (close - stop)) if close > stop else 0.0
-    action = _action_for(setup_type, score, qty, ind)
     pct_above_52w_low = ((close / l52 - 1.0) * 100.0) if l52 > 0 else 0.0
+
+    # ── Long-term scorecard (the ranking basis for this book) ──
+    # US positions are held to compound, so the setup score above only
+    # describes the entry chart. What decides ACCUMULATE vs AVOID is
+    # the business: quality, valuation vs sector, growth, balance
+    # sheet, 12-1 momentum and drawdown behaviour.
+    from modes.us.fundamentals import cached as cached_fundamentals
+    from modes.us.longterm import action_for as lt_action_for
+    from modes.us.longterm import score_long_term
+
+    closes = [float(c["close"]) for c in candles if c.get("close")]
+    bench_closes = [float(c["close"]) for c in (spy_candles or [])
+                    if c.get("close")]
+    fundamentals = cached_fundamentals(display_symbol)
+    lt = score_long_term(fundamentals, closes, bench_closes or None)
+    action = lt_action_for(lt)
 
     warnings: list[str] = []
     if qty <= 0:
         warnings.append("Ticket amount is below the current share price")
-    if ind.get("rsi", 0) >= 75:
-        warnings.append("RSI is extended; avoid chasing without a fresh base")
-    if close < ind.get("sma_200", 0) and setup_type != "52W_DIP":
-        warnings.append("Price is below SMA-200; trend risk is elevated")
+    if close < ind.get("sma_200", 0):
+        warnings.append("Price is below its 200-DMA; the long-term trend "
+                        "has not turned up yet")
+    if lt.valuation_band == "EXPENSIVE vs sector":
+        warnings.append("Priced well above the sector median — entry price "
+                        "matters more than usual")
+    if not fundamentals or fundamentals.get("unavailable"):
+        warnings.append("No fundamentals cached — score is chart-only. "
+                        "Run a scan to fetch them.")
+    warnings.extend(lt.risk_drivers)
 
-    # Quant profile + conviction/risk grade (2026-07-31). Same engine
-    # the NSE scanner uses, so an Indian and a US candidate carry
-    # directly comparable grades. Benchmark is SPY, risk-free is the US
-    # 10y proxy rather than the Indian G-Sec.
+    # Raw quant profile is still useful context on the detail page, but
+    # conviction and risk now come from the long-term scorecard — two
+    # competing risk grades on one row would be worse than none.
     quant: dict[str, Any] = {}
-    grade_dict: dict[str, Any] = {}
     try:
         quant = quant_profile(candles, spy_candles or None, risk_free_pct=4.5)
-        enriched = dict(ind)
-        try:
-            adx_val = (compute_adx(candles, period=14) or {}).get("adx")
-            if adx_val is not None:
-                enriched["adx"] = float(adx_val)
-        except Exception:
-            pass
-        grade_dict = grade_candidate(
-            enriched, setup_score=float(score), setup_type=setup_type,
-            quant=quant, entry_price=close, stop_price=stop, usd=True,
-        ).to_dict()
     except Exception:
-        quant, grade_dict = {}, {}
-
-    if grade_dict.get("risk_grade") in ("HIGH", "VERY HIGH"):
-        warnings.append(
-            f"Risk grade {grade_dict['risk_grade']} — "
-            + ("; ".join(grade_dict.get("risk_notes") or [])
-               or "size this one down")
-        )
+        quant = {}
 
     return {
         "ok": True,
@@ -578,12 +604,18 @@ def _build_analysis(
         "ticket_amount": round(ticket, 2),
         "action": action,
         "setup_type": setup_type,
-        "score": round(float(score), 2),
-        "conviction": grade_dict.get("conviction", 0.0),
-        "conviction_grade": grade_dict.get("conviction_grade", ""),
-        "risk_score": grade_dict.get("risk", 0.0),
-        "risk_grade": grade_dict.get("risk_grade", ""),
-        "grade_detail": grade_dict,
+        "score": round(float(lt.composite), 2),
+        "setup_score": round(float(score), 2),
+        "rating": lt.rating,
+        "valuation_band": lt.valuation_band,
+        "coverage_pct": round(lt.coverage_pct, 1),
+        "longterm": lt.to_dict(),
+        "fundamentals": fundamentals,
+        "conviction": round(float(lt.composite), 1),
+        "conviction_grade": lt.conviction,
+        "risk_score": round(lt.risk_score, 1),
+        "risk_grade": lt.risk_grade,
+        "grade_detail": {},
         "quant": quant,
         "trend_signal": {
             "setup_type": trend_setup,
@@ -623,6 +655,8 @@ def _build_analysis(
 
 
 def _action_for(setup_type: str, score: float, qty: float, ind: dict) -> str:
+    """Legacy swing action map. Superseded by `modes.us.longterm.action_for`;
+    kept only because older cached scan JSON still carries its values."""
     if setup_type == "52W_DIP":
         return "BUY_CANDIDATE" if qty > 0 else "WATCH"
     if setup_type == "NONE":
@@ -639,28 +673,20 @@ def _action_for(setup_type: str, score: float, qty: float, ind: dict) -> str:
 _DIP_SETUPS = {"52W_DIP", "ATH_DIP"}
 
 
-def _rank_key(row: dict[str, Any]) -> tuple[int, int, float, float, str]:
-    """Sort key for the unified entry recommendation table.
+def _rank_key(row: dict[str, Any]) -> tuple[int, float, float, str]:
+    """Sort key for the long-term idea list.
 
-    Tie-break order:
-      1. action_rank (BUY_CANDIDATE first, NO_SETUP last)
-      2. setup_family (trend setups above 52w dips so the table
-         does not get dominated by raw dip-percentage scores; the
-         52w setup has a 10-30 score scale while trend setups score
-         0-10, which earlier caused the top-N to be all-dip).
-      3. -score (within family)
-      4. -dip_pct (final tie-break)
-      5. symbol (deterministic)
+    Ranked by conviction in the *business*, not by how clean the chart
+    looks: action first, then the long-term composite. The old swing
+    key sorted by setup family and dip percentage, which is exactly the
+    short-horizon bias this book should not have.
     """
-    action_rank = {"BUY_CANDIDATE": 0, "WATCH": 1, "WAIT": 2, "NO_SETUP": 3}
-    setup = (row.get("setup_type") or "").upper()
-    family = 1 if setup in _DIP_SETUPS else 0
-    dip = float((row.get("dip_signal") or {}).get("dip_pct") or 0.0)
+    action_rank = {"ACCUMULATE": 0, "HOLD": 1, "WATCH": 2,
+                   "REVIEW": 3, "TRIM": 4, "AVOID": 5}
     return (
-        action_rank.get(row.get("action", "NO_SETUP"), 9),
-        family,
+        action_rank.get(row.get("action", "AVOID"), 9),
         -float(row.get("score") or 0.0),
-        -dip,
+        -float(row.get("coverage_pct") or 0.0),
         row.get("symbol", ""),
     )
 

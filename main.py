@@ -113,6 +113,12 @@ def _run_mf_mode() -> None:
     elif "--sips" in sys.argv:
         runner.list_sips()
 
+    elif "--insights" in sys.argv or "--review" in sys.argv:
+        runner.insights(
+            live="--offline" not in sys.argv,
+            refresh_history="--refresh-history" in sys.argv,
+        )
+
     elif "--refresh-codes" in sys.argv:
         runner.refresh_scheme_codes()
 
@@ -205,6 +211,9 @@ def main():
         print()
         print("  portfolio                     — long-term analysis, stocks (default)")
         print("  portfolio --type mf           — mutual-fund book (Coin + other brokers)")
+        print("  portfolio --type mf --insights — structural review (overlap, drift, tax)")
+        print("  portfolio --type mf --insights --refresh-history")
+        print("                                — same, after downloading NAV history")
         print("  portfolio --type mf --sips    — SIPs, active and paused")
         print("  portfolio --type mf --search \"hdfc small cap\"")
         print("                                — find a scheme code in the Coin catalogue")

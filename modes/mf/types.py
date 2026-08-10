@@ -41,6 +41,9 @@ class MFHolding:
     plan: str = ""
     holding_id: int = 0         # only set for EXTERNAL rows
     notes: str = ""
+    # Monthly SIP feeding this leg. Coin legs get it from the broker's
+    # SIP book; external legs can only be told by the user.
+    sip_amount: float = 0.0
 
     @property
     def invested_value(self) -> float:
@@ -81,6 +84,7 @@ class MFHolding:
             "plan": self.plan,
             "holding_id": self.holding_id,
             "notes": self.notes,
+            "sip_amount": self.sip_amount,
             "invested_value": round(self.invested_value, 2),
             "current_value": round(self.current_value, 2),
             "pnl": round(self.pnl, 2),
@@ -110,10 +114,16 @@ class MFSchemeRollup:
     plan: str = ""
     brokers: list[str] = field(default_factory=list)
     legs: list[MFHolding] = field(default_factory=list)
+    sip_amount: float = 0.0      # total monthly inflow across all legs
 
     @property
     def avg_nav(self) -> float:
         return (self.invested_value / self.units) if self.units > 0 else 0.0
+
+    @property
+    def is_accumulating(self) -> bool:
+        """True when new money still flows into this scheme."""
+        return self.sip_amount > 0
 
     @property
     def pnl(self) -> float:
@@ -142,6 +152,8 @@ class MFSchemeRollup:
             "plan": self.plan,
             "brokers": self.brokers,
             "is_split": self.is_split,
+            "sip_amount": round(self.sip_amount, 2),
+            "is_accumulating": self.is_accumulating,
             "invested_value": round(self.invested_value, 2),
             "current_value": round(self.current_value, 2),
             "pnl": round(self.pnl, 2),

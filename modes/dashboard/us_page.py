@@ -1,11 +1,17 @@
-"""US stock dashboard page.
+"""US long-term portfolio page.
 
-Mirrors the Indian Swing dashboard (`modes/dashboard/swing_page.py`)
-in structure and design: same card layout, same kvtable detail view,
-same data-live-symbol live-price poller, plus a USD<->INR currency
-toggle in the topnav so all dollar values can be flipped to rupees.
-Stock holdings persist via the shared Swing schema, partitioned by
-the `exchange` column (NASDAQ / NYSE / AMEX / ARCA).
+This book is **not** a swing book. US positions are long-term holdings
+meant to compound — RSU lots plus deliberate long-horizon buys — so the
+page is framed as a portfolio and an idea list, and ideas are ranked by
+`modes/us/longterm.py` (quality, valuation vs sector, growth, 12-1
+momentum, balance sheet, drawdown) rather than by chart setups.
+
+It shares the Indian swing dashboard's layout and, for now, its storage:
+holdings persist via the `modes/swing` SQLite schema partitioned by the
+`exchange` column (NASDAQ / NYSE / AMEX / ARCA). That is an
+implementation detail of where the rows live, not a statement about the
+holding period — do not reintroduce swing language in the UI because of
+it.
 """
 
 from __future__ import annotations
@@ -56,7 +62,7 @@ def render_us_page() -> str:
     body: list[str] = []
     body.append(_topnav("/us", fx))
     body.append('<div class="wrap">')
-    body.append('<h1 class="page-title">US Trading</h1>')
+    body.append('<h1 class="page-title">US Long-Term Portfolio</h1>')
     body.append(_render_freshness(latest_scan, bool(live_syms), fx))
 
     from modes.dashboard.chat_widget import chat_section_html
@@ -131,12 +137,21 @@ def render_us_sections_json() -> str:
 
     names = _scan_names(latest_scan)
     rows = latest_scan.get("candidates") or []
+    # Holdings are graded with the same long-term model as the ideas
+    # list, so a position whose business has decayed is visible.
+    ratings = {
+        str(c.get("symbol") or "").strip().upper(): {
+            "rating": c.get("rating") or "",
+            "summary": (c.get("longterm") or {}).get("summary") or "",
+        }
+        for c in rows if c.get("rating")
+    }
     open_symbols = {p.symbol.strip().upper() for p in positions}
     html_frag = "".join([
         _render_broker_instructions(rows),
         _render_recommendations(latest_scan, live, open_symbols),
         _render_watchlist(watchlist, live, names, open_symbols),
-        _render_positions(positions, live, names),
+        _render_positions(positions, live, names, ratings),
     ])
     return json.dumps({"ok": True, "html": html_frag})
 
@@ -226,8 +241,8 @@ def render_us_detail(symbol: str) -> str:
                  if stock_name else '')
     body.append(name_html)
     body.append(f'<div style="font-size:14px;line-height:1.6;margin-bottom:14px">'
-                f'<strong>Setup: {html.escape((row.get("setup_type") or "NONE").replace("_", " ").title())}</strong>'
-                f'<br>{html.escape(setup_text)}</div>')
+                f'<strong>{html.escape(str(row.get("rating") or "—"))}</strong>'
+                f'<br>{html.escape((row.get("longterm") or {}).get("summary") or setup_text)}</div>')
 
     ind = row.get("indicators") or {}
     # Detail page lives in its own 15 s polling tier so a user
@@ -245,16 +260,20 @@ def render_us_detail(symbol: str) -> str:
                      f'<span class="{pnl_cls}">{_money_span(lprice)} '
                      f'({chg:+.2f}% today)</span></span>'))
     body.append(_kv("Suggested Entry", _money_span(row.get("entry_price"))))
-    body.append(_kv("Stop Loss", _money_span(row.get("stop_price"))))
-    body.append(_kv("Target", _money_span(row.get("target_price"))))
-    body.append(_kv("Risk vs Reward",
-                     f'{float(row.get("rr_ratio") or 0):.2f}x'))
+    body.append(_kv("Rating",
+                     f'{html.escape(str(row.get("rating") or "—"))} '
+                     f'({float(row.get("score") or 0):.0f}/100)'))
+    body.append(_kv("Valuation",
+                     html.escape(str(row.get("valuation_band") or "—"))))
+    body.append(_kv("Risk Grade",
+                     f'{html.escape(str(row.get("risk_grade") or "—"))} '
+                     f'({float(row.get("risk_score") or 0):.0f}/100)'))
+    body.append(_kv("Model Coverage",
+                     f'{float(row.get("coverage_pct") or 0):.0f}% of inputs available'))
     body.append(_kv("Suggested Quantity",
                      f'{_fmt_qty(row.get("suggested_qty"))} shares'))
     body.append(_kv("Position Size",
                      _money_span(row.get("position_value"))))
-    body.append(_kv("Composite Score",
-                     f'{float(row.get("score") or 0):.2f}'))
     h52 = float(ind.get("high_52w") or 0.0)
     dip = float(ind.get("dip_from_52w_high_pct") or 0.0)
     if h52 > 0:
@@ -268,16 +287,39 @@ def render_us_detail(symbol: str) -> str:
     # ── Why this stock ─────────────────────────────────────────
     body.append('<div class="card">')
     body.append('<h2>Why This Stock?</h2>')
+    pillars = (row.get("longterm") or {}).get("pillars") or []
+    if pillars:
+        body.append('<p class="muted small" style="margin:-4px 0 10px">'
+                    'Each factor scored 0-100 and weighted into the rating. '
+                    'An uncovered factor is dropped and the rest '
+                    're-weighted, so a data gap never scores as a zero.</p>')
+        body.append('<table class="kvtable">')
+        for p in pillars:
+            if not p.get("covered"):
+                body.append(
+                    f'<tr><td>{html.escape(str(p.get("name")))} '
+                    f'<span class="small">(w {p.get("weight")})</span></td>'
+                    f'<td><span class="muted">no data</span></td></tr>')
+                continue
+            drivers = "; ".join(p.get("drivers") or [])
+            body.append(
+                f'<tr><td>{html.escape(str(p.get("name")))} '
+                f'<span class="small">(w {p.get("weight")})</span><br>'
+                f'<span class="small">{html.escape(drivers)}</span></td>'
+                f'<td><strong>{float(p.get("score") or 0):.0f}</strong></td></tr>')
+        body.append('</table>')
+
     reasons = row.get("reasons") or []
     if reasons:
+        body.append('<h3 style="font-size:12px;margin:14px 0 6px;color:var(--muted)">'
+                    'Chart context</h3>')
         body.append('<ol style="font-size:13px;line-height:1.8">')
         for r in reasons:
             body.append(f'<li>{html.escape(str(r))}</li>')
         body.append('</ol>')
-    else:
-        body.append('<p class="muted">No quant reasons returned — '
-                    'setup did not pass any of the technical or '
-                    '52w-dip filters.</p>')
+    elif not pillars:
+        body.append('<p class="muted">No score available — run a scan to '
+                    'fetch fundamentals for this symbol.</p>')
     warnings = row.get("warnings") or []
     if warnings:
         body.append('<p class="muted" style="margin-top:6px">'
@@ -444,8 +486,8 @@ def _render_pnl_card(
     out.append(_kv("Net P&amp;L",
                     f'<span class="{pnl_cls}">{_money_span(pnl.get("net_pnl", 0), signed=True)}</span>'))
     out.append(_kv("Closed Trades", str(int(pnl.get("count", 0)))))
-    out.append(_kv("Open Positions", str(len(positions))))
-    out.append(_kv("Book Amount",
+    out.append(_kv("Holdings", str(len(positions))))
+    out.append(_kv("Invested",
                    _money_span(invested, element_id="us-open-book-amount")))
     out.append(_kv("Current Amount",
                    _money_span(current_value, element_id="us-open-current-amount")))
@@ -467,7 +509,11 @@ def _render_scan_card(default_ticket: float,
                        latest_scan: dict) -> str:
     out: list[str] = []
     out.append('<div class="card">')
-    out.append('<h2>Daily Scan</h2>')
+    out.append('<h2>Long-Term Investment Ideas</h2>')
+    out.append(
+        '<p class="muted" style="font-size:12px;margin:-4px 0 12px">'
+        'Candidates for the long-term book. These are entry ideas to hold '
+        'and compound, not trades to flip &mdash; size them accordingly.</p>')
     out.append('<div id="us-scan-banner"></div>')
     if latest_scan:
         finished = (latest_scan.get("finished_at", "")
@@ -650,12 +696,14 @@ def _render_recommendations(latest_scan: dict, live: dict,
     out: list[str] = []
     out.append('<div class="card">')
     out.append('<details open><summary class="collapse-header">'
-               f'<h2 style="display:inline">Entry Recommendations ({len(rows)})</h2>'
+               f'<h2 style="display:inline">Long-Term Entry Ideas ({len(rows)})</h2>'
                '<span class="collapse-hint">click to expand</span></summary>')
     out.append('<p class="muted" style="margin-bottom:10px">'
-               'Combined view of trend setups (breakouts / pullbacks / '
-               'continuations / support reversals) and 52w-dip buys. '
-               'Use the page-level live-price toggle to refresh quotes.</p>')
+               'Candidates for the long-term book, ranked by the quality of '
+               'the business rather than the shape of the chart: quality, '
+               'valuation vs sector, growth, 12-1 momentum, balance sheet '
+               'and drawdown. Use the page-level live-price toggle to '
+               'refresh quotes.</p>')
     if not rows:
         out.append('<div class="muted">No US recommendations yet. '
                    'Click <em>Run Scan</em> above to analyse the universe.</div>')
@@ -664,27 +712,31 @@ def _render_recommendations(latest_scan: dict, live: dict,
     out.append('<div class="table-scroll">')
     out.append('<table class="holdings">')
     out.append('<tr>'
-               '<th>#</th><th>Symbol</th><th>Name</th><th>Setup</th>'
-               '<th title="Setup strength, trend quality, relative strength vs SPY, '
-               'volume, ADX and volatility fit blended 0-100">Conviction</th>'
-               '<th title="ATR, stop distance, volatility, drawdown, beta '
-               'and liquidity blended 0-100">Risk</th>'
+               '<th>#</th><th>Symbol</th><th>Name</th>'
+               '<th title="Quality, valuation vs sector, growth, 12-1 momentum, '
+               'balance sheet and drawdown blended 0-100 for a buy-and-hold '
+               'horizon">Rating</th>'
+               '<th class="right" title="Long-term composite score 0-100">Score</th>'
+               '<th title="Trailing P/E against the median for this sector">'
+               'Valuation</th>'
+               '<th title="Volatility, drawdown and beta blended 0-100">Risk</th>'
                '<th class="right">% Below 52w</th>'
                '<th class="right">Live Price</th>'
-               '<th class="right">Entry</th><th class="right">Stop</th>'
-               '<th class="right">Target</th>'
-               '<th class="right">Qty</th><th class="right">R:R</th>'
-               '<th>Reason</th><th>Actions</th>'
+               '<th class="right">Qty</th>'
+               '<th>Why</th><th>Actions</th>'
                '</tr>')
     for r in rows:
         sym = r.get("symbol", "")
         ind = r.get("indicators") or {}
+        lt = r.get("longterm") or {}
         dip = float(ind.get("dip_from_52w_high_pct") or 0.0)
-        setup = (r.get("setup_type") or "NONE").replace("_", " ").title()
         ai_mark = ' <span class="muted" style="font-size:10px">AI</span>' if r.get("ai_overlay") else ''
-        reason = (r.get("reasons") or [""])[0]
-        if len(r.get("reasons") or []) > 1:
-            reason += f" (+{len(r['reasons']) - 1} more)"
+        # Lead with the pillar evidence, not a chart pattern.
+        drivers: list[str] = []
+        for p in (lt.get("pillars") or []):
+            if p.get("covered") and p.get("drivers"):
+                drivers.append(p["drivers"][0])
+        reason = "; ".join(drivers[:3]) or (r.get("reasons") or [""])[0]
         payload = html.escape(json.dumps(_action_payload(r),
                                          separators=(",", ":")))
         lq = live.get(sym, {})
@@ -699,29 +751,35 @@ def _render_recommendations(latest_scan: dict, live: dict,
             dip_cell = f'<span>{dip:.1f}%</span>'
         else:
             dip_cell = f'<span class="muted">{dip:.1f}%</span>'
+
+        rating = str(r.get("rating") or "")
+        rating_slug = rating.lower().replace(" ", "-")
+        val_band = str(r.get("valuation_band") or "")
+        val_slug = val_band.split()[0].lower() if val_band else ""
+        coverage = float(r.get("coverage_pct") or 0)
         out.append(
-            # `data-live-tier="reco"` puts recommendation rows in
-            # the slow 60 s polling bucket — these are not
-            # money-at-risk so they don't need 15 s refreshes.
+            # `data-live-tier="reco"` puts idea rows in the slow 60 s
+            # polling bucket — these are not money-at-risk.
             f'<tr data-live-symbol="{html.escape(sym)}" '
             f'data-live-tier="reco">'
             f'<td>{int(r.get("priority_rank") or 0)}</td>'
             f'<td><a href="/us/{html.escape(sym)}" class="ticker">'
             f'{html.escape(sym)}</a></td>'
             f'<td><span class="small">{html.escape(stock_name)}</span></td>'
-            f'<td><span style="font-size:11px">{html.escape(setup)}</span>{ai_mark}</td>'
-            f'{_grade_cell(r.get("conviction_grade"), r.get("conviction"), "conv", (r.get("grade_detail") or {}).get("notes"))}'
-            f'{_grade_cell(r.get("risk_grade"), r.get("risk_score"), "risk", (r.get("grade_detail") or {}).get("risk_notes"))}'
+            f'<td><span class="grade rating rating-{html.escape(rating_slug)}" '
+            f'title="{html.escape(lt.get("summary") or "")}">'
+            f'{html.escape(rating)}</span>{ai_mark}</td>'
+            f'<td class="right" title="Model coverage {coverage:.0f}%">'
+            f'{float(r.get("score") or 0):.0f}</td>'
+            f'<td><span class="val-band val-{html.escape(val_slug)}">'
+            f'{html.escape(val_band)}</span></td>'
+            f'{_grade_cell(r.get("risk_grade"), r.get("risk_score"), "risk", (lt.get("risk_drivers") or []))}'
             f'<td class="right">{dip_cell}</td>'
             f'<td class="right" data-live-field="price_with_change">'
             f'<span class="{chg_cls}">{_money_span(lprice)}</span> '
             f'<span class="muted">({chg:+.1f}%)</span></td>'
-            f'<td class="right">{_money_span(r.get("entry_price"))}</td>'
-            f'<td class="right">{_money_span(r.get("stop_price"))}</td>'
-            f'<td class="right">{_money_span(r.get("target_price"))}</td>'
             f'<td class="right">{_fmt_qty(r.get("suggested_qty"))}</td>'
-            f'<td class="right">{float(r.get("rr_ratio") or 0):.2f}</td>'
-            f'<td style="font-size:11px;max-width:220px">'
+            f'<td style="font-size:11px;max-width:280px">'
             f'{html.escape(reason)}</td>'
             f'<td><select class="add-dropdown" data-row="{payload}" '
             f'onchange="addUsCandidate(this)" '
@@ -813,43 +871,63 @@ def _render_watchlist(watchlist, live: dict,
 
 def _render_positions(positions: list[SwingPosition],
                        live: dict,
-                       names: dict[str, str] | None = None) -> str:
+                       names: dict[str, str] | None = None,
+                       ratings: dict[str, dict] | None = None) -> str:
     out: list[str] = []
-    out.append('<h2>Open US Book</h2>')
+    out.append('<h2>US Holdings</h2>')
     out.append('<div class="card">')
     if not positions:
-        out.append('<div class="muted">No open US positions. '
-                   'Confirm an entry recommendation above to start tracking.</div>')
+        out.append('<div class="muted">No US holdings yet. '
+                   'Confirm an investment idea above to start tracking.</div>')
         out.append('</div>')
         return "".join(out)
+    out.append('<p class="muted small" style="margin:-4px 0 12px">'
+               'Held to compound. Weight is share of the US book; the rating '
+               'is the current long-term score for that business, so a name '
+               'whose fundamentals have decayed shows up here rather than in '
+               'a stop-loss.</p>')
+
+    total_value = 0.0
+    for p in positions:
+        lq = live.get(p.symbol, {})
+        total_value += p.managed_qty * float(lq.get("price") or p.entry_price)
+
     out.append('<div class="table-scroll">')
     out.append('<table class="holdings">')
     out.append('<tr>'
                '<th>Symbol</th><th>Name</th>'
                '<th class="right">Qty</th>'
-               '<th class="right">Entry</th>'
+               '<th class="right">Avg Cost</th>'
                '<th class="right">Live Price</th>'
+               '<th class="right">Value</th>'
                '<th class="right">P&amp;L</th>'
-               '<th class="right">Stop</th>'
-               '<th class="right">Target</th>'
-               '<th class="right">R</th>'
-               '<th>Action</th>'
+               '<th class="right">Weight</th>'
+               '<th>Rating</th>'
                '<th>Controls</th>'
                '</tr>')
     for p in positions:
         lq = live.get(p.symbol, {})
         lprice = float(lq.get("price") or p.entry_price)
+        value = lprice * p.managed_qty
         upnl = (lprice - p.entry_price) * p.managed_qty
-        risk_per = p.entry_price - p.stop_price
-        r_mult = ((lprice - p.entry_price) / risk_per
-                  if risk_per > 0 else 0)
+        pnl_pct = ((lprice / p.entry_price - 1) * 100) if p.entry_price else 0.0
         pnl_cls = "pos" if upnl >= 0 else "neg"
+        weight = (value / total_value * 100) if total_value > 0 else 0.0
         stock_name = (names or {}).get(p.symbol.strip().upper(), "")
+
+        row_rating = (ratings or {}).get(p.symbol.strip().upper()) or {}
+        rating = str(row_rating.get("rating") or "")
+        if rating:
+            slug = rating.lower().replace(" ", "-")
+            rating_cell = (
+                f'<span class="grade rating rating-{html.escape(slug)}" '
+                f'title="{html.escape(str(row_rating.get("summary") or ""))}">'
+                f'{html.escape(rating)}</span>')
+        else:
+            rating_cell = ('<span class="muted small" title="Run a scan to '
+                           'score this holding">&mdash;</span>')
+
         out.append(
-            # `data-live-tier="open"` puts this row in the
-            # fastest polling bucket (15 s) so live P&L on real
-            # money positions refreshes ahead of watchlist and
-            # recommendations. See `_usPollTier` in _js below.
             f'<tr data-live-symbol="{html.escape(p.symbol)}" '
             f'data-live-tier="open" '
             f'data-entry-price="{p.entry_price}" '
@@ -862,12 +940,12 @@ def _render_positions(positions: list[SwingPosition],
             f'<td class="right">{_fmt_qty(p.managed_qty)}</td>'
             f'<td class="right">{_money_span(p.entry_price)}</td>'
             f'<td class="right" data-live-field="price">{_money_span(lprice)}</td>'
+            f'<td class="right">{_money_span(value)}</td>'
             f'<td class="right" data-live-field="pnl">'
-            f'<span class="{pnl_cls}">{_money_span(upnl, signed=True)}</span></td>'
-            f'<td class="right">{_money_span(p.stop_price)}</td>'
-            f'<td class="right">{_money_span(p.target_price)}</td>'
-            f'<td class="right" data-live-field="r_mult">{r_mult:+.2f}R</td>'
-            f'<td><span class="small">{html.escape(p.daily_action or "HOLD")}</span></td>'
+            f'<span class="{pnl_cls}">{_money_span(upnl, signed=True)}</span>'
+            f'<br><span class="small {pnl_cls}">{pnl_pct:+.1f}%</span></td>'
+            f'<td class="right">{weight:.1f}%</td>'
+            f'<td>{rating_cell}</td>'
             f'<td>'
             f'<button class="action alt" '
             f'onclick="editUsPosition({p.position_id}, {p.managed_qty}, '
@@ -876,7 +954,7 @@ def _render_positions(positions: list[SwingPosition],
             f'style="padding:4px 8px;font-size:12px">Edit</button> '
             f'<button class="action alt" '
             f'onclick="exitUsPosition({p.position_id}, {p.managed_qty})" '
-            f'style="padding:4px 8px;font-size:12px">Mark Exit Done</button>'
+            f'style="padding:4px 8px;font-size:12px">Mark Sold</button>'
             f'</td>'
             f'</tr>'
         )
@@ -1054,6 +1132,24 @@ body { font-family: var(--font);
                    border-color: var(--warn-line); }
 .grade.risk-very-high { background: var(--neg-bg, #fdecec);
                         color: var(--neg); border-color: var(--neg); }
+/* Long-term rating + valuation badges (2026-08-11) */
+.grade.rating { font-weight: 700; }
+.grade.rating-high-conviction { background: var(--pos-bg); color: var(--pos);
+                                border-color: var(--pos-line); }
+.grade.rating-accumulate { background: var(--pos-bg); color: var(--pos);
+                           border-color: var(--pos-line); }
+.grade.rating-neutral { background: var(--soft); color: var(--muted);
+                        border-color: var(--line); }
+.grade.rating-weak { background: var(--warn-bg); color: var(--warn-fg);
+                     border-color: var(--warn-line); }
+.grade.rating-avoid { background: var(--neg-bg, #fdecec); color: var(--neg);
+                      border-color: var(--neg); }
+.val-band { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.val-cheap { color: var(--pos); }
+.val-fair { color: var(--muted); }
+.val-rich { color: var(--warn-fg, #b06d1a); }
+.val-expensive { color: var(--neg); }
+.val-unknown { color: var(--muted); opacity: .7; }
 .wrap { max-width: 1180px; margin: 0 auto; }
 h1.page-title { font-size: 22px; margin: 0 0 4px; }
 h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;

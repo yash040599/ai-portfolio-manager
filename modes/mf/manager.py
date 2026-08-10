@@ -32,6 +32,30 @@ def _inr(value: float, signed: bool = False) -> str:
     return f"Rs.{sign}{abs(value):,.2f}"
 
 
+def _pct(value) -> str:
+    return "-" if value is None else f"{float(value):+.1f}%"
+
+
+def _mag(value) -> str:
+    """Volatility and drawdown are magnitudes, not returns — no sign."""
+    return "-" if value is None else f"{abs(float(value)):.1f}%"
+
+
+def _wrap(text: str, width: int) -> list[str]:
+    words = str(text).split()
+    lines: list[str] = []
+    line = ""
+    for w in words:
+        if len(line) + len(w) + 1 > width:
+            lines.append(line)
+            line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        lines.append(line)
+    return lines
+
+
 class MFManager:
     """Mutual-fund book runner (Coin + externally-held funds)."""
 
@@ -141,6 +165,144 @@ class MFManager:
                   f"{s.instalment_amount:>12,.2f} {s.frequency[:9]:<10} "
                   f"{(s.next_instalment or '-')[:10]:<12} "
                   f"{s.completed_instalments:>5}")
+
+    # ── Insights ────────────────────────────────────────────────
+
+    def insights(self, *, live: bool = False, refresh_history: bool = False) -> None:
+        """Structural review of the book (no buy/sell calls by design)."""
+        from modes.mf.insights import build_insights
+
+        self.log.section("MUTUAL FUND REVIEW")
+        init_db()
+        book = build_book(live=live, log=self.log)
+        if not book.holdings:
+            self.log.warning("No mutual-fund holdings to review.")
+            return
+
+        if refresh_history:
+            from modes.mf.catalog import refresh_nav_history
+            self.log.info("Refreshing NAV history (one call per scheme)...")
+            ensure_catalog(log=self.log)
+            refresh_nav_history([s.scheme_code for s in book.schemes],
+                                log=self.log)
+
+        ins = build_insights(book)
+        self._print_findings(ins)
+        self._print_accumulation(ins)
+        self._print_clusters(ins)
+        self._print_consolidation(ins)
+        self._print_risk(ins, book)
+
+    def _print_findings(self, ins: dict) -> None:
+        findings = ins.get("findings") or []
+        if not findings:
+            return
+        self.log.section("WHAT STANDS OUT")
+        for f in findings:
+            print(f"  [{f['severity']:<6}] {f['title']}")
+            if f.get("detail"):
+                for line in _wrap(f["detail"], 88):
+                    print(f"            {line}")
+            print()
+
+    def _print_accumulation(self, ins: dict) -> None:
+        a = ins["accumulation"]
+        self.log.section("ACCUMULATION vs DORMANT CORPUS")
+        print(f"  New money      : {_inr(a['monthly_inflow'])}/month "
+              f"({_inr(a['annual_inflow'])}/yr = {a['inflow_rate_pct']:.1f}% "
+              f"of the book)")
+        print(f"  Receiving money: {a['funded_count']} schemes, "
+              f"{_inr(a['funded_value'])}")
+        print(f"  Dormant        : {a['dormant_count']} schemes, "
+              f"{_inr(a['dormant_value'])} ({a['dormant_pct']:.1f}% of corpus)")
+        if a["funded"]:
+            print()
+            print("  Where new money goes:")
+            for row in a["funded"]:
+                print(f"    {_inr(row['sip_amount']):>12}  "
+                      f"{row['sip_share_pct']:>5.1f}%  "
+                      f"{row['exposure'][:22]:<24}{row['fund'][:40]}")
+        rows = a.get("corpus_vs_inflow") or []
+        if rows:
+            print()
+            print(f"    {'asset class':<18}{'corpus':>9}{'new money':>12}{'gap':>9}")
+            for r in rows:
+                print(f"    {r['label']:<18}{r['corpus_pct']:>8.1f}%"
+                      f"{r['inflow_pct']:>11.1f}%{r['gap']:>+8.1f}")
+
+    def _print_clusters(self, ins: dict) -> None:
+        self.log.section("EXPOSURE MAP")
+        print(f"  {'exposure':<26}{'funds':>6}{'weight':>9}{'dormant':>9}  "
+              f"{'monthly SIP':>12}")
+        print("  " + "-" * 74)
+        for c in ins["clusters"]:
+            mark = "  <-- same bet held more than once" if c["is_redundant"] else ""
+            print(f"  {c['label'][:25]:<26}{c['fund_count']:>6}"
+                  f"{c['weight_pct']:>8.1f}%{c['dormant_count']:>9}  "
+                  f"{_inr(c['sip_amount']):>12}{mark}")
+
+        pairs = ins.get("correlated_pairs") or []
+        if pairs:
+            print()
+            print("  Funds whose NAVs move together (r >= 0.90):")
+            for p in pairs[:8]:
+                print(f"    r={p['correlation']:.2f}  {p['a_fund'][:34]:<36} "
+                      f"| {p['b_fund'][:34]}")
+
+    def _print_consolidation(self, ins: dict) -> None:
+        options = ins.get("consolidation") or []
+        tax = ins["tax"]
+        self.log.section("CONSOLIDATION & TAX")
+        print(f"  LTCG exemption : {_inr(tax['ltcg_exemption'])}/FY  "
+              f"(remaining {_inr(tax['headroom'])})")
+        print(f"  Unrealised     : gain {_inr(tax['unrealised_gain'])}, "
+              f"loss {_inr(tax['unrealised_loss'])}")
+        print(f"  Note           : {tax['equity_oriented_note']}")
+        print("  Caveat         : per-lot purchase dates are not available "
+              "from the broker,")
+        print("                   so long-term status must be verified before "
+              "acting.")
+        if not options:
+            print()
+            print("  No dormant duplicates to merge.")
+            return
+        print()
+        for o in options:
+            fits = ("fits this year's exemption" if o["fits_exemption"]
+                    else "exceeds the exemption or is not equity-oriented")
+            print(f"  {o['cluster']}: keep {o['keep'][:44]}")
+            for m in o["merge"]:
+                print(f"    merge {m['fund'][:46]:<48} "
+                      f"{_inr(m['value']):>12}  gain {_inr(m['gain']):>12}")
+            print(f"    -> frees {_inr(o['freed_value'])}, realises "
+                  f"{_inr(o['gain_realised'])} \u2014 {fits}")
+            print()
+
+    def _print_risk(self, ins: dict, book) -> None:
+        cov = ins.get("nav_history_coverage") or {}
+        risk = ins.get("risk") or {}
+        if not risk:
+            self.log.section("RETURN & RISK")
+            print("  No NAV history stored yet. Run with --refresh-history "
+                  "to download it (one call per scheme).")
+            return
+        self.log.section("RETURN & RISK (from NAV history)")
+        print(f"  Coverage: {cov.get('have', 0)}/{cov.get('total', 0)} schemes")
+        print()
+        print(f"  {'fund':<44}{'1Y':>8}{'3Y':>8}{'5Y':>8}{'vol':>8}{'maxDD':>8}")
+        print("  " + "-" * 84)
+        for s in book.schemes:
+            p = risk.get(s.scheme_code)
+            if not p:
+                continue
+            print(f"  {s.fund[:43]:<44}{_pct(p['cagr_1y']):>8}"
+                  f"{_pct(p['cagr_3y']):>8}{_pct(p['cagr_5y']):>8}"
+                  f"{_mag(p['volatility']):>8}{_mag(p['max_drawdown']):>8}")
+        print()
+        print("  CAGR is annualised from published NAVs, so it measures the "
+              "fund itself,")
+        print("  not your entry timing. Compare funds within the same "
+              "exposure row above.")
 
     # ── Sub-commands ────────────────────────────────────────────
 

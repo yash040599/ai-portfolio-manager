@@ -13,7 +13,7 @@ NAV_ITEMS = [
     ("Portfolio", "/portfolio", "Zerodha holdings, gaps and analyse runs"),
     ("Mutual Funds", "/mf", "Coin funds plus funds held at other brokers"),
     ("Swing", "/swing", "Indian swing scan, watchlist and open book"),
-    ("US", "/us", "US scan, watchlist and open book"),
+    ("US", "/us", "US long-term portfolio and investment ideas"),
     ("Intraday", "/trading", "Live intraday P&L"),
     ("Dry Run", "/dryrun", "Per-strategy dry-run P&L"),
     ("Tax", "/tax", "Realised P&L and tax projection"),

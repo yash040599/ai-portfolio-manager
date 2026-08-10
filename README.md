@@ -125,6 +125,15 @@ live number.
 - Allocation by asset class, AMC, plan (direct vs regular) and broker,
   plus concentration HHI and NAV history charts (AMFI scheme map +
   MFapi daily series).
+- **Structural review** (`--insights`, and a Review section on `/mf`):
+  exposure map showing how many *distinct bets* the book holds, funds
+  whose NAVs correlate above 0.90 (the honest stand-in for holdings
+  overlap), the accumulation-vs-dormant split, per-fund CAGR/volatility/
+  drawdown from NAV history, and the LTCG-exemption cost of
+  consolidating duplicates. No buy/sell calls — for a long-held book,
+  ranking funds on recent return mostly measures when you bought.
+- Externally-held funds get the **same analysis** as Coin funds, and can
+  record their own monthly SIP so they are not misread as dormant.
 - **Every Coin fetch is stored locally**, so the page and the home
   net-worth open on the last known book without calling the broker. A
   sync that fails (expired token) falls back to that stored book and
@@ -134,6 +143,8 @@ live number.
 
 ```
 python main.py --mode portfolio --type mf                    # full book
+python main.py --mode portfolio --type mf --insights         # structural review
+python main.py --mode portfolio --type mf --insights --refresh-history
 python main.py --mode portfolio --type mf --offline          # stored book, no broker call
 python main.py --mode portfolio --type mf --sips             # active + paused SIPs
 python main.py --mode portfolio --type mf --search "parag parikh"
@@ -232,12 +243,26 @@ Pages:
   than valued at zero. First paint replays the last stored Coin fetch
   (`Coin synced <ts>` chip) so the page never opens empty — the Refresh
   button is for pulling a newer NAV, not for making the page work.
-- **`/swing`** and **`/us`** — delivery swing dashboards for India and
-  the US. Entry recommendations on top with **Conviction** and **Risk**
-  grade columns, watchlist and open book below with live prices
-  (Zerodha 5s / yfinance 15s), per-stock detail pages, and Add+ /
-  Mark-Exit controls for manual broker actions. `/us` adds a USD/INR
-  currency toggle.
+- **`/swing`** — India delivery swing dashboard. Entry recommendations on
+  top with **Conviction** and **Risk** grade columns, watchlist and open
+  book below with live prices (Zerodha 5s), per-stock detail pages, and
+  Add+ / Mark-Exit controls for manual broker actions.
+- **`/us`** — **US long-term portfolio.** This is not a trading book:
+  US positions are long-term holdings meant to compound (RSU lots plus
+  deliberate long-horizon buys), so ideas are scored by
+  [`modes/us/longterm.py`](modes/us/longterm.py) — a six-factor
+  buy-and-hold model (quality & profitability 24, valuation vs sector 18,
+  growth durability 17, 12-1 momentum 16, financial strength 13,
+  risk & drawdown 12) rather than by chart setups. Ratings run
+  HIGH CONVICTION / ACCUMULATE / NEUTRAL / WEAK / AVOID; there are no
+  ATR stops, R-multiples or price targets, because those assume a
+  planned exit in weeks. Fundamentals come from yfinance and are cached
+  for a fortnight in `data/us_fundamentals.json`. Holdings show weight
+  and a current rating so a business that has decayed surfaces there
+  instead of in a stop-loss. Live prices via yfinance (15s), per-stock
+  detail page with the full pillar breakdown, USD/INR toggle.
+  It shares the swing SQLite schema (partitioned by `exchange`) purely
+  as a storage detail — that says nothing about the holding period.
 - **`/trading`** — intraday-trading profitability view (the original
   Phase 3 SPA from D1.1). Two charts (Chart.js via CDN, zero new
   Python deps): cumulative net P&L (line, daily) + per-bucket P&L

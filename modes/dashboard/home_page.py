@@ -42,7 +42,7 @@ _TILES = [
     ("Portfolio", "/portfolio", "Holdings, gap analysis, analyse runs.", "in"),
     ("Mutual Funds", "/mf", "Coin funds, external folios, SIPs.", "mf"),
     ("Swing (India)", "/swing", "Daily scan, watchlist, open book.", "in"),
-    ("US", "/us", "US scan, watchlist, FX toggle, open book.", "us"),
+    ("US", "/us", "US long-term holdings and investment ideas.", "us"),
     ("Intraday", "/trading", "Live intraday P&L and day drill-down.", "id"),
     ("Dry Run", "/dryrun", "Per-strategy dry-run P&L and stats.", "dr"),
     ("Tax", "/tax", "Realised P&L, charges, slab projection.", "tx"),
@@ -418,7 +418,7 @@ def _books(data: dict) -> str:
   <div class="t-card book">
     <div class="book-head">
       <h3>US book</h3>
-      <span class="t-chip info" title="MSFT and ORCL are RSU lots, not swing entries">RSU + swing</span>
+      <span class="t-chip info" title="Long-term holdings — RSU lots plus deliberate long-horizon buys. Not a trading book.">long-term</span>
       <span class="spacer"></span><a class="more" href="/us">Open &#8594;</a>
     </div>
     <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>

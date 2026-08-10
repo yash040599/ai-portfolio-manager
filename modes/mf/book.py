@@ -229,6 +229,7 @@ def _rollup(holdings: list[MFHolding]) -> list[MFSchemeRollup]:
         row.units += h.units
         row.invested_value += h.invested_value
         row.current_value += h.current_value
+        row.sip_amount += h.sip_amount
         row.legs.append(h)
         if h.broker not in row.brokers:
             row.brokers.append(h.broker)
@@ -238,6 +239,22 @@ def _rollup(holdings: list[MFHolding]) -> list[MFSchemeRollup]:
     out = list(merged.values())
     out.sort(key=lambda r: r.current_value, reverse=True)
     return out
+
+
+def _attach_sips(holdings: list[MFHolding], sips: list[MFSip]) -> None:
+    """Point each Coin leg at its active SIP.
+
+    External legs already carry a user-entered `sip_amount`; only Coin
+    legs can be resolved from the broker's SIP book. Paused SIPs
+    contribute nothing — a paused plan is not new money.
+    """
+    monthly: dict[str, float] = {}
+    for s in sips:
+        if s.is_active and s.scheme_code:
+            monthly[s.scheme_code] = monthly.get(s.scheme_code, 0.0) + s.monthly_outflow
+    for h in holdings:
+        if h.source == SRC_COIN:
+            h.sip_amount = monthly.get(h.scheme_code, 0.0)
 
 
 def _weights(buckets: dict[str, float], total: float) -> list[dict]:
@@ -320,6 +337,7 @@ def build_book(*, live: bool = False, log: Logger | None = None) -> MFBook:
 
     holdings = coin_list + external_holdings()
     _enrich(holdings)
+    _attach_sips(holdings, sips)
     schemes = _rollup(holdings)
 
     holdings.sort(key=lambda h: h.current_value, reverse=True)

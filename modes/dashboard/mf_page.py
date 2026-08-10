@@ -124,11 +124,21 @@ def render_mf_sections_json(*, live: bool = False) -> str:
             pass
 
     book = build_book(live=live)
+
+    if live and book.schemes:
+        # One call per scheme, but rate-limited to weekly per scheme so a
+        # routine refresh does not re-download five years of NAVs.
+        try:
+            from modes.mf.catalog import refresh_nav_history
+            refresh_nav_history([s.scheme_code for s in book.schemes])
+        except Exception:  # noqa: BLE001 — analytics degrade, book still renders
+            pass
     coin = [h for h in book.holdings if h.source == SRC_COIN]
     external = [h for h in book.holdings if h.source == SRC_EXTERNAL]
 
     fragment = "".join([
         _render_split_notice(book),
+        _render_insights(book),
         _render_combined_table(book),
         _render_coin_table(coin, book),
         _render_external_table(external),
@@ -391,7 +401,7 @@ def _render_external_table(external) -> str:
         'from the Coin catalogue so the NAV resolves automatically, then '
         'enter your units and average NAV. The same scheme can be added '
         'here even if you also hold it on Coin &mdash; the combined table '
-        'merges the two.</p>')
+        'brokers so the review can tell which funds still receive money.</p>')
 
     out.append(_render_add_form())
 
@@ -402,7 +412,8 @@ def _render_external_table(external) -> str:
         out.append('<tr><th>Fund</th><th>Broker</th><th>Folio</th>'
                    '<th class="right">Units</th><th class="right">Avg NAV</th>'
                    '<th class="right">NAV</th><th class="right">Value</th>'
-                   '<th class="right">P&amp;L</th><th>Controls</th></tr>')
+                   '<th class="right">P&amp;L</th><th class="right">SIP</th>'
+                   '<th>Controls</th></tr>')
         for h in external:
             out.append(
                 f'<tr><td>{html.escape(h.fund)}<br>'
@@ -416,6 +427,8 @@ def _render_external_table(external) -> str:
                 f'<td class="right {_cls(h.pnl)}">{_inr(h.pnl, signed=True)}'
                 f'<span class="small {_cls(h.pnl_pct)}"> '
                 f'{_num(h.pnl_pct):+.2f}%</span></td>'
+                f'<td class="right">'
+                f'{_inr(h.sip_amount) if h.sip_amount > 0 else "&mdash;"}</td>'
                 f'<td><button class="action alt mini" type="button" '
                 f'onclick="editExternal({h.holding_id}, {_num(h.units)}, '
                 f'{_num(h.avg_nav)})">Edit</button> '
@@ -449,6 +462,9 @@ def _render_add_form() -> str:
     </label>
     <label>Folio <span class="muted small">(optional)</span>
       <input type="text" id="mf-add-folio" placeholder="12345678/90">
+    </label>
+    <label>Monthly SIP <span class="muted small">(0 if none)</span>
+      <input type="number" id="mf-add-sip" step="100" min="0" value="0">
     </label>
     <button class="action" type="button" id="mf-add-btn"
             onclick="addExternal()" disabled>Add fund</button>
@@ -519,6 +535,208 @@ def _render_orders(book) -> str:
             f'</span></td></tr>')
     out.append('</table></div></div>')
     return "".join(out)
+
+
+def _render_insights(book) -> str:
+    """Structural review: overlap, accumulation split, tax consolidation.
+
+    Deliberately has no buy/sell verdict — for a long-held book the
+    useful questions are how many distinct bets you own and what it
+    costs to tidy them, not which fund did well recently.
+    """
+    from modes.mf.insights import build_insights
+
+    if not book.schemes:
+        return ""
+    ins = build_insights(book)
+    acc = ins["accumulation"]
+    tax = ins["tax"]
+
+    out = ['<h2>Review</h2>']
+
+    findings = ins.get("findings") or []
+    if findings:
+        out.append('<div class="card">')
+        out.append('<p class="muted small">Structural observations only. '
+                   'Nothing here is a buy or sell call &mdash; ranking funds '
+                   'on recent return mostly measures when you bought.</p>')
+        for f in findings:
+            sev = f["severity"].lower()
+            out.append(
+                f'<div class="finding {sev}">'
+                f'<div class="f-head"><span class="chip mini {sev}">'
+                f'{html.escape(f["severity"])}</span>'
+                f'<strong>{html.escape(f["title"])}</strong></div>'
+                f'<div class="f-detail">{html.escape(f["detail"])}</div>'
+                f'</div>')
+        out.append('</div>')
+
+    # Accumulation vs dormant.
+    out.append('<div class="card">')
+    out.append('<h3>Where new money goes</h3>')
+    out.append(
+        f'<p class="muted small">'
+        f'{_inr(acc["monthly_inflow"])}/month into '
+        f'{acc["funded_count"]} of {len(book.schemes)} schemes &mdash; '
+        f'{acc["inflow_rate_pct"]:.0f}% of the book a year. The other '
+        f'{acc["dormant_count"]} schemes ({_inr(acc["dormant_value"])}, '
+        f'{acc["dormant_pct"]:.0f}% of corpus) receive nothing, so anything '
+        f'redundant there will not be diluted by future SIPs.</p>')
+    if acc["funded"]:
+        out.append('<div class="table-scroll"><table class="holdings">')
+        out.append('<tr><th>Fund</th><th>Exposure</th>'
+                   '<th class="right">Monthly</th><th class="right">Share</th>'
+                   '<th class="right">Held</th></tr>')
+        for r in acc["funded"]:
+            out.append(
+                f'<tr><td>{html.escape(r["fund"])}</td>'
+                f'<td><span class="small">{html.escape(r["exposure"])}</span></td>'
+                f'<td class="right">{_inr(r["sip_amount"])}</td>'
+                f'<td class="right">{r["sip_share_pct"]:.1f}%</td>'
+                f'<td class="right">{_inr(r["value"])}</td></tr>')
+        out.append('</table></div>')
+
+    rows = acc.get("corpus_vs_inflow") or []
+    if rows:
+        out.append('<h3 style="margin-top:18px">Corpus vs new money</h3>')
+        out.append('<div class="table-scroll"><table class="holdings">')
+        out.append('<tr><th>Asset class</th><th class="right">Corpus</th>'
+                   '<th class="right">New money</th><th class="right">Gap</th></tr>')
+        for r in rows:
+            gap = r["gap"]
+            out.append(
+                f'<tr><td>{html.escape(r["label"])}</td>'
+                f'<td class="right">{r["corpus_pct"]:.1f}%</td>'
+                f'<td class="right">{r["inflow_pct"]:.1f}%</td>'
+                f'<td class="right {_cls(gap)}">{gap:+.1f}</td></tr>')
+        out.append('</table></div>')
+    out.append('</div>')
+
+    # Exposure map.
+    out.append('<div class="card">')
+    out.append('<h3>Exposure map</h3>')
+    out.append('<p class="muted small">One row per distinct bet. More than '
+               'one fund in a row means the same exposure is held twice.</p>')
+    out.append('<div class="table-scroll"><table class="holdings">')
+    out.append('<tr><th>Exposure</th><th class="right">Funds</th>'
+               '<th class="right">Weight</th><th class="right">Dormant</th>'
+               '<th class="right">Monthly SIP</th><th>Holdings</th></tr>')
+    for c in ins["clusters"]:
+        names = ", ".join(f["fund"] for f in c["funds"])
+        flag = ' <span class="chip mini warn">overlap</span>' if c["is_redundant"] else ""
+        out.append(
+            f'<tr><td>{html.escape(c["label"])}{flag}</td>'
+            f'<td class="right">{c["fund_count"]}</td>'
+            f'<td class="right">{c["weight_pct"]:.1f}%</td>'
+            f'<td class="right">{c["dormant_count"]}</td>'
+            f'<td class="right">{_inr(c["sip_amount"])}</td>'
+            f'<td><span class="small">{html.escape(names[:120])}</span></td></tr>')
+    out.append('</table></div>')
+
+    pairs = ins.get("correlated_pairs") or []
+    if pairs:
+        out.append('<h3 style="margin-top:18px">Funds that move together</h3>')
+        out.append('<p class="muted small">Correlation of daily NAV moves. '
+                   'Above 0.90 the two funds are effectively one bet, whatever '
+                   'their categories say. This is the honest stand-in for true '
+                   'holdings overlap, which needs AMFI portfolio disclosures '
+                   'we do not have.</p>')
+        out.append('<div class="table-scroll"><table class="holdings">')
+        out.append('<tr><th class="right">r</th><th>Fund A</th><th>Fund B</th>'
+                   '<th class="right">Combined</th></tr>')
+        for p in pairs[:12]:
+            out.append(
+                f'<tr><td class="right"><strong>{p["correlation"]:.2f}</strong></td>'
+                f'<td>{html.escape(p["a_fund"])}</td>'
+                f'<td>{html.escape(p["b_fund"])}</td>'
+                f'<td class="right">{_inr(p["combined_value"])}</td></tr>')
+        out.append('</table></div>')
+    out.append('</div>')
+
+    # Consolidation + tax.
+    out.append('<div class="card">')
+    out.append('<h3>Consolidation &amp; tax</h3>')
+    out.append(
+        f'<p class="muted small">LTCG on equity-oriented funds is exempt up to '
+        f'{_inr(tax["ltcg_exemption"])} a financial year &mdash; the cheapest '
+        f'way to tidy a long-held book. Unrealised gain across the book is '
+        f'{_inr(tax["unrealised_gain"])}. {html.escape(tax["equity_oriented_note"])}</p>')
+    out.append(
+        '<div class="banner warn"><strong>Verify before acting.</strong> '
+        'Per-lot purchase dates are not available from the broker, so these '
+        'gains cannot be confirmed as long-term here. Check the holding '
+        'period of each lot in your CAS statement first.</div>')
+    options = ins.get("consolidation") or []
+    if not options:
+        out.append('<div class="muted">No dormant duplicates to merge.</div>')
+    else:
+        out.append('<div class="table-scroll"><table class="holdings">')
+        out.append('<tr><th>Exposure</th><th>Keep</th><th>Could merge</th>'
+                   '<th class="right">Frees</th><th class="right">Gain</th>'
+                   '<th>Within exemption</th></tr>')
+        for o in options:
+            merge = "<br>".join(html.escape(m["fund"]) for m in o["merge"])
+            fits = ('<span class="chip mini pos">yes</span>'
+                    if o["fits_exemption"] else
+                    '<span class="chip mini warn">check</span>')
+            out.append(
+                f'<tr><td>{html.escape(o["cluster"])}</td>'
+                f'<td><span class="small">{html.escape(o["keep"])}</span></td>'
+                f'<td><span class="small">{merge}</span></td>'
+                f'<td class="right">{_inr(o["freed_value"])}</td>'
+                f'<td class="right">{_inr(o["gain_realised"])}</td>'
+                f'<td>{fits}</td></tr>')
+        out.append('</table></div>')
+    out.append('</div>')
+
+    # Return & risk.
+    risk = ins.get("risk") or {}
+    cov = ins.get("nav_history_coverage") or {}
+    out.append('<div class="card">')
+    out.append('<h3>Return &amp; risk</h3>')
+    if not risk:
+        out.append('<div class="muted">No NAV history stored yet. '
+                   'Refresh from Coin to download it.</div>')
+    else:
+        out.append(
+            f'<p class="muted small">Annualised from published NAVs, so this '
+            f'measures the fund rather than your entry timing &mdash; which is '
+            f'why it replaces a "best/worst performer" list. Compare funds '
+            f'inside the same exposure row above. '
+            f'Coverage {cov.get("have", 0)}/{cov.get("total", 0)}.</p>')
+        out.append('<div class="table-scroll"><table class="holdings">')
+        out.append('<tr><th>Fund</th><th class="right">1Y</th>'
+                   '<th class="right">3Y</th><th class="right">5Y</th>'
+                   '<th class="right">Volatility</th>'
+                   '<th class="right">Max drawdown</th></tr>')
+        for s in book.schemes:
+            p = risk.get(s.scheme_code)
+            if not p:
+                continue
+            out.append(
+                f'<tr><td>{html.escape(s.fund)}</td>'
+                f'<td class="right {_ret_cls(p["cagr_1y"])}">{_pct(p["cagr_1y"])}</td>'
+                f'<td class="right {_ret_cls(p["cagr_3y"])}">{_pct(p["cagr_3y"])}</td>'
+                f'<td class="right {_ret_cls(p["cagr_5y"])}">{_pct(p["cagr_5y"])}</td>'
+                f'<td class="right">{_mag(p["volatility"])}</td>'
+                f'<td class="right">{_mag(p["max_drawdown"])}</td></tr>')
+        out.append('</table></div>')
+    out.append('</div>')
+
+    return "".join(out)
+
+
+def _pct(value) -> str:
+    return "&mdash;" if value is None else f"{float(value):+.1f}%"
+
+
+def _mag(value) -> str:
+    return "&mdash;" if value is None else f"{abs(float(value)):.1f}%"
+
+
+def _ret_cls(value) -> str:
+    """No colour for a missing return — an absent number is not a gain."""
+    return "" if value is None else _cls(value)
 
 
 # ── Chrome ────────────────────────────────────────────────────
@@ -640,6 +858,21 @@ input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
                color: var(--warn-fg); }
 .banner.error { background: var(--neg-bg, #fdecec); border: 1px solid var(--neg);
                 color: var(--neg); }
+.finding { border-left: 3px solid var(--line); padding: 8px 0 8px 12px;
+           margin: 10px 0; }
+.finding.review { border-left-color: var(--warn-fg, #b06d1a); }
+.finding.note { border-left-color: var(--accent); }
+.finding.good { border-left-color: var(--pos); }
+.finding .f-head { display: flex; align-items: baseline; gap: 8px;
+                   flex-wrap: wrap; font-size: 13.5px; }
+.finding .f-detail { color: var(--muted); font-size: 12.5px; margin-top: 4px;
+                     line-height: 1.55; }
+.chip.mini.review { background: var(--warn-bg); color: var(--warn-fg);
+                    border-color: var(--warn-line); }
+.chip.mini.note { background: var(--accent-soft); color: var(--accent);
+                  border-color: var(--accent-line); }
+.chip.mini.good { background: var(--pos-bg); color: var(--pos);
+                  border-color: var(--pos-line); }
 ul.tight { margin: 8px 0 0; padding-left: 18px; }
 ul.tight li { margin: 3px 0; }
 @media (max-width: 900px) {
@@ -921,6 +1154,7 @@ _SCRIPT = r"""
     var nav = Number((document.getElementById('mf-add-nav') || {}).value);
     var broker = ((document.getElementById('mf-add-broker') || {}).value || '').trim();
     var folio = ((document.getElementById('mf-add-folio') || {}).value || '').trim();
+    var sip = Number((document.getElementById('mf-add-sip') || {}).value) || 0;
     if (!(units > 0) || !(nav > 0)) {
       showError('Units and average NAV must both be positive numbers.');
       return;
@@ -929,13 +1163,15 @@ _SCRIPT = r"""
     showError('');
     post('/api/mf/external/add', {
       scheme_code: picked.code, fund: picked.name, units: units,
-      avg_nav: nav, broker: broker, folio: folio
+      avg_nav: nav, broker: broker, folio: folio, sip_amount: sip
     }).then(function () {
       ['mf-add-units', 'mf-add-nav', 'mf-add-folio', 'mf-add-search']
         .forEach(function (id) {
           var el = document.getElementById(id);
           if (el) el.value = '';
         });
+      var sipEl = document.getElementById('mf-add-sip');
+      if (sipEl) sipEl.value = '0';
       picked = null;
       var note = document.getElementById('mf-add-picked');
       if (note) note.textContent = 'No scheme selected yet.';
