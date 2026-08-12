@@ -14,6 +14,7 @@ Read-only. Out-of-sample by construction. Never touches capital.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 from collections import defaultdict
@@ -102,6 +103,7 @@ def simulate_gap_go_adaptive(
     gap_hold_min_pct: float = 0.5,
     score_contra_block: bool = True,
     side_filter: str = "ALL",            # "ALL", "BUY", "SELL"
+    entry_candle_idx: int = ENTRY_CANDLE_IDX,
 ) -> tuple[list[dict], dict[str, int]]:
     """Run gap-and-go with adaptive volume on broad-gap days.
     
@@ -163,10 +165,10 @@ def simulate_gap_go_adaptive(
             if not prev_close or prev_close <= 0:
                 continue
 
-            if len(candles) < ENTRY_CANDLE_IDX + 1:
+            if len(candles) < entry_candle_idx + 1:
                 continue
 
-            entry_candle = candles[ENTRY_CANDLE_IDX]
+            entry_candle = candles[entry_candle_idx]
             open_price = candles[0]["open"]
 
             gap = (open_price - prev_close) / prev_close * 100
@@ -190,7 +192,7 @@ def simulate_gap_go_adaptive(
             start_idx = day_start[0]
             if start_idx < 14:
                 continue
-            atr_window = all_candles[max(0, start_idx + ENTRY_CANDLE_IDX - 50):start_idx + ENTRY_CANDLE_IDX + 1]
+            atr_window = all_candles[max(0, start_idx + entry_candle_idx - 50):start_idx + entry_candle_idx + 1]
             atr_val = _atr(atr_window, 14)
             if atr_val <= 0:
                 atr_val = entry_candle["close"] * 0.005
@@ -239,7 +241,7 @@ def simulate_gap_go_adaptive(
         selected = candidates[:daily_cap]
 
         for sym, side, _gap_mag, candles, atr_val in selected:
-            entry_candle = candles[ENTRY_CANDLE_IDX]
+            entry_candle = candles[entry_candle_idx]
             entry_price = entry_candle["close"]
             if entry_price <= 0:
                 continue
@@ -264,7 +266,7 @@ def simulate_gap_go_adaptive(
             entry_ts = entry_candle["ts"]
             exited = False
 
-            for ci in range(ENTRY_CANDLE_IDX + 1, len(candles)):
+            for ci in range(entry_candle_idx + 1, len(candles)):
                 c = candles[ci]
                 hour = c["ts"].hour
                 minute = c["ts"].minute
@@ -371,6 +373,14 @@ def _print_table(label: str, metrics: dict) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Broad-gap adaptive volume backtest")
+    parser.add_argument(
+        "--late-entry-sweep",
+        action="store_true",
+        help="Compare the frozen v1.2 signal at later entry candles on TRAIN and TEST",
+    )
+    args = parser.parse_args()
+
     universe = "NIFTY100"
     symbols = get_universe(universe)
     print("\n  Broad-Gap Adaptive Volume + Side Analysis Backtest")
@@ -413,6 +423,30 @@ def main() -> None:
         dist[r] += 1
     print("  Regime distribution: "
           + ", ".join(f"{r}={dist[r]}" for r in ("TREND", "RANGE", "VOLATILE")))
+
+    if args.late_entry_sweep:
+        print("\n  Frozen v1.2 signal persistence (net of costs, no regime lookahead)")
+        print("  Opening gap/volume qualification is unchanged; entry and hold checks move later.")
+        for entry_idx, entry_label in [(1, "09:30"), (4, "10:15"), (5, "10:30"), (6, "10:45"), (7, "11:00")]:
+            for window_name in ("TRAIN", "TEST"):
+                window_start, window_end = WINDOWS[window_name]
+                trades, _ = simulate_gap_go_adaptive(
+                    all_symbol_days,
+                    regime_labels,
+                    start=window_start,
+                    end=window_end,
+                    vol_mult=2.0,
+                    vol_mult_broad=1.25,
+                    broad_gap_threshold=25,
+                    entry_candle_idx=entry_idx,
+                )
+                metrics = compute_metrics(
+                    trades,
+                    f"late-{entry_label}-{window_name}",
+                    with_costs=True,
+                )
+                _print_table(f"{entry_label} candle / {window_name}", metrics)
+        return
 
     w_start, w_end = WINDOWS["TEST"]
 

@@ -1,7 +1,6 @@
 # Trading Roadmap
 
-Last updated: 2026-08-10 (unit-economics review: strategy passes the gate, the
-business case does not at Rs.50K).
+Last updated: 2026-08-12 (book-configuration and late-start fallback review).
 
 ## Current Posture
 
@@ -133,6 +132,8 @@ Until one is chosen, this mode stays paused. Recommendation on the evidence: (2)
     - **Global vol=1.5x tested**: PF drops 1.17→1.04. Adaptive is critical — only relax on broad days.
     - **Zero regression risk**: narrow-day behavior unchanged (2.0x threshold). Only broad-gap days (33/242 = 14% of trading days) get the relaxation.
     - Config: `GAP_GO_BROAD_GAP_THRESHOLD = 25`, `GAP_GO_BROAD_VOL_MULTIPLE = 1.25`, `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0"`.
+  15. **2026-08-10**: India-specific book configurations were replayed under the canonical walk-forward and cost model. Exact ORB, first-candle RSI and EMA 6/60 variants all failed; best OOS PF was 0.98. Gap-and-Go v1.2.0 remains the strongest tested strategy. See [BOOK_STRATEGY_RETEST_2026-08-10.md](backtest/BOOK_STRATEGY_RETEST_2026-08-10.md).
+  16. **2026-08-12**: Late-start fallback audit completed. Previous-day breakout at the actual 10:15 boundary fell to OOS PF 0.85 (volatile-only PF 0.82); delayed Gap-and-Go was unstable across TRAIN/TEST. The user may nevertheless explicitly approve the best runtime-compatible fallback, `NOAI_LEGACY_FULL` (OOS PF 0.82), after a negative-expectancy warning. Stop/no-trade remains the default. See [LATE_START_FALLBACK_AUDIT.md](backtest/LATE_START_FALLBACK_AUDIT.md).
 
 ## Key Config (v1.2.0)
 

@@ -32,6 +32,7 @@ Read-only. Out-of-sample by construction. Never touches capital.
 from __future__ import annotations
 
 import argparse
+import datetime
 import os
 import sys
 from collections import defaultdict
@@ -69,6 +70,7 @@ LOSER_EXIT_HOUR = 13
 SQUARE_OFF_HOUR = 14
 SQUARE_OFF_MIN = 0
 ENTRY_START_HOUR = 10         # skip 9:15-9:45 opening noise
+ENTRY_START_MIN = 0
 ENTRY_END_HOUR = 13
 ENTRY_END_MIN = 30
 GATE_PF = 1.15
@@ -116,6 +118,8 @@ def simulate_prev_day_breakout(
     adx_min: float = ADX_MIN,
     vol_mult: float = VOL_MULT,
     daily_cap: int = DAILY_CAP,
+    entry_start_hour: int = ENTRY_START_HOUR,
+    entry_start_min: int = ENTRY_START_MIN,
     skip_regimes: set[str] | None = None,
     start: str | None = None,
     end: str | None = None,
@@ -176,7 +180,7 @@ def simulate_prev_day_breakout(
                 minute = c["ts"].minute
 
                 # Entry window
-                if hour < ENTRY_START_HOUR:
+                if hour * 60 + minute < entry_start_hour * 60 + entry_start_min:
                     continue
                 if hour > ENTRY_END_HOUR or (hour == ENTRY_END_HOUR and minute > ENTRY_END_MIN):
                     break
@@ -336,12 +340,19 @@ def main() -> None:
     ap.add_argument("--adx-min", type=float, default=ADX_MIN, help="Minimum ADX for breakout")
     ap.add_argument("--vol-mult", type=float, default=VOL_MULT, help="Volume multiplier floor")
     ap.add_argument("--daily-cap", type=int, default=DAILY_CAP, help="Max trades per day")
+    ap.add_argument(
+        "--entry-start",
+        type=datetime.time.fromisoformat,
+        default=datetime.time(ENTRY_START_HOUR, ENTRY_START_MIN),
+        metavar="HH:MM",
+        help="Earliest breakout candle eligible for entry (default: 10:00)",
+    )
     args = ap.parse_args()
 
     symbols = get_universe(args.universe)
     print("\n  Phase 7.3 — Previous-Day High/Low Breakout")
     print(f"  ADX >= {args.adx_min}, Volume >= {args.vol_mult}x avg, "
-          f"daily cap = {args.daily_cap}")
+            f"daily cap = {args.daily_cap}, entry >= {args.entry_start.strftime('%H:%M')}")
     print(f"  Loading {len(symbols)} symbols...")
 
     # Load data
@@ -405,6 +416,8 @@ def main() -> None:
                 adx_min=args.adx_min,
                 vol_mult=args.vol_mult,
                 daily_cap=args.daily_cap,
+                entry_start_hour=args.entry_start.hour,
+                entry_start_min=args.entry_start.minute,
                 skip_regimes=skip,
                 start=w_start, end=w_end,
             )
@@ -423,6 +436,8 @@ def main() -> None:
             trades = simulate_prev_day_breakout(
                 all_symbol_days, regime_labels,
                 adx_min=adx, vol_mult=vm, daily_cap=args.daily_cap,
+                entry_start_hour=args.entry_start.hour,
+                entry_start_min=args.entry_start.minute,
                 skip_regimes=set(),
                 start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
             )
@@ -436,6 +451,8 @@ def main() -> None:
         adx_min=args.adx_min,
         vol_mult=args.vol_mult,
         daily_cap=args.daily_cap,
+        entry_start_hour=args.entry_start.hour,
+        entry_start_min=args.entry_start.minute,
         skip_regimes=set(),
         start=WINDOWS["TEST"][0], end=WINDOWS["TEST"][1],
     )

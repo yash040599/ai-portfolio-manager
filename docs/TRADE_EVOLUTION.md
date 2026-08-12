@@ -4,7 +4,7 @@ A plain-English, newest-first log of how the trading strategy changed over time.
 
 ## Current Direction
 
-As of 2026-06-12, the active strategy is **Gap-and-Go v1.1.1** (`NOAI_GAP_AND_GO_1.1.1`) on **NIFTY100**. OOS PF 1.62, Sharpe 1.80. Universe expanded from NIFTY50 to NIFTY100 — backtest showed strictly better metrics (PF +5%, Sharpe +8%) with same trade count. Version scheme: `NOAI_GAP_AND_GO_X.Y.Z` — X = strategy logic change, Y = filter/safeguard changes, Z = config/parameter changes.
+As of 2026-08-12, the active strategy is **Gap-and-Go v1.2.0** (`NOAI_GAP_AND_GO_1.2.0`) on **NIFTY100**. OOS PF 1.30, Sharpe 1.29. When the signal is stale or the scan is empty, stop/no-trade remains recommended; the user may explicitly approve the legacy blended-score fallback after its OOS PF 0.82 warning. Version scheme: `NOAI_GAP_AND_GO_X.Y.Z` — X = strategy logic change, Y = filter/safeguard changes, Z = config/parameter changes.
 
 ## What Goes Here
 
@@ -37,6 +37,8 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T3.5 | Risk | Gap-and-Go fallback consent (2026-08-12): after a post-10:15 start or an empty valid scan, the tool defaults to no trade but lets the user explicitly run the legacy blended scorer after warning that its OOS PF is 0.82 and negative after costs. |
+| T3.4 | Indicators | Gap-and-Go v1.2.0 (2026-06-15): on broad-gap days with at least 25 gapping stocks, the volume floor adapts from 2.0x to 1.25x; NIFTY100 OOS PF 1.30 and Sharpe 1.29. |
 | T3.3 | Performance | Phase 9 diversification research (2026-06-12): tested 7 alternative intraday strategies — all FAIL. FHRB (PF 0.81), OCM (PF 0.87), NIFTY Index Momentum (PF 0.25), Sector Rotation (PF 0.78), Gap Fade (PF 0.70), EOD VWAP Reversion (PF 0.55), Auction Alpha (PF 0.74). Also confirmed NIFTY100 optimal (NIFTY150 PF 1.13, NIFTY200 PF 1.17 — both worse). Gap-and-Go v1.1.1 remains the only strategy to pass the 1.15 OOS gate. **20 strategies/variants tested across 9 phases — intraday equity search space on NSE conclusively exhausted.** |
 | T3.2 | Indicators | NIFTY100 universe expansion → v1.1.1 (2026-06-12): widened scan from 50 to 100 stocks. Backtest showed strictly better metrics with same trade count (cap=2 selects from wider pool): OOS PF 1.55 → 1.62 (+5%), Sharpe 1.66 → 1.80 (+8%). VOLATILE-only PF jumps 1.98 → 2.45. Mid-large-caps (positions 51-100) provide more explosive gap moves on volatile days. No cost or drawdown increase. Version scheme updated to X.Y.Z (X=strategy, Y=filters, Z=config). |
 | T3.1 | Indicators | Gap-and-Go v1.1.0 (2026-06-09): three fixes after v1.0.0 day-1 dry-run failed 0/2. (1) Entry delayed to 09:45 so the 09:30 candle has closed — matches backtest entry price. (2) Gap-hold filter: reject if gap faded >0.3% from open by entry time. (3) Score-contradiction block: reject BUY when composite score is bearish (and vice versa). OOS PF 1.37 → 1.55 (+13%), WR 32.1% → 35.7%, Sharpe 1.38 → 1.66. Fewer trades (159 → 98) but higher quality. |

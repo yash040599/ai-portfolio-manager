@@ -159,8 +159,9 @@ python main.py --mode portfolio --type mf --remove 3
 Fully automated NSE intraday loop. **NoAI is the default** (zero AI API
 calls, pure indicators); add `--ai` to put the active AI provider in the
 selection loop. Supports multiple strategy profiles via `TRADE_STRATEGY_PROFILE`
-(default: `NOAI_GAP_AND_GO_1.1.1` — gap-and-go with volume qualification,
-gap-hold confirmation, score-contradiction filter on NIFTY100. OOS PF 1.62, Sharpe 1.80).
+(default: `NOAI_GAP_AND_GO_1.2.0` — gap-and-go with volume qualification,
+adaptive broad-gap volume, gap-hold confirmation and score-contradiction
+filter on NIFTY100. OOS PF 1.30, Sharpe 1.29).
 
 Loop, in plain English:
 
@@ -183,6 +184,11 @@ Loop, in plain English:
    holiday-shifted expiry adjustments, dynamic budget regimes.
 5. **EOD** — square off, generate P&L + tax report, auto-verify trades
    against Zerodha, run rejection audit (verdict on every skipped entry).
+
+If the tool starts after the 10:15 Gap-and-Go cutoff or a valid scan finds
+no candidates, it asks before using the best runtime-compatible fallback.
+Stop/no-trade is the default; the alternative is the legacy blended scorer,
+with its negative after-cost OOS PF 0.82 shown before consent.
 
 ```
 python main.py --mode trade           # NoAI (default)
@@ -221,7 +227,11 @@ Pages:
   Book boundaries are enforced: net worth = Zerodha holdings + mutual
   funds + US book. The India swing open book is a *tracking* ledger over
   shares that already sit inside the Zerodha holdings, so it is shown
-  separately and never summed into net worth.
+  separately and never summed into net worth. A persistent USD/INR toggle
+  keeps home and the US page in the same display currency. **Ask AI** builds
+  a copy-paste prompt containing the private multi-book snapshot, allocation,
+  SIP and overlap context for use in ChatGPT, Claude or Gemini; it does not
+  place orders or send the prompt automatically.
 - **`/portfolio`** — Phase 1 analyser surface.
   Reads the latest `--mode analyze` run from `data/portfolio_analyses.db`,
   shows holdings (with **Rating** and **Risk** columns from the factor
@@ -242,7 +252,9 @@ Pages:
   chip; funds with no resolvable NAV are flagged and held at cost rather
   than valued at zero. First paint replays the last stored Coin fetch
   (`Coin synced <ts>` chip) so the page never opens empty — the Refresh
-  button is for pulling a newer NAV, not for making the page work.
+  button is for pulling a newer NAV, not for making the page work. Refresh
+  now shows progress/completion feedback, and NAV history has a fund picker
+  whose selection survives a book refresh.
 - **`/swing`** — India delivery swing dashboard. Entry recommendations on
   top with **Conviction** and **Risk** grade columns, watchlist and open
   book below with live prices (Zerodha 5s), per-stock detail pages, and
@@ -457,7 +469,7 @@ their content.
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
 | [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) | **Operator-facing walkthrough for Phase 4 swing** — dashboard surface, full CLI reference, 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence, AI overlay (cost / sticky cache / prompt), Compare-up-to-4, Add+ flow, HTTP API, persistence, tuning knobs, FAQ |
 | [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — D1/D1.1/D13/D16/D17 + **D24-D29 (Portfolio-Analyser pages) shipped 2026-05-12** + **D30-D31 (live quotes + /swing page) shipped 2026-05-13** |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D36 adds whole-book Ask-AI prompts, shared USD/INR display state and MF refresh/NAV-chart UX. |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday (superseded), ~~A2 swing~~ (✅ done), A3 ETF rotation (planning), A4 options (✅ shipped). No-F&O constraint lifted 2026-06-09. |
 | [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) | **Plain-English options primer** — what options are, how P&L works, the Greeks (delta/theta/vega/gamma), buying vs selling mechanics |
 | [docs/OPTIONS_STRATEGY.md](docs/OPTIONS_STRATEGY.md) | **Options strategy reference** — regime-gated directional buying v1.0, premium model (Brenner-Subrahmanyam + Parkinson), NSE charges, backtest results, improvement ideas, config reference, module architecture |

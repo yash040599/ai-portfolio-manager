@@ -58,6 +58,10 @@ from shared.technical_indicators import adx as _calc_adx
 class PortfolioManager:
     """Intraday trading bot. See module docstring for the lifecycle."""
 
+    LEGACY_FALLBACK_PROFILE = "NOAI_LEGACY_FULL"
+    LEGACY_FALLBACK_OOS_PF = 0.82
+    LEGACY_FALLBACK_FULL_PF = 0.86
+
 
     def __init__(self, config: type[Config]):
         self.cfg = config
@@ -107,6 +111,43 @@ class PortfolioManager:
     # ================================================================
     # RUN — MAIN ENTRY POINT
     # ================================================================
+
+    def _offer_legacy_fallback(self, reason: str) -> bool:
+        """Ask for explicit consent before using the negative-edge fallback."""
+        print(
+            f"\n  Gap-and-Go cannot continue: {reason}"
+            f"\n"
+            f"\n  Best available runtime fallback: legacy blended-score strategy"
+            f"\n    Profile: {self.LEGACY_FALLBACK_PROFILE}"
+            f"\n    OOS PF: {self.LEGACY_FALLBACK_OOS_PF:.2f} "
+            f"(full combined PF: {self.LEGACY_FALLBACK_FULL_PF:.2f})"
+            f"\n    WARNING: PF below 1.00 means the strategy lost money after costs."
+            f"\n"
+            f"\n  Options:"
+            f"\n    [1] Run the legacy fallback for today"
+            f"\n    [2] Stop — open no new trades (recommended)"
+            f"\n"
+        )
+        try:
+            choice = input("  Your choice [2]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            choice = "2"
+
+        if choice != "1":
+            self.log.info("Legacy fallback declined — no new trades today")
+            return False
+
+        self.log.warning(
+            f"User approved {self.LEGACY_FALLBACK_PROFILE} fallback after warning: "
+            f"OOS PF {self.LEGACY_FALLBACK_OOS_PF:.2f}, negative after-cost expectancy"
+        )
+        self._gap_go = False
+        self.cfg.TRADE_STRATEGY_PROFILE = self.LEGACY_FALLBACK_PROFILE
+        self.cfg.SQUARE_OFF_HOUR = 14
+        self.cfg.SQUARE_OFF_MINUTE = 0
+        self.cfg.LOSER_EXIT_HOUR = 13
+        self._scan_failed = False
+        return True
 
     def run(self):
         """
@@ -377,49 +418,19 @@ class PortfolioManager:
                         f"Gap-and-Go: started too late ({now.strftime('%H:%M')}) — "
                         f"gap signal only valid in first hour after open."
                     )
-                    # Offer fallback to legacy score-based strategy
-                    sq_off = now.replace(
-                        hour=self.cfg.SQUARE_OFF_HOUR,
-                        minute=self.cfg.SQUARE_OFF_MINUTE,
-                        second=0, microsecond=0,
+                    reason = (
+                        f"started at {now.strftime('%H:%M')}, after the "
+                        f"{gap_go_cutoff.strftime('%H:%M')} signal cutoff"
                     )
-                    mins_left = (sq_off - now).total_seconds() / 60
-                    if mins_left >= self.cfg.MIN_MINUTES_FOR_ENTRY:
-                        print(
-                            f"\n  Cannot run Gap-and-Go at {now.strftime('%H:%M')} "
-                            f"(cutoff was {gap_go_cutoff.strftime('%H:%M')})."
-                            f"\n  {mins_left:.0f} minutes left until square-off."
-                            f"\n"
-                            f"\n  Options:"
-                            f"\n    [1] Fallback to legacy score-based strategy "
-                            f"(NOAI_LEGACY_FULL, backtest PF 0.86)"
-                            f"\n    [2] Exit — nothing to do today"
-                            f"\n"
-                        )
-                        try:
-                            choice = input("  Your choice [2]: ").strip()
-                        except (EOFError, KeyboardInterrupt):
-                            choice = "2"
-                        if choice == "1":
-                            self.log.info(
-                                "User chose legacy fallback — switching to "
-                                "NOAI_LEGACY_FULL for today"
-                            )
-                            self._gap_go = False
-                            self.cfg.TRADE_STRATEGY_PROFILE = "NOAI_LEGACY_FULL"
-                            # Restore default square-off time (legacy uses later close)
-                            self.cfg.SQUARE_OFF_HOUR = 14
-                            self.cfg.SQUARE_OFF_MINUTE = 0
-                            self._run_pre_market_scan()
-                            if self._trade_plans:
-                                self._enter_positions()
-                                self._run_monitor_loop()
-                            else:
-                                self.log.info("Legacy scan: no trades found")
-                            self._generate_report()
-                            return
+                    if self._offer_legacy_fallback(reason):
+                        self._run_pre_market_scan()
+                        if self._trade_plans:
+                            self._enter_positions()
+                            self._run_monitor_loop()
+                        elif self._scan_failed:
+                            self.log.error("Legacy fallback scan failed — no new trades today")
                         else:
-                            self.log.info("User chose to exit — no trades today")
+                            self.log.info("Legacy fallback scan found no eligible trades")
                     self._generate_report()
                     return
 
@@ -468,13 +479,28 @@ class PortfolioManager:
                 if not self._trade_plans:
                     if self._scan_failed:
                         self.log.error("Scan failed — could not fetch market data. Exiting.")
-                    else:
-                        self.log.warning(
-                            "Gap-and-Go scan: no stocks gapped with volume today. "
-                            "Nothing to do."
-                        )
-                    self._generate_report()
-                    return
+                        self._generate_report()
+                        return
+
+                    self.log.warning(
+                        "Gap-and-Go scan: no stocks gapped with volume today."
+                    )
+                    if not self._offer_legacy_fallback(
+                        "the completed scan found no eligible gap-and-go candidates"
+                    ):
+                        self._generate_report()
+                        return
+
+                    self._run_pre_market_scan()
+                    if self._shutdown_requested:
+                        return
+                    if not self._trade_plans:
+                        if self._scan_failed:
+                            self.log.error("Legacy fallback scan failed — no new trades today")
+                        else:
+                            self.log.info("Legacy fallback scan found no eligible trades")
+                        self._generate_report()
+                        return
 
                 # Enter immediately — no observation delay needed
                 # (the gap IS the directional signal)

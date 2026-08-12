@@ -23,6 +23,7 @@ import html
 import re
 
 _VALID_SCOPES = {
+    "home",
     "portfolio", "portfolio_detail",
     "swing", "swing_detail",
     "us", "us_detail",
@@ -88,6 +89,12 @@ def chat_section_html(scope: str, symbol: str = "") -> str:
         placeholder = (
             f"e.g. I hold {sym} and it dipped after I bought — "
             f"should I buy more, hold, or exit?"
+        )
+    elif scope == "home":
+        subject = "about <strong>everything I own</strong>"
+        placeholder = (
+            "e.g. Across my Indian stocks, mutual funds and US holdings, "
+            "what is over-weight and what should I fix first?"
         )
     else:
         subject = "about this page"
@@ -221,6 +228,14 @@ def build_chat_prompt(scope: str, symbol: str, question: str) -> str:
     question = (question or "").strip()
     sym = _clean_symbol(symbol)
 
+    if scope == "home":
+        return _assemble(
+            question,
+            "Multi-market: Indian equities and mutual funds (INR) plus "
+            "US equities (USD)",
+            _home_overview_block(),
+            asks=_PORTFOLIO_ASKS,
+        )
     if scope == "portfolio_detail":
         body = _portfolio_detail_block(sym)
         market = "Indian (NSE/BSE), prices in INR (Rs.)"
@@ -243,7 +258,34 @@ def build_chat_prompt(scope: str, symbol: str, question: str) -> str:
     return _assemble(question, market, body)
 
 
-def _assemble(question: str, market: str, body: str) -> str:
+# Whole-book questions need a different closing brief to a single-stock
+# one: "buy more / trim / exit" is the wrong frame for net worth.
+_PORTFOLIO_ASKS = """1. Read my overall asset allocation: what is over- or under-weight for a
+   long-term investor, and what is the single most important change to make?
+2. Flag concentration and overlap risk — names or themes I am exposed to
+   more than once across the Indian, mutual-fund and US books.
+3. Comment on whether my new money (SIPs) is going where it should, given
+   what I already own.
+4. Verify current prices/levels and any recent news that changes the read,
+   stating the date of the data you used.
+5. Call out anything that looks structurally wrong (too many funds, cash
+   drag, currency exposure, tax inefficiency).
+
+Do not give me per-stock trade calls unless one is genuinely urgent.
+Keep it concise and practical. I am the one deciding and executing."""
+
+_DEFAULT_ASKS = """1. A clear, actionable recommendation (e.g. buy more / hold / trim / exit),
+   with the reasoning laid out simply.
+2. Verify the CURRENT price and any recent news before concluding, and
+   tell me if that changes the picture vs. my snapshot above.
+3. Key risks I should watch, and a level/condition that would change your view.
+4. If you need data I didn't provide, tell me exactly what to fetch.
+
+Keep it concise and practical. I am the one deciding and executing the trade."""
+
+
+def _assemble(question: str, market: str, body: str,
+              asks: str = _DEFAULT_ASKS) -> str:
     q = question or "(No specific question typed — give me your overall read and the single best action to take.)"
     return f"""You are a seasoned equity research analyst and portfolio advisor.
 
@@ -264,17 +306,219 @@ local snapshot and may be stale.
 {body}
 
 ================ WHAT I NEED FROM YOU ================
-1. A clear, actionable recommendation (e.g. buy more / hold / trim / exit),
-   with the reasoning laid out simply.
-2. Verify the CURRENT price and any recent news before concluding, and
-   tell me if that changes the picture vs. my snapshot above.
-3. Key risks I should watch, and a level/condition that would change your view.
-4. If you need data I didn't provide, tell me exactly what to fetch.
-
-Keep it concise and practical. I am the one deciding and executing the trade."""
+{asks}"""
 
 
 # ── Scope data blocks ───────────────────────────────────────────
+
+# Row caps keep the prompt inside a free model's context window. A
+# 24-fund book plus 30 equities plus a US book is already long.
+_MAX_ROWS = 30
+
+
+def _home_overview_block() -> str:
+    """Every book in one prompt: Indian equity, mutual funds, US.
+
+    Built from `home_summary.build_summary()` — the same payload the
+    home page renders — so a book added there shows up in the totals
+    automatically. Adding a *detailed* section for a new book means
+    adding a helper below.
+    """
+    try:
+        from modes.dashboard.home_summary import build_summary
+        data = build_summary(live=False)
+    except Exception:
+        return "(Could not read my portfolio right now.)"
+
+    totals = data.get("totals") or {}
+    fx = data.get("fx") or {}
+    rate = float(fx.get("rate") or 0)
+
+    lines = ["=== NET WORTH (my last local snapshot) ==="]
+    lines.append(f"- Total net worth: Rs.{float(totals.get('net_worth_inr') or 0):,.0f}")
+    lines.append(f"- Total invested: Rs.{float(totals.get('invested_inr') or 0):,.0f}")
+    lines.append(
+        f"- Unrealised P&L: Rs.{float(totals.get('unrealised_inr') or 0):+,.0f} "
+        f"({float(totals.get('unrealised_pct') or 0):+.2f}%)")
+    lines.append(
+        f"- Split: Indian equity {float(totals.get('india_share_pct') or 0):.0f}% · "
+        f"mutual funds {float(totals.get('mf_share_pct') or 0):.0f}% · "
+        f"US {float(totals.get('us_share_pct') or 0):.0f}%")
+    if rate > 0:
+        lines.append(f"- USD/INR used for conversion: {rate:,.2f}")
+    lines.append(
+        f"- Realised P&L to date (all books): "
+        f"Rs.{float(totals.get('realised_inr') or 0):+,.0f}")
+    if not (data.get("us") or {}).get("live"):
+        lines.append("- CAVEAT: no live US quote was available, so the US book "
+                     "is counted at cost and the net-worth and P&L figures "
+                     "above are understated by however much it has moved.")
+
+    lines.append("")
+    lines.append(_india_equity_section(data.get("india") or {}))
+    lines.append("")
+    lines.append(_mutual_fund_section())
+    lines.append("")
+    lines.append(_us_section(data.get("us") or {}, rate))
+
+    swing = data.get("swing_india") or {}
+    if int(swing.get("positions") or 0) > 0:
+        lines.append("")
+        lines.append(
+            f"=== NOTE ON DOUBLE COUNTING ===\n"
+            f"I also track {swing['positions']} Indian swing position(s) "
+            f"separately, but those shares already sit inside the Zerodha "
+            f"holdings above — do not add them again.")
+    return "\n".join(lines)
+
+
+def _india_equity_section(india: dict) -> str:
+    lines = ["=== INDIAN EQUITY (Zerodha demat) ==="]
+    if not india.get("available"):
+        lines.append("- No analysis snapshot on file yet.")
+        return "\n".join(lines)
+
+    lines.append(f"- Invested: Rs.{float(india.get('invested') or 0):,.0f}")
+    lines.append(f"- Current value: Rs.{float(india.get('current') or 0):,.0f}")
+    lines.append(
+        f"- Unrealised P&L: Rs.{float(india.get('pnl') or 0):+,.0f} "
+        f"({float(india.get('pnl_pct') or 0):+.2f}%)")
+    lines.append(f"- Holdings: {india.get('holdings', 0)}")
+
+    # The home payload only carries the top few rows, so pull the full
+    # book from the analyser snapshot when it is available.
+    try:
+        from modes.analyze.persistence import latest_snapshot
+        snap = latest_snapshot()
+    except Exception:
+        snap = None
+
+    if snap and getattr(snap, "holdings", None):
+        ranked = sorted(snap.holdings,
+                        key=lambda h: _num(getattr(h, "current_value", None)),
+                        reverse=True)
+        lines.append("")
+        lines.append("Holdings (symbol · qty · avg buy · last · P&L% · sector):")
+        for h in ranked[:_MAX_ROWS]:
+            lines.append(
+                f"- {h.symbol}: {_qty_str(h.qty)} sh · "
+                f"avg Rs.{_num(h.avg_buy_price):,.2f} · "
+                f"last Rs.{_num(h.current_price):,.2f} · "
+                f"{_num(h.pnl_pct):+.1f}% · {_txt(h.sector, 'n/a')}")
+        if len(ranked) > _MAX_ROWS:
+            lines.append(f"(showing the top {_MAX_ROWS} of {len(ranked)} "
+                         f"holdings by value)")
+    elif india.get("sectors"):
+        lines.append("")
+        lines.append("Sector weights:")
+        for s in india["sectors"][:12]:
+            lines.append(f"- {s.get('sector') or 'OTHER'}: "
+                         f"{float(s.get('weight_pct') or 0):.1f}%")
+    return "\n".join(lines)
+
+
+def _mutual_fund_section() -> str:
+    lines = ["=== MUTUAL FUNDS (Zerodha Coin + other brokers) ==="]
+    try:
+        from modes.mf.book import build_book
+        book = build_book(live=False)
+    except Exception:
+        lines.append("- Could not read the mutual-fund book.")
+        return "\n".join(lines)
+
+    if not book.schemes:
+        lines.append("- No mutual funds tracked.")
+        return "\n".join(lines)
+
+    lines.append(f"- Invested: Rs.{book.invested_value:,.0f}")
+    lines.append(f"- Current value: Rs.{book.current_value:,.0f}")
+    lines.append(f"- Unrealised P&L: Rs.{book.pnl:+,.0f} ({book.pnl_pct:+.2f}%)")
+    lines.append(f"- Schemes: {len(book.schemes)}")
+    lines.append(
+        f"- Active SIPs: {len(book.active_sips)} "
+        f"(Rs.{book.monthly_sip_outflow:,.0f}/month); "
+        f"paused: {len(book.paused_sips)} (paused deliberately, not neglected)")
+    if book.nav_as_of:
+        lines.append(f"- Valued on NAV published {book.nav_as_of} "
+                     f"(mutual funds have no intraday price)")
+
+    lines.append("")
+    lines.append("Funds (name · units · avg NAV · current NAV · P&L% · monthly SIP):")
+    for s in book.schemes[:_MAX_ROWS]:
+        sip = (f" · SIP Rs.{s.sip_amount:,.0f}/mo" if s.sip_amount > 0
+               else " · no new money")
+        broker = (f" · held at {', '.join(s.brokers)}"
+                  if len(s.brokers) > 1 else "")
+        lines.append(
+            f"- {s.fund}: {s.units:,.3f} units · avg {s.avg_nav:,.2f} · "
+            f"NAV {s.nav:,.2f} · {s.pnl_pct:+.1f}%{sip}{broker}")
+    if len(book.schemes) > _MAX_ROWS:
+        lines.append(f"(showing the top {_MAX_ROWS} of {len(book.schemes)} "
+                     f"funds by value)")
+
+    # The exposure map is the most useful thing an advisor can react to.
+    try:
+        from modes.mf.insights import exposure_clusters
+        clusters = exposure_clusters(book)
+        redundant = [c for c in clusters if c.is_redundant]
+        if redundant:
+            lines.append("")
+            lines.append("Same exposure held more than once:")
+            for c in redundant:
+                names = ", ".join(s.fund for s in c.schemes)
+                lines.append(f"- {c.label} ({c.weight_pct:.1f}% of the fund "
+                             f"book): {names}")
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
+def _us_section(us: dict, rate: float) -> str:
+    lines = ["=== US EQUITY (long-term book, not swing) ==="]
+    invested = float(us.get("invested_usd") or 0)
+    current = float(us.get("current_usd") or 0)
+    priced = bool(us.get("live"))
+
+    lines.append(f"- Invested (cost basis): ${invested:,.2f}")
+    if priced:
+        lines.append(f"- Current value: ${current:,.2f}")
+        lines.append(
+            f"- Unrealised P&L: ${float(us.get('pnl_usd') or 0):+,.2f} "
+            f"({float(us.get('pnl_pct') or 0):+.2f}%)")
+        if rate > 0:
+            lines.append(f"- In rupees: Rs.{current * rate:,.0f}")
+    else:
+        # Without live quotes this book is marked at cost. Reporting
+        # "+0.00%" here would be a fabricated number, and the net-worth
+        # figure above inherits the same understatement.
+        lines.append("- Current value: NOT PRICED — no live US quote was "
+                     "available, so this book is shown at cost and its "
+                     "unrealised P&L is unknown. Please look up current "
+                     "prices for the holdings below.")
+        if rate > 0:
+            lines.append(f"- At cost, in rupees: Rs.{invested * rate:,.0f}")
+    lines.append(f"- Positions: {us.get('positions', 0)}")
+    lines.append("- These are long-term holdings (RSU lots plus deliberate "
+                 "long-horizon buys), held to compound — not trades.")
+
+    try:
+        from modes.dashboard.us_page import _us_positions
+        positions = _us_positions()
+    except Exception:
+        positions = []
+
+    if positions:
+        lines.append("")
+        lines.append("Holdings (symbol · qty · avg cost):")
+        for p in positions[:_MAX_ROWS]:
+            lines.append(
+                f"- {p.symbol}: {_qty_str(getattr(p, 'managed_qty', 0))} sh · "
+                f"avg ${float(getattr(p, 'entry_price', 0) or 0):,.2f}")
+        if len(positions) > _MAX_ROWS:
+            lines.append(f"(showing the first {_MAX_ROWS} of "
+                         f"{len(positions)} positions)")
+    return "\n".join(lines)
+
 
 def _portfolio_detail_block(sym: str) -> str:
     if not sym:

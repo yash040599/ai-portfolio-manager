@@ -536,7 +536,28 @@ def _fallback_payload(err: str) -> dict:
     }
 
 
+def _currency_toggle_html(data: dict) -> str:
+    """USD/INR switch for the dollar figures on this page.
+
+    Shares `localStorage['us-currency']` with `/us` on purpose — a
+    currency preference that flips back when you change page would be
+    worse than no toggle at all.
+    """
+    rate = _num((data.get("fx") or {}).get("rate"))
+    title = (f"Show US dollar values in rupees at {rate:,.2f}/USD"
+             if rate > 0 else
+             "USD/INR rate unavailable — dollar values cannot be converted")
+    return (
+        f'<button id="home-currency-toggle" class="cur-toggle" type="button" '
+        f'onclick="toggleHomeCurrency()" title="{html.escape(title)}">'
+        f'<span id="cur-usd-pill" class="cur-pill active">USD</span>'
+        f'<span id="cur-inr-pill" class="cur-pill">INR</span>'
+        f'</button>'
+    )
+
+
 def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
+    from modes.dashboard.chat_widget import chat_section_html
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
 
     load_error = ""
@@ -575,12 +596,13 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
         "</head><body>",
         error_toast_html(),
         "<main class='wrap'>",
-        render_topnav("/"),
+        render_topnav("/", after_links=_currency_toggle_html(data)),
         _hero(data),
         flash,
         err_banner,
         _kpis(data),
         _connect_card(data),
+        chat_section_html("home"),
         _allocation(data),
         _books(data),
         _realised(data),
@@ -596,6 +618,13 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
 
 
 _STYLE = r"""
+.cur-toggle { display: inline-flex; align-items: center; gap: 0;
+              background: var(--card); border: 1px solid var(--line);
+              border-radius: 999px; padding: 0; margin-left: 8px;
+              cursor: pointer; font: inherit; overflow: hidden; }
+.cur-pill { padding: 3px 10px; font-size: 12px; font-weight: 700;
+            color: var(--muted); }
+.cur-pill.active { background: var(--accent); color: #fff; }
 .wrap { max-width: 1240px; margin: 0 auto; }
 
 /* ── Hero ─────────────────────────────────────────────────── */
@@ -758,10 +787,13 @@ _SCRIPT = r"""
   'use strict';
 
   var AUTO_KEY = 'homeAutoRefresh';
+  var CUR_KEY = 'us-currency';   // shared with /us so the choice sticks
   var AUTO_MS = 60000;
   var timer = null;
   var inFlight = false;
   var geoChart = null;
+  var lastPayload = null;
+  var fxRate = 0;
 
   function boot() {
     var el = document.getElementById('home-bootstrap');
@@ -790,12 +822,40 @@ _SCRIPT = r"""
     if (a >= 1e5) return '\u20B9' + sign + (a / 1e5).toFixed(2) + ' L';
     return '\u20B9' + sign + group(a);
   }
+  function currency() {
+    try { return window.localStorage.getItem(CUR_KEY) || 'USD'; }
+    catch (e) { return 'USD'; }
+  }
   function usd(v, signed) {
     v = Number(v) || 0;
+    // In INR mode every dollar figure is converted in place, so the
+    // page never mixes the two currencies in one view.
+    if (currency() === 'INR' && fxRate > 0) {
+      return inr(v * fxRate, signed);
+    }
     return '$' + (v < 0 ? '-' : (signed ? '+' : '')) +
       Math.abs(v).toLocaleString('en-US',
         { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
+  function syncCurrencyPills() {
+    var cur = currency();
+    var u = document.getElementById('cur-usd-pill');
+    var i = document.getElementById('cur-inr-pill');
+    if (u) u.classList.toggle('active', cur === 'USD');
+    if (i) i.classList.toggle('active', cur === 'INR');
+  }
+  function toggleHomeCurrency() {
+    if (fxRate <= 0) {
+      showError('No USD/INR rate available yet, so dollar values cannot ' +
+        'be converted. Refresh live prices and try again.');
+      return;
+    }
+    var next = currency() === 'USD' ? 'INR' : 'USD';
+    try { window.localStorage.setItem(CUR_KEY, next); } catch (e) {}
+    syncCurrencyPills();
+    apply(lastPayload);
+  }
+  window.toggleHomeCurrency = toggleHomeCurrency;
   function pct(v) { return (Number(v) || 0).toFixed(2) + '%'; }
   function signedPct(v) {
     v = Number(v) || 0;
@@ -870,6 +930,9 @@ _SCRIPT = r"""
   // ── render ───────────────────────────────────────────────
   function apply(d) {
     if (!d) return;
+    lastPayload = d;
+    fxRate = Number((d.fx || {}).rate) || 0;
+    syncCurrencyPills();
     var t = d.totals || {}, ind = d.india || {}, us = d.us || {}, sw = d.swing_india || {};
     var mf = d.mf || {};
 

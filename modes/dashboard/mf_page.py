@@ -140,6 +140,7 @@ def render_mf_sections_json(*, live: bool = False) -> str:
         _render_split_notice(book),
         _render_insights(book),
         _render_combined_table(book),
+        _render_nav_chart_card(book),
         _render_coin_table(coin, book),
         _render_external_table(external),
         _render_sips(book),
@@ -213,6 +214,12 @@ def _render_freshness(book) -> str:
         + '<button class="action" type="button" id="mf-refresh" '
           'onclick="refreshMf(true)">Refresh from Coin</button>'
         + '</div>'
+        # Sits directly under the button rather than above the tables:
+        # a spinner below the fold is the same as no spinner.
+        + '<div id="mf-loading" class="mf-loading" hidden>'
+          '<span class="spinner"></span>'
+          '<span id="mf-loading-text">Loading\u2026</span>'
+          '</div>'
         + '<div class="banner error" id="mf-error" style="display:none"></div>'
     )
 
@@ -277,17 +284,39 @@ year. The same scheme in a direct plan keeps that fee invested.">?</span></h3>
     <ul class="sectors" id="mf-broker-list"></ul>
   </div>
 </section>
-<section class="card">
-  <h3>NAV history <span class="muted small" id="mf-nav-chart-label">
-    &mdash; pick a fund below</span></h3>
-  <div class="chart-wrap"><canvas id="mf-chart-nav" height="220"></canvas></div>
-</section>
 """
+
+
+def _render_nav_chart_card(book) -> str:
+    """NAV history panel. Lives beside the fund tables, not at the top of
+    the page, because it is only meaningful once you have picked a fund."""
+    options = [
+        f'<option value="{html.escape(s.scheme_code)}" '
+        f'data-fund="{html.escape(s.fund)}">{html.escape(s.fund)}</option>'
+        for s in book.schemes
+    ]
+    return (
+        '<div class="card">'
+        '<div class="nav-chart-head">'
+        '<h3>NAV history</h3>'
+        '<select id="mf-nav-picker" onchange="navPickerChanged()" '
+        'aria-label="Choose a fund to chart">'
+        '<option value="">Choose a fund…</option>'
+        + "".join(options)
+        + '</select>'
+        '<span class="muted small" id="mf-nav-chart-label"></span>'
+        '</div>'
+        '<p class="muted small">Published daily NAV. Pick a fund above, or '
+        'click any fund name in the tables below.</p>'
+        '<div class="chart-wrap"><canvas id="mf-chart-nav" height="220">'
+        '</canvas></div>'
+        '</div>'
+    )
 
 
 def _render_sections_loader() -> str:
     return (
-        '<div id="mf-sections">'
+        '<div id="mf-sections" aria-busy="false">'
         '<div class="card muted">Loading holdings&hellip;</div>'
         '</div>'
     )
@@ -875,6 +904,28 @@ input { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px;
                   border-color: var(--pos-line); }
 ul.tight { margin: 8px 0 0; padding-left: 18px; }
 ul.tight li { margin: 3px 0; }
+/* Refresh feedback */
+.mf-loading { display: flex; align-items: center; gap: 10px;
+              background: var(--accent-soft); border: 1px solid var(--accent-line);
+              color: var(--accent); border-radius: 10px; padding: 10px 14px;
+              margin-bottom: 14px; font-size: 13px; font-weight: 500; }
+.mf-loading.done { background: var(--pos-bg); border-color: var(--pos-line);
+                   color: var(--pos); }
+.mf-loading.done .spinner { display: none; }
+.spinner { display: inline-block; width: 14px; height: 14px; flex: none;
+           border: 2px solid var(--accent-line);
+           border-top-color: var(--accent); border-radius: 50%;
+           animation: mf-spin 0.8s linear infinite; }
+@keyframes mf-spin { to { transform: rotate(360deg); } }
+#mf-sections[aria-busy="true"] { opacity: .45; pointer-events: none;
+                                 transition: opacity .15s ease; }
+.nav-chart-head { display: flex; align-items: center; gap: 10px;
+                  flex-wrap: wrap; margin-bottom: 4px; }
+.nav-chart-head h3 { margin: 0; }
+#mf-nav-picker { min-width: 280px; max-width: 100%; padding: 6px 9px;
+                 border: 1px solid var(--line); border-radius: 6px;
+                 background: var(--card); color: var(--fg); font: inherit;
+                 font-size: 13px; }
 @media (max-width: 900px) {
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .split { grid-template-columns: 1fr; }
@@ -889,6 +940,7 @@ _SCRIPT = r"""
 
   var assetChart = null, amcChart = null, navChart = null;
   var picked = null;
+  var lastNav = null;      // fund the user is charting, kept across refreshes
   var searchTimer = null;
   var inFlight = false;
 
@@ -1042,19 +1094,29 @@ _SCRIPT = r"""
   // ── NAV history ──────────────────────────────────────────
   function loadNavChart(scheme, fundName) {
     var label = document.getElementById('mf-nav-chart-label');
-    if (label) label.textContent = '\u2014 ' + fundName;
+    var picker = document.getElementById('mf-nav-picker');
+    if (!scheme) {
+      if (label) label.textContent = '';
+      if (navChart) { navChart.destroy(); navChart = null; }
+      lastNav = null;
+      return;
+    }
+    lastNav = { scheme: scheme, fund: fundName };
+    if (picker && picker.value !== scheme) picker.value = scheme;
+    if (label) label.textContent = 'Loading ' + fundName + '\u2026';
     fetch('/api/mf/nav_history?scheme=' + encodeURIComponent(scheme))
       .then(function (r) { return r.json(); })
       .then(function (d) {
         var canvas = document.getElementById('mf-chart-nav');
         if (!canvas || typeof Chart === 'undefined') return;
         if (!d.ok || !d.points || !d.points.length) {
-          if (label) {
-            label.textContent = '\u2014 ' + fundName +
-              ' (no NAV history available)';
-          }
+          if (label) label.textContent = fundName + ' \u2014 no NAV history available';
           if (navChart) { navChart.destroy(); navChart = null; }
           return;
+        }
+        if (label) {
+          label.textContent = fundName + ' \u00B7 ' + d.points.length +
+            ' days to ' + d.points[d.points.length - 1].date;
         }
         var labels = d.points.map(function (p) { return p.date; });
         var data = d.points.map(function (p) { return p.nav; });
@@ -1085,6 +1147,14 @@ _SCRIPT = r"""
       .catch(function (e) { showError('NAV history failed: ' + e.message); });
   }
   window.loadNavChart = loadNavChart;
+
+  function navPickerChanged() {
+    var picker = document.getElementById('mf-nav-picker');
+    if (!picker) return;
+    var opt = picker.options[picker.selectedIndex];
+    loadNavChart(picker.value, opt ? (opt.getAttribute('data-fund') || opt.text) : '');
+  }
+  window.navPickerChanged = navPickerChanged;
 
   // ── Scheme picker ────────────────────────────────────────
   function searchSchemes() {
@@ -1207,14 +1277,52 @@ _SCRIPT = r"""
   window.removeExternal = removeExternal;
 
   // ── Sections ─────────────────────────────────────────────
+  function setBusy(on, text) {
+    var box = document.getElementById('mf-loading');
+    var host = document.getElementById('mf-sections');
+    if (host) host.setAttribute('aria-busy', on ? 'true' : 'false');
+    if (!box) return;
+    if (on) {
+      box.hidden = false;
+      box.classList.remove('done');
+      var label = document.getElementById('mf-loading-text');
+      if (label) label.textContent = text || 'Loading\u2026';
+    } else {
+      box.hidden = true;
+      box.classList.remove('done');
+    }
+  }
+
+  function flashDone(text) {
+    var box = document.getElementById('mf-loading');
+    var label = document.getElementById('mf-loading-text');
+    if (!box) return;
+    box.hidden = false;
+    box.classList.add('done');
+    if (label) label.textContent = text;
+    // Leave the confirmation up briefly so a fast refresh is still
+    // visibly a refresh, rather than the page appearing to do nothing.
+    window.setTimeout(function () {
+      box.hidden = true;
+      box.classList.remove('done');
+    }, 2500);
+  }
+
   function refreshMf(live) {
     if (inFlight) return;
     inFlight = true;
     var btn = document.getElementById('mf-refresh');
-    if (btn && live) { btn.disabled = true; btn.textContent = 'Refreshing\u2026'; }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = live ? 'Refreshing\u2026' : 'Loading\u2026';
+    }
     var chip = document.getElementById('mf-live-chip');
     if (chip && live) chip.textContent = 'Fetching from Coin\u2026';
+    setBusy(true, live
+      ? 'Fetching holdings, SIPs and NAVs from Coin\u2026'
+      : 'Loading the stored book\u2026');
 
+    var started = Date.now();
     fetch('/api/mf/sections' + (live ? '?live=1' : ''))
       .then(function (r) {
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1223,11 +1331,24 @@ _SCRIPT = r"""
       .then(function (d) {
         showError('');
         var host = document.getElementById('mf-sections');
-        if (host) host.innerHTML = d.html || '';
+        if (host) {
+          // innerHTML throws away the old canvas, so the Chart.js
+          // instance bound to it must go too or it redraws into a
+          // detached node.
+          if (navChart) { navChart.destroy(); navChart = null; }
+          host.innerHTML = d.html || '';
+        }
         applySummary(d.summary);
         if (chip) chip.textContent = syncedLabel((d.summary || {}).synced_at);
+        restoreNavSelection();
+        setBusy(false);
+        var secs = Math.max(1, Math.round((Date.now() - started) / 1000));
+        flashDone(live
+          ? 'Updated from Coin in ' + secs + 's'
+          : 'Book loaded');
       })
       .catch(function (e) {
+        setBusy(false);
         showError('Could not load the mutual-fund book: ' + e.message);
       })
       .then(function () {
@@ -1236,6 +1357,22 @@ _SCRIPT = r"""
       });
   }
   window.refreshMf = refreshMf;
+
+  function restoreNavSelection() {
+    // Sections were re-rendered; put the user's chosen fund back rather
+    // than silently resetting the chart they were looking at.
+    if (!lastNav) return;
+    var picker = document.getElementById('mf-nav-picker');
+    if (!picker) return;
+    for (var i = 0; i < picker.options.length; i++) {
+      if (picker.options[i].value === lastNav.scheme) {
+        picker.value = lastNav.scheme;
+        loadNavChart(lastNav.scheme, lastNav.fund);
+        return;
+      }
+    }
+    lastNav = null;
+  }
 
   document.addEventListener('DOMContentLoaded', function () {
     applySummary(boot());

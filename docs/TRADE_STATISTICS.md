@@ -1,6 +1,6 @@
 # Trading Statistics
 
-Last updated: 2026-06-15 (v1.2.0: adaptive volume on broad-gap days. PF 1.30, Sharpe 1.29).
+Last updated: 2026-08-12 (explicit-consent legacy fallback policy).
 
 ## 0. Current Verdict
 
@@ -22,6 +22,7 @@ Last updated: 2026-06-15 (v1.2.0: adaptive volume on broad-gap days. PF 1.30, Sh
 | Gap-hold filter | 0.3% (v1.1.0+: reject if gap faded > 0.3% from open) |
 | Score contradiction | ENABLED (v1.1.0+: reject when score contradicts gap direction) |
 | Entry timing | 09:45 IST (v1.1.0+: after 09:30 candle closes, matching backtest) |
+| Fallback policy | If startup is after 10:15 or the Gap-and-Go scan finds zero candidates, ask before switching to `NOAI_LEGACY_FULL`. Warning: OOS PF 0.82, full combined PF 0.86, negative after-cost expectancy. Stop/no-trade is the default and recommended choice. |
 | Worst-case daily loss | ~Rs.933 (2 trades x 2.5% SL), hard circuit breaker at Rs.1,500 |
 | Note | v1.0.0 dry-run on 2026-06-09 lost Rs.475 (0/2 wins). Root cause: entry timing mismatch vs backtest + missing gap-hold check. Both fixed in v1.1.0. |
 
@@ -194,11 +195,14 @@ The legacy multi-indicator scorer (NOAI_LEGACY_FULL) was audited across 62 gates
 | Charges (old NoAI baseline) | Rs.2,591 |
 | v1.0.0 dry-run 2026-06-09 | 2 trades, Rs.-476 (0/2 wins) |
 
-Gap-and-Go v1.1.1 dry-run results will be tracked here starting 2026-06-12.
+Gap-and-Go dry-run evidence began with v1.1.1 on 2026-06-12 and continues
+under the active v1.2.0 config hash. Do not mix the cohorts when evaluating
+promotion metrics.
 
 ## 4. Promotion Metrics
 
-Evidence starts from the first v1.1.1 dry-run session:
+Evidence starts from the first v1.1.1 dry-run session and is segmented by
+strategy config version:
 
 | Metric | Target |
 |---|---:|
@@ -255,8 +259,8 @@ for improvement ideas.
 
 | Mode | Strategy | Window | Trades | PF | Sharpe | Status |
 |---|---|---|---|---|---|---|
-| **Intraday equity** | Gap-and-Go v1.1.1 | OOS | 98 | **1.62** | 1.80 | ✅ Dry-run active (NIFTY100) |
-| Intraday equity | Legacy blended score | OOS | 970 | 0.82 | -1.30 | ❌ Abandoned |
+| **Intraday equity** | Gap-and-Go v1.2.0 | OOS | 179 | **1.30** | 1.29 | ✅ Active profile (NIFTY100) |
+| Intraday equity | Legacy blended score | OOS | 970 | 0.82 | -1.30 | ⚠ Explicit-consent fallback only |
 | Intraday equity | ORB-15 breakout | OOS | ~200 | 0.97 | -0.15 | ❌ Close but fail |
 | Intraday equity | VWAP mean-reversion | OOS | ~300 | 0.80 | -0.80 | ❌ Abandoned |
 | Intraday equity | EMA pullback | OOS | ~250 | 0.65 | -2.10 | ❌ Abandoned |
@@ -270,9 +274,12 @@ for improvement ideas.
 | **Swing** | 52W dip-buy | 10yr | ~500 | 1.29 CAGR alpha | — | ✅ Report-only |
 
 **Key takeaways:**
-1. Only Gap-and-Go v1.1.1 passes the 1.15 PF gate — currently in dry-run
+1. Only Gap-and-Go v1.2.0 passes the 1.15 PF gate — active profile
 2. Phase 9 tested 4 new strategies (FHRB, OCM, NIFTY Futures, Sector Rotation) — all FAIL
 3. Budget scaling Rs.50K→Rs.1L saves only 0.024%/trade — doesn't rescue any failed strategy
 4. Intraday equity search space on NSE is largely exhausted at Rs.50K/cost level
 5. Options directional buying needs a better signal or pivot to selling
 6. Regime routing is the strongest reusable asset across all modes
+
+August 2026 research details: [book-configuration retest](backtest/BOOK_STRATEGY_RETEST_2026-08-10.md)
+and [late-start fallback audit](backtest/LATE_START_FALLBACK_AUDIT.md).

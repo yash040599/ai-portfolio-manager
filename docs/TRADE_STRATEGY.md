@@ -10,6 +10,11 @@
 > Set `TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0"` to activate.
 > Version scheme: X.Y.Z where X = strategy logic, Y = filter/safeguard
 > changes, Z = config/parameter changes.
+> If startup is after 10:15 or the Gap-and-Go scan returns no candidates,
+> the tool defaults to stopping. The user may explicitly approve the
+> `NOAI_LEGACY_FULL` fallback after a warning that its OOS PF is 0.82
+> (negative expectancy after costs); fallback exits are 13:00 loser exit and
+> 14:00 square-off.
 > See [TRADE_STATISTICS.md](TRADE_STATISTICS.md) for current results and
 > [TRADE_ROADMAP.md](TRADE_ROADMAP.md) for the operating plan.
 
