@@ -136,8 +136,14 @@ def _hero(data: dict) -> str:
     </div>
   </div>
   <div class="hero-right">
-    <button id="home-refresh" class="action" type="button" onclick="refreshHome(true)">
-      Refresh live prices</button>
+    <div class="t-row hero-actions">
+      <button id="home-refresh" class="action" type="button" onclick="refreshHome(true)">
+        Refresh live prices</button>
+      <button id="home-privacy" class="action alt" type="button"
+              onclick="toggleHomePrivacy()" aria-pressed="false"
+              title="Hide every figure in the summary cards — for when someone can see your screen">
+        Hide amounts</button>
+    </div>
     <label class="switch" title="Re-fetch live prices every 60 seconds">
       <input type="checkbox" id="home-auto"> <span>Auto refresh</span>
     </label>
@@ -556,6 +562,22 @@ def _currency_toggle_html(data: dict) -> str:
     )
 
 
+def _privacy_boot_script() -> str:
+    """Set `data-privacy` before first paint so the KPI figures are never
+    briefly readable on a screen someone else can see."""
+    return r"""
+<script>
+(function () {
+  try {
+    if (window.localStorage.getItem('homePrivacy') === '1') {
+      document.documentElement.setAttribute('data-privacy', 'on');
+    }
+  } catch (e) { /* private mode */ }
+})();
+</script>
+"""
+
+
 def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
     from modes.dashboard.chat_widget import chat_section_html
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
@@ -589,6 +611,7 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         "<title>Dashboard &middot; Portfolio HQ</title>",
         theme_boot_script(),
+        _privacy_boot_script(),
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/'
         'dist/chart.umd.min.js"></script>',
         "<style>", theme_css(), topnav_css(), _STYLE, theme_overrides_css(),
@@ -643,6 +666,7 @@ _STYLE = r"""
 .hero h1 { margin: 4px 0; font-size: 27px; letter-spacing: -.02em; }
 .hero .sub { margin: 0 0 12px; max-width: 62ch; color: var(--muted); font-size: 13.5px; }
 .hero .stamp { font-size: 11.5px; color: var(--muted); text-align: right; }
+.hero-actions { justify-content: flex-end; }
 .switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
           color: var(--muted); cursor: pointer; user-select: none; }
 .switch input { accent-color: var(--accent); cursor: pointer; }
@@ -666,6 +690,19 @@ _STYLE = r"""
           width: 15px; height: 15px; border-radius: 50%; font-size: 10px;
           background: var(--soft); color: var(--muted); cursor: help;
           border: 1px solid var(--line); font-weight: 700; }
+
+/* ── Privacy mask (top summary boxes only) ────────────────── */
+/* `visibility: hidden` rather than a blur: it removes the glyphs
+   outright and also kills the `title` tooltip that would otherwise
+   still reveal the exact rupee figure on hover. */
+html[data-privacy="on"] .kpis .k-value,
+html[data-privacy="on"] .kpis .k-foot { position: relative; visibility: hidden; }
+html[data-privacy="on"] .kpis .k-value::after,
+html[data-privacy="on"] .kpis .k-foot::after {
+  content: "\2022\2022\2022\2022\2022";
+  visibility: visible; position: absolute; inset: 0 auto 0 0;
+  display: flex; align-items: center; letter-spacing: .12em;
+  color: var(--muted); }
 
 /* ── Connect / login ──────────────────────────────────────── */
 .connect { margin-bottom: 6px; border-left: 4px solid var(--pos); }
@@ -788,6 +825,7 @@ _SCRIPT = r"""
 
   var AUTO_KEY = 'homeAutoRefresh';
   var CUR_KEY = 'us-currency';   // shared with /us so the choice sticks
+  var PRIVACY_KEY = 'homePrivacy';
   var AUTO_MS = 60000;
   var timer = null;
   var inFlight = false;
@@ -1094,6 +1132,27 @@ _SCRIPT = r"""
   }
   window.refreshHome = refreshHome;
 
+  // ── privacy mask (KPI cards only) ────────────────────────
+  function privacyOn() {
+    try { return window.localStorage.getItem(PRIVACY_KEY) === '1'; }
+    catch (e) { return false; }
+  }
+  function syncPrivacy() {
+    var on = privacyOn();
+    document.documentElement.setAttribute('data-privacy', on ? 'on' : 'off');
+    var btn = document.getElementById('home-privacy');
+    if (btn) {
+      btn.textContent = on ? 'Show amounts' : 'Hide amounts';
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+  function toggleHomePrivacy() {
+    try { window.localStorage.setItem(PRIVACY_KEY, privacyOn() ? '0' : '1'); }
+    catch (e) {}
+    syncPrivacy();
+  }
+  window.toggleHomePrivacy = toggleHomePrivacy;
+
   function setAuto(on) {
     if (timer) { clearInterval(timer); timer = null; }
     if (on) {
@@ -1106,6 +1165,7 @@ _SCRIPT = r"""
 
   document.addEventListener('DOMContentLoaded', function () {
     apply(boot());
+    syncPrivacy();
 
     var auto = document.getElementById('home-auto');
     var saved = '0';

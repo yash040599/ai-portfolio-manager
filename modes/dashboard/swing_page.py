@@ -708,6 +708,8 @@ def render_swing_page() -> str:
                     '<th class="right">Qty</th>'
                     '<th class="right">Entry</th>'
                     '<th class="right">Live Price</th>'
+                    '<th class="right" title="Move since yesterday&#39;s close, '
+                    'on the quantity you hold">Day</th>'
                     '<th class="right">P&amp;L</th>'
                     '<th class="right">Stop</th><th class="right">Target</th>'
                     '<th class="right">R</th><th>Action</th>'
@@ -742,6 +744,7 @@ def render_swing_page() -> str:
                 f'<td class="right">Rs.{p.entry_price:,.2f}</td>'
                 f'<td class="right" data-live-field="price">'
                 f'Rs.{lprice:,.2f}</td>'
+                f'{_day_change_cell(p.managed_qty, lprice, lq)}'
                 f'<td class="right" data-live-field="pnl">'
                 f'<span class="{pnl_cls}">Rs.{upnl:+,.2f}</span></td>'
                 f'<td class="right">Rs.{p.stop_price:,.2f}</td>'
@@ -771,6 +774,29 @@ def render_swing_page() -> str:
     body.append(_js())
 
     return _wrap("Swing", body)
+
+
+def _day_change_cell(qty: float, price: float, quote: dict) -> str:
+    """Today's move on an open position — rupee value plus percent.
+
+    Only the open book gets this column: watchlist and recommendation
+    rows would need the same quote traffic for a number that has no
+    money riding on it.
+
+    Quotes carry `change_pct` but not the previous close, so the close
+    is backed out of the pair.
+    """
+    chg = (quote or {}).get("change_pct")
+    if chg is None or price <= 0:
+        return ('<td class="right" data-live-field="day">'
+                '<span class="muted" title="No live quote yet">&mdash;</span></td>')
+    chg = float(chg)
+    prev = price / (1 + chg / 100.0) if chg > -100 else 0.0
+    day_value = (price - prev) * qty
+    cls = "pos" if chg >= 0 else "neg"
+    return (f'<td class="right" data-live-field="day">'
+            f'<span class="{cls}">Rs.{day_value:+,.2f}</span>'
+            f'<br><span class="small {cls}">{chg:+.2f}%</span></td>')
 
 
 def _grade_pill(label: str, score: float, kind: str, title: str) -> str:
@@ -2253,6 +2279,19 @@ function _swingPollLivePrices() {
                                 { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                             + '</span> <span class="muted">('
                             + (change >= 0 ? '+' : '') + change.toFixed(1) + '%)</span>';
+                    } else if (field === 'day') {
+                        // Open book only. The quote carries change_pct
+                        // but not yesterday's close, so back it out.
+                        var dqty = Number(row.getAttribute('data-managed-qty'));
+                        var prev = change > -100 ? price / (1 + change / 100) : 0;
+                        var dayValue = (price - prev) * (isFinite(dqty) ? dqty : 0);
+                        cell.innerHTML = '<span class="' + chgCls + '">Rs.'
+                            + (dayValue >= 0 ? '+' : '')
+                            + dayValue.toLocaleString('en-IN',
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            + '</span><br><span class="small ' + chgCls + '">'
+                            + (change >= 0 ? '+' : '') + change.toFixed(2)
+                            + '%</span>';
                     } else if (field === 'pnl') {
                         var entry = Number(row.getAttribute('data-entry-price'));
                         var qty = Number(row.getAttribute('data-managed-qty'));

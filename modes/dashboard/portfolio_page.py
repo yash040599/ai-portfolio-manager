@@ -789,6 +789,11 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
             f'<td class="right">Rs.{avg_buy:,.2f}</td>'
             f'<td class="right" data-live-field="price">'
             f'Rs.{_v(s.current_price):,.2f}</td>'
+            # The snapshot has no previous close, so the day move only
+            # appears once live prices are switched on.
+            f'<td class="right" data-live-field="day">'
+            f'<span class="muted" title="Load live prices to see '
+            f'today&#39;s move">&mdash;</span></td>'
             f'<td class="right" data-live-field="value">'
             f'Rs.{_v(s.current_value):,.0f}</td>'
             f'<td class="right">{weight:.1f}%</td>'
@@ -807,6 +812,8 @@ def _render_holdings_table(snap: PortfolioSnapshot) -> str:
     <thead><tr>
       <th>Symbol</th><th>Sector</th><th>Cap</th><th class="right">Qty</th>
       <th class="right">Avg</th><th class="right">LTP</th>
+      <th class="right" title="Move since yesterday's close, on the quantity
+you hold. Needs live prices switched on.">Day</th>
       <th class="right">Value</th><th class="right">Weight</th>
       <th class="right">P&amp;L</th>
       <th title="Six-pillar factor scorecard: trend, momentum, risk-adjusted
@@ -1712,6 +1719,7 @@ function _portfolioPollLivePrices() {
         if (!isFinite(price) || price <= 0) return;
         var avg = Number(row.getAttribute('data-avg-buy'));
         var qty = Number(row.getAttribute('data-qty'));
+        var change = Number(q.change_pct) || 0;
         var fmtRupee = function (n, frac) {
           return 'Rs.' + Number(n).toLocaleString('en-IN', {
             minimumFractionDigits: frac, maximumFractionDigits: frac });
@@ -1720,6 +1728,16 @@ function _portfolioPollLivePrices() {
           var field = cell.getAttribute('data-live-field');
           if (field === 'price') {
             cell.textContent = fmtRupee(price, 2);
+          } else if (field === 'day' && isFinite(qty) && qty > 0) {
+            // Quotes carry change_pct only, so back out yesterday's
+            // close to get the rupee move on the held quantity.
+            var prev = change > -100 ? price / (1 + change / 100) : 0;
+            var dayValue = (price - prev) * qty;
+            var dcls = change >= 0 ? 'pos' : 'neg';
+            cell.innerHTML = '<span class="' + dcls + '">'
+              + (dayValue >= 0 ? '+' : '-') + fmtRupee(Math.abs(dayValue), 0)
+              + '</span><br><span class="small ' + dcls + '">'
+              + (change >= 0 ? '+' : '') + change.toFixed(2) + '%</span>';
           } else if (field === 'value' && isFinite(qty) && qty > 0) {
             cell.textContent = fmtRupee(price * qty, 0);
           } else if (field === 'pnl' && isFinite(avg) && isFinite(qty)

@@ -357,9 +357,12 @@ table.kvtable td { border-bottom: 1px dashed var(--line) !important; }
 .table-scroll > table.holdings th,
 .table-scroll > table.holdings td { white-space: nowrap; }
 /* Reason is free text and the only column that should wrap; capping it
-   stops one long reason from stretching the whole table. */
+   stops one long reason from stretching the whole table. A cell that
+   keeps `nowrap` here overflows its box and the next cell paints on
+   top of it, so every free-text column must carry `class="reason"`. */
 .table-scroll > table.holdings td.reason {
-  white-space: normal; min-width: 180px; max-width: 260px;
+  white-space: normal; overflow-wrap: anywhere;
+  min-width: 180px; max-width: 260px;
 }
 /* A horizontal scroll container also traps vertical sticky positioning,
    so drop the sticky header rather than have it pin to the wrong box. */

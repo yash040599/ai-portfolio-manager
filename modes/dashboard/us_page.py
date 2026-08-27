@@ -779,7 +779,11 @@ def _render_recommendations(latest_scan: dict, live: dict,
             f'<span class="{chg_cls}">{_money_span(lprice)}</span> '
             f'<span class="muted">({chg:+.1f}%)</span></td>'
             f'<td class="right">{_fmt_qty(r.get("suggested_qty"))}</td>'
-            f'<td style="font-size:11px;max-width:280px">'
+            # `class="reason"` opts this cell out of the table-wide
+            # `white-space: nowrap`; without it the long reason string
+            # overflowed its box and the Actions dropdown painted on
+            # top of it.
+            f'<td class="reason" style="font-size:11px">'
             f'{html.escape(reason)}</td>'
             f'<td><select class="add-dropdown" data-row="{payload}" '
             f'onchange="addUsCandidate(this)" '
@@ -899,6 +903,8 @@ def _render_positions(positions: list[SwingPosition],
                '<th class="right">Qty</th>'
                '<th class="right">Avg Cost</th>'
                '<th class="right">Live Price</th>'
+               '<th class="right" title="Move since yesterday&#39;s close, '
+               'on the quantity you hold">Day</th>'
                '<th class="right">Value</th>'
                '<th class="right">P&amp;L</th>'
                '<th class="right">Weight</th>'
@@ -940,6 +946,7 @@ def _render_positions(positions: list[SwingPosition],
             f'<td class="right">{_fmt_qty(p.managed_qty)}</td>'
             f'<td class="right">{_money_span(p.entry_price)}</td>'
             f'<td class="right" data-live-field="price">{_money_span(lprice)}</td>'
+            f'{_day_change_cell(p.managed_qty, lprice, lq)}'
             f'<td class="right">{_money_span(value)}</td>'
             f'<td class="right" data-live-field="pnl">'
             f'<span class="{pnl_cls}">{_money_span(upnl, signed=True)}</span>'
@@ -1021,6 +1028,29 @@ def _money_span(value, signed: bool = False, element_id: str | None = None) -> s
     id_attr = f' id="{html.escape(element_id)}"' if element_id else ''
     return (f'<span{id_attr} class="money" data-usd="{v}" '
             f'data-signed="{1 if signed else 0}">{text}</span>')
+
+
+def _day_change_cell(qty: float, price: float, quote: dict) -> str:
+    """Today's move on an open position — dollar value plus percent.
+
+    Only the open book gets this column: watchlist and recommendation
+    rows would need the same quote traffic for a number that has no
+    money riding on it.
+
+    Quotes carry `change_pct` but not the previous close, so the close
+    is backed out of the pair.
+    """
+    chg = (quote or {}).get("change_pct")
+    if chg is None or price <= 0:
+        return ('<td class="right" data-live-field="day">'
+                '<span class="muted" title="No live quote yet">&mdash;</span></td>')
+    chg = float(chg)
+    prev = price / (1 + chg / 100.0) if chg > -100 else 0.0
+    day_value = (price - prev) * qty
+    cls = "pos" if chg >= 0 else "neg"
+    return (f'<td class="right" data-live-field="day">'
+            f'<span class="{cls}">{_money_span(day_value, signed=True)}</span>'
+            f'<br><span class="small {cls}">{chg:+.2f}%</span></td>')
 
 
 def _fmt_qty(value) -> str:
@@ -1463,6 +1493,7 @@ function _usApplyQuotesToNodes(nodes, quotes) {
         _updateLiveCell(row, 'price_with_change', price, false, change);
         var entry = parseFloat(row.getAttribute('data-entry-price') || '0');
         var qty = parseFloat(row.getAttribute('data-managed-qty') || '0');
+        _updateDayCell(row, price, change, qty);
         if (entry > 0 && qty > 0) {
             var pnl = (price - entry) * qty;
             _updateLiveCell(row, 'pnl', pnl, true);
@@ -1628,6 +1659,24 @@ function _updateLiveCell(row, field, price, signed, changePct) {
     }
     var spans = cell.querySelectorAll('span.money');
     for (var i = 0; i < spans.length; i++) _renderMoney(spans[i]);
+}
+/* Today's move on an open position. `change_pct` is all the quote
+ * carries, so yesterday's close is backed out of price + change. */
+function _updateDayCell(row, price, changePct, qty) {
+    var cell = row.querySelector('[data-live-field="day"]');
+    if (!cell) return;
+    var chg = Number(changePct || 0);
+    var prev = chg > -100 ? price / (1 + chg / 100) : 0;
+    var dayValue = (price - prev) * (Number(qty) || 0);
+    var cls = chg >= 0 ? 'pos' : 'neg';
+    cell.innerHTML =
+        '<span class="' + cls + '">' +
+        '<span class="money" data-usd="' + dayValue + '" data-signed="1">' +
+        _fmtMoneyUsd(dayValue, true) + '</span></span>' +
+        '<br><span class="small ' + cls + '">' +
+        (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%</span>';
+    var moneySpans = cell.querySelectorAll('span.money');
+    for (var j = 0; j < moneySpans.length; j++) _renderMoney(moneySpans[j]);
 }
 function _updateWatchVpnl(row, vpnl, vpct) {
     var cell = row.querySelector('[data-live-field="vpnl"]');

@@ -8,8 +8,10 @@ from modes.dashboard.theme import theme_toggle_html
 
 
 # (label, href, tooltip)
+# "Home" is deliberately absent — the `Portfolio HQ` brand on the left
+# is the home link, so a separate pill would be a second button to the
+# same page.
 NAV_ITEMS = [
-    ("Home", "/", "Overview of every book"),
     ("Portfolio", "/portfolio", "Zerodha holdings, gaps and analyse runs"),
     ("Mutual Funds", "/mf", "Coin funds plus funds held at other brokers"),
     ("Swing", "/swing", "Indian swing scan, watchlist and open book"),
@@ -56,11 +58,15 @@ def _active(here: str, label: str, href: str) -> bool:
 
 def render_topnav(here: str = "", *, after_links: str = "") -> str:
     """Render a full dashboard nav plus a Back control and theme switch."""
+    at_home = _active(here, "Home", "/")
+    brand_cls = "nav-brand here" if at_home else "nav-brand"
+    brand_extra = ' aria-current="page"' if at_home else ''
     parts = [
         '<button class="nav-back" type="button" title="Go back" '
         'onclick="if (window.history.length > 1) { window.history.back(); } '
         'else { window.location.href=\'/\'; }">&#8592; Back</button>',
-        '<a class="nav-brand" href="/" title="Dashboard home">'
+        f'<a class="{brand_cls}" href="/"{brand_extra} '
+        'title="Home — overview of every book">'
         '<span class="dot"></span>Portfolio HQ</a>',
         '<span class="nav-links">',
     ]
@@ -110,9 +116,11 @@ nav.topnav button.nav-back { font: inherit; padding: 5px 12px;
                              color: var(--fg); cursor: pointer; }
 nav.topnav button.nav-back:hover { background: var(--soft); }
 nav.topnav .here { color: var(--accent); cursor: default; }
+nav.topnav a.nav-brand.here { color: var(--accent); }
 nav.topnav .sep { display: none; }
 nav.topnav .spacer { flex: 1; }
-@media (max-width: 900px) { nav.topnav .nav-brand { display: none; } }
+/* The brand is the only Home affordance now, so it stays visible at
+   every width; the nav wraps instead. */
 """
 
 
