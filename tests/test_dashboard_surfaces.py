@@ -144,6 +144,9 @@ class TestDashboardControls(unittest.TestCase):
         self.assertIn('personalRoots()', script)
         self.assertIn("this.scopes = '[data-personal]", script)
         self.assertNotIn("createTreeWalker(document.body", script)
+        self.assertIn('renderMasks()', script)
+        self.assertIn('this.originals = new WeakMap()', script)
+        self.assertNotIn('position: absolute; left: 0; top: 0', privacy_css())
         self.assertIn('Array.from(row.cells).slice(1)', script)
         self.assertIn("input.setAttribute('aria-hidden', 'true')", script)
 

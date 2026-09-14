@@ -1457,7 +1457,7 @@ def render_login_page(*, ok: bool = False, err: str = "") -> str:
         assisted_html = f"""
 <h2>Quick login (saved credentials)</h2>
 <div class="card">
-  <p>Your Kite user ID <strong>{html.escape(user_id)}</strong> and password are
+  <p>Your Kite user ID <strong data-private>{html.escape(user_id)}</strong> and password are
   saved in <code>.env</code>. Just enter your 6-digit authenticator code below.</p>
   <form method="post" action="/api/login_assisted" style="margin-top: 10px;">
     <div style="display:flex;gap:8px;align-items:center">

@@ -4,21 +4,15 @@ from __future__ import annotations
 
 
 def privacy_css() -> str:
-    """Remove private glyphs rather than blurring recoverable text."""
+    """Masked values are replaced in the text flow, so they inherit each
+    container's alignment instead of floating over it."""
     return r"""
 html[data-privacy="on"]:not([data-privacy-ready]) body { visibility: hidden; }
-html[data-privacy="on"] .privacy-value,
-html[data-privacy="on"] [data-private] {
-  position: relative; visibility: hidden; user-select: none;
+html[data-privacy="on"] .privacy-value {
+  color: var(--muted, #64748b);
+  letter-spacing: .14em;
+  user-select: none;
 }
-html[data-privacy="on"] .privacy-value::after,
-html[data-privacy="on"] [data-private]::after {
-  content: "\2022\2022\2022\2022"; visibility: visible;
-  position: absolute; left: 0; top: 0; color: var(--muted, #64748b);
-  letter-spacing: 0; white-space: nowrap;
-}
-html[data-privacy="on"] [data-private] *,
-html[data-privacy="on"] [data-private] *::after { visibility: hidden; }
 html[data-privacy="on"] [data-private-input] {
   color: transparent !important; text-shadow: none !important;
   caret-color: transparent; user-select: none; pointer-events: none;
@@ -77,12 +71,15 @@ def privacy_boot_script() -> str:
       this.key = 'dashPrivacy';
       this.attributes = new Map();
       this.inputs = new Map();
-      this.moneySource = String.raw`[+\-\u2212]?\s*(?:\u20b9|\$|\bRs\.?|\bINR\b|\bUSD\b)\s*[+\-\u2212]?\s*\d[\d,]*(?:\.\d+)?(?:\s*(?:Cr\b|crores?\b|lakhs?\b|L\b|[KMB]\b))?`;
+      // Masked originals live here, not in the DOM, so a hidden screen has
+      // nothing to read back out of the markup.
+      this.originals = new WeakMap();
+      this.moneySource = String.raw`(?:[+\-\u2212]\s*)?(?:\u20b9|\$|\bRs\.?|\bINR\b|\bUSD\b)\s*[+\-\u2212]?\s*\d[\d,]*(?:\.\d+)?(?:\s*(?:Cr\b|crores?\b|lakhs?\b|L\b|[KMB]\b))?`;
       this.identitySource = String.raw`\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|[A-Z]:[\\/]Users[\\/][^\\/\s<>]+|/home/[^/\s<>]+`;
       this.quantitySource = String.raw`\b\d[\d,]*(?:\.\d+)?\s*(?:shares?\b|units?\b|u\b)|\b(?:qty|quantity|folio|account)\s*[:=]\s*[A-Z0-9./-]+`;
       // Only these regions hold the owner's money and holdings. Research
       // notes, guides, thresholds and reference tables stay readable.
-      this.scopes = '[data-personal], .kpis, .books, .realised, #geo-legend,'
+      this.scopes = '[data-personal], [data-private], .kpis, .books, .realised, #geo-legend,'
         + ' table.holdings, table.kvtable, table.kv, .big-value, .day-detail';
       this.observer = new MutationObserver(() => this.refresh());
       this.hidden = this.readSaved();
@@ -181,20 +178,65 @@ def privacy_boot_script() -> str:
         const numeric = parent.closest('[data-private-values]') ? '|[+\\-\\u2212]?\\d[\\d,]*(?:\\.\\d+)?' : '';
         const pattern = new RegExp(this.moneySource + '|' + this.identitySource + '|' + this.quantitySource + numeric, 'gi');
         const text = node.textContent;
-        const matches = Array.from(text.matchAll(pattern)).filter(match => !/^\s*%/.test(text.slice(match.index + match[0].length)));
-        if (!matches.length) return;
-        const fragment = document.createDocumentFragment();
-        let offset = 0;
-        matches.forEach(match => {
-          fragment.append(document.createTextNode(text.slice(offset, match.index)));
-          const masked = document.createElement('span');
-          masked.className = 'privacy-value';
-          masked.textContent = match[0];
-          fragment.append(masked);
-          offset = match.index + match[0].length;
+        const matches = Array.from(text.matchAll(pattern)).filter(match => {
+          const after = text.slice(match.index + match[0].length);
+          if (/^\s*%/.test(after)) return false;
+          // "23 runs" / "5 trades" are counts, not amounts.
+          return !(/^[+\-\u2212]?[\d,.]+$/.test(match[0]) && /^\s*[A-Za-z]/.test(after));
         });
-        fragment.append(document.createTextNode(text.slice(offset)));
-        node.replaceWith(fragment);
+        this.wrap(node, matches.map(match => ({index: match.index, value: match[0]})));
+      });
+      this.maskWholeValues(roots);
+    }
+
+    // Identity columns (quantity, units, folio) are masked entirely: the
+    // value carries no public part worth keeping.
+    maskWholeValues(roots) {
+      const cells = new Set();
+      roots.forEach(root => {
+        if (root.matches('[data-private]')) cells.add(root);
+        root.querySelectorAll('[data-private]').forEach(cell => cells.add(cell));
+      });
+      cells.forEach(cell => {
+        if (cell.closest('[data-privacy-public]')) return;
+        const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        nodes.forEach(node => {
+          if (node.parentElement && node.parentElement.closest('.privacy-value')) return;
+          const start = node.textContent.search(/\S/);
+          if (start < 0) return;
+          this.wrap(node, [{index: start, value: node.textContent.slice(start).replace(/\s+$/, '')}]);
+        });
+      });
+    }
+
+    wrap(node, matches) {
+      if (!matches.length) return;
+      const text = node.textContent;
+      const fragment = document.createDocumentFragment();
+      let offset = 0;
+      matches.forEach(match => {
+        fragment.append(document.createTextNode(text.slice(offset, match.index)));
+        const masked = document.createElement('span');
+        masked.className = 'privacy-value';
+        masked.textContent = match.value;
+        this.originals.set(masked, match.value);
+        fragment.append(masked);
+        offset = match.index + match.value.length;
+      });
+      fragment.append(document.createTextNode(text.slice(offset)));
+      node.replaceWith(fragment);
+    }
+
+    // Swapping the text itself keeps the dots on the same baseline and
+    // alignment as the number they replace.
+    renderMasks() {
+      document.querySelectorAll('.privacy-value').forEach(span => {
+        const original = this.originals.get(span);
+        if (original === undefined) return;
+        const wanted = this.hidden ? '\u2022\u2022\u2022\u2022' : original;
+        if (span.textContent !== wanted) span.textContent = wanted;
       });
     }
 
@@ -261,8 +303,11 @@ def privacy_boot_script() -> str:
       this.observer.disconnect();
       if (document.body) {
         const roots = this.personalRoots();
-        this.prepareTables(roots);
-        this.maskText(roots);
+        if (this.hidden) {
+          this.prepareTables(roots);
+          this.maskText(roots);
+        }
+        this.renderMasks();
         this.protectInputs();
         this.protectAttributes(roots);
         document.querySelectorAll('canvas:not([data-privacy-public])').forEach(canvas => {

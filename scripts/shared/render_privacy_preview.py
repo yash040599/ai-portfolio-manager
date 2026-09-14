@@ -20,7 +20,7 @@ def render_all(destination: Path) -> list[Path]:
     from modes.dashboard.mf_page import render_mf_page
     from modes.dashboard.portfolio_page import render_portfolio_page
     from modes.dashboard.swing_page import render_swing_page
-    from modes.dashboard.tax_page import render_tax_page
+    from modes.dashboard.tax_page import render_tax_page_v2
     from modes.dashboard.theory_page import PAGES, render_theory_page
     from modes.dashboard.us_page import render_us_page
 
@@ -30,7 +30,7 @@ def render_all(destination: Path) -> list[Path]:
         "mf": render_mf_page,
         "swing": render_swing_page,
         "us": render_us_page,
-        "tax": render_tax_page,
+        "tax": render_tax_page_v2,
         "dryrun": render_dryrun_page,
     }
     renderers.update({f"theory_{slug}": (lambda s=slug: render_theory_page(s)) for slug in PAGES})

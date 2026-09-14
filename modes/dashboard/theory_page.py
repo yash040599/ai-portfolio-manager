@@ -40,7 +40,7 @@ _DOCS_DIR = _PROJECT_ROOT / "docs"
 
 # slug -> (label, source filename, includes_summary_card)
 PAGES: dict[str, tuple[str, str, bool]] = {
-    "project": ("AI Portfolio Manager", "PROJECT_OVERVIEW.md", False),
+    "project": ("Project Overview — Start Here", "PROJECT_OVERVIEW.md", False),
     "statistics":  ("Statistical Analysis",             "TRADE_STATISTICS.md", True),
     "trade-strategy": ("Trade Strategy — Complete Reference", "TRADE_STRATEGY.md",         False),
     "evolution":   ("Strategy Evolution",               "TRADE_EVOLUTION.md",  False),

@@ -243,7 +243,7 @@ def _connect_card(data: dict) -> str:
         quick = f"""
     <form class="login-form" method="post" action="/api/login_assisted">
       <input type="hidden" name="next" value="/">
-      <label>Authenticator code for <strong>{html.escape(auth['user_id'])}</strong></label>
+      <label>Authenticator code for <strong data-private>{html.escape(auth['user_id'])}</strong></label>
       <div class="t-row">
         <input type="text" name="otp" required placeholder="000000" pattern="[0-9]{{6}}"
                maxlength="6" inputmode="numeric" autocomplete="one-time-code"
