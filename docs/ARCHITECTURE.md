@@ -27,9 +27,10 @@ functions; stateful lifecycles benefit from small, focused classes.
 
 ## Shared Components
 
-- `DashboardPrivacy` owns saved screen-privacy state, control synchronisation,
-  initial paint protection, dynamic DOM classification and private input/tooltip
-  handling. Page renderers can explicitly declare sensitive or public elements.
+- `DashboardPrivacy` owns saved screen-privacy state, the declared personal
+  scopes, control synchronisation, initial paint protection, dynamic DOM
+  classification and private input/tooltip handling. Masked values are swapped
+  in the text flow, with originals held in memory rather than in the markup.
 - `RenderCache` owns a bounded collection of short-lived response snapshots,
   monotonic expiry, a lock and prefix invalidation. Existing server helpers
   delegate to it, preserving route callers.
@@ -44,13 +45,22 @@ functions; stateful lifecycles benefit from small, focused classes.
 
 ## Privacy Contract
 
-Use `data-private` for an identity or quantity, `data-private-values` for
-personal numbers mixed with percentage performance, and `data-private-input`
-for personal form values. `data-privacy-public` is an explicit, reviewed
-exception: public market prices, percentage-only charts or simulated research
+Masking is scoped: only regions a renderer declares personal are touched.
+Mark a personal region with `data-personal`, a single identity or quantity with
+`data-private`, personal numbers mixed with percentage performance with
+`data-private-values`, and personal form values with `data-private-input`.
+Anything outside those regions — guides, thresholds, reference tables, tool
+costs and research figures — stays readable, so a demo still explains itself.
+
+`data-privacy-public` is an explicit, reviewed exception inside a personal
+region: public market prices, percentage-only charts or simulated research
 data. Never put a personal holding, folio, budget or absolute return inside
 that exception. Monetary charts are hidden unless deliberately converted to
 public/percentage-only values and checked for tooltip leaks.
+
+A masked value is replaced in the text flow, so the placeholder inherits its
+container's alignment and baseline and lines up as a column. Plain counts such
+as "23 runs" are left alone; only amounts, quantities and identities are hidden.
 
 The saved `dashPrivacy` preference migrates the old HQ `homePrivacy` setting.
 Privacy survives navigation and reloads, synchronises tabs and reclassifies

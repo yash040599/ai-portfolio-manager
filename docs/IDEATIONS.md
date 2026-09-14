@@ -1,19 +1,23 @@
 # Ideations — Future Money Engines
 
-> **Updated:** 2026-06-09
+> **Updated:** 2026-09-14
 > **A1 (V3 AI Intraday):** Superseded by [TRADE_NEXT_IDEAS.md](TRADE_NEXT_IDEAS.md).
-> **A2 (Swing):** ✅ **DONE** — shipped as Phase 4. See [SWING_GUIDE.md](SWING_GUIDE.md).
+> **A2 (Swing):** ✅ **DONE** — shipped as Phase 4, report-only. See [SWING_GUIDE.md](SWING_GUIDE.md).
 > **A3 (ETF Rotation):** Still planning stage.
-> **Options:** ✅ **SHIPPED** — Phase 5. See [OPTIONS_STRATEGY.md](OPTIONS_STRATEGY.md)
-> and [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
+> **Options:** Engine shipped as Phase 5, but **research-only** — dry-run by
+> default and both tested structures failed their gates. See
+> [OPTIONS_STRATEGY.md](OPTIONS_STRATEGY.md) and
+> [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
+> **Intraday:** live execution paused; see [TRADE_ROADMAP.md](TRADE_ROADMAP.md).
 
 ---
 
 ## Hard Constraints (revised 2026-06-09)
 
-1. ~~**No F&O ideas.**~~ **LIFTED** — Options mode (`--mode options`) shipped
-   2026-06-09. NIFTY weekly options trading is live in code. Naked selling
-   remains hard-blocked. See [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
+1. ~~**No F&O ideas.**~~ **LIFTED** — the options engine (`--mode options`)
+   shipped 2026-06-09 and runs in dry-run; live orders stay blocked until a
+   strategy passes its gate. Naked selling remains hard-blocked. See
+   [OPTIONS_ROADMAP.md](OPTIONS_ROADMAP.md).
 2. **Phase 1 remains FYI-only.** It may analyse the existing Zerodha portfolio,
    but it must not generate executable orders for long-term holdings.
 3. **Long-term invested stocks are not touched.** New money engines must use a

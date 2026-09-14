@@ -8,9 +8,12 @@ not a swing strategy. `/theory/project` is the default, public-only project
 story with financial definitions, archived evidence and the portfolio pivot.
 
 Shared `DashboardPrivacy` state covers navigation, refreshes, quantities,
-personal inputs and tooltips. Percentage performance and audited public charts
-remain visible; private monetary charts and personal edit/copy prompts are
-restricted. This is screen privacy, not server authentication or API redaction.
+personal inputs and tooltips. Masking is scoped to regions marked personal, so
+guides, thresholds and research figures stay readable; masked values are
+replaced in the text flow and keep their column alignment. Percentage
+performance and audited public charts remain visible; private monetary charts
+and personal edit/copy prompts are restricted. This is screen privacy, not
+server authentication or API redaction.
 
 `RenderCache` owns bounded, thread-safe snapshot expiry and invalidation.
 Dashboard background authentication cannot launch assisted credential prompts.

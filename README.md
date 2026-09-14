@@ -224,12 +224,13 @@ the nav that persists in `localStorage` and follows the OS preference by
 default.
 
 **Screen privacy is shared across every dashboard page.** HQ's Hide amounts
-button and the navigation control use one saved setting. Percentages remain
-visible; personal amounts, quantities, folios, private inputs and monetary
-charts are masked. Public prices, percentage allocation charts and the public
-Theory story remain usable. Personal edit/copy prompts are restricted while
-hidden. This is screen privacy, not authentication: do not publish the personal
-server, page source, API responses, exports or browser developer tools.
+button and the navigation control use one saved setting. Only regions declared
+personal are masked — amounts, quantities, folios, private inputs and monetary
+charts — so tax rules, option examples, tool costs and research figures stay
+readable. Percentages remain visible, and masked values keep their column
+alignment. Personal edit/copy prompts are restricted while hidden. This is
+screen privacy, not authentication: do not publish the personal server, page
+source, API responses, exports or browser developer tools.
 
 Pages:
 
@@ -785,10 +786,10 @@ Full migration notes are mirrored in [copilot/machine-migration.md](copilot/mach
 |---------|--------------|
 | `python main.py --mode analyze` | Phase 1 — long-term portfolio analyser, NoAI default (no AI cost) |
 | `python main.py --mode analyze --ai` | Phase 1 + AI qualitative overlay (thesis/risks/news) |
-| `python main.py --mode trade` | Phase 2 NoAI (default) |
-| `python main.py --mode trade --ai` | Phase 2 with AI |
+| `python main.py --mode trade --dryrun` | Phase 2 research run — full strategy, no real orders. **Use this one.** |
+| `python main.py --mode trade` | Stops before broker login while `TRADE_LIVE_TRADING_PAUSED=True` |
+| `python main.py --mode trade --ai` | Phase 2 with AI (same pause applies to live runs) |
 | `python main.py --mode trade --noai` | Same as default; explicit |
-| `python main.py --mode trade --dryrun` | Full strategy, no real orders |
 | `python main.py --mode trade --test` | See pipeline only (no AI, no trades, no cost) |
 | `python main.py --mode trade --max 30000` | Cap today's capital at Rs.30,000 |
 | `python main.py --mode trade --nifty 150` | Override scan universe |
@@ -989,10 +990,11 @@ python main.py --mode login           # picks ASSISTED if KITE_USER_ID+PASSWORD 
 
 ### Daily operation
 
-One-command bring-up (recommended) — the script `cd`s into the repo,
-activates the venv, runs `git pull`, pulls the latest data from the
-backup repo (`--all-remote`, auto-confirmed), and starts
-`--mode trade --noai --max 50000`. From your VM home directory:
+Live intraday execution is paused, so a VM run is a research session. The
+bring-up script `cd`s into the repo, activates the venv, runs `git pull`, pulls
+the latest data from the backup repo, and starts the trade mode; add `--dryrun`
+to simulate, because a live run stops before broker login while
+`TRADE_LIVE_TRADING_PAUSED=True`. From your VM home directory:
 
 ```bash
 ssh azureuser@<vm-ip>
@@ -1008,7 +1010,7 @@ ssh azureuser@<vm-ip>
 cd ai-portfolio-manager
 source venv/bin/activate
 tmux new -s bot                       # detach with Ctrl+B, D
-python main.py --mode trade
+python main.py --mode trade --dryrun
 ```
 
 To re-attach after disconnect: `tmux attach -t bot`. After a VM reboot
@@ -1351,6 +1353,13 @@ python -m ruff check . --select F,B,E711,E712,E713,E714,E722,PLE,PLW0602 --exclu
 python -m compileall -q . -x "(__pycache__|\.venv)"
 python -m unittest discover -s tests -v
 python scripts/shared/repository_audit.py
+```
+
+Before recording a demo, render every page offline and confirm nothing personal
+is readable while amounts are hidden:
+
+```text
+python scripts/shared/render_privacy_preview.py
 ```
 
 CI uses Python 3.12 and Ruff 0.16.1. Install that Ruff version in the development

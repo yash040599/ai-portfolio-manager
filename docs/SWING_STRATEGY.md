@@ -1,14 +1,17 @@
 # Swing Trading Strategy
 
-User-facing reference for the planned `python main.py --mode swing`.
+User-facing reference for `python main.py --mode swing`.
 
-Swing mode will be a separate multi-day equity strategy engine. It
-will use completed daily candles, weekly trend confirmation, ATR-based
-risk, and a dedicated swing ledger so swing positions are kept separate
-from long-term holdings.
+Swing mode is a separate multi-day equity strategy engine. It uses
+completed daily candles, weekly trend confirmation, ATR-based risk, and
+a dedicated swing ledger so swing positions are kept separate from
+long-term holdings.
 
-> **Status.** This is a strategy/design document. No swing runtime has
-> shipped yet. The implementation backlog is tracked in
+> **Status (2026-09-14).** Shipped and in regular use, and **report-only
+> by permanent design** — it never places broker orders; the operator
+> trades manually. Dip-buy parameters come from an archived all-time-high
+> study rather than a runtime-matched 52-week replay (S11 is still open),
+> so treat the numbers as research, not validated returns. Change log:
 > [SWING_ROADMAP.md](SWING_ROADMAP.md).
 
 Sister docs:
