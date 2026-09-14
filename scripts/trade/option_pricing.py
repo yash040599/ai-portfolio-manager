@@ -90,8 +90,12 @@ def bs_price(spot: float, strike: float, years: float, sigma: float,
     discount = math.exp(-rate * years)
 
     if kind == "CE":
-        return spot * _N.cdf(d1) - strike * discount * _N.cdf(d2)
-    return strike * discount * _N.cdf(-d2) - spot * _N.cdf(-d1)
+        value = spot * _N.cdf(d1) - strike * discount * _N.cdf(d2)
+    else:
+        value = strike * discount * _N.cdf(-d2) - spot * _N.cdf(-d1)
+    # Deep out-of-the-money legs cancel to a tiny negative float on some
+    # platforms; an option can never be worth less than nothing.
+    return max(0.0, value)
 
 
 def bs_delta(spot: float, strike: float, years: float, sigma: float,
