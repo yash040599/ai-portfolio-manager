@@ -4,7 +4,11 @@ A plain-English, newest-first log of how the trading strategy changed over time.
 
 ## Current Direction
 
-As of 2026-08-12, the active strategy is **Gap-and-Go v1.2.0** (`NOAI_GAP_AND_GO_1.2.0`) on **NIFTY100**. OOS PF 1.30, Sharpe 1.29. When the signal is stale or the scan is empty, stop/no-trade remains recommended; the user may explicitly approve the legacy blended-score fallback after its OOS PF 0.82 warning. Version scheme: `NOAI_GAP_AND_GO_X.Y.Z` — X = strategy logic change, Y = filter/safeguard changes, Z = config/parameter changes.
+As of 2026-09-14, live intraday execution is paused in config. The retained
+research candidate is **Gap-and-Go v1.2.0** on **NIFTY100**, with historical TEST
+PF 1.30 and Sharpe 1.29. Product work focuses on Indian/US portfolio analysis
+and mutual funds. Strategy logic remains available for research; no validated
+live profitability or automatic capital scaling is claimed.
 
 ## What Goes Here
 
@@ -37,6 +41,7 @@ Last reorganised: 2026-05-15. Rows preserved from the prior history: 165 strateg
 
 | # | Category | What shipped |
 |---|----------|--------------|
+| T3.6 | Risk | Research pause enforced by default (2026-09-14): live startup stops before broker login, while explicit dry runs remain available; no strategy parameters or profitability claims changed. |
 | T3.5 | Risk | Gap-and-Go fallback consent (2026-08-12): after a post-10:15 start or an empty valid scan, the tool defaults to no trade but lets the user explicitly run the legacy blended scorer after warning that its OOS PF is 0.82 and negative after costs. |
 | T3.4 | Indicators | Gap-and-Go v1.2.0 (2026-06-15): on broad-gap days with at least 25 gapping stocks, the volume floor adapts from 2.0x to 1.25x; NIFTY100 OOS PF 1.30 and Sharpe 1.29. |
 | T3.3 | Performance | Phase 9 diversification research (2026-06-12): tested 7 alternative intraday strategies — all FAIL. FHRB (PF 0.81), OCM (PF 0.87), NIFTY Index Momentum (PF 0.25), Sector Rotation (PF 0.78), Gap Fade (PF 0.70), EOD VWAP Reversion (PF 0.55), Auction Alpha (PF 0.74). Also confirmed NIFTY100 optimal (NIFTY150 PF 1.13, NIFTY200 PF 1.17 — both worse). Gap-and-Go v1.1.1 remains the only strategy to pass the 1.15 OOS gate. **20 strategies/variants tested across 9 phases — intraday equity search space on NSE conclusively exhausted.** |

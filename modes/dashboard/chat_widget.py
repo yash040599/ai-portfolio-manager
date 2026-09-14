@@ -250,11 +250,13 @@ def build_chat_prompt(scope: str, symbol: str, question: str) -> str:
         market = "Indian (NSE) swing trades, prices in INR (Rs.)"
     elif scope == "us_detail":
         body = _us_detail_block(sym)
-        market = "US (NASDAQ/NYSE) swing trade, prices in USD ($)"
+        market = "US (NASDAQ/NYSE) long-term investments, prices in USD ($)"
     else:  # us
         body = _us_overview_block()
-        market = "US (NASDAQ/NYSE) swing trades, prices in USD ($)"
+        market = "US (NASDAQ/NYSE) long-term investments, prices in USD ($)"
 
+    if scope in {"us", "us_detail"}:
+        return _assemble(question, market, body, asks=_US_ASKS)
     return _assemble(question, market, body)
 
 
@@ -273,6 +275,14 @@ _PORTFOLIO_ASKS = """1. Read my overall asset allocation: what is over- or under
 
 Do not give me per-stock trade calls unless one is genuinely urgent.
 Keep it concise and practical. I am the one deciding and executing."""
+
+_US_ASKS = """1. Evaluate this as a multi-year investment: business quality, valuation
+    against sector peers, durable growth, financial strength and downside risk.
+2. Verify current prices, filings and news; state dates and missing information.
+3. Separate the business rating from portfolio fit and concentration. Explain
+    whether accumulate, hold, watch, review, trim or avoid is appropriate.
+4. Explain what evidence would change the thesis. Historical returns and AI
+    opinions are not guarantees. I make all investment and execution decisions."""
 
 _DEFAULT_ASKS = """1. A clear, actionable recommendation (e.g. buy more / hold / trim / exit),
    with the reasoning laid out simply.
@@ -498,8 +508,7 @@ def _us_section(us: dict, rate: float) -> str:
         if rate > 0:
             lines.append(f"- At cost, in rupees: Rs.{invested * rate:,.0f}")
     lines.append(f"- Positions: {us.get('positions', 0)}")
-    lines.append("- These are long-term holdings (RSU lots plus deliberate "
-                 "long-horizon buys), held to compound — not trades.")
+    lines.append("- These are long-term holdings, held to compound, not short-term trades.")
 
     try:
         from modes.dashboard.us_page import _us_positions
@@ -715,14 +724,12 @@ def _us_detail_block(sym: str) -> str:
     except Exception:
         held = None
 
-    lines = [f"US swing-trade candidate: {sym} (US equity)"]
+    lines = [f"US long-term investment study: {sym} (US equity)"]
     if held is not None:
         lines += [
             "- I already HOLD an open position in this:",
             f"  · Quantity: {_qty_str(getattr(held, 'managed_qty', 0))} shares",
-            f"  · My entry price: ${float(getattr(held, 'entry_price', 0) or 0):,.2f}",
-            f"  · My stop: ${float(getattr(held, 'stop_price', 0) or 0):,.2f}",
-            f"  · My target: ${float(getattr(held, 'target_price', 0) or 0):,.2f}",
+            f"  · My average cost: ${float(getattr(held, 'entry_price', 0) or 0):,.2f}",
         ]
     else:
         lines.append("- I do NOT currently hold this (evaluating a new entry).")
@@ -731,15 +738,15 @@ def _us_detail_block(sym: str) -> str:
         ind = row.get("indicators") or {}
         lines += [
             "",
-            "My tool's US setup for this stock (verify price/news yourself):",
+            "My tool's long-term scorecard (verify prices and business data):",
             f"- Name: {row.get('stock_name', 'n/a')} · Exchange: {row.get('exchange', 'n/a')}",
-            f"- Setup type: {row.get('setup_type', 'n/a')}",
-            f"- Suggested entry: ${float(row.get('entry_price') or 0):,.2f}",
-            f"- Stop loss: ${float(row.get('stop_price') or 0):,.2f}",
-            f"- Target: ${float(row.get('target_price') or 0):,.2f}",
-            f"- Risk:reward: {float(row.get('rr_ratio') or 0):.2f}x",
-            f"- Suggested quantity: {_qty_str(row.get('suggested_qty'))} shares",
-            f"- Composite score: {float(row.get('score') or 0):.2f}",
+            f"- Rating: {row.get('rating', 'unavailable')}",
+            f"- Research action: {row.get('action', 'unavailable')}",
+            f"- Valuation: {row.get('valuation_band', 'unavailable')}",
+            f"- Risk grade: {row.get('risk_grade', 'unavailable')}",
+            f"- Data coverage: {row.get('coverage_pct', 'unavailable')}%",
+            f"- Composite score: {row.get('score', 'unavailable')}/100",
+            f"- Snapshot price (USD): {row.get('current_price', 'unavailable')}",
             f"- 52w high: ${float(ind.get('high_52w') or 0):,.2f} "
             f"({float(ind.get('dip_from_52w_high_pct') or 0):.2f}% below high)",
             f"- Data through: {row.get('as_of', 'n/a')}",
@@ -751,12 +758,12 @@ def _us_detail_block(sym: str) -> str:
         if warnings:
             lines.append("- Warnings: " + "; ".join(str(w) for w in warnings))
     elif held is None:
-        lines.append("(No US setup on file for this symbol — research from scratch.)")
+        lines.append("(No US scorecard available for this symbol; research from source filings.)")
     return "\n".join(lines)
 
 
 def _us_overview_block() -> str:
-    lines = ["My US (NASDAQ/NYSE) swing-trading book:"]
+    lines = ["My US (NASDAQ/NYSE) long-term investment book:"]
     try:
         from modes.dashboard.us_page import _us_positions
         positions = _us_positions()
@@ -775,13 +782,11 @@ def _us_overview_block() -> str:
     lines.append(f"- Currency: USD{fx_note}")
     if positions:
         lines.append("")
-        lines.append("Open US positions (symbol · qty · entry · stop · target):")
+        lines.append("US holdings (symbol · quantity · average cost):")
         for p in positions:
             lines.append(
                 f"- {p.symbol}: {_qty_str(getattr(p, 'managed_qty', 0))} sh · "
-                f"entry ${float(getattr(p, 'entry_price', 0) or 0):,.2f} · "
-                f"stop ${float(getattr(p, 'stop_price', 0) or 0):,.2f} · "
-                f"target ${float(getattr(p, 'target_price', 0) or 0):,.2f}"
+                f"average cost ${float(getattr(p, 'entry_price', 0) or 0):,.2f}"
             )
     else:
         lines.append("- No open US positions right now.")

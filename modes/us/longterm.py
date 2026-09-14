@@ -43,7 +43,6 @@ of the model actually had data.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from shared.quant_metrics import (
     annualised_volatility_pct, max_drawdown_pct, momentum_12_1_pct,

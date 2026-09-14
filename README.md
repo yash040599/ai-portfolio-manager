@@ -1,9 +1,14 @@
 # AI Portfolio Manager
 
-Automated intraday trading bot for the **Indian stock market (NSE)**. Uses
-technical indicators + candlestick patterns for stock selection, **Zerodha
-Kite** for data and execution, and optionally **AI** (Gemini / GPT / Claude)
-for selection and reviews via `--ai`.
+A research-led portfolio analysis tool for **Indian stocks, US stocks and
+mutual funds**, with a local dashboard and optional AI explanations.
+Intraday trading was tried end to end, including broker buys and sells, but
+is now **paused**: the tested Rs.50,000 setup did not justify its full costs.
+Options remain **research-only**, with backtesting required before live use.
+
+Start with the self-contained [project story](docs/PROJECT_OVERVIEW.md), also
+available on the dashboard at `/theory/project`. Reviewed 14 September 2026;
+historical backtest results retain their original dates, not a new validation date.
 
 
 <!-- ══════════════════════════════════════════════════════════════
@@ -51,7 +56,8 @@ When in doubt: terser is better. Long-form belongs in docs/TRADE_STRATEGY.md.
 
 ## 1. What it does
 
-Three surfaces, one CLI. Pick a mode at the CLI.
+One CLI and a shared dashboard, with active investment-analysis surfaces and
+separate trading-research modes.
 
 ### Phase 1 — Portfolio analysis (read-only)
 
@@ -103,8 +109,9 @@ python main.py --mode portfolio --type stocks   # explicit stock book
 python main.py --mode portfolio --type mf       # mutual-fund book
 ```
 
-Full plan: [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md) (P1-P7
-foundation in flight; D24-D29 dashboard surface in flight).
+Full plan: [docs/ANALYZE_ROADMAP.md](docs/ANALYZE_ROADMAP.md). The persisted
+analysis, scorecard, stock drill-down and dashboard surfaces are implemented;
+data-coverage quality and research validation remain ongoing work.
 
 ### Phase 1b — Mutual funds (Coin + other brokers)
 
@@ -154,14 +161,16 @@ python main.py --mode portfolio --type mf --list-external
 python main.py --mode portfolio --type mf --remove 3
 ```
 
-### Phase 2 — Intraday trading (V2, default)
+### Phase 2 — Intraday trading (implemented, live paused)
 
 Fully automated NSE intraday loop. **NoAI is the default** (zero AI API
 calls, pure indicators); add `--ai` to put the active AI provider in the
 selection loop. Supports multiple strategy profiles via `TRADE_STRATEGY_PROFILE`
 (default: `NOAI_GAP_AND_GO_1.2.0` — gap-and-go with volume qualification,
 adaptive broad-gap volume, gap-hold confirmation and score-contradiction
-filter on NIFTY100. OOS PF 1.30, Sharpe 1.29).
+filter on NIFTY100. Historical reported OOS PF 1.30, Sharpe 1.29).
+`TRADE_LIVE_TRADING_PAUSED=True` blocks live startup before broker login.
+The retained strategy is a research candidate, not a proven profitable product.
 
 Loop, in plain English:
 
@@ -191,8 +200,8 @@ Stop/no-trade is the default; the alternative is the legacy blended scorer,
 with its negative after-cost OOS PF 0.82 shown before consent.
 
 ```
-python main.py --mode trade           # NoAI (default)
-python main.py --mode trade --ai      # with AI
+python main.py --mode trade --dryrun       # explicit NoAI simulation
+python main.py --mode trade --dryrun --ai  # optional AI research
 ```
 
 ### Phase 3 — Dashboard (tool-wide operator surface)
@@ -213,6 +222,14 @@ All pages share one design system
 for colour, radius and shadow, plus a **light / dark theme** toggle in
 the nav that persists in `localStorage` and follows the OS preference by
 default.
+
+**Screen privacy is shared across every dashboard page.** HQ's Hide amounts
+button and the navigation control use one saved setting. Percentages remain
+visible; personal amounts, quantities, folios, private inputs and monetary
+charts are masked. Public prices, percentage allocation charts and the public
+Theory story remain usable. Personal edit/copy prompts are restricted while
+hidden. This is screen privacy, not authentication: do not publish the personal
+server, page source, API responses, exports or browser developer tools.
 
 Pages:
 
@@ -295,10 +312,12 @@ Pages:
   Schedule BP fields, documents checklist, cross-link to Tax Guide.
   Backed by versioned slabs in [`modes/dashboard/tax/slabs.py`](modes/dashboard/tax/slabs.py)
   — adding a future FY is a one-line config.
-- **`/theory/<slug>`** — four reference docs rendered live from
-  `docs/` with KaTeX math + dropdown nav: Statistical Analysis (with a
-  theoretical-vs-live snapshot card on top), Trade Strategy reference,
-  Strategy Evolution log, India Tax Guide.
+- **`/theory/project`** — default Theory page: the whole project in simple
+  language, the end-to-end trading journey, dated backtest evidence, the
+  small-capital cost example, portfolio pivot, options research and limitations.
+  Its chart uses the same document table, not personal live data.
+- **`/theory/<slug>`** — eight documents: Project, Statistics, Trade Strategy,
+  Evolution, Tax Guide, Options Guide, Options Roadmap and Next Ideas.
 - **`/login`** — standalone Zerodha auth page (the same two flows the
   home page embeds). Both accept a `next` field so you land back where
   you started; the value is whitelisted server-side.
@@ -336,7 +355,7 @@ What ships today:
   stock falls X% below its rolling 52-week high; sell on Y% gain).
   Defaults X=10, Y=20, Rs.20k ticket are retuned from the 2026-05-16
   finite-capital V2 backtest in the standalone
-  [market-research](https://github.com/yash040599/market-research)
+  [standalone research notes](docs/SWING_GUIDE.md)
   repo: Rs.1L start, Rs.20k lots, recycled proceeds, and +1.29% CAGR
   alpha over the equal-weight NIFTY 50 benchmark. The live scanner uses
   the rolling 52-week high as a stricter reference than that ATH study.
@@ -447,7 +466,7 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Act
 pip install -r requirements.txt
 cp .env.example .env                                  # then fill in keys
 python main.py --mode login                           # one-time Zerodha login
-python main.py --mode trade                           # start the bot
+python main.py --mode dashboard                       # open investment research
 ```
 
 ---
@@ -459,6 +478,8 @@ their content.
 
 | Doc | What it covers |
 |-----|----------------|
+| [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) | Self-contained hackathon story, simple definitions, archived evidence and current phase of every page. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Ownership boundaries, privacy contract, repository roles, CI verification and remaining engineering work. |
 | [docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md) | Complete Trade strategy — NoAI + AI modes, 44-check pre-trade pipeline, all indicators/patterns, scoring, risk layers, glossary |
 | [docs/TRADE_STRATEGY_ROLLOUT.md](docs/TRADE_STRATEGY_ROLLOUT.md) | Gate optimization approach — backtest-driven gate enable/disable decisions. |
 | [docs/TRADE_ROADMAP.md](docs/TRADE_ROADMAP.md) | Operating plan, current posture, next steps, promotion gate, deferred work |
@@ -694,7 +715,7 @@ runbooks, and replay datasets without manually copying folders.
 |---|---|---|
 | Main code | `git clone` | `ai-portfolio-manager/` |
 | Operational data, reports, logs, runbooks | [scripts/shared/backup_data.py](scripts/shared/backup_data.py) | `../ai-portfolio-manager-data/` plus local `data/`, `reports/`, `logs/`, `copilot/` |
-| `.env` | [scripts/shared/backup_data.py](scripts/shared/backup_data.py) with `--include-env` | project root |
+| Credentials | Secure manual transfer or a password manager; never Git | local environment only |
 | Replay/backtest datasets | [scripts/shared/sync_backtest_data.py](scripts/shared/sync_backtest_data.py) | `../ai-portfolio-backtest-data/` |
 
 > The replay dataset repo uses **Git LFS** for its `*.sqlite` candle
@@ -706,8 +727,8 @@ runbooks, and replay datasets without manually copying folders.
 On the old laptop, do the final private-data push first:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-local --dry-run
-.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-local --yes
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --snapshot --dry-run
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --snapshot --push
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --push --commit --message "sync replay data before machine move"
 ```
@@ -736,7 +757,7 @@ BACKUP_REPO_URL_SSH=git@github.com:<user>/<private-data-repo>.git
 Then restore the private data and replay dataset:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\shared\backup_data.py --include-env --all-remote --yes
+.\.venv\Scripts\python.exe scripts\shared\backup_data.py --all-remote --yes
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
 ```
 
@@ -938,7 +959,8 @@ sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
 Authenticate with GitHub via one of:
 
 - **GitHub CLI:** `sudo apt install -y gh && gh auth login`
-- **Personal Access Token:** clone with `https://USER:TOKEN@github.com/...`
+- **Credential manager:** authenticate without embedding tokens in clone URLs,
+  shell history or repository configuration.
 - **SSH key:** `ssh-keygen -t ed25519` → paste `~/.ssh/id_ed25519.pub`
   into GitHub → Settings → SSH keys.
 
@@ -1054,27 +1076,33 @@ All scripts support `--help`.
 private repo** so they're portable across machines. The default sync
 is a glob walk of those folders so any new file (e.g. a new DB, report
 subfolder, or private runbook) is picked up automatically with no code
-change. The top-level `.env` is opt-in via `--include-env` for trusted
-private-repo machine migration only.
+change. Credentials are never eligible for sync. `--include-env` is rejected;
+transfer secrets separately through a secure channel. Sync leaves changes
+uncommitted unless `--push` is explicitly requested.
 
 **Synced as of 2026-05-11 (everything in these locations):**
 - `data/trades.db` — trades, intraday_tax_ledger, capital_gains_ledger, **`intraday_candidates`** (Roadmap #259, full SCORED → ENTERED/REJECTED → OUTCOME chain stamped with `Config.snapshot_hash()`)
 - `data/intraday_tax.db`, `data/tax.db` — tax DBs
 - **`data/volume_baseline.db`** (Roadmap #260) — per-(symbol, hour) cumulative volume share, built by `scripts/trade/build_volume_baseline.py`
 - `data/zerodha_authoritative_*.json` — quarterly Zerodha truth snapshots
-- `data/candle_cache.db` — git-tracked alongside the code repo (already identical across machines, NOT in the data backup)
+- `data/candle_cache.db` — private operational cache; ignored in the code repo
 - `reports/dashboard/`, `reports/modes/trade/`, `reports/trading/`, **`reports/backtest/`** (Roadmap #24, per-trade JSON stamped with `Config.snapshot_hash()` so two machines with the same config produce comparable runs)
 - `logs/portfolio.log*`
 - `copilot/` — private runbooks/checklists that should follow you to a new laptop/VM
-- `.env` — only when `--include-env` is explicitly passed
 
-**Never synced by default (operator secrets / local-only):** `.env`, `data/access_token.json`, `data/access_token.json.bak`, `data/ZerodhaTaxPL/`, `__pycache__/`.
+**Never synced:** environment files, all access-token variants (including
+invalidated tokens), credential files, private keys, raw tax statements and
+SQLite transient files. The private data repo may hold personal financial
+records; the main and backtest repos must not.
 
 ```bash
-python scripts/shared/backup_data.py            # two-way append-merge + push (HTTPS)
+python scripts/shared/backup_data.py --snapshot --local-only --dry-run # recommended preview
+python scripts/shared/backup_data.py --snapshot --local-only # preserve local data and previous backups
+python scripts/shared/backup_data.py            # pull + local two-way sync; no commit/push
 python scripts/shared/backup_data.py --ssh      # SSH (Linux VMs)
 python scripts/shared/backup_data.py --dry-run  # preview, no writes
-python scripts/shared/backup_data.py --include-env --dry-run  # preview one-time .env migration
+python scripts/shared/backup_data.py --local-only --prefer local # no network or publication
+python scripts/shared/backup_data.py --push     # explicit commit and publication
 
 # Manual-fix flow (you edited a row/report on this machine — make it the truth)
 python scripts/shared/backup_data.py --prefer local    # local wins, edits propagate via UPSERT
@@ -1083,8 +1111,6 @@ python scripts/shared/backup_data.py --prefer remote   # remote wins (rare — a
 # Nuclear reset (also DELETES files not on the chosen side; prompts unless --yes)
 python scripts/shared/backup_data.py --all-local       # full overwrite of remote
 python scripts/shared/backup_data.py --all-remote      # full overwrite of local
-python scripts/shared/backup_data.py --include-env --all-local --yes
-python scripts/shared/backup_data.py --include-env --all-remote --yes
 ```
 
 | Scenario | Action |
@@ -1097,16 +1123,24 @@ python scripts/shared/backup_data.py --include-env --all-remote --yes
 | Other file in both, different with `--prefer X` | X's copy kept (no prompt) |
 | Log files (`logs/portfolio.log`) | Always line-merged (chronological union) |
 
+**Recommended for the multi-book application:** `--snapshot` copies current
+local data one way, archives replaced backup files under
+`reports/backup_history/`, and preserves destination-only records. SQLite's
+backup API makes a consistent database snapshot. It never merges into the
+local portfolio. Legacy row-merge mode now refuses unknown schemas rather
+than silently discarding tables it does not understand. Back up unique records
+from other machines before choosing which version should become canonical.
+
 **Two normal flows**
 
-1. **EOD VM → coding machine** (no flag needed):
-   - VM: `python scripts/shared/backup_data.py --ssh` after market close.
+1. **EOD VM → coding machine** (publication explicitly requested):
+  - VM: `python scripts/shared/backup_data.py --snapshot --ssh --push` after reviewing local records.
    - Dev machine: `python scripts/shared/backup_data.py` next morning.
    - DBs append-merge cleanly because both sides only added new rows.
 
 2. **Manual data fix on coding machine → VM** (use `--prefer local`):
    - Edit a DB row or report .txt to correct bad data.
-   - `python scripts/shared/backup_data.py --prefer local` — your edits become the truth.
+  - `python scripts/shared/backup_data.py --prefer local --push` — explicitly publish the reviewed corrections.
    - VM picks up corrections on its next pull.
 
   Important: row-level sync does not delete remote-only ghost DB rows yet. If a repair deliberately removes rows from `trades.db`, use the new deletion-aware path:
@@ -1128,11 +1162,12 @@ commands in one place.
 > The data repo MUST be **Private**. The main code repo has no link to
 > it — only the sync script knows the URL.
 
-### Backtest/replay data sync (private repo)
+### Backtest/replay data sync (market data only)
 
-The backtest audit uses a separate private repository for
-normalized historical replay data:
-`https://github.com/yash040599/ai-portfolio-backtest-data`.
+The backtest audit uses the separate `ai-portfolio-backtest-data` repository for
+normalized historical replay data. It must contain no personal records or
+credentials. Provider redistribution rights must be verified separately before
+publishing market data; a privacy audit is not a data licence.
 
 This is intentionally separate from the operational data repo above.
 Operational data is mutable and needs row-level SQLite merges; replay
@@ -1164,8 +1199,8 @@ or `--path` points there.
 Set these in `.env`:
 
 ```bash
-BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/yash040599/ai-portfolio-backtest-data.git
-BACKTEST_DATA_REPO_URL_SSH=git@github.com:yash040599/ai-portfolio-backtest-data.git
+BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/<owner>/ai-portfolio-backtest-data.git
+BACKTEST_DATA_REPO_URL_SSH=git@github.com:<owner>/ai-portfolio-backtest-data.git
 BACKTEST_DATA_PATH=../ai-portfolio-backtest-data
 ```
 
@@ -1177,6 +1212,11 @@ python scripts/shared/sync_backtest_data.py --ssh        # Linux VM flow using S
 python scripts/shared/sync_backtest_data.py --status     # show data repo status
 python scripts/shared/sync_backtest_data.py --push --commit --message "update replay dataset"
 ```
+
+For routine updates from locally cached NSE candles, use
+`python scripts/trade/export_backtest_data.py --append`. Existing candle keys
+and the five-minute archive are preserved. The original seed exporter now
+requires explicit `--replace` before overwriting any existing stores.
 
 Seed the first replay dataset from the local candle cache:
 
@@ -1298,6 +1338,24 @@ Tax rates configurable in [config.py](config.py): `TAX_RATE_PCT`,
 Full risk architecture: **[docs/TRADE_STRATEGY.md](docs/TRADE_STRATEGY.md#risk-management--entry-pre-checks)**.
 
 ---
+
+### Pre-push verification
+
+The CI workflow in [.github/workflows/ci.yml](.github/workflows/ci.yml) runs
+lint before tests. The 2026-08-27 failed run stopped on five `F401` unused
+imports, not failed financial tests; those imports were removed in the
+2026-09-14 maintenance pass. Reproduce the checks locally before publishing:
+
+```text
+python -m ruff check . --select F,B,E711,E712,E713,E714,E722,PLE,PLW0602 --exclude .venv
+python -m compileall -q . -x "(__pycache__|\.venv)"
+python -m unittest discover -s tests -v
+python scripts/shared/repository_audit.py
+```
+
+CI uses Python 3.12 and Ruff 0.16.1. Install that Ruff version in the development
+environment when reproducing CI. These commands do not start a dashboard,
+place orders, commit or push.
 
 ## 12. Disclaimer
 

@@ -21,10 +21,9 @@
 from __future__ import annotations
 
 import datetime
-import math
 from dataclasses import dataclass, field
 
-from modes.mf.book import asset_class, plan_kind
+from modes.mf.book import asset_class
 from modes.mf.persistence import nav_history_meta, nav_series
 from modes.mf.types import MFBook, MFSchemeRollup
 from shared.quant_metrics import (

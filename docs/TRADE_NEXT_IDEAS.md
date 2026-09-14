@@ -301,7 +301,8 @@ Thursday expiry morning. Collect premium that decays rapidly through the day.
 - **Unlimited loss on naked selling** — a black swan move can cause losses
   many times the premium collected. Iron condors cap this.
 - **Margin requirements** — selling options requires margin (~Rs.1-1.5L for
-  NIFTY strangle). This may exceed our Rs.50K budget unless we use iron condors.
+  NIFTY strangle). This can exceed a small research budget; a defined-risk
+  structure still requires its own evidence and margin checks.
 - **Gamma risk on expiry** — if NIFTY moves sharply, short options move against
   you very fast near expiry
 - **Need fast execution** — if NIFTY breaks range, must exit quickly

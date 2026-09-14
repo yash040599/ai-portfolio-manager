@@ -1,6 +1,8 @@
 # HFT-Readiness Intraday Audit - 2026-05-11
 
-Fresh full-repo audit of the NoAI intraday trading system, treating the engineering bar as industry-grade automated trading while the deployed capital remains Rs.50,000.
+> Public copy: historical account amounts have been removed. The original evidence is retained in the private operational archive. This dated audit is not the current operating state.
+
+Fresh full-repo audit of the NoAI intraday trading system, treating the engineering bar as industry-grade automated trading while the deployed capital remains [private amount removed].
 
 ## Scope
 
@@ -20,13 +22,13 @@ Non-goals:
 
 | Area | Verdict | Reason |
 |---|---|---|
-| Capital scaling | DO NOT SCALE | Since 2026-04-22 the ledger is net -Rs.3,550.99 over 84 tax-ledger rows. Every reviewed day in the window is net-negative after charges. |
-| Strategy edge | Failing in the recent regime | Gross loss is -Rs.2,137.26 and charges are Rs.1,413.70. This is not just friction; gross alpha is negative. |
+| Capital scaling | DO NOT SCALE | Since 2026-04-22 the ledger is net  [private amount removed] over 84 tax-ledger rows. Every reviewed day in the window is net-negative after charges. |
+| Strategy edge | Failing in the recent regime | Gross loss is  [private amount removed] and charges are [private amount removed]. This is not just friction; gross alpha is negative. |
 | Execution safety | Improving, not institutional yet | Exchange SL-M, duplicate-order guard, quote/depth retry, fail-closed depth, orphan SL-M reconciliation, and exit coverage are strong. Data sync/replay/typed quote plumbing are still incomplete. |
 | Data integrity | Recovering, still has a gap | May 8/May 11 were repaired, but backup merge cannot propagate deletions. A canonical overwrite/tombstone sync is now roadmap item #270. |
 | HFT readiness | Not HFT, but can become a disciplined low-cap intraday bot | Kite REST, 15-min candles, and 10s polling are not HFT. Use the HFT standard as a control/audit bar, not a latency claim. |
 
-Bottom line: keep capital capped at Rs.50,000 or lower, and consider dry-run if the next live sessions keep producing net-negative days. The next work should build evidence infrastructure, not add more discretionary gates.
+Bottom line: keep capital capped at [private amount removed] or lower, and consider dry-run if the next live sessions keep producing net-negative days. The next work should build evidence infrastructure, not add more discretionary gates.
 
 ## Live Evidence Snapshot
 
@@ -45,19 +47,19 @@ Key current metrics:
 |---|---|
 | Window | 2026-04-22 to 2026-05-11 |
 | Tax-ledger rows | 84 |
-| Gross P&L | -Rs.2,137.26 |
-| Charges | Rs.1,413.70 |
-| Net P&L | -Rs.3,550.99 |
-| BUY side | 52 rows, 7 wins, 13.5% WR, net -Rs.2,986.81 |
-| SELL side | 32 rows, 14 wins, 43.8% WR, net -Rs.564.18 |
-| STOP_LOSS exits | 10 rows, 0% WR, net -Rs.1,681.51 |
-| STAGNANT_EXIT exits | 14 rows, 7.1% WR, net -Rs.622.37 |
-| MOMENTUM_KILL exits | 9 rows, 0% WR, net -Rs.577.28 |
-| SIGNAL_DECAY exits | 21 rows, 57.1% gross WR, gross +Rs.123.16, net -Rs.232.37 |
-| TARGET_HIT exits | 2 rows, 100% WR, net +Rs.380.60 |
-| 13:30-15:00 entries | 7 trades, 0% WR, -Rs.476.25 |
-| 15-30 min holds | 6 trades, 0% WR, -Rs.783.99 |
-| >120 min holds | 11 trades, 54.5% WR, +Rs.438.39 |
+| Gross P&L |  [private amount removed] |
+| Charges | [private amount removed] |
+| Net P&L |  [private amount removed] |
+| BUY side | 52 rows, 7 wins, 13.5% WR, net  [private amount removed] |
+| SELL side | 32 rows, 14 wins, 43.8% WR, net  [private amount removed] |
+| STOP_LOSS exits | 10 rows, 0% WR, net  [private amount removed] |
+| STAGNANT_EXIT exits | 14 rows, 7.1% WR, net  [private amount removed] |
+| MOMENTUM_KILL exits | 9 rows, 0% WR, net  [private amount removed] |
+| SIGNAL_DECAY exits | 21 rows, 57.1% gross WR, gross  [private amount removed], net  [private amount removed] |
+| TARGET_HIT exits | 2 rows, 100% WR, net  [private amount removed] |
+| 13:30-15:00 entries | 7 trades, 0% WR,  [private amount removed] |
+| 15-30 min holds | 6 trades, 0% WR,  [private amount removed] |
+| >120 min holds | 11 trades, 54.5% WR,  [private amount removed] |
 
 Interpretation:
 
@@ -74,20 +76,20 @@ Full ledger with entry score and P&L:
 
 | Bucket | n | WR | Sum P&L | Expectancy |
 |---|---:|---:|---:|---:|
-| 9.0+ | 20 | 45.0% | +Rs.180 | +Rs.9.0 |
-| 8.0-9.0 | 15 | 33.3% | -Rs.107 | -Rs.7.2 |
-| 7.0-8.0 | 27 | 48.1% | +Rs.129 | +Rs.4.8 |
-| 6.0-7.0 | 24 | 33.3% | -Rs.237 | -Rs.9.9 |
-| 5.0-6.0 | 18 | 55.6% | +Rs.202 | +Rs.11.2 |
-| <5.0 | 15 | 53.3% | +Rs.163 | +Rs.10.8 |
+| 9.0+ | 20 | 45.0% |  [private amount removed] |  [private amount removed] |
+| 8.0-9.0 | 15 | 33.3% |  [private amount removed] |  [private amount removed] |
+| 7.0-8.0 | 27 | 48.1% |  [private amount removed] |  [private amount removed] |
+| 6.0-7.0 | 24 | 33.3% |  [private amount removed] |  [private amount removed] |
+| 5.0-6.0 | 18 | 55.6% |  [private amount removed] |  [private amount removed] |
+| <5.0 | 15 | 53.3% |  [private amount removed] |  [private amount removed] |
 
 Score-cap experiments:
 
 | Hypothesis | Blocked cohort | Admitted cohort | Verdict |
 |---|---|---|---|
-| Refuse abs(score) >= 8.5 | n=30, -Rs.165 | n=89, +Rs.495 | Not enough to justify a blind cap |
-| Refuse abs(score) >= 8.0 | n=35, +Rs.73 | n=84, +Rs.257 | Reject cap; it blocks winners too |
-| BUY-only score >= 8.5 cap | blocked +Rs.257 | admitted -Rs.123 | Bad idea; high-score BUY still has historical value |
+| Refuse abs(score) >= 8.5 | n=30,  [private amount removed] | n=89,  [private amount removed] | Not enough to justify a blind cap |
+| Refuse abs(score) >= 8.0 | n=35,  [private amount removed] | n=84,  [private amount removed] | Reject cap; it blocks winners too |
+| BUY-only score >= 8.5 cap | blocked  [private amount removed] | admitted  [private amount removed] | Bad idea; high-score BUY still has historical value |
 
 Interpretation:
 
@@ -116,7 +118,7 @@ Interpretation:
 |---|---|
 | Blind high-score cap | Reject for now; full-ledger score audit does not justify it. |
 | More entry gates from the latest losing sessions | Wait. The system already has many gates; more gates without telemetry increase overfit risk. |
-| Post-SIGNAL_DECAY cluster cooldown | Plausible, but still awaiting data under #269. Current follow-up cohort is 4 trades, 25% WR, -Rs.177.74. |
+| Post-SIGNAL_DECAY cluster cooldown | Plausible, but still awaiting data under #269. Current follow-up cohort is 4 trades, 25% WR,  [private amount removed]. |
 | Late-afternoon hard ban | Watch, do not ship yet. 13:30-15:00 is 0/7, but this belongs in telemetry/backtest first. |
 | BUY-side full shutdown | Too blunt. Directional pause exists; recent BUY weakness needs attribution, not a permanent ban. |
 
@@ -132,7 +134,7 @@ Interpretation:
 | Intraday volume curves | #260 | ✅ SHIPPED 2026-05-11 | New `modes/trade/volume_baseline.py` + `scripts/trade/build_volume_baseline.py` builder + new `data/volume_baseline.db` (separate from `trades.db`). Three new config knobs: `INTRADAY_VOLUME_BASELINE_ENABLED` (default `False`), `LOOKBACK_DAYS` (20), `MIN_SAMPLES` (10). Scanner read site in `_analyse_stock` falls back to legacy linear pro-rating with a WARNING log on lookup failure (so silent fallback is visible). Operator workflow: `python scripts/trade/build_volume_baseline.py` → review `--dry-run` → flip kill-switch on. |
 | Typed market-data objects | #261 | ✅ SHIPPED 2026-05-11 | New `Quote` + `DepthLevel` dataclasses in `core/zerodha_client.py` with safe defaults, `Quote.from_kite_dict()` factory, plus convenience methods (`is_priced`, `best_bid`, `best_ask`, `has_two_sided_book`, `spread_pct()`, `impact_cost_pct(qty, side)` that walks top-5 levels). New `get_typed_quotes(stocks)` wrapper around `get_quotes_safe()`; never raises (parse failure → DEBUG log + symbol exclusion). Migration of the four legacy raw-dict call sites (scanner pre-filter, engine entry quote, manager monitor poll, rejection-audit EOD fetch) is deferred to a follow-up to keep this ship surgical. |
 | Config/version stamping per trade | folded into #271 | ✅ SHIPPED 2026-05-11 | `Config.snapshot_hash() -> (version, sha256[:16])`. `STRATEGY_CONFIG_VERSION = "v1.0-2026-05-11"` + `STRATEGY_CONFIG_KEYS` tuple of ≈70 watched constants; missing keys recorded as the literal string `"<MISSING>"` so a refactor that drops a key still moves the hash and an audit can find the drift. Stamped on every `intraday_candidates` row + every backtest run. |
-| Dry-run/live promotion criteria | folded into #271 | ✅ SHIPPED 2026-05-11 | New `scripts/trade/promotion_check.py` reads last N (default 20) sessions; tests PF≥1.15, expectancy≥+Rs.10/trade, day-WR≥55%, trade-WR≥40%, max-DD≤3% of avg daily capital; exit codes 0/1/2 = PASS/FAIL/INSUFFICIENT_DATA. **Current state: FAIL** (PF 0.86, expectancy −Rs.5/trade, day-WR 30%) — capital MUST NOT be scaled until next PASS run. |
+| Dry-run/live promotion criteria | folded into #271 | ✅ SHIPPED 2026-05-11 | New `scripts/trade/promotion_check.py` reads last N (default 20) sessions; tests PF≥1.15, expectancy≥ [private amount removed]/trade, day-WR≥55%, trade-WR≥40%, max-DD≤3% of avg daily capital; exit codes 0/1/2 = PASS/FAIL/INSUFFICIENT_DATA. **Current state: FAIL** (PF 0.86, expectancy  [private amount removed]/trade, day-WR 30%) — capital MUST NOT be scaled until next PASS run. |
 
 ## Code And Config Hygiene
 
@@ -177,13 +179,13 @@ Do not scale capital until all of these are true over a fresh forward window:
 
 - At least 20 trading sessions after the next evidence-infra change.
 - Profit factor > 1.15 after charges.
-- Expectancy > +Rs.10/trade after charges.
+- Expectancy >  [private amount removed]/trade after charges.
 - Profitable-day rate >= 55%.
 - Max drawdown < 3% of allocated capital over the window.
 - No unresolved DB/report/tax reconciliation drift.
 - Rejection audit does not show a large missed-profit cohort caused by a newly shipped fail-closed gate.
 
-A stricter institutional target would require tick-level fill modeling, streaming market data, and formal pre-trade risk controls. For current Rs.50,000 capital, the right target is conservative live or dry-run evidence collection, not speed.
+A stricter institutional target would require tick-level fill modeling, streaming market data, and formal pre-trade risk controls. For current [private amount removed] capital, the right target is conservative live or dry-run evidence collection, not speed.
 
 ## Roadmap Triage
 
@@ -231,7 +233,7 @@ Active awaiting-data rows after pruning shipped/superseded stale entries: 19.
 
 Phase 0 - operating posture:
 
-- Do not scale beyond Rs.50,000.
+- Do not scale beyond [private amount removed].
 - Avoid new live strategy gates unless a concrete bug is verified.
 - Continue daily `verify_trades.py`, `tax_summary.py`, and backup sync discipline.
 
@@ -280,7 +282,7 @@ Phase 5 - only then revisit strategy changes:
 - `CandidateTelemetry().healthy`: **True** (DB init + table create succeeded; `intraday_candidates` table present in `data/trades.db`).
 - `Quote.from_kite_dict()` synthetic-payload smoke: best_bid 1234.0, best_ask 1234.7, spread 0.0567%, impact BUY 1000 = 0.0369%, impact SELL 800 = 0.0709% — all numeric, no NaN/None.
 - `scripts/trade/backtest.py`: 100-symbol × 25-day window (2026-04-15 → 2026-05-09) at min-score 3 → 336 trades, WR 44.05%, PF 0.97, output written to `reports/backtest/2026-04-15_to_2026-05-09_<hash>.json` stamped with config hash.
-- `scripts/trade/promotion_check.py`: **FAIL** on the live trades.db (PF 0.86, expectancy −Rs.5/trade, day-WR 30%, max-DD 2.04% of avg daily capital, trade-WR 41%) — capital scaling is GATED OFF as designed.
+- `scripts/trade/promotion_check.py`: **FAIL** on the live trades.db (PF 0.86, expectancy  [private amount removed]/trade, day-WR 30%, max-DD 2.04% of avg daily capital, trade-WR 41%) — capital scaling is GATED OFF as designed.
 - `scripts/trade/strategy_stability_check.py`: today's ship (`config.py`, `modes/trade/stock_scanner.py`, `modes/trade/performance_tracker.py`, `modes/trade/manager.py`, `core/zerodha_client.py`) opens a fresh 10-day no-tune window across the entry-pipeline, scanner-scoring, and execution subsystems. Per the user-issued "implement them all" direction this window is accepted, not blocked. The window is informational only — no commit/push is blocked.
 
 ### Post-ship roadmap-counts re-verification

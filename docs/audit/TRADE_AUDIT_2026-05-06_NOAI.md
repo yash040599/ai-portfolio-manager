@@ -1,5 +1,7 @@
 # NoAI Intraday Audit - 2026-05-06 - GPT 5.5 XHigh
 
+> Public copy: historical account amounts have been removed. The original evidence is retained in the private operational archive. This dated audit is not the current operating state.
+
 Scope: phase-2 intraday trading only. No AI-mode recommendations, no
 portfolio-analysis phase, no dashboard/tax product review except where a
 script feeds intraday decisions or post-trade learning.
@@ -11,25 +13,25 @@ were re-checked against current code or the local trade database.
 ## Executive View
 
 The live problem is real: `intraday_tax_ledger` shows 25 trading days, only
-7 profitable, total net Rs.-2,211.32. The last 10 trading days are 1/10
-profitable with net Rs.-2,085.44. The recent failure window is concentrated:
+7 profitable, total net [private amount removed]. The last 10 trading days are 1/10
+profitable with net [private amount removed]. The recent failure window is concentrated:
 
 | Window | Ledger rows | Winning rows | Net |
 |---|---:|---:|---:|
-| 2026-04-22 to 2026-05-05 | 54 | 10 | Rs.-2,141.11 |
-| 2026-04-27 to 2026-05-06 | 41 | 7 | Rs.-1,451.17 |
+| 2026-04-22 to 2026-05-05 | 54 | 10 | [private amount removed] |
+| 2026-04-27 to 2026-05-06 | 41 | 7 | [private amount removed] |
 
 The scoring system is not uniformly broken across all history, but it broke
 badly in the recent regime. For scored trades from 2026-04-22 to 2026-05-05:
 
 | Abs entry score | Trades | Win rate | PnL |
 |---|---:|---:|---:|
-| <5 | 6 | 50.0% | Rs.+241.41 |
-| 5-6 | 3 | 33.3% | Rs.+19.29 |
-| 6-7 | 11 | 9.1% | Rs.-472.13 |
-| 7-8 | 9 | 33.3% | Rs.-319.85 |
-| 8-9 | 7 | 14.3% | Rs.-374.57 |
-| 9+ | 8 | 12.5% | Rs.-475.42 |
+| <5 | 6 | 50.0% | [private amount removed] |
+| 5-6 | 3 | 33.3% | [private amount removed] |
+| 6-7 | 11 | 9.1% | [private amount removed] |
+| 7-8 | 9 | 33.3% | [private amount removed] |
+| 8-9 | 7 | 14.3% | [private amount removed] |
+| 9+ | 8 | 12.5% | [private amount removed] |
 
 The recent scores are therefore anti-correlated with profitability. That is
 not a small threshold issue; it means the score is overweighting the wrong
@@ -206,9 +208,9 @@ Runtime exit/management checks:
 Exit review:
 
 - SL-M plus software SL is the right safety architecture.
-- Momentum kill is useful but should be watched carefully; in scored trades it is 0/8 wins and Rs.-323.74, meaning it cuts losers but does not prove the entry model is fixed.
-- Stagnant exits are doing damage control, not edge generation: 38 scored cases, Rs.-147.38. That is a symptom of weak entries drifting, not a standalone problem.
-- TARGET_HIT carries the system: 13 scored target hits, Rs.+2,446.69. The bot can win when it catches a real runner; the task is to stop false high-score runners.
+- Momentum kill is useful but should be watched carefully; in scored trades it is 0/8 wins and [private amount removed], meaning it cuts losers but does not prove the entry model is fixed.
+- Stagnant exits are doing damage control, not edge generation: 38 scored cases, [private amount removed]. That is a symptom of weak entries drifting, not a standalone problem.
+- TARGET_HIT carries the system: 13 scored target hits, [private amount removed]. The bot can win when it catches a real runner; the task is to stop false high-score runners.
 - Signal decay is mixed and should stay, but any change must run `scripts/trade/exit_coverage_check.py`.
 
 ## Highest Priority Strategy Recommendations

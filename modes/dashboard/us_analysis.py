@@ -16,9 +16,7 @@ from config import Config, now_ist
 from modes.dashboard import us_config
 from shared.candle_cache import CandleCache
 from modes.swing.signals import classify_setup, compute_swing_indicators
-from modes.swing.conviction import grade as grade_candidate
 from shared.quant_metrics import profile as quant_profile
-from shared.technical_indicators import adx as compute_adx
 
 
 US_SCAN_CACHE_PATH = os.path.join("data", "us_scan_latest.json")

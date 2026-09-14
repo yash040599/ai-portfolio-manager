@@ -15,13 +15,18 @@
 > See [TRADE_GATE_AUDIT.md](TRADE_GATE_AUDIT.md) for the full
 > gate-by-gate backtest results.
 
-## Current State
+## Current State (2026-09-14)
 
-- **Live trading**: ENABLED
-- **Mode**: AI (Gemini 2.5 Flash, detailed plan) — selects 2 trades/day from NIFTY50
-- **Strategy profile**: `NOAI_LEGACY_FULL` (blended score feeds AI pre-filter)
-- **Stage name**: `BACKTEST_OPTIMIZED` (gates set by backtest evidence)
-- **Config version**: `v2.0-2026-05-26-BACKTEST_OPTIMIZED`
+- **Live trading**: PAUSED (`TRADE_LIVE_TRADING_PAUSED=True`)
+- **Mode**: NoAI research; explicit `--dryrun` for simulation
+- **Strategy profile**: `NOAI_GAP_AND_GO_1.2.0` on NIFTY100
+- **Stage name**: `GAP_AND_GO_RESEARCH_PAUSED`
+- **Strategy version**: `v2.3-2026-06-15-GAP_AND_GO_1.2.0`; the config fingerprint changes with the pause/stage settings
+- **Promotion**: fresh frozen evaluation, all costs and benchmark comparison,
+  then separate forward evidence and an explicit live decision. No capital scaling now.
+
+The candidate and gate tables below are historical May research, superseded
+by the June/August results in the current roadmap. They are not live defaults.
 
 ## New Strategy Candidates (Backtested 2026-05-25)
 

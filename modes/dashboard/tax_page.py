@@ -193,7 +193,7 @@ def _slab_table(fy_start: int, taxable: float) -> str:
             break
         prev = upper
     return f"""
-<table class="md-table">
+<table class="md-table" data-personal>
   <thead><tr><th>Slab</th><th class="r">Rate</th>
               <th class="r">Income in slab</th><th class="r">Tax</th></tr></thead>
   <tbody>{''.join(rows)}</tbody>
@@ -252,7 +252,7 @@ def _projection_card(proj_with: TaxComputation, proj_without: TaxComputation,
     rebate_note = ""
     if proj_with.taxable_income <= rebate_ceiling:
         rebate_note = (
-            f'<div class="rebate-note">Section 87A rebate fully covers tax on '
+            f'<div class="rebate-note" data-personal>Section 87A rebate fully covers tax on '
             f'taxable income up to Rs.{rebate_ceiling:,.0f} — net tax payable is zero on '
             'the slab portion.</div>'
         )
@@ -629,7 +629,7 @@ function rebuildSlabTable(taxable, fyStart) {
     prev = upper;
   }
   document.getElementById("slab-table-wrap").innerHTML =
-    `<table class="md-table">
+    `<table class="md-table" data-personal>
       <thead><tr><th>Slab</th><th class="r">Rate</th>
                   <th class="r">Income in slab</th><th class="r">Tax</th></tr></thead>
       <tbody>${rows}</tbody>

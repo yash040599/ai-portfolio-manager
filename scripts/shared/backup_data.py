@@ -8,7 +8,7 @@ Pulls the latest backup repo, then syncs in both directions:
   - SQLite databases (.db) -> MERGED row-by-row (new rows from each
     side are added to the other, nothing is deleted)
 
-After syncing, commits and pushes changes to the backup repo.
+After syncing, leaves changes for review. Only --push commits and publishes.
 
 Two normal flows:
 
@@ -30,9 +30,8 @@ Usage
     python scripts/shared/backup_data.py              # full two-way sync (HTTPS)
     python scripts/shared/backup_data.py --ssh        # use SSH URL (for Linux VMs)
     python scripts/shared/backup_data.py --dry-run    # show what would change (no writes)
-    python scripts/shared/backup_data.py --include-env --all-local
-                                                     # one-time machine migration:
-                                                     # include .env in private repo
+    python scripts/shared/backup_data.py --local-only # no network, commit or push
+    python scripts/shared/backup_data.py --push       # explicitly commit and publish
 
     # Smart conflict resolution (non-interactive) — for the manual-fix flow
     python scripts/shared/backup_data.py --prefer local   # local wins all conflicts (UPSERT into remote)
@@ -49,12 +48,16 @@ Usage
 """
 
 import argparse
+from contextlib import closing
+from datetime import datetime, timezone
 import filecmp
+import json
 import os
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 
 try:
     from dotenv import load_dotenv
@@ -68,8 +71,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 # This script syncs the repository's runtime data (data/, reports/,
 # logs/, copilot/) to a SEPARATE *private* GitHub repo so it survives
 # reinstalls and is shareable across machines (e.g. dev laptop ↔ VM).
-# .env is intentionally opt-in via --include-env because it contains
-# API keys/secrets. Use that flag for a private, one-time machine move.
+# Secrets are never synced, including during machine migration.
 #
 # Set ONE or BOTH of these in .env (HTTPS for laptops with `gh auth`,
 # SSH for headless VMs with an SSH key on the GitHub account):
@@ -131,8 +133,6 @@ SYNC_ITEMS = [
     "copilot",
 ]
 
-OPTIONAL_ENV_ITEM = ".env"
-
 # Skip these within synced folders
 SKIP_NAMES = {
     "__pycache__", ".DS_Store", "Thumbs.db", "desktop.ini",
@@ -145,6 +145,8 @@ def should_skip(name: str) -> bool:
     # between listing and comparison and must never be synced.
     return (
         name in SKIP_NAMES
+        or name.lower().startswith((".env", "access_token", "credentials", "id_rsa", "id_ed25519"))
+        or name.lower().endswith((".pem", ".key"))
         or name.endswith((".pyc", ".pyo", ".swp", ".swo"))
         or name.endswith(("-shm", "-wal", "-journal"))
     )
@@ -177,10 +179,9 @@ def collect_files(base: str, folder: str) -> dict[str, str]:
 
 def sync_items(include_env: bool) -> list[str]:
     """Return the relative roots/files included in this sync run."""
-    items = list(SYNC_ITEMS)
     if include_env:
-        items.append(OPTIONAL_ENV_ITEM)
-    return items
+        raise ValueError("Secrets cannot be backed up to Git. Transfer credentials separately.")
+    return list(SYNC_ITEMS)
 
 
 def copy_file(src: str, dst: str, dry_run: bool):
@@ -189,6 +190,88 @@ def copy_file(src: str, dst: str, dry_run: bool):
         return
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copy2(src, dst)
+
+
+class LocalSnapshotBackup:
+    """Copy the local book without merging schemas or deleting backup-only records."""
+
+    def __init__(self, source: str, destination: str):
+        self.source = source
+        self.destination = destination
+        self.stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+    @staticmethod
+    def _source_fingerprint(source: str) -> dict[str, str | None]:
+        wal = source + "-wal"
+        return {
+            "database": _file_sha256(source),
+            "wal": _file_sha256(wal) if os.path.isfile(wal) else None,
+        }
+
+    @staticmethod
+    def _copy(source: str, destination: str) -> None:
+        from pathlib import Path
+
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        if not source.endswith((".db", ".sqlite")):
+            shutil.copy2(source, destination)
+            return
+        handle, temporary = tempfile.mkstemp(dir=os.path.dirname(destination), suffix=".tmp")
+        os.close(handle)
+        try:
+            with closing(sqlite3.connect(Path(source).resolve().as_uri() + "?mode=ro", uri=True)) as source_db:
+                with closing(sqlite3.connect(temporary)) as destination_db:
+                    source_db.backup(destination_db)
+                    if destination_db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise ValueError("Refusing to publish an invalid SQLite backup")
+            os.replace(temporary, destination)
+        finally:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+
+    def sync(self, *, dry_run: bool = False) -> int:
+        manifest_path = os.path.join(self.destination, "snapshot_manifest.json")
+        snapshots = {}
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, encoding="utf-8") as handle:
+                snapshots = json.load(handle)
+        changed = 0
+        for item in SYNC_ITEMS:
+            for relative, source in collect_files(self.source, item).items():
+                destination = os.path.join(self.destination, relative)
+                is_database = source.endswith((".db", ".sqlite"))
+                fingerprint = self._source_fingerprint(source) if is_database else None
+                key = relative.replace(os.sep, "/")
+                saved = snapshots.get(key, {})
+                if os.path.isfile(destination):
+                    if is_database and saved.get("source") == fingerprint and saved.get("backup_sha256") == _file_sha256(destination):
+                        continue
+                    if not (fingerprint and fingerprint["wal"]) and filecmp.cmp(source, destination, shallow=False):
+                        continue
+                changed += 1
+                print(f"    -> snapshot: {relative}")
+                if dry_run:
+                    continue
+                if os.path.isfile(destination):
+                    archived = os.path.join(self.destination, "reports", "backup_history", self.stamp, relative)
+                    self._copy(destination, archived)
+                self._copy(source, destination)
+                if is_database:
+                    snapshots[key] = {
+                        "source": fingerprint if self._source_fingerprint(source) == fingerprint else None,
+                        "backup_sha256": _file_sha256(destination),
+                    }
+        if not dry_run:
+            handle, temporary = tempfile.mkstemp(dir=self.destination, suffix=".tmp")
+            try:
+                with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                    json.dump(snapshots, stream, indent=2)
+                    stream.write("\n")
+                os.replace(temporary, manifest_path)
+            finally:
+                if os.path.exists(temporary):
+                    os.remove(temporary)
+        return changed
 
 
 def git_pull():
@@ -504,10 +587,11 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool,
         return False
 
     if dry_run:
+        display_path = os.path.relpath(local_db, PROJECT_ROOT)
         if prefer:
-            print(f"    <-> upsert:  data/trades.db ({prefer} wins on key collisions)")
+            print(f"    <-> upsert:  {display_path} ({prefer} wins on key collisions)")
         else:
-            print("    <-> merge:   data/trades.db (would merge rows from both sides)")
+            print(f"    <-> merge:   {display_path} (would merge rows from both sides)")
         return True
 
     total_inserted = 0
@@ -520,6 +604,12 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool,
         local_tables  = set(_get_user_tables(local_conn))
         remote_tables = set(_get_user_tables(remote_conn))
         mergeable = (UNIQUE_TABLES | set(APPEND_TABLES.keys()))
+        unsupported = (local_tables | remote_tables) - mergeable
+        if unsupported:
+            raise ValueError(
+                "Database contains tables without a merge contract. Use --snapshot "
+                "for a one-way backup that preserves the prior destination."
+            )
 
         # Step A: pull preferred-side rows into the OTHER side first.
         # In append mode this is a no-op pass on local (only the
@@ -599,10 +689,9 @@ def merge_databases(local_db: str, remote_db: str, dry_run: bool,
     # thing -> copy local to remote. After prefer=remote, the freshly-
     # upserted local file is also the union -> still copy local->remote
     # so the remote git checkout reflects it on next push.
-    shutil.copy2(local_db, remote_db)
-
     changed = (total_inserted + total_upserted) > 0 \
               or not filecmp.cmp(local_db, remote_db, shallow=False)
+    LocalSnapshotBackup._copy(local_db, remote_db)
     return changed
 
 
@@ -662,7 +751,7 @@ def _file_sha256(path: str) -> str:
     return h.hexdigest()[:16]
 
 
-def canonical_trades_replace(dry_run: bool) -> int:
+def canonical_trades_replace(dry_run: bool, *, push: bool = False) -> int:
     """
     Replace each canonical SQLite DB on the remote side with the local
     file, with deletions propagated. Backs up the existing remote file
@@ -757,10 +846,10 @@ def canonical_trades_replace(dry_run: bool) -> int:
         return 0
 
     push_msg = "sync: canonical-trades replace (#270, deletion-aware)"
-    if git_push(push_msg):
+    if push and git_push(push_msg):
         print("  ok Pushed canonical replace to remote.\n")
     else:
-        print("  (no git changes detected — push skipped)\n")
+        print("  Local backup prepared; no commit or push performed.\n")
     return 0
 
 
@@ -768,6 +857,12 @@ def main():
     parser = argparse.ArgumentParser(description="Two-way sync data with private backup repo.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would change without making any writes.")
+    parser.add_argument("--local-only", action="store_true",
+                        help="Sync existing local clones without fetching, committing or pushing.")
+    parser.add_argument("--snapshot", action="store_true",
+                        help="One-way local backup; archive replaced files, preserve destination-only records, never merge into local databases.")
+    parser.add_argument("--push", action="store_true",
+                        help="Explicitly commit and push the resulting backup changes.")
     parser.add_argument("--ssh", action="store_true",
                         help="Use SSH URL for cloning (for VMs with SSH key auth).")
     parser.add_argument("--prefer", choices=("local", "remote"), default=None,
@@ -790,11 +885,17 @@ def main():
                              "<file>.bak.<UTC stamp>. Combine with --dry-run "
                              "to preview row-count and checksum diffs only.")
     parser.add_argument("--include-env", action="store_true",
-                        help="Include top-level .env in the private backup sync. "
-                             "Use only for trusted private repos / machine migration.")
+                        help="Removed for safety; credential files must never enter Git.")
     parser.add_argument("--yes", action="store_true",
                         help="Confirm --all-local/--all-remote without an interactive prompt.")
     args = parser.parse_args()
+
+    if args.include_env:
+        parser.error("--include-env is disabled: transfer credentials through a secure channel, not Git.")
+    if args.local_only and args.push:
+        parser.error("--local-only cannot be combined with --push.")
+    if args.snapshot and (args.prefer or args.all_local or args.all_remote or args.canonical_trades):
+        parser.error("--snapshot cannot be combined with merge or replacement modes.")
 
     if args.all_local and args.all_remote:
         print("  \u2717 Cannot use --all-local and --all-remote together.")
@@ -809,6 +910,8 @@ def main():
         sys.exit(1)
 
     if not os.path.isdir(BACKUP_ROOT):
+        if args.dry_run or args.local_only:
+            parser.error("Backup clone is absent; this mode will not create it or contact the network.")
         clone_url = _require_backup_url(want_ssh=args.ssh)
         print(f"\n  Backup repo not found at: {BACKUP_ROOT}")
         print(f"  Cloning from {clone_url} ...")
@@ -833,14 +936,18 @@ def main():
 
     mode = "DRY RUN" if args.dry_run else "SYNC"
     print(f"\n  [{mode}] Two-way sync: local <-> {os.path.basename(BACKUP_ROOT)}/")
-    if args.include_env:
-        print("  Including .env in this run. Ensure the backup repo is private.")
-
     # Step 1: Pull latest remote data
-    if not args.dry_run:
+    if not args.dry_run and not args.local_only:
         if not git_pull():
             sys.exit(1)
     print()
+
+    if args.snapshot:
+        changed = LocalSnapshotBackup(PROJECT_ROOT, BACKUP_ROOT).sync(dry_run=args.dry_run)
+        print(f"  Snapshot: {changed} changed files; local data unchanged; backup-only files preserved.")
+        if args.push and not args.dry_run:
+            git_push("backup: reviewed local snapshot")
+        return 0
 
     # -- Canonical-trades replace (#270) ---------------------------
     # Append-merge can never delete a row that exists only on the
@@ -851,7 +958,7 @@ def main():
     # backup of the remote file. Targets only the canonical SQLite
     # databases (data/trades.db). Other files use the normal flow.
     if args.canonical_trades:
-        rc = canonical_trades_replace(args.dry_run)
+        rc = canonical_trades_replace(args.dry_run, push=args.push)
         sys.exit(rc)
 
     # -- Full one-directional sync ---------------------------------
@@ -860,17 +967,6 @@ def main():
         src_root  = PROJECT_ROOT if args.all_local else BACKUP_ROOT
         dst_root  = BACKUP_ROOT  if args.all_local else PROJECT_ROOT
         print(f"  [{direction}] Full overwrite of {'remote' if args.all_local else 'local'} data\n")
-
-        if args.include_env:
-            env_src = os.path.join(src_root, OPTIONAL_ENV_ITEM)
-            if not os.path.isfile(env_src):
-                print(
-                    f"  ! --include-env requested, but source .env is missing: {env_src}\n"
-                    f"    A real run would remove .env from the destination. "
-                    f"Push .env from the old machine first, or omit --include-env."
-                )
-                if not args.dry_run:
-                    return 1
 
         # Destructive — confirm unless dry-run.
         if not args.dry_run:
@@ -908,7 +1004,7 @@ def main():
                     print(f"    X removed: {rel}")
 
         print(f"\n  Summary: {copied} file(s) copied {direction}")
-        if not args.dry_run and args.all_local:
+        if not args.dry_run and args.all_local and args.push:
             if git_push("sync: full overwrite from local"):
                 print("  ok Pushed to remote.\n")
             else:
@@ -1012,6 +1108,10 @@ def main():
           f"{conflicts} conflict(s), {unchanged} unchanged")
 
     if args.dry_run:
+        return
+
+    if not args.push:
+        print("  Local backup prepared. Review changes; no commit or push performed.")
         return
 
     # Step 4: Push changes to backup repo

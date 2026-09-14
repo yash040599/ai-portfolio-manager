@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from config import Config
 from modes.trade.manager import PortfolioManager
 
 
@@ -21,6 +22,24 @@ class _LogCapture:
 
     def warning(self, message):
         self.warning_messages.append(message)
+
+
+class TestResearchSafetyDefaults(unittest.TestCase):
+    def test_default_config_blocks_live_trading(self):
+        manager = PortfolioManager.__new__(PortfolioManager)
+        manager.cfg = Config
+
+        self.assertTrue(Config.TRADE_LIVE_TRADING_PAUSED)
+        self.assertTrue(Config.OPTIONS_DRY_RUN)
+        with patch.object(Config, "DRY_RUN", False):
+            self.assertTrue(manager._should_abort_live_trading_for_reset())
+
+    def test_pause_still_allows_explicit_dry_runs(self):
+        manager = PortfolioManager.__new__(PortfolioManager)
+        manager.cfg = Config
+
+        with patch.object(Config, "DRY_RUN", True):
+            self.assertFalse(manager._should_abort_live_trading_for_reset())
 
 
 class TestTradeFallbackConsent(unittest.TestCase):

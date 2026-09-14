@@ -46,7 +46,7 @@ _TILES = [
     ("Intraday", "/trading", "Live intraday P&L and day drill-down.", "id"),
     ("Dry Run", "/dryrun", "Per-strategy dry-run P&L and stats.", "dr"),
     ("Tax", "/tax", "Realised P&L, charges, slab projection.", "tx"),
-    ("Theory", "/theory/statistics", "Strategy notes and statistics.", "th"),
+    ("Theory", "/theory/project", "The project story, evidence and next steps.", "th"),
 ]
 
 
@@ -117,7 +117,7 @@ def _hero(data: dict) -> str:
     fx = data["fx"]
     rate = _num(fx.get("rate"))
     fx_chip = (
-        f'<span class="t-chip" title="Source: {html.escape(str(fx.get("source", "")))}">'
+        f'<span class="t-chip" data-privacy-public title="Source: {html.escape(str(fx.get("source", "")))}">'
         f'USD/INR&nbsp;<strong>{rate:,.2f}</strong></span>'
         if rate > 0 else
         '<span class="t-chip warn">USD/INR unavailable</span>'
@@ -140,8 +140,8 @@ def _hero(data: dict) -> str:
       <button id="home-refresh" class="action" type="button" onclick="refreshHome(true)">
         Refresh live prices</button>
       <button id="home-privacy" class="action alt" type="button"
-              onclick="toggleHomePrivacy()" aria-pressed="false"
-              title="Hide every figure in the summary cards — for when someone can see your screen">
+              onclick="toggleDashboardPrivacy()" aria-pressed="false" data-privacy-toggle
+              title="Hide personal amounts and quantities across every dashboard page">
         Hide amounts</button>
     </div>
     <label class="switch" title="Re-fetch live prices every 60 seconds">
@@ -303,7 +303,7 @@ def _allocation(data: dict) -> str:
 <section class="split">
   <div class="t-card">
     <h3>Book mix</h3>
-    <div class="donut-wrap"><canvas id="chart-geo" height="190"></canvas></div>
+    <div class="donut-wrap"><canvas id="chart-geo" height="190" data-privacy-public></canvas></div>
     <ul class="legend" id="geo-legend"></ul>
   </div>
   <div class="t-card">
@@ -424,7 +424,7 @@ def _books(data: dict) -> str:
   <div class="t-card book">
     <div class="book-head">
       <h3>US book</h3>
-      <span class="t-chip info" title="Long-term holdings — RSU lots plus deliberate long-horizon buys. Not a trading book.">long-term</span>
+      <span class="t-chip info" title="Long-term investment holdings, not a short-term trading book.">long-term</span>
       <span class="spacer"></span><a class="more" href="/us">Open &#8594;</a>
     </div>
     <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>
@@ -562,22 +562,6 @@ def _currency_toggle_html(data: dict) -> str:
     )
 
 
-def _privacy_boot_script() -> str:
-    """Set `data-privacy` before first paint so the KPI figures are never
-    briefly readable on a screen someone else can see."""
-    return r"""
-<script>
-(function () {
-  try {
-    if (window.localStorage.getItem('homePrivacy') === '1') {
-      document.documentElement.setAttribute('data-privacy', 'on');
-    }
-  } catch (e) { /* private mode */ }
-})();
-</script>
-"""
-
-
 def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
     from modes.dashboard.chat_widget import chat_section_html
     from modes.dashboard.error_toast import error_toast_html, error_toast_script
@@ -611,7 +595,6 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
         "<title>Dashboard &middot; Portfolio HQ</title>",
         theme_boot_script(),
-        _privacy_boot_script(),
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/'
         'dist/chart.umd.min.js"></script>',
         "<style>", theme_css(), topnav_css(), _STYLE, theme_overrides_css(),
@@ -690,19 +673,6 @@ _STYLE = r"""
           width: 15px; height: 15px; border-radius: 50%; font-size: 10px;
           background: var(--soft); color: var(--muted); cursor: help;
           border: 1px solid var(--line); font-weight: 700; }
-
-/* ── Privacy mask (top summary boxes only) ────────────────── */
-/* `visibility: hidden` rather than a blur: it removes the glyphs
-   outright and also kills the `title` tooltip that would otherwise
-   still reveal the exact rupee figure on hover. */
-html[data-privacy="on"] .kpis .k-value,
-html[data-privacy="on"] .kpis .k-foot { position: relative; visibility: hidden; }
-html[data-privacy="on"] .kpis .k-value::after,
-html[data-privacy="on"] .kpis .k-foot::after {
-  content: "\2022\2022\2022\2022\2022";
-  visibility: visible; position: absolute; inset: 0 auto 0 0;
-  display: flex; align-items: center; letter-spacing: .12em;
-  color: var(--muted); }
 
 /* ── Connect / login ──────────────────────────────────────── */
 .connect { margin-bottom: 6px; border-left: 4px solid var(--pos); }
@@ -825,7 +795,6 @@ _SCRIPT = r"""
 
   var AUTO_KEY = 'homeAutoRefresh';
   var CUR_KEY = 'us-currency';   // shared with /us so the choice sticks
-  var PRIVACY_KEY = 'homePrivacy';
   var AUTO_MS = 60000;
   var timer = null;
   var inFlight = false;
@@ -1037,7 +1006,7 @@ _SCRIPT = r"""
       .getPropertyValue(name).trim();
   }
 
-  function tooltipLabel(ctx) { return ' ' + ctx.label + ': ' + inr(ctx.parsed); }
+  function tooltipLabel(ctx) { return ' ' + ctx.label + ': ' + pct(ctx.parsed); }
 
   function drawGeo(t) {
     var canvas = document.getElementById('chart-geo');
@@ -1056,6 +1025,7 @@ _SCRIPT = r"""
       return;
     }
     var total = india + mf + us;
+    var percentages = values.map(function (value) { return value / total * 100; });
     if (legend) {
       legend.innerHTML = values.map(function (v, i) {
         return '<li><i style="background:' + colours[i] + '"></i>' +
@@ -1063,7 +1033,7 @@ _SCRIPT = r"""
       }).join('');
     }
     if (geoChart) {
-      geoChart.data.datasets[0].data = values;
+      geoChart.data.datasets[0].data = percentages;
       geoChart.update();
       return;
     }
@@ -1072,7 +1042,7 @@ _SCRIPT = r"""
       data: {
         labels: labels,
         datasets: [{
-          data: values,
+          data: percentages,
           backgroundColor: colours,
           borderColor: cssVar('--card') || '#fff',
           borderWidth: 3,
@@ -1132,27 +1102,6 @@ _SCRIPT = r"""
   }
   window.refreshHome = refreshHome;
 
-  // ── privacy mask (KPI cards only) ────────────────────────
-  function privacyOn() {
-    try { return window.localStorage.getItem(PRIVACY_KEY) === '1'; }
-    catch (e) { return false; }
-  }
-  function syncPrivacy() {
-    var on = privacyOn();
-    document.documentElement.setAttribute('data-privacy', on ? 'on' : 'off');
-    var btn = document.getElementById('home-privacy');
-    if (btn) {
-      btn.textContent = on ? 'Show amounts' : 'Hide amounts';
-      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
-  }
-  function toggleHomePrivacy() {
-    try { window.localStorage.setItem(PRIVACY_KEY, privacyOn() ? '0' : '1'); }
-    catch (e) {}
-    syncPrivacy();
-  }
-  window.toggleHomePrivacy = toggleHomePrivacy;
-
   function setAuto(on) {
     if (timer) { clearInterval(timer); timer = null; }
     if (on) {
@@ -1165,7 +1114,6 @@ _SCRIPT = r"""
 
   document.addEventListener('DOMContentLoaded', function () {
     apply(boot());
-    syncPrivacy();
 
     var auto = document.getElementById('home-auto');
     var saved = '0';

@@ -1,17 +1,19 @@
 # Trading Statistics
 
-Last updated: 2026-08-12 (explicit-consent legacy fallback policy).
+Last reviewed: 2026-09-14. These are archived research results, not newly run
+backtests. Live intraday execution is paused; personal actual-trade amounts are
+kept in private operational records. Money in the research tables is simulated.
 
 ## 0. Current Verdict
 
 | Area | Current Read |
 |---|---|
 | Runtime strategy version | 2.3-2026-06-15-GAP_AND_GO_1.2.0 |
-| Active stage | **GAP_AND_GO_DRY_RUN** — v1.2.0 on NIFTY100: adaptive volume on broad-gap days (≥25 stocks gap ≥1% → vol threshold 2.0x→1.25x). Entry at 09:30 candle close, gap-hold 0.3%, score-contradiction block. OOS PF 1.30, Sharpe 1.29. |
+| Active stage | **GAP_AND_GO_RESEARCH_PAUSED**; live startup blocked. Retained v1.2.0 candidate on NIFTY100, reported TEST PF 1.30 and Sharpe 1.29. Dry-run validation is not live promotion. |
 | Strategy profile | `NOAI_GAP_AND_GO_1.2.0` (active in config.py) |
 | AI mode | Not used — Gap-and-Go is pure rules-based (NoAI) |
 | Run command | python main.py --mode trade --dryrun (SCAN_UNIVERSE = "NIFTY100") |
-| Budget | Rs.50,000 |
+| Research sizing assumption | Rs.50,000; not personal-account disclosure |
 | Daily trade cap | 2 trades max (GAP_GO_DAILY_CAP=2) |
 | Square-off | 13:00 IST (GAP_GO_SQUARE_OFF_HOUR=13) |
 | Loser exit | 12:00 IST (auto: sq-off − 1hr) |
@@ -186,14 +188,15 @@ The legacy multi-indicator scorer (NOAI_LEGACY_FULL) was audited across 62 gates
 
 **Verdict: FAIL.** OOS PF 0.82 = negative expectancy. Led to the Gap-and-Go research (Phases 1-7) that produced the first passing strategy.
 
-## 3. FY 2026-27 Historical Record
+## 3. Actual Evidence Boundary
 
-| Metric | Value |
-|---|---:|
-| Total trades (old NoAI baseline) | 184 |
-| Net P&L (old NoAI baseline) | Rs.-3,929 |
-| Charges (old NoAI baseline) | Rs.2,591 |
-| v1.0.0 dry-run 2026-06-09 | 2 trades, Rs.-476 (0/2 wins) |
+The end-to-end broker workflow was exercised with actual buys and sells.
+Personal ledger totals, charges, quantities and account records are retained
+only in the private operational repository and local dashboard. Earlier live
+results did not establish a profitable system.
+
+The v1.0.0 simulated session on 2026-06-09 exposed an entry-timing mismatch and
+missing gap confirmation. It is dry-run evidence, not personal P&L.
 
 Gap-and-Go dry-run evidence began with v1.1.1 on 2026-06-12 and continues
 under the active v1.2.0 config hash. Do not mix the cohorts when evaluating
@@ -213,15 +216,17 @@ strategy config version:
 | Max drawdown | <= 3% of daily capital |
 | Sample size | >= 10 sessions, >= 20 trades |
 
-Capital scaling (Rs.50K → Rs.1L) requires passing all promotion metrics.
-At Rs.50K, charges eat 39% of gross; at Rs.1L this drops to ~20%.
+These gates are necessary research checks, not sufficient proof for capital
+scaling. Repeated tuning on the TEST window weakens out-of-sample independence.
+Require a fresh frozen evaluation, current trading and subscription costs,
+benchmark comparison and forward evidence before any explicit live decision.
 
 ## 5. Update Protocol
 
-After each live trading session:
+After each approved research session:
 1. Check daily report in reports/trading/
 2. Run scripts/trade/promotion_check.py --window 20 when >= 20 trades accumulated
-3. Update this doc with latest metrics
+3. Update public docs with labelled simulated metrics; keep actual personal amounts private
 4. Capital scaling decision only after promotion metrics pass
 
 ---
@@ -271,13 +276,13 @@ for improvement ideas.
 | **Options** | Directional buying v1.0 | FULL | 147 | 0.42 | -6.37 | ❌ FAIL |
 | Options | Directional buying v1.0 | OOS | 60 | 0.64 | -3.24 | ❌ FAIL |
 | Options | VOLATILE-only subset | FULL | 36 | 0.77 | — | ❌ Promising but fail |
-| **Swing** | 52W dip-buy | 10yr | ~500 | 1.29 CAGR alpha | — | ✅ Report-only |
+| **Swing** | Historical ATH dip-buy, not runtime 52W replay | 10yr | Separate archive | Not comparable | — | Report-only; full runtime validation pending |
 
 **Key takeaways:**
 1. Only Gap-and-Go v1.2.0 passes the 1.15 PF gate — active profile
 2. Phase 9 tested 4 new strategies (FHRB, OCM, NIFTY Futures, Sector Rotation) — all FAIL
 3. Budget scaling Rs.50K→Rs.1L saves only 0.024%/trade — doesn't rescue any failed strategy
-4. Intraday equity search space on NSE is largely exhausted at Rs.50K/cost level
+4. The tested intraday families did not justify resuming live operation at the assumed cost level; this does not exhaust all possible research
 5. Options directional buying needs a better signal or pivot to selling
 6. Regime routing is the strongest reusable asset across all modes
 

@@ -343,7 +343,7 @@ def render_swing_page() -> str:
                 f'font-variant-numeric:tabular-nums" />')
     note_color = "#5d6b82"
     body.append(
-        f'<span style="margin-left:8px;font-size:12px;color:{note_color}">'
+        f'<span data-personal style="margin-left:8px;font-size:12px;color:{note_color}">'
         f'{html.escape(capital_source_note)}</span>'
     )
     body.append('</div>')

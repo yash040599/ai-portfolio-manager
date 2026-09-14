@@ -477,11 +477,11 @@ def _render_charts(snap: PortfolioSnapshot) -> str:
 <div class="chart-grid">
   <div class="chart-card">
     <h3>Sector mix</h3>
-    <canvas id="chart-sector"></canvas>
+    <canvas id="chart-sector" data-privacy-public></canvas>
   </div>
   <div class="chart-card">
     <h3>Market-cap tier (AMFI)</h3>
-    <canvas id="chart-cap-tier"></canvas>
+    <canvas id="chart-cap-tier" data-privacy-public></canvas>
   </div>
 </div>
 <div class="chart-grid" style="grid-template-columns: 1fr;">

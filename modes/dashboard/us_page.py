@@ -1,7 +1,7 @@
 """US long-term portfolio page.
 
 This book is **not** a swing book. US positions are long-term holdings
-meant to compound — RSU lots plus deliberate long-horizon buys — so the
+meant to compound through long-horizon investment decisions, so the
 page is framed as a portfolio and an idea list, and ideas are ranked by
 `modes/us/longterm.py` (quality, valuation vs sector, growth, 12-1
 momentum, balance sheet, drawdown) rather than by chart setups.

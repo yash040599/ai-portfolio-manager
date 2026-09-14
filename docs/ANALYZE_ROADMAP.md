@@ -16,8 +16,8 @@ Scope:
 - Default flow is **NoAI** (zero Claude cost). `--ai` is the opt-in
   upgrade that adds qualitative / narrative fields on top of the
   same NoAI base. Symmetric with `--mode trade`.
-- Surfaced on the dashboard as the new default landing page
-  (`/portfolio`); per-stock drill-down (`/portfolio/<symbol>`)
+- Surfaced on the dashboard at `/portfolio`; HQ at `/` is the
+   landing page. Per-stock drill-down (`/portfolio/<symbol>`)
   exposes "Analyse with AI / without AI" buttons. Dashboard items
   live in [`modes/dashboard/docs/DASHBOARD_ROADMAP.md`](../modes/dashboard/docs/DASHBOARD_ROADMAP.md)
   with the `D` prefix; cross-references between the two roadmaps
@@ -28,20 +28,20 @@ Scope:
 
 ---
 
-## Current Posture (2026-08-10)
+## Current Posture (2026-09-14)
 
 | Area | Status |
 |---|---|
-| Stage | **Working and in regular use.** 17 analyse runs, 613 stock analyses recorded in `data/portfolio_analyses.db`. |
-| Trading cost | **Zero** — read-only, places no orders, needs no subscription beyond the data plan already paid for. |
-| Standing | Across the four modes this is the one with a positive contribution and no open blocker. |
+| Stage | **Active product focus.** Persisted Indian-stock analysis, per-stock explanations, six-pillar ratings and separate risk grades are implemented. |
+| Costs | No order-placement charges from analysis; data, hosting and optional AI costs depend on provider plans. |
+| Companion books | US long-term stock study and mutual-fund structural review are implemented, with separate domain models. |
+| Evidence | Decision support, not demonstrated investment outperformance. Data coverage and freshness remain explicit limitations. |
+| Privacy | Dashboard-wide amount/quantity masking; public docs contain no personal holdings or account totals. |
 
-Worth stating plainly, because the trading modes absorb most of the attention:
-this mode's leverage scales with the size of the existing holding, not with a
-trade edge. A 1% better allocation decision on the demat book is worth more than
-a year of intraday Gap-and-Go at Rs.50K (see
-[TRADE_ROADMAP.md](TRADE_ROADMAP.md) unit economics), and it costs nothing to
-run. Keep it current.
+The pivot prioritises explaining existing investments and researching Indian
+and US candidates. Better information may support decisions, but this is not
+evidence that recommendations have earned any particular return. The project
+journey is documented in [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md).
 
 Known limitation recorded 2026-08-10 while writing
 [`tests/test_scoring.py`](../tests/test_scoring.py): `coverage_pct` is measured

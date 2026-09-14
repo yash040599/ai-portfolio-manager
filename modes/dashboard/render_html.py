@@ -290,10 +290,10 @@ __THEME_BOOT__
     </div>
   </div>
 
-  <div class="card verdict" id="verdict-card">…</div>
+  <div class="card verdict" id="verdict-card" data-personal>…</div>
 
   <h2>Headline P&amp;L</h2>
-  <div class="card" id="headline-card">…</div>
+  <div class="card" id="headline-card" data-personal>…</div>
 
   <h2>Charts</h2>
   <div class="charts">

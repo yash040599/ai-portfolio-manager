@@ -1,5 +1,7 @@
 # Edge Gap Audit — 2026-05-26
 
+> Public copy: historical account amounts have been removed. The original evidence is retained in the private operational archive. This dated audit is not the current operating state.
+
 **Trigger**: Post 62-gate backtest audit. PF improved 0.71 → 0.86 but still sub-1.0.
 **Question**: Why is the system not profitable and what is the missing edge?
 
@@ -13,9 +15,9 @@
 | Break-even WR (raw) | 35.7% |
 | Break-even WR (after costs) | ~42-45% |
 | Daily trade cap | 2 (K1) |
-| Budget | Rs.50,000 |
+| Budget | [private amount removed] |
 | AI mode | Gemini 2.5 Flash selects 2/day from NIFTY50 |
-| FY net (pre-audit, NoAI) | Rs.-3,929 on 184 trades |
+| FY net (pre-audit, NoAI) | [private amount removed] on 184 trades |
 | H2 2024 PF (post-audit) | 1.02 (only profitable half) |
 
 **Core approach**: Blended 14-indicator + 14-pattern technical scorer → AI quality gate → ATR-based SL/target.
@@ -40,7 +42,7 @@
 
 ### Gap D: Transaction Cost Drag
 - Break-even WR is 35.7% raw but 42-45% after Zerodha STT + brokerage + GST.
-- At Rs.50K capital, per-trade charges are proportionally massive.
+- At [private amount removed] capital, per-trade charges are proportionally massive.
 - 37.8% WR is above raw break-even but below after-cost break-even.
 - **Impact**: Even marginal edge gets eaten by costs. This is the #1 reason PF < 1.0.
 
@@ -50,7 +52,7 @@
 - **Impact**: Missing the strongest short-term predictive signal available.
 
 ### Gap F: No Options Overlay
-- Equity intraday MIS has high STT (₹0.025% per side).
+- Equity intraday MIS has high STT ( [private amount removed]% per side).
 - F&O equity options have lower buy-side STT and allow defined-risk structures.
 - **Impact**: Cost structure disadvantage vs options-based strategies.
 
@@ -72,7 +74,7 @@
 | 1 | ORB-5 (5-min instead of 15-min) | Crabel, Connors & Raschke | ORB-15 was PF 0.97; tighter timeframe + volume filter may cross 1.0 | Strong first-30-min directional bias on NSE |
 | 2 | VWAP Twist (breakout with VWAP trail, not MR) | Institutional algo standard | Use VWAP as trailing stop on trend trades, not mean-reversion target | FIIs anchor to VWAP on NSE |
 | 3 | Regime-switching ensemble | Lopez de Prado; AQR Research | Classify day as Trend/Range/Volatile, route to matching sub-strategy | VIX + ADX + gap% available from existing data |
-| 4 | Order Flow Imbalance (OFI) | Cont, Kukanov & Stoikov 2014 | Bid-ask imbalance at top levels predicts short-term price | Needs Level-2 data (TrueData, ~₹2K/mo) |
+| 4 | Order Flow Imbalance (OFI) | Cont, Kukanov & Stoikov 2014 | Bid-ask imbalance at top levels predicts short-term price | Needs Level-2 data (TrueData, ~ [private amount removed]/mo) |
 | 5 | Pairs Trading (stat-arb) | Gatev, Goetzmann & Rouwenhorst (Yale) | Trade correlated pairs (HDFCBANK/ICICIBANK). Market-neutral. | Indian banking pairs are highly cointegrated |
 | 6 | Expiry-Day Options Selling | NSE data, QuantInsti research | Thursday expiry theta decay; India = world's largest options market | Documented retail edge |
 | 7 | Intraday Momentum (first-half → last-half) | Gao, Han, Li & Zhou 2018 | First-half-hour return predicts last-half-hour return | Strong on NSE due to FII patterns |
@@ -85,9 +87,9 @@
 | Tool | What it provides | Cost | Priority |
 |---|---|---|---|
 | Zerodha Historical API | 1-min candles (currently using 15-min) | Free (existing) | **Use immediately** — switch to 5-min |
-| TrueData / GlobalDataFeeds | Tick-by-tick, Level-2 order book depth | ₹1,500-3,000/mo | HIGH — needed for OFI strategy |
+| TrueData / GlobalDataFeeds | Tick-by-tick, Level-2 order book depth | [private amount removed]-3,000/mo | HIGH — needed for OFI strategy |
 | NSE Bhav Copy | End-of-day data | Free | Already sufficient |
-| Chartink Screener | Pre-built NSE scan alerts | Free/Pro ₹1K/mo | LOW — validation tool |
+| Chartink Screener | Pre-built NSE scan alerts | Free/Pro [private amount removed]/mo | LOW — validation tool |
 
 ### ML / AI Tools
 

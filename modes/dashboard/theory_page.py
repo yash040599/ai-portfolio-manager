@@ -1,7 +1,8 @@
 """Theory dashboard pages — one route per source doc.
 
 Routes:
-    /theory                     -> redirects to /theory/statistics
+    /theory                     -> redirects to /theory/project
+    /theory/project             -> docs/PROJECT_OVERVIEW.md (public project story)
     /theory/statistics          -> docs/TRADE_STATISTICS.md (+ live stats summary card)
     /theory/trade-strategy         -> docs/TRADE_STRATEGY.md
     /theory/evolution           -> docs/TRADE_EVOLUTION.md
@@ -39,6 +40,7 @@ _DOCS_DIR = _PROJECT_ROOT / "docs"
 
 # slug -> (label, source filename, includes_summary_card)
 PAGES: dict[str, tuple[str, str, bool]] = {
+    "project": ("AI Portfolio Manager", "PROJECT_OVERVIEW.md", False),
     "statistics":  ("Statistical Analysis",             "TRADE_STATISTICS.md", True),
     "trade-strategy": ("Trade Strategy — Complete Reference", "TRADE_STRATEGY.md",         False),
     "evolution":   ("Strategy Evolution",               "TRADE_EVOLUTION.md",  False),
@@ -48,7 +50,7 @@ PAGES: dict[str, tuple[str, str, bool]] = {
     "next-ideas":  ("Next Ideas — Intraday & Options",  "TRADE_NEXT_IDEAS.md",          False),
 }
 
-DEFAULT_PAGE = "statistics"
+DEFAULT_PAGE = "project"
 
 
 # ── Minimal Markdown -> HTML ─────────────────────────────────────
@@ -67,6 +69,10 @@ _MATH_BLOCK_RE    = re.compile(r"^\s*\$\$(.+?)\$\$\s*$", re.DOTALL)
 _MATH_INLINE_RE   = re.compile(r"(?<!\\)\$([^$\n]+?)(?<!\\)\$")
 # Standard markdown escapes we honour: \| \$ \* \_ \` \\ \# \[ \] \( \)
 _MD_ESCAPE_RE     = re.compile(r"\\([|$*_`\\#\[\]()<>])")
+
+
+def _heading_id(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def _inline(text: str) -> str:
@@ -203,7 +209,8 @@ def _markdown_to_html(md: str) -> str:
         m = _HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
-            out.append(f"<h{level}>{_inline(m.group(2))}</h{level}>")
+            anchor = _heading_id(m.group(2))
+            out.append(f'<h{level} id="{anchor}">{_inline(m.group(2))}</h{level}>')
             i += 1
             continue
 
@@ -342,11 +349,11 @@ def _summary_card(stats: LiveStats) -> str:
     (verified + provisional).
   </p>
   <div class="summary-grid">
-    <div class="summary-col">
+    <div class="summary-col" data-privacy-public>
       <div class="col-title">Theoretical (target)</div>
       <table class="summary-tbl"><tbody>{theory_html}</tbody></table>
     </div>
-    <div class="summary-col">
+    <div class="summary-col" data-personal>
       <div class="col-title">Live (current FY)</div>
       {live_block}
     </div>
@@ -361,6 +368,58 @@ def _summary_card(stats: LiveStats) -> str:
 
 
 # ── Page assembly ────────────────────────────────────────────────
+
+def _project_contents(markdown: str) -> str:
+        headings = re.findall(r"^## (.+)$", markdown, re.MULTILINE)
+        links = "".join(
+                f'<a href="#{_heading_id(heading)}">{html.escape(heading)}</a>'
+                for heading in headings
+        )
+        return f'<aside class="story-contents"><nav aria-label="Project contents">{links}</nav></aside>'
+
+
+_PROJECT_STATUS = """
+<section class="project-status" aria-label="Project status" data-privacy-public>
+    <div><span class="t-chip pos">Active focus</span><strong>Portfolio analysis</strong><span>India, US and mutual funds</span></div>
+    <div><span class="t-chip warn">Live paused</span><strong>Intraday research</strong><span>End-to-end tested; economics unresolved</span></div>
+    <div><span class="t-chip info">Research only</span><strong>Options</strong><span>Backtesting before any live decision</span></div>
+</section>
+"""
+
+_PROJECT_CHART = r"""
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    if (typeof Chart === 'undefined') return;
+    const table = Array.from(document.querySelectorAll('.md-table')).find(candidate =>
+        Array.from(candidate.querySelectorAll('th')).some(header => header.textContent === 'Profit factor'));
+    if (!table) return;
+    const rows = Array.from(table.querySelectorAll('tbody tr'));
+    const chart = document.createElement('div');
+    chart.className = 'research-chart';
+    const canvas = document.createElement('canvas');
+    canvas.setAttribute('data-privacy-public', '');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', 'Historical simulated profit factors. The adjacent table contains all values and caveats.');
+    chart.append(canvas);
+    table.closest('.table-scroll').before(chart);
+    new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: rows.map(row => row.cells[0].textContent.split(',')[0]),
+            datasets: [{label: 'Historical profit factor', data: rows.map(row => Number(row.cells[1].textContent)),
+                backgroundColor: rows.map(row => Number(row.cells[1].textContent) >= 1.15 ? '#198060' : '#b84b51'),
+                borderRadius: 3, maxBarThickness: 22}]
+        },
+        options: {indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+            plugins: {legend: {display: false}},
+            scales: {x: {beginAtZero: true, suggestedMax: 1.5,
+                title: {display: true, text: '1.00 = break-even before fixed operating costs'}},
+                y: {ticks: {font: {size: 11}}}}}
+    });
+});
+</script>
+"""
 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en">
@@ -473,23 +532,58 @@ __THEME_BOOT__
   footer { color: var(--muted); font-size: 12px; margin-top: 32px;
            text-align: center; }
   __THEME_OVERRIDES__
+    .project-story { max-width: 1240px; }
+    .project-story .page-title { font-size: 28px; letter-spacing: 0; }
+    .project-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px; border-block: 1px solid var(--line); padding: 18px 0; margin: 22px 0 28px; }
+    .project-status > div { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; }
+    .project-status strong { font-size: 16px; }
+    .project-status > div > span:last-child { color: var(--muted); font-size: 12px; }
+    .project-story .story-grid { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 32px; }
+    .story-contents { align-self: start; position: sticky; top: 16px; }
+    .story-contents nav { display: flex; flex-direction: column; gap: 4px; }
+    .story-contents a { color: var(--fg-2); text-decoration: none; font-size: 12px;
+        border-left: 2px solid var(--line); padding: 5px 10px; }
+    .story-contents a:hover { color: var(--accent); border-color: var(--accent); }
+    .project-story .doc-section { padding: 0; background: none; border: 0; box-shadow: none; min-width: 0; }
+    .project-story .doc-section > h1:first-child { display: none; }
+    .project-story .doc-section h2 { border-top: 1px solid var(--line); padding-top: 24px;
+        margin-top: 30px; scroll-margin-top: 20px; letter-spacing: 0; }
+    .project-story .doc-section p { max-width: 86ch; margin: 12px 0; }
+    .project-story .doc-section li { margin: 9px 0; }
+    .research-chart { position: relative; height: 260px; width: 100%; max-width: 100%;
+        min-width: 0; overflow: hidden; margin: 22px 0; }
+    nav.topnav .docs-pick { min-width: 0; max-width: 100%; }
+    nav.topnav .docs-pick select { width: 230px; max-width: 100%; }
+    @media (max-width: 760px) {
+        .project-story .story-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+        .story-contents { position: static; }
+        .story-contents nav { flex-direction: row; flex-wrap: wrap; }
+        .project-status { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+        .project-status > div { gap: 4px; }
+        .project-story .page-title { font-size: 24px; }
+        .research-chart { height: 300px; }
+        .project-story .doc-section .table-scroll { max-width: 100%; margin-inline: 0; padding-inline: 0; }
+    }
 </style>
+__PAGE_ASSETS__
 </head>
 <body>
-<div class="wrap">
+<div class="wrap __PAGE_CLASS__">
     __TOPNAV__
 
   <h1 class="page-title">__TITLE__</h1>
-  <div class="sub">
-    Rendered live from <code>docs/__FILENAME__</code>. Edit the markdown to update this page.
-  </div>
+    <div class="sub">__DESCRIPTION__</div>
 
   __SUMMARY__
 
-  <section class="doc-section">
-    <div class="source-banner">Source: <code>docs/__FILENAME__</code></div>
+    <div class="story-grid">
+    __CONTENTS__
+    <section class="doc-section" __PUBLIC__>
+        __SOURCE__
     __BODY__
   </section>
+    </div>
 
   <footer>
     Generated <span id="now"></span>.
@@ -500,8 +594,8 @@ __THEME_BOOT__
     new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
 
   // Render KaTeX into every element that has a data-tex attribute.
-  function renderAllMath() {
-    if (typeof katex === "undefined") { setTimeout(renderAllMath, 30); return; }
+    function renderAllMath() {
+        if (typeof katex === "undefined") return;
     document.querySelectorAll("[data-tex]").forEach(function (el) {
       try {
         katex.render(el.dataset.tex, el, {
@@ -514,7 +608,7 @@ __THEME_BOOT__
       }
     });
   }
-  renderAllMath();
+    document.addEventListener('DOMContentLoaded', renderAllMath);
 </script>
 </body>
 </html>
@@ -535,6 +629,8 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
     if slug not in PAGES:
         slug = DEFAULT_PAGE
     label, filename, has_summary = PAGES[slug]
+    is_project = slug == "project"
+    md = ""
 
     path = _DOCS_DIR / filename
     if path.exists():
@@ -553,6 +649,8 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
         )
 
     summary_html = ""
+    if is_project:
+        summary_html = _PROJECT_STATUS
     if has_summary:
         try:
             stats = compute_live_stats()
@@ -579,6 +677,12 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
             .replace("__THEME_BOOT__", theme_boot_script())
             .replace("__THEME_CSS__", theme_css())
             .replace("__THEME_OVERRIDES__", theme_overrides_css())
+            .replace("__PAGE_CLASS__", "project-story" if is_project else "")
+            .replace("__DESCRIPTION__", "From automated trading experiments to clearer investment decisions." if is_project else "Research notes, strategy references and recorded evidence.")
+            .replace("__CONTENTS__", _project_contents(md) if is_project else "")
+            .replace("__PUBLIC__", "data-privacy-public" if is_project else "")
+            .replace("__PAGE_ASSETS__", _PROJECT_CHART if is_project else "")
+            .replace("__SOURCE__", "" if is_project else f'<div class="source-banner">Source: <code>docs/{html.escape(filename)}</code></div>')
             .replace("__TITLE__", html.escape(label))
             .replace("__FILENAME__", html.escape(filename))
             .replace("__TOPNAV_CSS__", topnav_css())

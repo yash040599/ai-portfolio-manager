@@ -38,6 +38,8 @@ light theme).  The user's choice is persisted in
 
 from __future__ import annotations
 
+from modes.dashboard.privacy import privacy_boot_script
+
 
 # ── Tokens + base ────────────────────────────────────────────────
 
@@ -547,7 +549,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 def theme_boot_script() -> str:
     """Sets `data-theme` before first paint and exposes `toggleTheme()`."""
-    return r"""
+    return privacy_boot_script() + r"""
 <script>
 (function () {
   var KEY = 'dashTheme';

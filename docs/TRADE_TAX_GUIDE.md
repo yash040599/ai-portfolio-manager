@@ -157,7 +157,7 @@ To carry forward losses, you **must file ITR before the due date** (July 31).
 | Turnover < Rs.10 Cr AND total income < basic exemption | No |
 
 **Turnover for intraday** = Absolute sum of settlement profits and losses
-(NOT buy+sell value). For small accounts like ours (Rs.10K budget), turnover
+(NOT buy+sell value). In a hypothetical small-account example, turnover
 will be well under Rs.10 Cr — audit is almost certainly NOT required.
 
 ### Presumptive taxation (Section 44AD)

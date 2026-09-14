@@ -10,7 +10,19 @@ This skill keeps the intraday trading work aligned with the 2026-05-15 Chan-fram
 
 ## Current Journey State
 
-As of 2026-05-19:
+As of 2026-09-14, live intraday execution is paused in config. The retained
+profile is `NOAI_GAP_AND_GO_1.2.0`, stage `GAP_AND_GO_RESEARCH_PAUSED`.
+The active product focus is Indian/US portfolio analysis and mutual-fund
+review. Options remain research-only. Read `docs/PROJECT_OVERVIEW.md` and the
+current posture in `docs/TRADE_ROADMAP.md` before interpreting older evidence.
+Do not claim a profitable live system or scale capital on historical results.
+Do not commit or push unless the user explicitly asks.
+
+The May notes below are historical context, not current commands or config.
+Some named scripts and stages were subsequently retired; verify existence
+before using them. The current runtime and dated evidence take precedence.
+
+Historical state as of 2026-05-19:
 
 - The bot is not considered a validated profitable strategy.
 - Live trading is paused (`TRADE_LIVE_TRADING_PAUSED = True`); broker-side execution testing is blocked unless the user recharges Zerodha dev APIs.
@@ -25,8 +37,8 @@ As of 2026-05-19:
 - Active strategy version: `v1.3-2026-05-19-S0`. Active NoAI profile: `NOAI_SIMPLE_MR_BASELINE`.
 - Earlier dry-run sessions (including 2026-05-18 and 2026-05-19) were generated with non-MR gates
   active and were purged. The L0 sample restarts at zero from the next dry-run.
-- Latest live promotion check failed: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%.
-  FY intraday ledger is about Rs.-3,928.68 net after charges.
+- The historical live promotion check failed. Personal actual-trade figures
+  remain only in private operational evidence, not this public runbook.
 - Stage 1 plumbing (T1.0-T1.7) remains shipped: data contract, scanner-clock replay,
   config-hash candidate ledger, after-cost replay, live-vs-replay reports, dry-run DB separation,
   daily evidence files, simple MR profile isolation.
@@ -60,10 +72,10 @@ For implementation work, also inspect the relevant code path:
 
 External research/data context:
 
-- The user has a separate market-research repository: `https://github.com/yash040599/market-research`.
+- A separate `market-research` archive contains earlier daily-price experiments; its remote is configured privately.
 - It has now been inspected: it is a standalone daily ATH-dip research sandbox using `yfinance`, a hardcoded current NIFTY 50 list, and result matrices. Treat it as reference/seed material, not as the intraday replay runtime source.
 - Keep this repo as the trade tool. Do not bloat it with large raw datasets unless the user explicitly approves that storage decision.
-- Stage 1 data model: use the separate private repo `https://github.com/yash040599/ai-portfolio-backtest-data` for normalized replay-ready data. Clone/sync it beside the main repo at `../ai-portfolio-backtest-data` with `scripts/shared/sync_backtest_data.py`.
+- Use the market-data-only `ai-portfolio-backtest-data` repository for normalized replay data. Keep personal ledgers and credentials out; provider redistribution rights require a separate check before publication. Clone beside the application with `scripts/shared/sync_backtest_data.py`.
 - Git LFS: the data repo tracks all `*.sqlite` via Git LFS (`candles/intraday_15m.sqlite` is ~220 MB, over GitHub's 100 MB limit). `git-lfs` must be installed on every machine; `sync_backtest_data.py` checks for it and runs `git lfs pull` on clone/pull. New large file types must be `git lfs track`-ed in the data repo before committing.
 - Design for the Linux trading VM: use SSH pulls (`python scripts/shared/sync_backtest_data.py --ssh`) so the VM reads the same local dataset version as the dev machine. Do not fetch candles from GitHub at replay/runtime.
 - Data contract lives in `docs/TRADE_BACKTEST_DATA.md`. First format is dependency-light: CSV metadata plus SQLite candle stores, not parquet-first.

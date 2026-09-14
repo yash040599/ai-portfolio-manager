@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+from modes.dashboard.privacy import privacy_toggle_html
 from modes.dashboard.theme import theme_toggle_html
 
 
@@ -19,7 +20,7 @@ NAV_ITEMS = [
     ("Intraday", "/trading", "Live intraday P&L"),
     ("Dry Run", "/dryrun", "Per-strategy dry-run P&L"),
     ("Tax", "/tax", "Realised P&L and tax projection"),
-    ("Theory", "/theory/statistics", "Strategy notes and statistics"),
+    ("Theory", "/theory/project", "The project story, evidence and research roadmap"),
 ]
 
 # Pages still pass a label (not a path) as `here`; normalise those.
@@ -36,7 +37,7 @@ _LABEL_ALIASES = {
     "dry run": "/dryrun",
     "dryrun": "/dryrun",
     "tax": "/tax",
-    "theory": "/theory/statistics",
+    "theory": "/theory/project",
 }
 
 
@@ -87,6 +88,7 @@ def render_topnav(here: str = "", *, after_links: str = "") -> str:
         + "".join(parts)
         + '<span class="spacer"></span>'
         + after_links
+        + privacy_toggle_html()
         + theme_toggle_html()
         + '</nav>'
     )

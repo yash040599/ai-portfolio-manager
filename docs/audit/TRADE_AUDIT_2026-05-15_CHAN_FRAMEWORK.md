@@ -1,5 +1,7 @@
 # Chan-Framework Intraday Audit - 2026-05-15
 
+> Public copy: historical account amounts have been removed. The original evidence is retained in the private operational archive. This dated audit is not the current operating state.
+
 Scope: default intraday trading mode, especially `python main.py --mode trade` / NoAI. This audit uses the framework from Ernest P. Chan's *Algorithmic Trading: Winning Strategies and Their Rationale*: a trading idea needs an economic reason, a replayable implementation, transaction-cost-aware testing, out-of-sample validation, and a measured promotion path before real capital is increased.
 
 Source note: I did not use pirated PDFs. I used legitimate public metadata, including the author page, which describes the book as focused on real strategy examples, why each strategy was developed, how it was implemented, and how it was coded. The strategy-family mapping below uses the book's well-known themes: backtesting discipline, mean reversion, momentum, pairs/statistical arbitrage, seasonality, and HFT/microstructure.
@@ -8,10 +10,10 @@ Source note: I did not use pirated PDFs. I used legitimate public metadata, incl
 
 | Question | Verdict | Reason |
 |---|---|---|
-| Is the current live bot profitable? | No | Latest read-only metrics show current FY net about Rs.-3,928.68 after charges, promotion check FAIL, and last-9-day net about Rs.-3,947.51. |
+| Is the current live bot profitable? | No | Latest read-only metrics show current FY net about [private amount removed] after charges, promotion check FAIL, and last-9-day net about [private amount removed]. |
 | Is the current bot a clean Chan-style strategy? | No | It is a large combined score plus many gates. Good risk controls exist, but entry edge is not isolated by strategy family. |
 | Should we add more live gates now? | No | Chan's process would first make the hypothesis replayable, then test it after costs. More gates now would deepen overfit risk. |
-| Should capital be scaled? | No | `promotion_check.py --window 20` is FAIL: PF 0.839, expectancy Rs.-6.11/trade, day win rate 30.0%. |
+| Should capital be scaled? | No | `promotion_check.py --window 20` is FAIL: PF 0.839, expectancy [private amount removed]/trade, day win rate 30.0%. |
 | What is the right next step? | Research reset | Freeze live strategy tuning, keep evidence plumbing, isolate one strategy family, and trade only after backtest plus forward sample clears gates. |
 
 ## Current Code Walk-Through

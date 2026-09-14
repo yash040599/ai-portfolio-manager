@@ -5,6 +5,11 @@
 > This skill pushes all three repositories that make up the
 > ai-portfolio-manager system.
 
+Only execute commits or pushes after an explicit user request. A request to
+clean, audit, organise or locally sync repositories does not authorise publication.
+The operational-data repository may contain personal records and must remain
+private; the application and backtest repositories must contain no personal data.
+
 ## Repository Layout
 
 ```
@@ -19,19 +24,19 @@ AiPortfolioManager/
 | Repo | What to run | Notes |
 |------|-------------|-------|
 | **Code** | `git add -A ; git commit -m "<msg>" ; git push` | Standard git. Only if there are uncommitted code changes. |
-| **Data** | `python scripts/shared/backup_data.py --all-local --yes` | Copies data/, reports/, logs/, copilot/ → data repo → commits → pushes. Uses SSH. |
+| **Data** | `python scripts/shared/backup_data.py --snapshot --push` | Explicitly publishes a reviewed snapshot; preserves destination-only files and replaced versions. |
 | **Backtest** | `python scripts/shared/sync_backtest_data.py --push --commit --message "<msg>"` | Syncs SQLite candle DBs. Uses HTTPS. Prints "No changes" if clean. |
 
 ## Full Push Sequence
 
-Run from the code repo root (`c:\Users\yashagrawal\AiPortfolioManager\ai-portfolio-manager`):
+Run from the code repository root:
 
 ```powershell
 # 1. Code repo (only if there are uncommitted changes)
 git add -A ; git commit -m "sync: <describe changes>" ; git push
 
 # 2. Data repo (copies local data → data repo → push)
-python scripts/shared/backup_data.py --all-local --yes
+python scripts/shared/backup_data.py --snapshot --push
 
 # 3. Backtest repo (syncs backtest SQLite DBs → push)
 python scripts/shared/sync_backtest_data.py --push --commit --message "sync backtest data"
@@ -41,8 +46,8 @@ python scripts/shared/sync_backtest_data.py --push --commit --message "sync back
 
 - **Data repo uses SSH** (`git@github.com:...`). If SSH keys aren't configured, the push will fail.
 - **Code repo's data/ and reports/ are .gitignored** — they only live in the data repo. That's why `git status` on the code repo won't show them.
-- `backup_data.py` skips `access_token.json`, `ZerodhaTaxPL/`, `__pycache__/`, and SQLite WAL/SHM files.
-- The `copilot/` folder syncs to BOTH code and data repos.
+- `backup_data.py` skips environment secrets, every access-token variant, private keys, raw tax statements and SQLite transient files.
+- The `copilot/` folder is private and ignored in the main code repository.
 - `--all-local` means local files overwrite remote (no conflict prompts).
 - `--yes` skips interactive confirmation (required for non-interactive use).
 - Without `--yes`, `backup_data.py` will prompt and block forever.
@@ -51,6 +56,8 @@ python scripts/shared/sync_backtest_data.py --push --commit --message "sync back
 
 ### backup_data.py
 - `--dry-run` — preview what would change without writing
+- `--local-only` — no network, commit or push
+- `--push` — explicitly commit and publish reviewed private-data changes
 - `--ssh` — use SSH transport (for Linux VMs)
 - `--prefer local` — two-way sync, local wins conflicts (gentler than `--all-local`)
 

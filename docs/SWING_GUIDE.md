@@ -209,7 +209,7 @@ The score numbers are arbitrary units — what matters is the
 ## 5. The 52-week dip-buy strategy + backtest evidence
 
 The dip-buy mechanic (retuned against the standalone
-[market-research](https://github.com/yash040599/market-research)
+`market-research` (a separate research archive)
 repo's 10-year, 121-combo finite-capital V2 backtest):
 
 1. Track the **rolling 252-day max-close** (≈ 52 weeks) for each
@@ -498,7 +498,7 @@ In `config.py`:
 
 The four `SWING_DIP_*` knobs are user-tunable; everything else is set
 based on the calibration evidence in
-[market-research/results_v2/grid_metrics_v2.csv](https://github.com/yash040599/market-research/blob/main/results_v2/grid_metrics_v2.csv).
+the separate research archive's `results_v2/grid_metrics_v2.csv`.
 The [copilot/swing-review.md](../copilot/swing-review.md) skill has a
 mandatory backtest sanity-check step that fires whenever any swing
 knob moves away from the finite-capital V2 default or when S11 promotes
@@ -539,4 +539,4 @@ A: Use the [copilot/swing-review.md](../copilot/swing-review.md) skill — it's 
 - [SWING_STRATEGY.md](SWING_STRATEGY.md) — design spec (setup definitions, scoring math, risk model)
 - [SWING_ROADMAP.md](SWING_ROADMAP.md) — chronological change log (S1-S48 to date)
 - [../copilot/swing-review.md](../copilot/swing-review.md) — daily-review skill
-- [market-research](https://github.com/yash040599/market-research) — standalone X/Y backtest for the dip-buy strategy
+- `market-research` — standalone X/Y backtest archive for the dip-buy strategy; its remote is configured privately.

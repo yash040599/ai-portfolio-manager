@@ -11,6 +11,7 @@ checksums.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import csv
 import datetime as dt
 import hashlib
@@ -131,6 +132,8 @@ def _fetch_rows(
     interval: str,
     source_tag: str,
     created_at: str,
+    *,
+    exchange: str | None = None,
 ) -> list[tuple[Any, ...]]:
     with sqlite3.connect(source_db) as connection:
         connection.row_factory = sqlite3.Row
@@ -139,9 +142,10 @@ def _fetch_rows(
             SELECT symbol, exchange, interval, candle_date, open, high, low, close, volume
               FROM candle_cache
              WHERE interval = ?
+                    AND (? IS NULL OR exchange = ?)
              ORDER BY symbol, exchange, candle_date
             """,
-            (interval,),
+                (interval, exchange, exchange),
         ).fetchall()
 
     exported: list[tuple[Any, ...]] = []
@@ -178,6 +182,25 @@ def _write_candle_store(db_path: Path, schema_sql: str, rows: list[tuple[Any, ..
             """,
             rows,
         )
+
+
+def _append_candle_store(db_path: Path, rows: list[tuple[Any, ...]]) -> int:
+    """Add unseen candle keys without replacing existing historical observations."""
+    with closing(sqlite3.connect(db_path)) as connection, connection:
+        before = connection.total_changes
+        connection.executemany(
+            """
+            INSERT INTO candles
+            (symbol, instrument_token, exchange, ts_ist, interval,
+             open, high, low, close, volume, source, created_at_ist)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+                SELECT 1 FROM candles WHERE symbol = ? AND interval = ? AND ts_ist = ?
+             )
+            """,
+            (row + (row[0], row[4], row[3]) for row in rows),
+        )
+        return connection.total_changes - before
 
 
 def _interval_stats(db_path: Path) -> dict[str, Any]:
@@ -350,6 +373,9 @@ def main() -> int:
     parser.add_argument("--data-root", default=str(BACKTEST_DATA_ROOT), help="Backtest data repo path.")
     parser.add_argument("--source-tag", default="candle_cache", help="Source label stamped on exported rows.")
     parser.add_argument("--dry-run", action="store_true", help="Show counts without writing files.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--append", action="store_true", help="Append missing NSE candles; preserve existing research history and metadata.")
+    mode.add_argument("--replace", action="store_true", help="Explicitly replace existing seed stores; never use for routine updates.")
     args = parser.parse_args()
 
     source_db = Path(args.source_db).resolve()
@@ -376,6 +402,32 @@ def main() -> int:
         "day": data_root / "candles" / "daily.sqlite",
     }
     interval_stats: dict[str, dict[str, Any]] = {}
+
+    if args.append:
+        if not (data_root / "manifest.json").is_file() or not all(path.is_file() for path in interval_files.values()):
+            parser.error("Append requires an existing dataset and manifest; seed an empty repository first.")
+        additions = {}
+        for interval, target_path in interval_files.items():
+            rows = _fetch_rows(source_db, interval, args.source_tag, created_at, exchange="NSE")
+            additions[interval] = _append_candle_store(target_path, rows)
+            print(f"Appended {_relative(target_path, data_root)} rows={additions[interval]}")
+        if any(additions.values()):
+            manifest = json.loads((data_root / "manifest.json").read_text(encoding="utf-8"))
+            manifest.setdefault("updates", []).append({
+                "type": "append_missing_nse_candles", "at_ist": created_at,
+                "source": "local_candle_cache", "source_sha256": _sha256(source_db),
+                "rows_added": additions, "existing_candles": "preserved",
+            })
+            _write_manifest(data_root, manifest)
+            from scripts.shared.repository_audit import BacktestManifestAudit
+
+            report = BacktestManifestAudit(data_root).refresh_inventory()
+            if report["issues"]:
+                raise RuntimeError("Dataset inventory validation failed after append")
+        return 0
+
+    if not args.replace and any(path.exists() for path in interval_files.values()):
+        parser.error("Existing datasets would be replaced. Use --append for safe updates, or explicitly --replace.")
 
     for interval, target_path in interval_files.items():
         rows = _fetch_rows(source_db, interval, args.source_tag, created_at)

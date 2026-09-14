@@ -15,8 +15,8 @@ Book boundaries — deliberately NOT double counted
   above, so this book is reported separately and is **never** added to
   net worth.
 * **US** — the swing ``swing_positions`` rows on US exchanges.  There is
-  no US broker integration, so this book *is* the US portfolio (it
-  holds the MSFT / ORCL RSU lots).  It **is** added to net worth.
+    no US broker integration, so these manually tracked long-term positions
+    are the US portfolio. This book **is** added to net worth.
 * **Intraday** — realised-only, from the verified intraday tax ledger.
 
 Everything here is failure-silent: a missing DB, an expired broker
@@ -402,7 +402,7 @@ def mf_book(*, live: bool) -> dict[str, Any]:
 
 
 def us_book(*, live: bool) -> dict[str, Any]:
-    """US positions — this IS the US portfolio (RSU lots + swing buys)."""
+    """Manually tracked long-term US positions, included once in the portfolio."""
     out = {"positions": 0, "invested_usd": 0.0, "current_usd": 0.0,
            "pnl_usd": 0.0, "pnl_pct": 0.0, "realised_usd": 0.0, "closed": 0,
            "watchlist": 0, "rows": [], "live": False}

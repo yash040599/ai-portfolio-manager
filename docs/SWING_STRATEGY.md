@@ -472,7 +472,7 @@ Mechanical rule (the entire strategy):
 
 Calibration. The current defaults were picked from the 2026-05-16 V2
 run in the standalone
-[market-research](https://github.com/yash040599/market-research)
+`market-research` (a separate research archive)
 repo. That run uses finite capital (Rs.1L start), Rs.20k lots, sale
 proceeds recycled into later buys, the current NIFTY 50 universe, and
 an equal-weight NIFTY 50 benchmark. It is still an **ATH**-reference

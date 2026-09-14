@@ -1,6 +1,8 @@
 # Intraday Backtest Data Contract
 
-This contract is part of the 2026-05-15 Chan Research Reset. Stage 1 needs replay data that works the same way on the Windows dev machine and on the Linux trading VM.
+Reviewed 2026-09-14. Replay reads local, versioned historical market data on
+Windows and Linux. Intraday live execution is paused; this dataset supports
+research, not a claim of validated future returns.
 
 ## Repo Roles
 
@@ -8,9 +10,9 @@ This contract is part of the 2026-05-15 Chan Research Reset. Stage 1 needs repla
 |---|---|
 | `ai-portfolio-manager` | Trading, replay, dashboards, reports, and sync scripts. No large historical datasets. |
 | Existing private operational data repo | Mutable runtime data: trade ledgers, tax DBs, telemetry, reports, and logs synced by `scripts/shared/backup_data.py`. |
-| `https://github.com/yash040599/ai-portfolio-backtest-data` | Private replay-data repo for normalized historical datasets. It is cloned locally beside the main repo at `../ai-portfolio-backtest-data` by default. |
+| `ai-portfolio-backtest-data` | Market-data-only repository, with no personal ledgers or credentials. Verify provider redistribution rights before public release. |
 | `../ai-portfolio-backtest-data/` | Local clone/cache read by replay on both the dev machine and Linux VM. `backtest_data/` remains a supported legacy override only. |
-| `https://github.com/yash040599/market-research` | Standalone ATH-dip research sandbox. Use as reference/seed material, not as an intraday replay runtime dependency. |
+| Separate `market-research` archive | Standalone ATH-dip research sandbox. Reference material, not an intraday replay runtime dependency. |
 
 ## Sync Model
 
@@ -106,14 +108,51 @@ Use `--score-mode scanner` to run replay-safe scanner-style candle scoring with 
 Set these in `.env`:
 
 ```text
-BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/yash040599/ai-portfolio-backtest-data.git
-BACKTEST_DATA_REPO_URL_SSH=git@github.com:yash040599/ai-portfolio-backtest-data.git
+BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/<owner>/ai-portfolio-backtest-data.git
+BACKTEST_DATA_REPO_URL_SSH=git@github.com:<owner>/ai-portfolio-backtest-data.git
 BACKTEST_DATA_PATH=../ai-portfolio-backtest-data
 ```
 
 Use HTTPS on the Windows dev machine if `gh auth login` is already configured. Use SSH on the Linux VM with a GitHub SSH key.
 
-## First Dataset Layout
+## Current Inventory
+
+The local stores were checked on 2026-09-14, without fetching new candles:
+
+| Store | Rows | Symbols | Coverage |
+|---|---:|---:|---|
+| Daily | 246,937 | 108 | 2016-05-16 to 2026-09-03 |
+| 15 minute | 2,389,666 | 200 | 2024-05-27 to 2026-08-07 |
+| 5 minute | 1,846,189 | 50 | 2024-05-27 to 2026-05-22 |
+
+The May seed metadata was stale after later dataset expansion. The audit
+reconciles counts, ranges and checksums without overwriting the databases:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\shared\repository_audit.py --all-repos --check-manifest
+.\.venv\Scripts\python.exe scripts\shared\repository_audit.py --refresh-manifest
+```
+
+Refreshing the inventory does not fetch September market data or recreate
+missing historical universe membership. Do not run the seed exporter over an
+expanded dataset without reviewing its replacement behaviour.
+
+The 2026-09-14 update appended 181,382 missing NSE daily candles and 9,374
+missing NSE 15-minute candles from the existing local cache. Existing candle
+keys were preserved, including overlaps with different source labels. US
+candles were excluded. The five-minute archive is unchanged.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py --dry-run
+.\.venv\Scripts\python.exe scripts\trade\export_backtest_data.py --append
+```
+
+An existing seed can only be replaced with explicit `--replace`. Appending
+does not validate strategy performance or eliminate gaps in market coverage.
+The recent-volume-baseline dry run found no eligible recent intraday sample;
+do not treat these stores as live-feed replacements.
+
+## Dataset Layout
 
 Use dependency-light formats first. This repo does not currently depend on pandas, pyarrow, polars, or duckdb, so the first contract is CSV metadata plus SQLite candle stores.
 
@@ -127,6 +166,7 @@ Use dependency-light formats first. This repo does not currently depend on panda
     universe_nifty100.csv
   candles/
     intraday_15m.sqlite
+    intraday_5m.sqlite
     daily.sqlite
   corporate_actions/
     actions.csv

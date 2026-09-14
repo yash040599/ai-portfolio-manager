@@ -1,19 +1,20 @@
 # Trading Roadmap
 
-Last updated: 2026-08-12 (book-configuration and late-start fallback review).
+Last reviewed: 2026-09-14. Live execution is paused in config; the main product
+focus is portfolio analysis. Historical experiment dates are unchanged.
 
 ## Current Posture
 
 | Area | Status |
 |---|---|
-| Stage | **PAUSED — pending a capital decision, not a strategy decision.** Gap-and-Go v1.2.0 is the only strategy in the repo to clear the OOS gate (PF 1.30, Sharpe 1.29, MaxDD 11.58%). It is not the bottleneck. |
+| Stage | **GAP_AND_GO_RESEARCH_PAUSED.** Gap-and-Go v1.2.0 is the retained research candidate (reported TEST PF 1.30, Sharpe 1.29, MaxDD 11.58%). Historical results do not establish future profitability. |
 | Blocker | **Subscription cost exceeds the edge at Rs.50K.** See unit economics below. |
 | Mode | NoAI, pure rules-based |
 | Run command | python main.py --mode trade --dryrun (TRADE_STRATEGY_PROFILE = "NOAI_GAP_AND_GO_1.2.0", SCAN_UNIVERSE = "NIFTY100") |
 | Live trading | **DO NOT GO LIVE at Rs.50K** — negative after the Kite Connect subscription. |
-| Budget | Rs.50,000 |
+| Research sizing example | Rs.50,000; not a disclosure of personal capital |
 | Config version | 2.3-2026-06-15-GAP_AND_GO_1.2.0 |
-| Real ledger to date | **225 trades, 2026-03-25 to 2026-06-04, net Rs.-1,062, 42.7% win rate** (`data/trades.db :: intraday_tax_ledger`) |
+| Actual execution evidence | The full buy/sell lifecycle was exercised. Personal amounts and trade records remain in the private operational repository, not public docs. |
 
 ### Unit economics — the actual blocker (2026-08-10)
 
@@ -23,10 +24,10 @@ Last updated: 2026-08-12 (book-configuration and late-start fallback review).
 | Kite Connect subscription (Rs.500 x 12) | **Rs.-6,000** |
 | **Net** | **Rs.-2,379/year** |
 
-Charges already consume 39% of gross at Rs.50K. So the best strategy the
-research programme produced still loses money once the subscription required to
-run it is counted. **No further strategy work changes this** — it is arithmetic,
-not signal quality.
+In this archived v1.1.1 sizing scenario, charges consumed 39% of gross and the
+assumed annual subscription exceeded the remaining result. This is not the same
+cohort as the v1.2.0 comparison. It supports pausing that setup, not claiming
+that further research is impossible or a larger account guarantees an edge.
 
 Scaling (P&L scales with capital; the charge ratio falls):
 
@@ -40,21 +41,21 @@ Scaling (P&L scales with capital; the charge ratio falls):
 Even at Rs.3L the 11.58% max drawdown means risking ~Rs.35,000 to make ~Rs.25,000
 — worse risk-adjusted than an index fund, for materially more effort.
 
-### Decision required (operator, not engineering)
+### Decision and research gates
 
-1. **Commit Rs.2L+** and resume dry-run validation, or
-2. **Switch the mode off** and stop paying Rs.6,000/year for a Rs.3,621/year edge.
+1. Keep live execution paused; `TRADE_LIVE_TRADING_PAUSED=True` blocks startup
+  before broker login. Dry runs remain explicit research actions.
+2. Prioritise Indian/US stock study, portfolio analysis and mutual-fund review.
+3. Before any new live proposal, freeze rules, use fresh untouched data, include
+  trading and operating costs, compare a suitable benchmark and gather separate
+  forward evidence. Increasing capital alone is not a promotion decision.
 
-Until one is chosen, this mode stays paused. Recommendation on the evidence: (2).
-
-> **Where we are → where next (plain English):** Seven phases of research produced
-> exactly one strategy that clears the out-of-sample gate, and it works — the
-> problem is that Rs.50K is too small a base to carry a fixed Rs.6,000 annual
-> cost. The strategy is not broken and does not need replacing. It needs either
-> more capital behind it or to be retired.
+The engineering remains reusable. Market outperformance after all costs has
+not been demonstrated. See [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) for the
+plain-language account of the whole journey.
 
 
-> **Why not live?** Phase 0 walk-forward validation (2026-05-29) measured the
+> **Historical legacy failure, not the current Gap-and-Go cohort:** Phase 0 walk-forward validation (2026-05-29) measured the
 > frozen audit config on a held-out year it was never tuned on: **out-of-sample
 > PF 0.82, expectancy -0.068%/trade**. The 0.86 figure came from optimizing 62
 > gates *on the same data it was measured on* (in-sample). The true edge is

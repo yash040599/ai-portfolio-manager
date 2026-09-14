@@ -11,6 +11,15 @@
 > Options mode built as a separate engine (`--mode options`).
 > See [OPTIONS_GUIDE.md](OPTIONS_GUIDE.md) for plain-English primer.
 
+## Current Decision (2026-09-14)
+
+Options remain **research-only**, not a validated trading mode. Scanner,
+pricing, dry-run tracking and reports are implemented. The recorded directional
+and condor experiments failed; calendar spreads remain an unvalidated research
+candidate. No new backtest is claimed for this review date. Real-premium
+coverage, fresh tests, realistic fills and all costs must precede any promotion.
+`OPTIONS_DRY_RUN=True`; uncovered option selling remains blocked.
+
 ---
 
 ## Market structure — who actually makes money (SEBI, 2026-08-10 review)

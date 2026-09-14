@@ -264,12 +264,12 @@ def _render_charts() -> str:
   <div class="card">
     <h3>Asset class</h3>
     <div class="donut-wrap"><canvas id="mf-chart-asset" height="200"></canvas></div>
-    <ul class="legend" id="mf-asset-legend"></ul>
+    <ul class="legend" id="mf-asset-legend" data-personal></ul>
   </div>
   <div class="card">
     <h3>Fund house</h3>
     <div class="donut-wrap"><canvas id="mf-chart-amc" height="200"></canvas></div>
-    <ul class="legend" id="mf-amc-legend"></ul>
+    <ul class="legend" id="mf-amc-legend" data-personal></ul>
   </div>
 </section>
 <section class="split">
@@ -308,7 +308,7 @@ def _render_nav_chart_card(book) -> str:
         '</div>'
         '<p class="muted small">Published daily NAV. Pick a fund above, or '
         'click any fund name in the tables below.</p>'
-        '<div class="chart-wrap"><canvas id="mf-chart-nav" height="220">'
+        '<div class="chart-wrap"><canvas id="mf-chart-nav" height="220" data-privacy-public>'
         '</canvas></div>'
         '</div>'
     )

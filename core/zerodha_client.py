@@ -93,6 +93,12 @@ class ZerodhaClient:
                 self._kite.set_access_token(saved["token"])
                 return
 
+        if not interactive:
+            raise RuntimeError(
+                "Zerodha login required but interactive=False. Open the "
+                "Login page and complete the login flow."
+            )
+
         # No valid token — need OAuth flow
         login_url = self._kite.login_url()
 
@@ -134,20 +140,6 @@ class ZerodhaClient:
 
             self._login_browser(login_url)
             return
-
-        # interactive=False — caller (live_quotes, swing_capital
-        # fetch, scan_one, etc.) explicitly opted out of any
-        # blocking IO. We must NOT fall through to `_login_browser()`
-        # in this branch — pre-S42 (2026-05-14) the dashboard render
-        # path silently launched a browser when the saved token was
-        # invalid because the indented `_login_browser` line below
-        # was reached regardless. Raise instead so the caller can
-        # surface a Re-login toast via `core.error_sink`.
-        raise RuntimeError(
-            "Zerodha login required but interactive=False. Open the "
-            "Login page (Auth pill on any dashboard page) and complete "
-            "the manual paste-back flow."
-        )
 
     # ── Login helpers ─────────────────────────────────────────────
 

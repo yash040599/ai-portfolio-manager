@@ -623,18 +623,18 @@ def render_dryrun_page() -> str:
 <section class="grid two">
   <div class="card chart-card">
     <h2>Cumulative P&amp;L</h2>
-    <div class="chart-canvas-wrap"><canvas id="cum-chart"></canvas></div>
+    <div class="chart-canvas-wrap"><canvas id="cum-chart" data-privacy-public></canvas></div>
   </div>
   <div class="card chart-card">
     <h2>Daily P&amp;L</h2>
-    <div class="chart-canvas-wrap"><canvas id="daily-chart"></canvas></div>
+    <div class="chart-canvas-wrap"><canvas id="daily-chart" data-privacy-public></canvas></div>
   </div>
 </section>
 
 <section class="card">
   <h2>Rejection Breakdown</h2>
   <div class="grid two">
-    <div class="chart-canvas-wrap" style="height:220px"><canvas id="reject-chart"></canvas></div>
+    <div class="chart-canvas-wrap" style="height:220px"><canvas id="reject-chart" data-privacy-public></canvas></div>
     <div id="reject-table-wrap"></div>
   </div>
 </section>

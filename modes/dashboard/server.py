@@ -10,13 +10,14 @@ Routes:
     GET /api/data      -> JSON payload for a given filter combination.
     GET /favicon.ico   -> 204 (silences the browser).
 
-Every API response is freshly computed from the DB; nothing is
-cached server-side. The DB is local SQLite on the same box, so the
-read cost is negligible vs the dev convenience.
+Snapshot pages and selected sections use a bounded, short-lived response
+cache. Mutations invalidate it; live quote endpoints retain their own data
+freshness policy. This local operator server is not an authenticated public API.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import datetime
 import json
 import sys
@@ -44,37 +45,60 @@ from modes.dashboard.metrics import (
 from modes.dashboard.verdict import LadderRung, verdict_for
 
 
-_RENDER_CACHE_TTL_SECS = 45.0
-_RENDER_CACHE_LOCK = threading.Lock()
-_RENDER_CACHE: dict[str, tuple[float, bytes, str]] = {}
+class RenderCache:
+    """Bounded process-local snapshots with a monotonic expiry clock."""
+
+    def __init__(self, ttl_seconds: float = 45.0, max_entries: int = 128, *, clock=time.monotonic):
+        if ttl_seconds <= 0 or max_entries < 1:
+            raise ValueError("Cache limits must be positive")
+        self.ttl_seconds = ttl_seconds
+        self.max_entries = max_entries
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[str, tuple[float, bytes, str]] = OrderedDict()
+
+    def get(self, key: str) -> tuple[bytes, str] | None:
+        with self._lock:
+            item = self._entries.get(key)
+            if item is None:
+                return None
+            timestamp, body, content_type = item
+            if self.clock() - timestamp >= self.ttl_seconds:
+                self._entries.pop(key, None)
+                return None
+            self._entries.move_to_end(key)
+            return body, content_type
+
+    def put(self, key: str, body: bytes, content_type: str) -> None:
+        with self._lock:
+            self._entries[key] = (self.clock(), body, content_type)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def invalidate(self, prefix: str | None = None) -> None:
+        with self._lock:
+            if prefix is None:
+                self._entries.clear()
+            else:
+                for key in list(self._entries):
+                    if key.startswith(prefix):
+                        self._entries.pop(key, None)
+
+
+_RENDER_CACHE = RenderCache()
 
 
 def _cached_response(key: str) -> tuple[bytes, str] | None:
-    now = time.monotonic()
-    with _RENDER_CACHE_LOCK:
-        item = _RENDER_CACHE.get(key)
-        if not item:
-            return None
-        ts, body, content_type = item
-        if now - ts > _RENDER_CACHE_TTL_SECS:
-            _RENDER_CACHE.pop(key, None)
-            return None
-        return body, content_type
+    return _RENDER_CACHE.get(key)
 
 
 def _store_cached_response(key: str, body: bytes, content_type: str) -> None:
-    with _RENDER_CACHE_LOCK:
-        _RENDER_CACHE[key] = (time.monotonic(), body, content_type)
+    _RENDER_CACHE.put(key, body, content_type)
 
 
 def _invalidate_render_cache(prefix: str | None = None) -> None:
-    with _RENDER_CACHE_LOCK:
-        if prefix is None:
-            _RENDER_CACHE.clear()
-            return
-        for key in list(_RENDER_CACHE):
-            if key.startswith(prefix):
-                _RENDER_CACHE.pop(key, None)
+    _RENDER_CACHE.invalidate(prefix)
 
 
 def _parse_int(val: str | None) -> int | None:
@@ -353,18 +377,19 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self._serve_cached_html("page:dryrun", render_dryrun_page)
 
     def _write_html(self, body: bytes) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        self._write_response(body, "text/html; charset=utf-8")
 
     def _write_json(self, body: bytes, status: int = 200) -> None:
+        self._write_response(body, "application/json; charset=utf-8", status)
+
+    def _write_response(self, body: bytes, content_type: str, status: int = 200) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         self.wfile.write(body)
 
@@ -2316,8 +2341,8 @@ class _DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_theory(self, slug: str = "") -> None:
-        from modes.dashboard.theory_page import render_theory_page
-        body = render_theory_page(slug or "statistics").encode("utf-8")
+        from modes.dashboard.theory_page import DEFAULT_PAGE, render_theory_page
+        body = render_theory_page(slug or DEFAULT_PAGE).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

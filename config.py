@@ -36,7 +36,7 @@ class Config:
     #
     # 1. The rollout plan is the source of truth for which gates run
     #    at which stage: docs/TRADE_STRATEGY_ROLLOUT.md.
-    #    The active rung is `TRADE_STAGE_NAME` (currently `BACKTEST_OPTIMIZED`).
+    #    The active rung is `TRADE_STAGE_NAME` (currently research-paused).
     #    Gates are enabled/disabled based on backtest evidence.
     #    See docs/audit/TRADE_AUDIT_2026-05-15_CHAN_FRAMEWORK.md.
     #
@@ -153,7 +153,7 @@ class Config:
     # ── Live Trading ─────────────────────────────────────────────
     # Set to False for live trading, True to block real orders.
     # Use --dryrun CLI flag for simulation instead of editing this.
-    TRADE_LIVE_TRADING_PAUSED: bool = False
+    TRADE_LIVE_TRADING_PAUSED: bool = True
 
     # ── Strategy Profile ─────────────────────────────────────────
     # Controls which alpha-selection logic runs in NoAI mode.
@@ -273,7 +273,7 @@ class Config:
 
     # ── Strategy Stage ────────────────────────────────────────────
     # Stamped into reports for audit trail. No longer gates behavior.
-    TRADE_STAGE_NAME: str = "BACKTEST_OPTIMIZED"
+    TRADE_STAGE_NAME: str = "GAP_AND_GO_RESEARCH_PAUSED"
 
     # LOG_DISABLED_GATES is the single override that allows disabled
     # gates to still log a one-line "would have rejected" message.
