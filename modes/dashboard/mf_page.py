@@ -105,10 +105,10 @@ def render_mf_page() -> str:
         'last end-of-day NAV.</p>'
     )
     body.append(_render_freshness(book))
+    body.append(rupevo_card("mf"))
     body.append(_render_kpis(book))
     body.append(_render_charts())
     body.append(_render_sections_loader())
-    body.append(rupevo_card("mf"))
     body.append('</div>')
     body.append(f'<script id="mf-bootstrap" type="application/json">'
                 f'{_safe_json(payload)}</script>')

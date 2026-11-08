@@ -265,6 +265,7 @@ def render_swing_page() -> str:
             '<span id="swing-live-state">Live prices paused</span>')
 
     body.append('<div class="sub">' + '<br>'.join(freshness_parts) + '</div>')
+    body.append(rupevo_card("swing"))
 
     from modes.dashboard.chat_widget import chat_section_html
     body.append(chat_section_html("swing"))
@@ -769,7 +770,6 @@ def render_swing_page() -> str:
                     'Confirm an entry recommendation above to start tracking.</div>')
     body.append('</div>')
 
-    body.append(rupevo_card("swing"))
     body.append('</div>')  # .wrap
 
     # ── JavaScript ─────────────────────────────────────────────

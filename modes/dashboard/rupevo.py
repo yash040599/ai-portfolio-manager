@@ -202,8 +202,8 @@ def rupevo_css() -> str:
 nav.topnav a.nav-rupevo { display: inline-flex; align-items: center; gap: 6px;
                           margin-left: 4px; border: 1px solid var(--line); }
 .rv-card { position: relative; overflow: hidden; display: flex; flex-wrap: wrap;
-           align-items: center; gap: 12px 20px; margin: 22px 0 16px;
-           padding: 17px 18px 14px; color: var(--fg); background: var(--card);
+           align-items: center; gap: 10px 20px; margin: 12px 0 18px;
+           padding: 15px 18px 12px; color: var(--fg); background: var(--card);
            border: 1px solid var(--line); border-radius: var(--radius);
            box-shadow: var(--shadow-sm); }
 .rv-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0;

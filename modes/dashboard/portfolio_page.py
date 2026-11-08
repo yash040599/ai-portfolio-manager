@@ -306,8 +306,8 @@ def render_portfolio_page() -> str:
     body = []
 
     if snap is None:
-        body.append(_empty_state())
         body.append(rupevo_card("portfolio"))
+        body.append(_empty_state())
         return _wrap("Portfolio", "Portfolio", "".join(body),
                      holdings_count=0)
 
@@ -318,7 +318,6 @@ def render_portfolio_page() -> str:
     body.append(_render_charts(snap))
     body.append(_render_metrics(snap.metrics))
     body.append(_render_lazy_sections_loader())
-    body.append(rupevo_card("portfolio"))
     return _wrap("Portfolio", "Portfolio", "".join(body),
                  holdings_count=len(snap.holdings))
 
@@ -368,6 +367,7 @@ def _render_header(snap: PortfolioSnapshot) -> str:
       style="padding:3px 8px;font-size:12px" type="button">Load live prices</button>
       <span id="portfolio-live-state" class="muted" style="font-size:11px">Live prices paused</span>
 </div>
+{rupevo_card('portfolio')}
 <div class="card">
   <table class="kvtable">
     <tr><td>Invested value</td><td>{_inr_html(invested)}</td></tr>
@@ -1489,6 +1489,7 @@ def render_login_page(*, ok: bool = False, err: str = "") -> str:
 </div>
 {flash_html}
 {status_html}
+{rupevo_card('login')}
 {assisted_html}
 <h2>Manual login (paste redirect URL)</h2>
 <div class="card">
@@ -1521,7 +1522,6 @@ def render_login_page(*, ok: bool = False, err: str = "") -> str:
     the safest from a single-page browser context.
   </p>
 </div>
-{rupevo_card('login')}
 """
     return _wrap("Login", "Login", body)
 

@@ -65,6 +65,7 @@ def render_us_page() -> str:
     body.append('<div class="wrap">')
     body.append('<h1 class="page-title">US Long-Term Portfolio</h1>')
     body.append(_render_freshness(latest_scan, bool(live_syms), fx))
+    body.append(rupevo_card("us"))
 
     from modes.dashboard.chat_widget import chat_section_html
     body.append(chat_section_html("us"))
@@ -101,7 +102,6 @@ def render_us_page() -> str:
     body.append(_render_compare_card(default_ticket))
 
     body.append(_render_us_sections_loader())
-    body.append(rupevo_card("us"))
 
     body.append('</div>')  # /.wrap
     body.append(_js(fx))

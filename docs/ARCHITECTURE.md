@@ -43,6 +43,11 @@ functions; stateful lifecycles benefit from small, focused classes.
 - `LocalSnapshotBackup` copies local records one way, uses SQLite's backup API,
   archives replaced backup versions, and never merges unknown schemas into the
   local book. Publication requires explicit `--push`.
+- `table_sort.py` gives every dashboard table click-to-sort from the shared head
+  script. It reads only displayed text, keeps attached detail rows and totals
+  rows in place, and re-applies the chosen order after live refreshes.
+- `coffee.py` renders the "Buy me a coffee" button and dialog from the same public
+  UPI details and QR code that Rupevo publishes.
 
 ## Privacy Contract
 
@@ -73,6 +78,10 @@ Links to Rupevo, the public companion site, are fixed addresses defined in
 held symbols, amounts, folios or scheme codes. Links open in a new tab with
 `rel="noopener noreferrer"`, and the server also sends `Referrer-Policy: no-referrer`.
 
+Table sorting reads the text a cell currently shows. While privacy is on, masked
+amounts sort as equal values and keep the original row order, so sorting never
+reveals a ranking of hidden values.
+
 Screen privacy does not remove the underlying API/HTML/browser-memory data.
 Do not expose the personal server publicly, share raw snapshots, open developer
 tools during a recording, or show broker login/credential screens. The public
@@ -83,7 +92,7 @@ data or the public page; keep private captures outside the code repository.
 
 | Repository | Allowed contents | Publication boundary |
 |---|---|---|
-| Application | Source, tests, documentation and labelled research summaries | No personal identifiers, balances, positions or credentials. |
+| Application | Source, tests, documentation and labelled research summaries | No personal identifiers, balances, positions or credentials. Deliberate exception: the maintainer's donation UPI ID, payee name and QR code, the same details Rupevo publishes. |
 | Backtest data | Historical market data, schemas, metadata and checksums | No personal records. Provider redistribution rights need a separate review before publication. |
 | Operational data | Personal books, tax/trade records, reports, logs and private runbooks | Must remain private; never store credentials, even invalidated tokens. |
 | Rupevo (public website) | Static site, market snapshots and copies of the pure scoring engines | Public. No personal records, credentials or broker access; screener-style output without buy/sell calls or entry, stop and target levels. The dashboard only links to it. |

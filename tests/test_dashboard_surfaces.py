@@ -1,4 +1,7 @@
+import json
 import re
+import shutil
+import subprocess
 import unittest
 import sys
 from types import SimpleNamespace
@@ -7,6 +10,7 @@ from unittest.mock import Mock, patch
 from config import Config
 from core.zerodha_client import ZerodhaClient
 from modes.dashboard.chat_widget import build_chat_prompt, chat_section_html
+from modes.dashboard.coffee import PAYEE, UPI_ID, coffee_dialog_html, coffee_script
 from modes.dashboard.home_page import _connect_card, _currency_toggle_html, _tiles
 from modes.dashboard.mf_page import _render_nav_chart_card
 from modes.dashboard.nav import render_topnav
@@ -14,6 +18,7 @@ from modes.dashboard.portfolio_page import render_login_page
 from modes.dashboard.privacy import privacy_boot_script, privacy_css
 from modes.dashboard.rupevo import CALLOUTS, PAGES, RUPEVO_URL, rupevo_card
 from modes.dashboard.server import RenderCache
+from modes.dashboard.table_sort import SORT_KEY_JS
 from modes.dashboard.theme import theme_boot_script, theme_css
 from modes.dashboard.theory_page import DEFAULT_PAGE, render_theory_page
 
@@ -265,6 +270,59 @@ class TestRupevoLinks(unittest.TestCase):
             page = render_login_page()
         self.assertEqual(page.count('data-rupevo="login"'), 1)
         self.assertIn("No Zerodha account? Try Rupevo", page)
+        self.assertLess(page.index('data-rupevo="login"'), page.index("Manual login"))
+
+
+class TestSortableTables(unittest.TestCase):
+    def test_every_page_shell_ships_sorting(self):
+        self.assertIn("window.dashboardTableSort", theme_boot_script())
+        self.assertIn("th[data-sortable]", theme_css())
+        self.assertIn("table.kv, table.kvtable", theme_boot_script())
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js runs the browser sort parser")
+    def test_sort_keys_understand_dashboard_formats(self):
+        cases = {
+            "₹1,23,456": 123456, "-₹1,234": -1234, "₹-1,234": -1234, "−2.1%": -2.1,
+            "+12.34%": 12.34, "₹1.23 Cr": 1.23e7, "₹12.3 L": 1.23e6, "$1.2B": 1.2e9,
+            "45K": 45000, "22.4x": 22.4, "1,234 shares": 1234, "Rs. 2,500": 2500,
+            "+₹1,234 (+5.6%)": 1234, "•••• (+5.6%)": 5.6, "10:15": 36900,
+            "—": None, "": None, "n/a": None, "Loading…": None,
+            "HDFCBANK": "text", "52W_DIP": "text", "••••": "text", "2026-11-08": "date",
+        }
+        script = (SORT_KEY_JS + "\nprocess.stdout.write(JSON.stringify("
+                  + json.dumps(list(cases)) + ".map(dashSortKey)));")
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True,
+                                encoding="utf-8", check=True)
+        for (text, expected), key in zip(cases.items(), json.loads(result.stdout), strict=True):
+            with self.subTest(text=text):
+                if expected is None:
+                    self.assertIsNone(key)
+                elif expected == "text":
+                    self.assertNotIn("num", key)
+                elif expected == "date":
+                    self.assertTrue(key.get("date"))
+                else:
+                    self.assertAlmostEqual(key["num"], expected)
+
+
+class TestBuyMeACoffee(unittest.TestCase):
+    def test_every_navigation_offers_coffee(self):
+        for here in ("/", "/portfolio", "/mf", "/us", "/swing", "/tax", "/trading", "/dryrun"):
+            with self.subTest(page=here):
+                nav = render_topnav(here)
+                self.assertEqual(nav.count('class="nav-coffee"'), 1)
+                self.assertIn('onclick="openDashboardCoffee()"', nav)
+
+    def test_dialog_uses_rupevos_public_upi_details_without_pay_links(self):
+        dialog = coffee_dialog_html()
+        for content in (UPI_ID, PAYEE, "<svg", "Scan with any UPI app", "data-privacy-public"):
+            with self.subTest(content=content):
+                self.assertIn(content, dialog)
+        self.assertNotIn('href="upi:', dialog)
+        script = coffee_script()
+        self.assertEqual(script.count("</script>"), 1)
+        self.assertIn("window.openDashboardCoffee", script)
+        self.assertIn(script, theme_boot_script())
 
 
 if __name__ == "__main__":

@@ -399,6 +399,8 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
   Health &amp; Education cess (4%) are applied as per Budget 2025 (effective FY 2025-26+).
 </div>
 
+{rupevo_card('tax')}
+
 <section class="card inputs">
   <h2>Inputs</h2>
   <form id="tax-form" onsubmit="return false;">
@@ -430,8 +432,6 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
 {_docs_checklist()}
 
 {_theory_link_card()}
-
-{rupevo_card('tax')}
 
 <footer>
   Disclaimer: pure heuristic projection. Verify against your Zerodha Tax P&amp;L PDF and consult

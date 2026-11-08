@@ -38,8 +38,10 @@ light theme).  The user's choice is persisted in
 
 from __future__ import annotations
 
+from modes.dashboard.coffee import coffee_css, coffee_script
 from modes.dashboard.privacy import privacy_boot_script
 from modes.dashboard.rupevo import rupevo_css
+from modes.dashboard.table_sort import table_sort_css, table_sort_script
 
 
 # ── Tokens + base ────────────────────────────────────────────────
@@ -249,7 +251,7 @@ a { color: var(--accent); }
   * { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
       transition-duration: .001ms !important; }
 }
-""" + rupevo_css()
+""" + rupevo_css() + coffee_css() + table_sort_css()
 
 
 # ── Deliberate cross-page polish + dark-mode fix-ups ─────────────
@@ -549,8 +551,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 # ── Boot script (must be in <head>, before body paint) ───────────
 
 def theme_boot_script() -> str:
-    """Sets `data-theme` before first paint and exposes `toggleTheme()`."""
-    return privacy_boot_script() + r"""
+    """Sets `data-theme` before first paint and exposes `toggleTheme()`.
+
+    Also ships the shared table sorting and the coffee dialog to every page.
+    """
+    return privacy_boot_script() + table_sort_script() + coffee_script() + r"""
 <script>
 (function () {
   var KEY = 'dashTheme';

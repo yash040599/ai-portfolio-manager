@@ -236,8 +236,18 @@ screen privacy, not authentication: do not publish the personal server, page
 source, API responses, exports or browser developer tools.
 
 **Rupevo links.** The shared navigation carries a **Rupevo ↗** link on every
-page, and HQ, Login, Portfolio, Swing, Mutual Funds, US and Tax add a card for
-the matching public page — see [Phase 6](#phase-6--rupevo-public-login-free-companion-website).
+page, and HQ, Login, Portfolio, Swing, Mutual Funds, US and Tax show a card for
+the matching public page at the top — see [Phase 6](#phase-6--rupevo-public-login-free-companion-website).
+
+**Sortable tables.** Every data table on every page sorts by any column: click a
+header for ascending, again for descending, and a third time for the page's
+original order. Amounts, lakh/crore values, percentages and dates sort as
+numbers; blank cells stay last, totals rows stay at the bottom, and the choice
+survives live refreshes for the browser session. Columns hidden by screen
+privacy sort as equal values, so a hidden ranking is not revealed.
+
+**Buy me a coffee.** The navigation's coffee button opens the same UPI QR code
+and UPI ID that Rupevo shows, for anyone who wants to support the project.
 
 Pages:
 
@@ -471,7 +481,7 @@ links to Rupevo wherever someone without an account would otherwise hit a wall.
   in the public [Rupevo repository](https://github.com/yash040599/Rupevo); this
   repository only links to it.
 
-| Dashboard surface | Rupevo destination |
+| Dashboard surface | Rupevo destination (card at the top of the page) |
 |---|---|
 | Navigation (every page) | Rupevo home |
 | HQ `/` | Tools tile, plus a "Try Rupevo" hint while Zerodha is not connected |
@@ -483,6 +493,9 @@ links to Rupevo wherever someone without an account would otherwise hit a wall.
 
 - **Privacy:** every link is a fixed public address that opens in a new tab
   without a referrer. No holding, amount, folio or account detail leaves the dashboard.
+- **Buy me a coffee:** the navigation button shows the same UPI QR code and UPI ID
+  as Rupevo; update them in [modes/dashboard/coffee.py](modes/dashboard/coffee.py)
+  and `modes/dashboard/assets/upi-qr.svg` if Rupevo's change.
 - **Changing an address or a placement:** edit `RUPEVO_URL`, `PAGES` or `CALLOUTS`
   in [modes/dashboard/rupevo.py](modes/dashboard/rupevo.py);
   [tests/test_dashboard_surfaces.py](tests/test_dashboard_surfaces.py) guards the
@@ -550,7 +563,7 @@ their content.
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
 | [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) | **Operator-facing walkthrough for Phase 4 swing** — dashboard surface, full CLI reference, 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence, AI overlay (cost / sticky cache / prompt), Compare-up-to-4, Add+ flow, HTTP API, persistence, tuning knobs, FAQ |
 | [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D37 links every page to the public Rupevo site. |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D38 adds sortable tables, Rupevo cards at the top of pages and "Buy me a coffee". |
 | [Rupevo README](https://github.com/yash040599/Rupevo#readme) | **Public companion website (Phase 6)** — its pages, data pipeline, refresh schedule and compliance notes. Lives in its own public repository. |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday (superseded), ~~A2 swing~~ (✅ done), A3 ETF rotation (planning), A4 options (✅ shipped). No-F&O constraint lifted 2026-06-09. |
 | [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) | **Plain-English options primer** — what options are, how P&L works, the Greeks (delta/theta/vega/gamma), buying vs selling mechanics |
@@ -882,11 +895,32 @@ local operational data: use it only on the fresh checkout, not for daily sync.**
 
 #### Restore - macOS Terminal
 
+The dashboard reads your books only from this checkout's `data/` and `reports/`
+folders, not from the data repository's clone beside it. This step copies Swing,
+US, mutual-fund, portfolio-analysis, intraday, dry-run and tax records into place:
+
 ```bash
+# 1. Stop the dashboard first (Ctrl+C in its terminal): it holds the databases open.
+cd ~/Projects/ai-portfolio-manager          # your checkout
+git pull                                    # latest code
+# 2. Copy the private data repo into data/, reports/, logs/ and copilot/.
+#    The first run clones ../ai-portfolio-manager-data using BACKUP_REPO_URL_HTTPS.
 ./.venv/bin/python scripts/shared/backup_data.py --all-remote --yes
 ./.venv/bin/python scripts/shared/sync_backtest_data.py --pull --status
+# 3. Check the books arrived, then restart the dashboard.
+ls data/*.db
 ./.venv/bin/python main.py --mode login
+./.venv/bin/python main.py --mode dashboard
 ```
+
+- `--all-remote` makes the local folders match the backup; access tokens and raw
+  tax statements are never copied or deleted. Run it once on a fresh Mac.
+- If it stops with `BACKUP_REPO_URL_HTTPS is not set`, `.env` has not been moved
+  to the Mac yet. An authentication error means Git is signed in to a GitHub
+  account that cannot read the private repository.
+- From then on, back up from the Mac with
+  `./.venv/bin/python scripts/shared/backup_data.py --snapshot --push`. Avoid adding
+  new records on two machines at once; see [Data sync](#data-sync-private-repo).
 
 Log in freshly on each machine; confirm its broker IP whitelist as described
 in [API keys](#52-api-keys). Stop any old long-running session before moving
@@ -1137,6 +1171,8 @@ ai-portfolio-manager/
 │       ├── theme.py                 # shared design tokens + light/dark theme
 │       ├── nav.py                   # shared top nav + theme toggle
 │       ├── rupevo.py                # links to Rupevo, the public login-free site (Phase 6)
+│       ├── coffee.py                # "Buy me a coffee" dialog (UPI QR in assets/upi-qr.svg)
+│       ├── table_sort.py            # click-to-sort for every dashboard table
 │       ├── home_page.py             # / command centre (net worth, books, inline login)
 │       ├── home_summary.py          # cross-book aggregation for the home page
 │       ├── render_html.py           # /trading Chart.js SPA shell

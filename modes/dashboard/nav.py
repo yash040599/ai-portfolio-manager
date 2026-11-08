@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 
+from modes.dashboard.coffee import coffee_button_html
 from modes.dashboard.privacy import privacy_toggle_html
 from modes.dashboard.rupevo import rupevo_nav_link
 from modes.dashboard.theme import theme_toggle_html
@@ -61,7 +62,8 @@ def _active(here: str, label: str, href: str) -> bool:
 def render_topnav(here: str = "", *, after_links: str = "") -> str:
     """Render a full dashboard nav plus a Back control and theme switch.
 
-    The external Rupevo link follows the internal pages on every page.
+    The external Rupevo link follows the internal pages on every page, and
+    the "Buy me a coffee" button sits after the theme switch, as on Rupevo.
     """
     at_home = _active(here, "Home", "/")
     brand_cls = "nav-brand here" if at_home else "nav-brand"
@@ -95,6 +97,7 @@ def render_topnav(here: str = "", *, after_links: str = "") -> str:
         + after_links
         + privacy_toggle_html()
         + theme_toggle_html()
+        + coffee_button_html()
         + '</nav>'
     )
 
