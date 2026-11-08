@@ -460,14 +460,32 @@ python scripts/trade/backtest_options.py --sweep  # parameter sweep
 
 ## 2. Quick start
 
-```bash
-git clone https://github.com/<you>/ai-portfolio-manager.git
+Install the [prerequisites](#4-prerequisites) first. These are **fresh-clone**
+commands: fill in `.env` after creating it, before running login or the dashboard.
+Do not overwrite an existing `.env`.
+
+### Windows - PowerShell
+
+```powershell
+git clone https://github.com/yash040599/ai-portfolio-manager.git
 cd ai-portfolio-manager
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-cp .env.example .env                                  # then fill in keys
-python main.py --mode login                           # one-time Zerodha login
-python main.py --mode dashboard                       # open investment research
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe main.py --mode login
+.\.venv\Scripts\python.exe main.py --mode dashboard
+```
+
+### macOS - Terminal (zsh or bash)
+
+```bash
+git clone https://github.com/yash040599/ai-portfolio-manager.git
+cd ai-portfolio-manager
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+install -m 600 .env.example .env
+./.venv/bin/python main.py --mode login
+./.venv/bin/python main.py --mode dashboard
 ```
 
 ---
@@ -502,9 +520,22 @@ their content.
 
 ## 4. Prerequisites
 
-- **Python 3.10+** (uses modern type syntax).
-- **Windows / Linux / macOS** — works on headless Linux VMs (manual login
-  mode for SSH-only setups).
+- **Python 3.10+** (uses modern type syntax); **3.12 recommended** to match CI.
+- **Windows / Linux / macOS** use the same Python application; PowerShell
+  is not a runtime dependency. Headless machines can use manual broker login.
+- **Git** for code/data sync; **Git LFS** for the separate replay-data repo.
+  Windows: install LFS with `winget install GitHub.GitLFS`, then `git lfs install`.
+- **macOS tooling:** install [Homebrew](https://brew.sh/) and complete its
+  shell/PATH setup, then run `brew install python@3.12 git git-lfs gh` and
+  `git lfs install`. [Homebrew Python 3.12](https://formulae.brew.sh/formula/python@3.12)
+  supplies `python3.12`; do not rely on Apple's system Python.
+- **Apple Silicon:** use a native ARM Homebrew/Python environment, not a copied
+  Windows venv or mixed Rosetta/native packages. Recreate `.venv` on the Mac.
+- **macOS developer tools:** if Homebrew/Git requests them, run
+  `xcode-select --install` and finish installation before retrying.
+  A full Xcode installation is not an application requirement.
+- **Browser and local storage:** Safari/Chrome/Firefox for the dashboard; keep
+  the checkout outside iCloud/OneDrive-synced folders, for example `~/Projects`.
 - **Zerodha account** with [Kite Connect](https://developers.kite.trade)
   subscription (Rs.500/month).
 - **AI API key** — only needed for `--ai` mode. Default provider is
@@ -517,10 +548,29 @@ their content.
 
 ### 5.1 Install
 
-```bash
-cd ai-portfolio-manager
-pip install -r requirements.txt
+Run from the cloned repository root. Both platforms use the **same**
+[requirements.txt](requirements.txt); no macOS-specific requirements file or
+PowerShell installation is needed.
+
+#### Windows - PowerShell
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+#### macOS - Terminal
+
+```bash
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+```
+
+Use `python -m pip` through the venv interpreter, not `sudo pip` or a Windows
+`pip freeze` export. Pip selects platform-appropriate dependencies; `tzdata`
+can remain installed on macOS too.
 
 | Package | Purpose |
 |---------|---------|
@@ -531,7 +581,9 @@ pip install -r requirements.txt
 | `python-dotenv` | Loads keys from `.env` |
 | `openpyxl` | Reads Zerodha Tax P&L xlsx files |
 | `requests` | Programmatic Kite login (AUTO / ASSISTED modes — §5.4) |
-| `pyotp` | Optional, only if you opt-in to AUTO login (§5.4) |
+| `pyotp` | TOTP for the optional AUTO login flow (§5.4) |
+| `yfinance` | US quotes/history and fallback market data |
+| `tzdata` | IANA timezone fallback; safe to install on all supported platforms |
 
 ### 5.2 API keys
 
@@ -685,11 +737,11 @@ you have to re-enroll to see it as text:
 Only opt-in if you also do at minimum:
 
 - Confirm `.env` is gitignored: `git check-ignore -v .env` should print `.gitignore`.
-- **BitLocker** on the laptop drive (Win Pro built-in, free).
+- **Drive encryption:** BitLocker on Windows, FileVault on macOS.
 - **Exclude the project folder from OneDrive / iCloud** (Settings →
   Choose folders).
-- Restrict `.env` ACL to your Windows user only (Properties → Security
-  → disable inheritance, remove all but your account).
+- Restrict `.env` to your user: Windows Properties → Security → disable
+  inheritance/remove other accounts; macOS `chmod 600 .env`.
 - Keep your Zerodha bank-withdrawal whitelist set to **only your
   primary account** so a hijacker can’t move funds out cleanly.
 
@@ -701,14 +753,14 @@ you’ve given up almost nothing and kept real 2FA.
 Mild: your Kite **password** sits in `.env` next to your existing
 `ZERODHA_API_SECRET`. The TOTP factor still requires your phone, so a
 `.env` leak alone cannot log in. Same minimum hygiene applies
-(gitignore + BitLocker + no cloud sync).
+(gitignore + drive encryption + no cloud sync).
 
-For maximum hygiene store the password in Windows Credential Manager
-via the `keyring` package instead of `.env` — a future enhancement.
+OS credential-store integration (Windows Credential Manager/macOS Keychain)
+is a future enhancement, not an existing login mode.
 
 ### 5.5 New machine restore
 
-Use this when replacing the laptop or bringing up a fresh Linux VM. The
+Use this when replacing the laptop, moving Windows to macOS, or bringing up a fresh Linux VM. The
 goal is to restore the code, private operational data, `.env`, Copilot
 runbooks, and replay datasets without manually copying folders.
 
@@ -721,11 +773,11 @@ runbooks, and replay datasets without manually copying folders.
 
 > The replay dataset repo uses **Git LFS** for its `*.sqlite` candle
 > stores. Install `git-lfs` on the new machine *before* the first sync
-> (`git lfs install`; on Windows `winget install GitHub.GitLFS`, on the
-> Linux VM `sudo apt-get install git-lfs`). `sync_backtest_data.py` will
+> (`git lfs install`; on Windows `winget install GitHub.GitLFS`, on macOS
+> `brew install git-lfs`, on Linux `sudo apt-get install git-lfs`). `sync_backtest_data.py` will
 > refuse to run without it. See [Backtest/replay data sync](#backtestreplay-data-sync-private-repo).
 
-On the old laptop, do the final private-data push first:
+On the old Windows laptop, do the final private-data push first:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\shared\backup_data.py --snapshot --dry-run
@@ -734,38 +786,75 @@ On the old laptop, do the final private-data push first:
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --push --commit --message "sync replay data before machine move"
 ```
 
-On the new Windows machine:
+Authenticate Git for the private data repositories before restoring. With
+GitHub CLI installed, use `gh auth login --git-protocol https` followed by
+`gh auth setup-git`; alternatively configure SSH keys and the SSH repo URLs.
+
+#### New Windows machine - PowerShell
 
 ```powershell
 git clone <repo-url> ai-portfolio-manager
 cd ai-portfolio-manager
 python -m venv .venv
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Edit the temporary `.env` so it contains at least one operational data
-repo URL:
+#### New Mac - Terminal
+
+Install the [macOS prerequisites](#4-prerequisites), then:
+
+```bash
+git clone <repo-url> ai-portfolio-manager
+cd ai-portfolio-manager
+python3.12 -m venv .venv
+./.venv/bin/python -m pip install -r requirements.txt
+install -m 600 .env.example .env
+```
+
+Securely transfer the API keys separately; neither sync tool restores
+credentials or broker access tokens. Edit `.env` to configure the data URLs:
 
 ```env
 BACKUP_REPO_URL_HTTPS=https://github.com/<user>/<private-data-repo>.git
-# or
+# Replay data, if used:
+BACKTEST_DATA_REPO_URL_HTTPS=https://github.com/<user>/ai-portfolio-backtest-data.git
+# Or use the corresponding SSH settings:
 BACKUP_REPO_URL_SSH=git@github.com:<user>/<private-data-repo>.git
+BACKTEST_DATA_REPO_URL_SSH=git@github.com:<user>/ai-portfolio-backtest-data.git
 ```
 
-Then restore the private data and replay dataset:
+Keep `BACKTEST_DATA_PATH=../ai-portfolio-backtest-data` or another **Mac-valid**
+path on the Mac; do not copy a Windows drive-letter path into its configuration.
+Then restore the private data and replay dataset. **`--all-remote` overwrites
+local operational data: use it only on the fresh checkout, not for daily sync.**
+
+#### Restore - Windows PowerShell
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\shared\backup_data.py --all-remote --yes
 .\.venv\Scripts\python.exe scripts\shared\sync_backtest_data.py --pull --status
 ```
 
+#### Restore - macOS Terminal
+
+```bash
+./.venv/bin/python scripts/shared/backup_data.py --all-remote --yes
+./.venv/bin/python scripts/shared/sync_backtest_data.py --pull --status
+./.venv/bin/python main.py --mode login
+```
+
+Log in freshly on each machine; confirm its broker IP whitelist as described
+in [API keys](#52-api-keys). Stop any old long-running session before moving
+operation to the new machine.
+
 On the Linux VM, use the same flow with `python3 -m venv venv`,
 `source venv/bin/activate`, and add `--ssh` to both sync commands.
 
-After restore, run read-only smoke checks:
+After restore, run local smoke checks. These do not place broker orders;
+replay/evidence checks need restored data and may write local reports.
+
+#### Smoke checks - Windows PowerShell
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from config import Config; print(Config.snapshot_hash())"
@@ -774,13 +863,97 @@ After restore, run read-only smoke checks:
 .\.venv\Scripts\python.exe scripts\trade\promotion_check.py --window 20
 ```
 
+#### Smoke checks - macOS Terminal
+
+```bash
+./.venv/bin/python -c "from config import Config; print(Config.snapshot_hash())"
+./.venv/bin/python main.py --mode dashboard --help
+./.venv/bin/python -m unittest discover -s tests -v
+./.venv/bin/python scripts/trade/export_backtest_data.py --dry-run
+./.venv/bin/python scripts/trade/promotion_check.py --window 20
+```
+
 `promotion_check.py` runs the codified PASS/FAIL gate for capital scaling;
 it reads the last N trading sessions and tests PF, expectancy, WR, and drawdown.
+FAIL/INSUFFICIENT_DATA is a research result, not a macOS installation error.
 Full migration notes are mirrored in [copilot/machine-migration.md](copilot/machine-migration.md).
+
+### 5.6 macOS compatibility and long-running sessions
+
+| Surface | macOS usage / remaining verification |
+|---|---|
+| Dashboard, Indian/US stocks, mutual funds, swing, intraday/options research, AI, tax and utilities | Same Python code and CLI flags; use the commands in [Run modes](#6-run-modes). No separate backend or requirements file. |
+| Browser/login | Default browser opens through Python; manual login remains available. Broker callback uses port 8080; a dashboard on port 8765 is separate. |
+| Data and replay | Restore private records and LFS datasets using [Section 5.5](#55-new-machine-restore); quote paths containing spaces and retain exact filename case. |
+| Screen/publication privacy | Mac home-directory paths are covered alongside existing Windows path checks. |
+| Validation | CI is configured for Ubuntu, Windows and macOS. A native Mac install, browser login, authenticated refresh/scan, AI call and restored-dataset replay still need a first-run smoke test; offline CI does not validate external services. |
+
+- Keep the working directory at the repository root; some data/log paths are
+  relative to it. Each new terminal needs venv activation or an explicit
+  `./.venv/bin/python` invocation.
+- For a long dashboard session, activate the venv and run
+  `caffeinate -i python main.py --mode dashboard --port 8765`. For intraday
+  research, substitute `python main.py --mode trade --dryrun`.
+- Keep the Mac powered, online and its lid open. `caffeinate` prevents idle
+  sleep, not shutdown/reboot or all lid-close sleep; closing Terminal stops
+  foreground jobs. Ctrl+C is the normal graceful stop.
+- Optional terminal persistence: `brew install tmux`, then `tmux new -s portfolio`;
+  activate the venv and run the chosen command inside it. Detach with Ctrl+B,
+  then D; return with `tmux attach -t portfolio`. This does not survive reboot.
+- [start_trade_vm.sh](scripts/trade/start_trade_vm.sh) is a VM bring-up flow,
+  not the local Mac launcher: it pulls code and overwrites local data from the
+  SSH backup. Use the direct commands below on the Mac.
+- No OS scheduler/autostart configuration is supplied. Any external Windows
+  Task Scheduler setup must be recreated separately for macOS (for example
+  `launchd`), with the repo working directory and Mac venv interpreter.
 
 ---
 
 ## 6. Run modes
+
+Choose the command you need; do not paste every example as a batch. The dashboard
+runs in the foreground, so use another activated terminal for concurrent CLI
+work. Live intraday remains paused and options remain research-only on every OS.
+
+### Windows - PowerShell
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\.venv\Scripts\Activate.ps1
+python main.py --mode dashboard --port 8765
+# Other examples, run individually in another activated terminal:
+python main.py --mode portfolio
+python main.py --mode portfolio --type mf
+python main.py --mode swing
+python main.py --mode trade --dryrun
+python main.py --mode options --dryrun
+python scripts\shared\tax_summary.py --intraday
+python scripts\shared\backup_data.py --dry-run
+python scripts\shared\sync_backtest_data.py --status
+```
+
+### macOS - Terminal
+
+```bash
+source .venv/bin/activate
+python main.py --mode dashboard --port 8765
+# Other examples, run individually in another activated terminal:
+python main.py --mode portfolio
+python main.py --mode portfolio --type mf
+python main.py --mode swing
+python main.py --mode trade --dryrun
+python main.py --mode options --dryrun
+python scripts/shared/tax_summary.py --intraday
+python scripts/shared/backup_data.py --dry-run
+python scripts/shared/sync_backtest_data.py --status
+```
+
+All command tables below apply to **both** activated shells. Without activation,
+replace `python` with `.\.venv\Scripts\python.exe` on Windows or
+`./.venv/bin/python` on macOS; convert Windows backslashes in script/data paths
+to `/` when copying an older PowerShell command to the Mac. Login/refresh/scan
+commands require network access; `--ai` also needs the selected provider key.
+If the browser does not open, visit `http://127.0.0.1:8765` manually.
 
 | Command | What it does |
 |---------|--------------|
@@ -829,21 +1002,21 @@ the terminal too. (Same service layer powers both surfaces.)
 | `python main.py --mode swing --compare-sector BANKING` | Auto-pick the top 4 stocks in a sector (per `SECTOR_MAP` order) and run the same comparison. Sector aliases accepted: `BANK`/`BANKING`, `IT`/`TECH`, `PHARMA`/`HEALTH`, `AUTO`, `ENERGY`/`OIL`, `METALS`, `FMCG`/`CONSUMER`, `INFRA`/`POWER`, `TELECOM`, `CAPGOODS`/`DEFENCE`, `FINANCE`/`NBFC`. |
 | `python main.py --mode swing --backtest` | Run the X/Y dip-buy parameter sweep on the cached candle history. Writes `reports/backtest/ath_backtest.{txt,json}` with the full XIRR matrix. Pure-offline; never touches the broker. |
 
-**Read-only inspection from the CLI** (no separate flag — just SQL via
-the persistence helpers):
+**Read-only inspection from the CLI** (both activated shells; no separate flag,
+just SQL via the persistence helpers):
 
-```powershell
+```text
 # Last full-scan run summary (skips SEARCH_BOX + snapshot rows)
-.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_run; r = latest_run(); print(r)"
+python -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_run; r = latest_run(); print(r)"
 
 # All pending actions across runs
-.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import pending_actions; [print(a.action_id, a.symbol, a.action_type, a.suggested_price) for a in pending_actions()]"
+python -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import pending_actions; [print(a.action_id, a.symbol, a.action_type, a.suggested_price) for a in pending_actions()]"
 
 # All open positions with realised P&L
-.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import open_positions, realised_pnl_summary; [print(p.position_id, p.symbol, p.managed_qty, p.entry_price) for p in open_positions()]; print(realised_pnl_summary())"
+python -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import open_positions, realised_pnl_summary; [print(p.position_id, p.symbol, p.managed_qty, p.entry_price) for p in open_positions()]; print(realised_pnl_summary())"
 
 # AI overlay for a specific symbol (with timestamp)
-.\.venv\Scripts\python.exe -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_ai_overlay_for_symbol; r = latest_ai_overlay_for_symbol('SBIN'); print(r[1] if r else None); print(r[0][:500] if r else 'no overlay')"
+python -c "import sys; sys.path.insert(0, '.'); from modes.swing.persistence import latest_ai_overlay_for_symbol; r = latest_ai_overlay_for_symbol('SBIN'); print(r[1] if r else None); print(r[0][:500] if r else 'no overlay')"
 ```
 
 The same compare flow is also reachable via HTTP when the dashboard
@@ -1362,8 +1535,10 @@ is readable while amounts are hidden:
 python scripts/shared/render_privacy_preview.py
 ```
 
-CI uses Python 3.12 and Ruff 0.16.1. Install that Ruff version in the development
-environment when reproducing CI. These commands do not start a dashboard,
+CI is configured to run Python 3.12 and Ruff 0.16.1 on Ubuntu, Windows and macOS.
+Install that Ruff version in the development environment when reproducing CI;
+it is a development tool, not an additional dashboard/runtime dependency.
+These commands work in either activated shell and do not start a dashboard,
 place orders, commit or push.
 
 ## 12. Disclaimer

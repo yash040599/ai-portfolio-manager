@@ -60,7 +60,7 @@ class PublicationAudit:
                 findings.append(Finding(self.root.name, path, "credential_content", line_number))
             if re.search(r"(?:api[_-]?key|api[_-]?secret|access[_-]?token|password|totp_secret)\s*[=:]\s*[\"'][A-Za-z0-9_+/=-]{20,}[\"']", line, re.IGNORECASE):
                 findings.append(Finding(self.root.name, path, "credential_assignment", line_number))
-            if re.search(r"[A-Za-z]:[\\/]+Users[\\/]+[A-Za-z0-9_.-]+", line):
+            if re.search(r"(?:[A-Za-z]:[\\/]+Users[\\/]+|/Users/)[A-Za-z0-9_.-]+", line):
                 findings.append(Finding(self.root.name, path, "personal_machine_path", line_number))
             if re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", line) and "git@github.com" not in line:
                 if not re.search(r"@(example\.(com|org|net)|[\w.-]+\.invalid)\b", line, re.IGNORECASE):

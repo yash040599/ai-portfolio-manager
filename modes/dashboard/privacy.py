@@ -75,7 +75,7 @@ def privacy_boot_script() -> str:
       // nothing to read back out of the markup.
       this.originals = new WeakMap();
       this.moneySource = String.raw`(?:[+\-\u2212]\s*)?(?:\u20b9|\$|\bRs\.?|\bINR\b|\bUSD\b)\s*[+\-\u2212]?\s*\d[\d,]*(?:\.\d+)?(?:\s*(?:Cr\b|crores?\b|lakhs?\b|L\b|[KMB]\b))?`;
-      this.identitySource = String.raw`\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|[A-Z]:[\\/]Users[\\/][^\\/\s<>]+|/home/[^/\s<>]+`;
+      this.identitySource = String.raw`\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|[A-Z]:[\\/]Users[\\/][^\\/\s<>]+|/(?:home|Users)/[^/\s<>]+`;
       this.quantitySource = String.raw`\b\d[\d,]*(?:\.\d+)?\s*(?:shares?\b|units?\b|u\b)|\b(?:qty|quantity|folio|account)\s*[:=]\s*[A-Z0-9./-]+`;
       // Only these regions hold the owner's money and holdings. Research
       // notes, guides, thresholds and reference tables stay readable.

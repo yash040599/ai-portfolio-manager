@@ -1,3 +1,4 @@
+import re
 import unittest
 import sys
 from types import SimpleNamespace
@@ -130,6 +131,22 @@ class TestDashboardControls(unittest.TestCase):
 
     def test_privacy_fails_closed_when_storage_is_unavailable(self):
         self.assertIn("catch (error) {\n        return true;", privacy_boot_script())
+
+    def test_privacy_masks_windows_linux_and_macos_home_paths(self):
+        source = re.search(r"this\.identitySource = String\.raw`([^`]+)`;", privacy_boot_script())
+        assert source is not None
+        homes = (
+            "\\".join(("C:", "Users", "demo-user")),
+            "/".join(("C:", "Users", "demo-user")),
+            "/" + "/".join(("home", "demo-user")),
+            "/" + "/".join(("Users", "demo-user")),
+        )
+        for home in homes:
+            with self.subTest(home=home):
+                match = re.search(source.group(1), home + "/portfolio", re.IGNORECASE)
+                self.assertIsNotNone(match)
+                assert match is not None
+                self.assertEqual(match.group(0), home)
 
     def test_privacy_covers_refreshes_tooltips_inputs_and_private_charts(self):
         script = privacy_boot_script()

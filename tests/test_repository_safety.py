@@ -41,6 +41,19 @@ class TestPublicationAudit(unittest.TestCase):
         self.assertFalse(PublicationAudit.credential_path(".env.example"))
         self.assertTrue(PublicationAudit.credential_path("data/access_token.json.invalid"))
 
+    def test_windows_and_macos_home_paths_are_reported_without_values(self):
+        audit = PublicationAudit(Path.cwd())
+        homes = (
+            "\\".join(("C:", "Users", "demo-user")),
+            "/".join(("C:", "Users", "demo-user")),
+            "/" + "/".join(("Users", "demo-user")),
+        )
+        for home in homes:
+            with self.subTest(home=home):
+                findings = audit.inspect_text("example.md", "Report: " + home + "/portfolio")
+                self.assertEqual([finding.category for finding in findings], ["personal_machine_path"])
+                self.assertNotIn(home, str(findings))
+
 
 class TestBackupPrivacy(unittest.TestCase):
     def test_snapshot_preserves_previous_database_and_never_merges_into_source(self):
