@@ -916,8 +916,12 @@ ls data/*.db
 - `--all-remote` makes the local folders match the backup; access tokens and raw
   tax statements are never copied or deleted. Run it once on a fresh Mac.
 - If it stops with `BACKUP_REPO_URL_HTTPS is not set`, `.env` has not been moved
-  to the Mac yet. An authentication error means Git is signed in to a GitHub
-  account that cannot read the private repository.
+  to the Mac yet.
+- If Git asks for a username and password, or reports `Invalid username or
+  password`: GitHub no longer accepts account (or Google) passwords for Git.
+  Press Ctrl+C, run `gh auth login` (GitHub.com, HTTPS, log in with a web browser,
+  as the account that owns the private repositories), then `gh auth setup-git`,
+  and rerun. Your GitHub username plus a personal access token also works.
 - From then on, back up from the Mac with
   `./.venv/bin/python scripts/shared/backup_data.py --snapshot --push`. Avoid adding
   new records on two machines at once; see [Data sync](#data-sync-private-repo).

@@ -925,7 +925,9 @@ def main():
             if args.ssh:
                 print("  Make sure your SSH key is added to GitHub.")
             else:
-                print("  Make sure you're authenticated with GitHub (run: gh auth login)")
+                print("  GitHub does not accept account passwords for Git. Sign in once with:")
+                print("    gh auth login    then    gh auth setup-git")
+                print("  or answer the prompt with your GitHub username and a personal access token.")
                 print("  On Linux VMs with SSH keys, use: python scripts/shared/backup_data.py --ssh")
             sys.exit(1)
         print("  ok Cloned successfully.")
