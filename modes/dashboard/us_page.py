@@ -26,7 +26,7 @@ from modes.dashboard.us_analysis import (
     get_us_stock_name, cached_usd_inr_rate, get_usd_inr_rate,
     build_us_health_checks,
 )
-from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.nav import is_shell, render_topnav
 from modes.dashboard.rupevo import rupevo_card
 from modes.swing.persistence import (
     init_db, open_positions, get_watchlist, realised_pnl_summary,
@@ -1118,7 +1118,7 @@ def _wrap(title: str, body_parts: list[str], fx: dict) -> str:
     # Keep the nav first in <body>; the AI banner belongs under it.
     parts = list(body_parts)
     topnav = ""
-    if parts and parts[0].lstrip().startswith("<nav"):
+    if parts and is_shell(parts[0]):
         topnav = parts.pop(0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -1249,18 +1249,8 @@ details:not([open]) > summary .collapse-hint { display: inline; }
 .ai-toggle input { margin: 0; cursor: pointer; }
 .ai-toggle .lbl { font-weight: 500; }
 .ai-toggle .hint { color: var(--muted); font-size: 11px; }
-.fx-badge { background: #e6f4ea; color: var(--pos); border: 1px solid #cce8d4;
-        border-radius: 999px; padding: 3px 9px; font-size: 12px;
-        font-weight: 700; margin-left: 8px; white-space: nowrap; }
-.cur-toggle { display: inline-flex; align-items: center; gap: 0;
-          background: white; border: 1px solid var(--line);
-          border-radius: 999px; padding: 0; margin-left: 8px;
-          cursor: pointer; font: inherit; overflow: hidden; }
-.cur-pill { padding: 3px 10px; font-size: 12px; font-weight: 700;
-        color: var(--muted); }
-.cur-pill.active { background: var(--accent); color: white; }
 .money { font-variant-numeric: tabular-nums; }
-""" + topnav_css()
+"""
 
 
 # ── Page JS (live polling + currency toggle + scan controls) ──

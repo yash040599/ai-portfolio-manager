@@ -1,17 +1,21 @@
 """Dashboard home — the one screen that answers "where do I stand?".
 
-Layout (2026-07-30 revamp):
+Layout (2026-11 redesign, in Rupevo's Material 3 style):
 
-    hero            greeting, IST clock, NSE/US market chips, refresh
-    kpi row         net worth, unrealised P&L, India book, US book
-    connect card    Zerodha auth status + inline login (TOTP / paste), with a
-                    Rupevo pointer for visitors without a Zerodha account
-    allocation      India-vs-US doughnut + Indian sector weights
-    books           India holdings, US positions, swing tracker
-    realised strip  swing India, US, intraday
-    tiles           navigation into the per-book tools, plus Rupevo (public site)
+    page head       IST date, title, one-line lede and a status row: NSE / US
+                    market, USD/INR, Zerodha connection, refresh, auto-refresh
+    connect card    only while Zerodha is not connected: inline login (TOTP /
+                    paste), with a Rupevo pointer for visitors without an account
+    kpi tiles       net worth, unrealised P&L, India book, mutual funds, US book
+    holdings        one card, tabbed: India, mutual funds, US, swing tracker
+    allocation      book-mix doughnut + Indian sector weights
+    realised        swing India, US, intraday, total
+    ask AI          collapsed prompt builder
+    footer          the net-worth rule and a pointer to Rupevo
 
-Book boundaries are enforced in `modes/dashboard/home_summary.py`:
+Page navigation (and Rupevo) lives in the shared app shell from `nav.py`,
+so HQ no longer repeats it as tiles. Book boundaries are enforced in
+`modes/dashboard/home_summary.py`:
 net worth = Zerodha holdings + US book.  The India swing open book is
 a *tracking* ledger over shares that already sit inside the Zerodha
 holdings, so it is shown separately and never summed into net worth.
@@ -31,25 +35,14 @@ import html
 import json
 
 from modes.dashboard.home_summary import build_summary
-from modes.dashboard.nav import render_topnav, topnav_css
-from modes.dashboard.rupevo import rupevo_login_hint, rupevo_tile
+from modes.dashboard.icons import icon
+from modes.dashboard.nav import render_topnav
+from modes.dashboard.rupevo import rupevo_footer_link, rupevo_login_hint
 from modes.dashboard.theme import (
     theme_boot_script,
     theme_css,
     theme_overrides_css,
 )
-
-
-_TILES = [
-    ("Portfolio", "/portfolio", "Holdings, gap analysis, analyse runs.", "in"),
-    ("Mutual Funds", "/mf", "Coin funds, external folios, SIPs.", "mf"),
-    ("Swing (India)", "/swing", "Daily scan, watchlist, open book.", "in"),
-    ("US", "/us", "US long-term holdings and investment ideas.", "us"),
-    ("Intraday", "/trading", "Live intraday P&L and day drill-down.", "id"),
-    ("Dry Run", "/dryrun", "Per-strategy dry-run P&L and stats.", "dr"),
-    ("Tax", "/tax", "Realised P&L, charges, slab projection.", "tx"),
-    ("Theory", "/theory/project", "The project story, evidence and next steps.", "th"),
-]
 
 
 # ── Formatting ───────────────────────────────────────────────────
@@ -110,12 +103,14 @@ def _cls(value) -> str:
 
 # ── Fragments ────────────────────────────────────────────────────
 
-def _hero(data: dict) -> str:
+def _market_chip(is_open: bool, label: str) -> str:
+    dot = '<span class="dot live"></span>' if is_open else '<span class="dot"></span>'
+    return (f'<span class="t-chip{" pos" if is_open else ""}" data-privacy-public>'
+            f'{dot}{html.escape(label)}</span>')
+
+
+def _page_head(data: dict) -> str:
     mk = data["market"]
-    india_dot = ('<span class="dot live"></span>' if mk["india_open"]
-                 else '<span class="dot"></span>')
-    us_dot = ('<span class="dot live"></span>' if mk["us_open"]
-              else '<span class="dot"></span>')
     fx = data["fx"]
     rate = _num(fx.get("rate"))
     fx_chip = (
@@ -124,35 +119,40 @@ def _hero(data: dict) -> str:
         if rate > 0 else
         '<span class="t-chip warn">USD/INR unavailable</span>'
     )
+    # Connected: a compact chip here. Not connected: a warning chip that
+    # points at the login card rendered under the head.
+    zerodha = (
+        _connect_card(data) if data["auth"]["valid"] else
+        '<a class="t-chip warn" href="#connect-card"><span class="dot"></span>'
+        'Zerodha not connected</a>'
+    )
     return f"""
-<header class="hero">
-  <div class="hero-left">
-    <div class="eyebrow">{html.escape(mk['ist_date'])} &middot; {html.escape(mk['ist'])} IST</div>
-    <h1>Portfolio command centre</h1>
-    <p class="sub">Every book in one place — Zerodha holdings, the India swing
-       tracker, the US book, and realised intraday P&amp;L.</p>
-    <div class="t-row">
-      <span class="t-chip {'pos' if mk['india_open'] else ''}">{india_dot}{html.escape(mk['india_label'])}</span>
-      <span class="t-chip {'pos' if mk['us_open'] else ''}">{us_dot}{html.escape(mk['us_label'])}</span>
-      {fx_chip}
-    </div>
-  </div>
-  <div class="hero-right">
-    <div class="t-row hero-actions">
-      <button id="home-refresh" class="action" type="button" onclick="refreshHome(true)">
-        Refresh live prices</button>
-      <button id="home-privacy" class="action alt" type="button"
-              onclick="toggleDashboardPrivacy()" aria-pressed="false" data-privacy-toggle
-              title="Hide personal amounts and quantities across every dashboard page">
-        Hide amounts</button>
-    </div>
+<header class="page-head home-head">
+  <div class="eyebrow">{html.escape(mk['ist_date'])} &middot; {html.escape(mk['ist'])} IST</div>
+  <h1>Overview</h1>
+  <p class="lede">Every book in one place: Zerodha holdings, mutual funds, the US
+     book and the India swing tracker.</p>
+  <div class="status-row">
+    {_market_chip(mk['india_open'], mk['india_label'])}
+    {_market_chip(mk['us_open'], mk['us_label'])}
+    {fx_chip}
+    {zerodha}
+    <span class="spacer"></span>
+    <span class="stamp" id="home-stamp">Snapshot &middot; not yet refreshed</span>
+    <button id="home-refresh" class="text-btn" type="button" onclick="refreshHome(true)"
+            title="Fetch live prices for every book">{icon("refresh", size=18)}<span
+            class="btn-label">Refresh live prices</span></button>
     <label class="switch" title="Re-fetch live prices every 60 seconds">
-      <input type="checkbox" id="home-auto"> <span>Auto refresh</span>
+      <input type="checkbox" id="home-auto"> Auto refresh
     </label>
-    <div class="stamp" id="home-stamp">Snapshot &middot; not yet refreshed</div>
   </div>
 </header>
 """
+
+
+def _info(tip: str) -> str:
+    return (f'<span class="k-info" role="img" title="{html.escape(tip)}" '
+            f'aria-label="{html.escape(tip)}">{icon("info", size=16)}</span>')
 
 
 def _kpis(data: dict) -> str:
@@ -177,9 +177,9 @@ def _kpis(data: dict) -> str:
                   'title="Waiting for live US prices">&mdash;</span>')
         unreal_attr = ' title="US positions are held at cost until live prices load"'
     return f"""
-<section class="kpis">
+<section class="kpis" aria-label="Totals">
   <article class="kpi accent">
-    <div class="k-label">Net worth <span class="k-info" title="{html.escape(net_tip)}">?</span></div>
+    <div class="k-label">Net worth {_info(net_tip)}</div>
     <div class="k-value" id="kpi-networth" title="{_inr(t['net_worth_inr'])}">{_inr_compact(t['net_worth_inr'])}</div>
     <div class="k-foot"><span id="kpi-networth-split">India {t['india_share_pct']:.0f}%
       &middot; MF {t.get('mf_share_pct', 0):.0f}%
@@ -203,7 +203,7 @@ def _kpis(data: dict) -> str:
   </article>
 
   <article class="kpi">
-    <div class="k-label">Mutual funds <span class="k-info" title="{html.escape(mf_tip)}">?</span></div>
+    <div class="k-label">Mutual funds {_info(mf_tip)}</div>
     <div class="k-value" id="kpi-mf" title="{_inr(mf.get('current', 0))}">{_inr_compact(mf.get('current', 0))}</div>
     <div class="k-foot"><span class="{_cls(mf.get('pnl', 0))}" id="kpi-mf-pnl">{_inr_compact(mf.get('pnl', 0), signed=True)}
       ({_pct(mf.get('pnl_pct', 0))})</span> &middot; <span id="kpi-mf-count">{mf.get('schemes', 0)}</span> schemes</div>
@@ -219,19 +219,18 @@ def _kpis(data: dict) -> str:
 
 
 def _connect_card(data: dict) -> str:
+    """Zerodha status: a chip for the page head when connected, otherwise the
+    full login card. Both carry `id="connect-card"`; the page script reloads
+    when a live refresh finds the token expired under an `ok` chip."""
     auth = data["auth"]
     if auth["valid"]:
-        return f"""
-<section class="t-card connect ok" id="connect-card">
-  <div class="connect-head">
-    <span class="t-chip pos"><span class="dot"></span>Zerodha connected</span>
-    <span class="muted">Token valid for {html.escape(auth['token_date'])} —
-      Kite expires it at midnight IST.</span>
-    <span class="spacer"></span>
-    <a class="action alt" href="/login">Re-login</a>
-  </div>
-</section>
-"""
+        return (
+            '<span class="t-chip pos connect ok" id="connect-card" '
+            f'title="Token valid for {html.escape(auth["token_date"])}; '
+            'Kite expires it at midnight IST.">'
+            '<span class="dot"></span>Zerodha connected'
+            '<a class="chip-link" href="/login">Re-login</a></span>'
+        )
 
     reason = {
         "missing": "No access token saved yet.",
@@ -264,12 +263,13 @@ def _connect_card(data: dict) -> str:
     )
 
     return f"""
-<section class="t-card connect bad" id="connect-card">
-  <div class="connect-head">
-    <span class="t-chip warn"><span class="dot"></span>Zerodha not connected</span>
-    <span class="muted">{html.escape(reason)} Live Indian prices, holdings refresh
-      and analyse runs stay disabled until you re-login.</span>
+<section class="card connect bad" id="connect-card">
+  <div class="card-head">
+    <h2>Connect Zerodha</h2>
+    <span class="t-chip warn"><span class="dot"></span>Not connected</span>
   </div>
+  <p class="connect-why">{html.escape(reason)} Live Indian prices, holdings refresh
+     and analyse runs stay disabled until you log in.</p>
   <div class="connect-grid">
     {quick}
     <form class="login-form" method="post" action="/api/login_submit">
@@ -302,17 +302,12 @@ def _allocation(data: dict) -> str:
         rows.append('<li class="muted">Run a portfolio analysis to see sector weights.</li>')
 
     return f"""
-<h2 class="t-section-title">Allocation <span class="hint">where the money actually sits</span></h2>
-<section class="split">
-  <div class="t-card">
-    <h3>Book mix</h3>
-    <div class="donut-wrap"><canvas id="chart-geo" height="190" data-privacy-public></canvas></div>
-    <ul class="legend" id="geo-legend"></ul>
-  </div>
-  <div class="t-card">
-    <h3>Indian sector weight</h3>
-    <ul class="sectors">{''.join(rows)}</ul>
-  </div>
+<section class="card alloc">
+  <div class="card-head"><h2>Allocation</h2><span class="hint">where the money sits</span></div>
+  <div class="donut-wrap"><canvas id="chart-geo" height="170" data-privacy-public></canvas></div>
+  <ul class="legend" id="geo-legend"></ul>
+  <h3 class="sub-head">Indian sectors</h3>
+  <ul class="sectors">{''.join(rows)}</ul>
 </section>
 """
 
@@ -386,8 +381,8 @@ def _books(data: dict) -> str:
     else:
         stale = ""
 
-    swing_tip = ("These shares are already counted inside the Zerodha holdings "
-                 "above, so this book is never added to net worth.")
+    swing_tip = ("These shares are already counted inside the Zerodha holdings, "
+                 "so this book is never added to net worth.")
     swing_unreal = (_inr_compact(sw['unrealised'], signed=True)
                     if sw.get('live') else 'no live price')
 
@@ -400,54 +395,52 @@ def _books(data: dict) -> str:
                f'{mf.get("external_count", 0)} tracked outside Coin &middot; '
                f'{_inr_compact(mf.get("monthly_sip", 0))}/mo SIP')
 
+    def head(first: str) -> str:
+        return (f'<thead><tr><th>{first}</th><th class="right">'
+                f'{"Units" if first == "Fund" else "Qty"}</th>'
+                '<th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>')
+
+    panels = [
+        ("india", "India", "/portfolio", "Open Portfolio",
+         stale or '<span>Zerodha holdings, largest first</span>',
+         f'{head("Symbol")}<tbody id="book-india">'
+         f'{_rows_html(ind.get("top") or [], currency="inr", href="/portfolio/")}</tbody>'),
+        ("mf", "Mutual funds", "/mf", "Open Funds",
+         f'{mf_stamp}<span id="mf-foot">{mf_foot}</span>',
+         f'{head("Fund")}<tbody id="book-mf">{_mf_rows_html(mf.get("rows") or [])}</tbody>'),
+        ("us", "US", "/us", "Open US",
+         '<span class="t-chip info" title="Long-term investment holdings, not a '
+         'short-term trading book.">long-term</span><span>Investment holdings</span>',
+         f'{head("Symbol")}<tbody id="book-us">'
+         f'{_rows_html(us.get("rows") or [], currency="usd", href="/us/")}</tbody>'),
+        ("swing", "Swing tracker", "/swing", "Open Swing",
+         f'<span class="t-chip" title="{html.escape(swing_tip)}">not in net worth</span>'
+         f'<span id="swing-foot">{sw["positions"]} open &middot; {swing_unreal} unrealised'
+         f' &middot; {sw["watchlist"]} on watchlist</span>',
+         f'{head("Symbol")}<tbody id="book-swing">'
+         f'{_rows_html(sw.get("rows") or [], currency="inr", href="/swing/")}</tbody>'),
+    ]
+    tabs, bodies = [], []
+    for index, (key, label, href, open_label, meta, table) in enumerate(panels):
+        selected = index == 0
+        tabs.append(
+            f'<button class="book-tab" type="button" role="tab" id="book-tab-{key}" '
+            f'data-book="{key}" aria-controls="book-panel-{key}" '
+            f'aria-selected="{"true" if selected else "false"}" '
+            f'tabindex="{0 if selected else -1}">{label}</button>'
+        )
+        bodies.append(
+            f'<div class="book-panel" role="tabpanel" id="book-panel-{key}" '
+            f'aria-labelledby="book-tab-{key}"{"" if selected else " hidden"}>'
+            f'<div class="book-meta">{meta}<span class="spacer"></span>'
+            f'<a class="text-btn" href="{href}">{open_label} &#8594;</a></div>'
+            f'<table class="mini">{table}</table></div>'
+        )
     return f"""
-<h2 class="t-section-title">Books</h2>
-<section class="books">
-  <div class="t-card book">
-    <div class="book-head">
-      <h3>India &middot; Zerodha holdings</h3>{stale}
-      <span class="spacer"></span><a class="more" href="/portfolio">Open &#8594;</a>
-    </div>
-    <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>
-      <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
-      <tbody id="book-india">{_rows_html(ind.get('top') or [], currency='inr', href='/portfolio/')}</tbody></table>
-  </div>
-
-  <div class="t-card book">
-    <div class="book-head">
-      <h3>Mutual funds</h3>{mf_stamp}
-      <span class="spacer"></span><a class="more" href="/mf">Open &#8594;</a>
-    </div>
-    <table class="mini"><thead><tr><th>Fund</th><th class="right">Units</th>
-      <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
-      <tbody id="book-mf">{_mf_rows_html(mf.get('rows') or [])}</tbody></table>
-    <div class="book-foot muted"><span id="mf-foot">{mf_foot}</span></div>
-  </div>
-
-  <div class="t-card book">
-    <div class="book-head">
-      <h3>US book</h3>
-      <span class="t-chip info" title="Long-term investment holdings, not a short-term trading book.">long-term</span>
-      <span class="spacer"></span><a class="more" href="/us">Open &#8594;</a>
-    </div>
-    <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>
-      <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
-      <tbody id="book-us">{_rows_html(us.get('rows') or [], currency='usd', href='/us/')}</tbody></table>
-  </div>
-
-  <div class="t-card book">
-    <div class="book-head">
-      <h3>Swing tracker &middot; India</h3>
-      <span class="t-chip" title="{html.escape(swing_tip)}">not in net worth</span>
-      <span class="spacer"></span><a class="more" href="/swing">Open &#8594;</a>
-    </div>
-    <table class="mini"><thead><tr><th>Symbol</th><th class="right">Qty</th>
-      <th class="right">Value</th><th class="right">P&amp;L</th></tr></thead>
-      <tbody id="book-swing">{_rows_html(sw.get('rows') or [], currency='inr', href='/swing/')}</tbody></table>
-    <div class="book-foot muted"><span id="swing-foot">{sw['positions']} open &middot;
-      {swing_unreal} unrealised &middot;
-      {sw['watchlist']} on watchlist</span></div>
-  </div>
+<section class="card books" aria-label="Holdings by book">
+  <div class="card-head"><h2>Holdings</h2><span class="hint">top positions in each book</span></div>
+  <div class="book-tabs" role="tablist" aria-label="Books">{''.join(tabs)}</div>
+  {''.join(bodies)}
 </section>
 """
 
@@ -456,51 +449,47 @@ def _realised(data: dict) -> str:
     sw, us, intra = data["swing_india"], data["us"], data["intraday"]
     t = data["totals"]
     best, worst = intra.get("best_day"), intra.get("worst_day")
-    extra = ""
+    intra_tip = "Current financial year, from the verified intraday tax ledger."
     if best and worst:
-        extra = (f'best {html.escape(str(best[0]))} {_inr(best[1], signed=True)}'
-                 f' &middot; worst {html.escape(str(worst[0]))} {_inr(worst[1], signed=True)}')
+        intra_tip += (f" Best day {best[0]} {_inr(best[1], signed=True)};"
+                      f" worst day {worst[0]} {_inr(worst[1], signed=True)}.")
     return f"""
-<h2 class="t-section-title">Realised <span class="hint">booked, not marked-to-market</span></h2>
-<section class="realised">
-  <div class="t-card r-card">
-    <div class="k-label">Swing &middot; India</div>
-    <div class="r-value {_cls(sw['realised_net'])}" id="r-swing">{_inr(sw['realised_net'], signed=True)}</div>
-    <div class="k-foot">{sw['closed']} closed trades, net of charges</div>
-  </div>
-  <div class="t-card r-card">
-    <div class="k-label">US</div>
-    <div class="r-value {_cls(us['realised_usd'])}" id="r-us">{_usd(us['realised_usd'], signed=True)}</div>
-    <div class="k-foot">{us['closed']} closed trades</div>
-  </div>
-  <div class="t-card r-card">
-    <div class="k-label">Intraday <span class="k-info"
-      title="Current financial year, from the verified intraday tax ledger.">?</span></div>
-    <div class="r-value {_cls(intra['net_pnl'])}" id="r-intraday">{_inr(intra['net_pnl'], signed=True)}</div>
-    <div class="k-foot">{intra['trades']} trades over {intra['days']} days
-      &middot; {html.escape(str(intra['window']))}<br>{extra}</div>
-  </div>
-  <div class="t-card r-card total">
-    <div class="k-label">Total realised</div>
-    <div class="r-value {_cls(t['realised_inr'])}" id="r-total">{_inr(t['realised_inr'], signed=True)}</div>
-    <div class="k-foot">All books, converted to INR</div>
+<section class="card realised-card">
+  <div class="card-head"><h2>Realised</h2><span class="hint">booked, not marked-to-market</span></div>
+  <div class="facts realised">
+    <div class="fact">
+      <div class="fact-label">Swing &middot; India</div>
+      <div class="fact-value {_cls(sw['realised_net'])}" id="r-swing">{_inr(sw['realised_net'], signed=True)}</div>
+      <div class="fact-sub">{sw['closed']} closed trades, net of charges</div>
+    </div>
+    <div class="fact">
+      <div class="fact-label">US</div>
+      <div class="fact-value {_cls(us['realised_usd'])}" id="r-us">{_usd(us['realised_usd'], signed=True)}</div>
+      <div class="fact-sub">{us['closed']} closed trades</div>
+    </div>
+    <div class="fact">
+      <div class="fact-label">Intraday {_info(intra_tip)}</div>
+      <div class="fact-value {_cls(intra['net_pnl'])}" id="r-intraday">{_inr(intra['net_pnl'], signed=True)}</div>
+      <div class="fact-sub">{intra['trades']} trades over {intra['days']} days
+        &middot; {html.escape(str(intra['window']))}</div>
+    </div>
+    <div class="fact total">
+      <div class="fact-label">Total realised</div>
+      <div class="fact-value {_cls(t['realised_inr'])}" id="r-total">{_inr(t['realised_inr'], signed=True)}</div>
+      <div class="fact-sub">All books, converted to INR</div>
+    </div>
   </div>
 </section>
 """
 
 
-def _tiles() -> str:
-    cards = [
-        f'<a class="tile k-{kind}" href="{html.escape(href)}">'
-        f'<strong>{html.escape(title)}</strong>'
-        f'<span>{html.escape(desc)}</span>'
-        f'<em>Open &#8594;</em></a>'
-        for title, href, desc, kind in _TILES
-    ]
-    return f"""
-<h2 class="t-section-title">Tools</h2>
-<section class="tiles">{''.join(cards)}{rupevo_tile()}</section>
-"""
+def _footer() -> str:
+    return (
+        '<footer class="home-foot">'
+        '<span>Read-only overview. The swing tracker is excluded from net worth, '
+        'so Zerodha holdings are never double-counted.</span>'
+        f'{rupevo_footer_link()}</footer>'
+    )
 
 
 # ── Page ─────────────────────────────────────────────────────────
@@ -590,6 +579,7 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
         if load_error else
         '<div id="home-error" class="banner error" style="display:none"></div>'
     )
+    connected = bool(data["auth"].get("valid"))
 
     return "".join([
         "<!doctype html><html lang='en'>",
@@ -600,24 +590,24 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
         theme_boot_script(),
         '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/'
         'dist/chart.umd.min.js"></script>',
-        "<style>", theme_css(), topnav_css(), _STYLE, theme_overrides_css(),
+        "<style>", theme_css(), _STYLE, theme_overrides_css(),
         "</style>",
         "</head><body>",
         error_toast_html(),
-        "<main class='wrap'>",
         render_topnav("/", after_links=_currency_toggle_html(data)),
-        _hero(data),
+        "<main class='wrap'>",
+        _page_head(data),
         flash,
         err_banner,
+        "" if connected else _connect_card(data),
         _kpis(data),
-        _connect_card(data),
-        chat_section_html("home"),
-        _allocation(data),
+        "<div class='home-grid'>",
         _books(data),
+        _allocation(data),
+        "</div>",
         _realised(data),
-        _tiles(),
-        "<footer class='home-foot'>Read-only overview &middot; the swing tracker is "
-        "excluded from net worth so Zerodha holdings are never double-counted.</footer>",
+        chat_section_html("home"),
+        _footer(),
         "</main>",
         f'<script id="home-bootstrap" type="application/json">{_safe_json(data)}</script>',
         _SCRIPT,
@@ -627,166 +617,111 @@ def render_home_page(*, login_ok: bool = False, login_err: str = "") -> str:
 
 
 _STYLE = r"""
-.cur-toggle { display: inline-flex; align-items: center; gap: 0;
-              background: var(--card); border: 1px solid var(--line);
-              border-radius: 999px; padding: 0; margin-left: 8px;
-              cursor: pointer; font: inherit; overflow: hidden; }
-.cur-pill { padding: 3px 10px; font-size: 12px; font-weight: 700;
-            color: var(--muted); }
-.cur-pill.active { background: var(--accent); color: #fff; }
-.wrap { max-width: 1240px; margin: 0 auto; }
+/* ── Page head ────────────────────────────────────────────── */
+.home-head { margin-bottom: 16px; }
+.status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+.status-row .spacer { flex: 1; }
+.status-row .stamp { font-size: 12.5px; color: var(--muted); }
+.status-row .text-btn svg { margin-left: -2px; }
+.status-row .switch { margin-left: 4px; }
+.t-chip .chip-link { margin-left: 6px; color: inherit; font-weight: 500;
+                     text-decoration: underline; text-underline-offset: 2px; }
+a.t-chip.warn:hover { box-shadow: inset 0 0 0 1px currentColor; }
+.banner { padding: 12px 16px; margin: 0 0 16px; font-size: 13.5px; }
+.banner.ok-flash { background: var(--pos-bg); color: var(--pos); font-weight: 500; }
 
-/* ── Hero ─────────────────────────────────────────────────── */
-.hero { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap;
-        padding: 22px 24px; margin-bottom: 18px; border-radius: var(--radius);
-        border: 1px solid var(--line); box-shadow: var(--shadow-sm);
-        background:
-          linear-gradient(135deg,
-            color-mix(in srgb, var(--accent) 10%, var(--card)) 0%,
-            var(--card) 46%,
-            color-mix(in srgb, var(--accent-2) 9%, var(--card)) 100%); }
-.hero-left { flex: 1 1 420px; min-width: 0; }
-.hero-right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.hero .eyebrow { font-size: 11.5px; font-weight: 700; letter-spacing: .1em;
-                 text-transform: uppercase; color: var(--muted); }
-.hero h1 { margin: 4px 0; font-size: 27px; letter-spacing: -.02em; }
-.hero .sub { margin: 0 0 12px; max-width: 62ch; color: var(--muted); font-size: 13.5px; }
-.hero .stamp { font-size: 11.5px; color: var(--muted); text-align: right; }
-.hero-actions { justify-content: flex-end; }
-.switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
-          color: var(--muted); cursor: pointer; user-select: none; }
-.switch input { accent-color: var(--accent); cursor: pointer; }
+/* ── KPI tiles (base look from theme.py) ──────────────────── */
+.kpis { display: grid; gap: 12px; margin: 0 0 16px;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.k-info { display: inline-grid; place-items: center; color: var(--muted); cursor: help; }
 
-/* ── KPI cards ────────────────────────────────────────────── */
-.kpis { display: grid; gap: 14px; margin-bottom: 16px;
-        grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); }
-.kpi { position: relative; overflow: hidden; padding: 15px 17px 14px;
-       background: var(--card); border: 1px solid var(--line);
-       border-radius: var(--radius); box-shadow: var(--shadow-sm); }
-.kpi::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
-               background: var(--line-strong); }
-.kpi.accent::before { background: linear-gradient(180deg, var(--accent), var(--accent-2)); }
-.kpi .k-label { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
-                text-transform: uppercase; color: var(--muted);
-                display: flex; align-items: center; gap: 6px; }
-.kpi .k-value { font-size: 27px; font-weight: 700; letter-spacing: -.02em;
-                margin: 7px 0 5px; font-variant-numeric: tabular-nums; }
-.kpi .k-foot { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.k-info { display: inline-flex; align-items: center; justify-content: center;
-          width: 15px; height: 15px; border-radius: 50%; font-size: 10px;
-          background: var(--soft); color: var(--muted); cursor: help;
-          border: 1px solid var(--line); font-weight: 700; }
-
-/* ── Connect / login ──────────────────────────────────────── */
-.connect { margin-bottom: 6px; border-left: 4px solid var(--pos); }
-.connect.bad { border-left-color: var(--warn-fg); }
-.connect-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-                font-size: 13px; }
-.connect-head .spacer { flex: 1; }
-.connect-head .action { text-decoration: none; }
-.connect-grid { display: grid; gap: 16px; margin-top: 14px;
-                grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
-.login-form label { display: block; font-size: 12px; font-weight: 600;
-                    color: var(--muted); margin-bottom: 6px; }
+/* ── Connect / login (only while Zerodha is not connected) ── */
+.connect .card-head { margin-bottom: 4px; }
+.connect-why { margin: 0 0 14px; font-size: 13.5px; color: var(--fg-2); }
+.connect-grid { display: grid; gap: 16px;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.login-form label { display: block; margin-bottom: 6px; font-size: 12.5px;
+                    font-weight: 500; color: var(--fg-2); }
+.login-form .t-row { flex-wrap: nowrap; }
 .login-form input[type=text] { flex: 1 1 180px; min-width: 0; }
 .login-form input.otp { flex: 0 0 132px; font-size: 18px; letter-spacing: 5px;
                         text-align: center; }
-.login-form .hint { margin: 8px 0 0; font-size: 11.5px; color: var(--muted); }
+.login-form .hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 
-/* ── Allocation ───────────────────────────────────────────── */
-.split { display: grid; gap: 14px;
-         grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); }
-@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
-.split h3, .book-head h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700;
-                           letter-spacing: .04em; }
-.donut-wrap { position: relative; height: 190px; }
-.legend { list-style: none; margin: 12px 0 0; padding: 0; display: flex;
-          gap: 14px; flex-wrap: wrap; font-size: 12.5px; }
-.legend li { display: flex; align-items: center; gap: 7px; color: var(--muted); }
-.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.legend b { color: var(--fg); font-variant-numeric: tabular-nums; }
-.sectors { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
-.sectors li { display: grid; grid-template-columns: 108px 1fr 52px;
-              align-items: center; gap: 10px; font-size: 12.5px; }
-.sectors .s-name { color: var(--fg-2); font-weight: 600; overflow: hidden;
-                   text-overflow: ellipsis; white-space: nowrap; }
-.sectors .s-bar { height: 8px; border-radius: 999px; background: var(--soft);
-                  overflow: hidden; }
-.sectors .s-bar i { display: block; height: 100%; border-radius: 999px;
-                    background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-.sectors .s-val { text-align: right; color: var(--muted);
-                  font-variant-numeric: tabular-nums; }
+/* ── Holdings + allocation ────────────────────────────────── */
+.home-grid { display: grid; gap: 16px; margin-bottom: 16px; align-items: start;
+             grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
+.home-grid > .card { margin: 0; }
+@media (max-width: 1023px) { .home-grid { grid-template-columns: minmax(0, 1fr); } }
 
-/* ── Books ────────────────────────────────────────────────── */
-.books { display: grid; gap: 14px;
-         grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-.book-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-             margin-bottom: 4px; }
-.book-head .spacer { flex: 1; }
-.book-head .more { font-size: 12px; font-weight: 600; text-decoration: none; }
-.book-head .more:hover { text-decoration: underline; }
-table.mini { width: 100%; border-collapse: collapse; font-size: 12.5px;
+.book-tabs { display: flex; gap: 4px; margin: 0 -8px; padding: 0 8px;
+             border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.book-tabs::-webkit-scrollbar { display: none; }
+.book-tab { position: relative; flex: none; height: 44px; padding: 0 14px; border: 0;
+            border-radius: 8px 8px 0 0; background: none; color: var(--fg-2);
+            font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.book-tab:hover { background: var(--soft); color: var(--fg); }
+.book-tab[aria-selected="true"] { color: var(--accent); }
+.book-tab[aria-selected="true"]::after { content: ""; position: absolute; left: 10px; right: 10px;
+                                         bottom: 0; height: 3px; border-radius: 3px 3px 0 0;
+                                         background: var(--accent); }
+.book-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+             margin: 12px 0 4px; font-size: 12.5px; color: var(--muted); }
+.book-meta .spacer { flex: 1; }
+.book-meta .text-btn { margin-right: -12px; }
+
+table.mini { width: 100%; border-collapse: collapse; font-size: 13.5px;
              font-variant-numeric: tabular-nums; }
-table.mini th { text-align: left; font-size: 10.5px; text-transform: uppercase;
-                letter-spacing: .05em; color: var(--muted); font-weight: 700;
-                padding: 6px 8px; border-bottom: 1px solid var(--line); }
-table.mini td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
-table.mini tr:last-child td { border-bottom: none; }
-table.mini tr:hover td { background: var(--soft); }
+table.mini th { text-align: left; padding: 10px 8px; font-size: 12px; font-weight: 500;
+                color: var(--muted); border-bottom: 1px solid var(--line); }
+table.mini td { padding: 9px 8px; border-bottom: 1px solid var(--line); }
+table.mini tr:last-child td { border-bottom: 0; }
+table.mini tbody tr:hover td { background: var(--card-2); }
 table.mini .right { text-align: right; }
-table.mini td.pad { padding: 18px 8px; text-align: center; }
-table.mini a { text-decoration: none; font-weight: 600; color: var(--fg); }
+table.mini td.pad { padding: 24px 8px; text-align: center; }
+table.mini a { color: var(--fg); font-weight: 500; text-decoration: none; }
 table.mini a:hover { color: var(--accent); text-decoration: underline; }
-table.mini .sub-pct { display: block; font-size: 10.5px; opacity: .78; font-weight: 500; }
-.book-foot { margin-top: 10px; font-size: 11.5px; }
+table.mini .sub-pct { display: block; font-size: 12px; opacity: .85; }
+
+.donut-wrap { position: relative; height: 170px; }
+.legend { list-style: none; display: grid; gap: 6px; margin: 14px 0 0; padding: 0;
+          font-size: 13px; }
+.legend li { display: flex; align-items: center; gap: 8px; color: var(--fg-2); }
+.legend i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.legend b { margin-left: auto; font-weight: 500; color: var(--fg);
+            font-variant-numeric: tabular-nums; }
+.alloc .sub-head { margin: 20px 0 10px; font-size: 14px; line-height: 20px;
+                   font-weight: 500; color: var(--fg); }
+.sectors { list-style: none; display: grid; gap: 8px; margin: 0; padding: 0; }
+.sectors li { display: grid; grid-template-columns: minmax(0, 120px) 1fr 48px;
+              align-items: center; gap: 10px; font-size: 12.5px; }
+.sectors .s-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                   color: var(--fg-2); }
+.sectors .s-bar { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; }
+.sectors .s-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.sectors .s-val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ── Realised ─────────────────────────────────────────────── */
-.realised { display: grid; gap: 14px;
-            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.r-card .k-label { font-size: 11.5px; font-weight: 700; letter-spacing: .07em;
-                   text-transform: uppercase; color: var(--muted);
-                   display: flex; align-items: center; gap: 6px; }
-.r-card .r-value { font-size: 21px; font-weight: 700; margin: 7px 0 5px;
-                   font-variant-numeric: tabular-nums; }
-.r-card .k-foot { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
-.r-card.total { background: linear-gradient(135deg,
-                  color-mix(in srgb, var(--accent) 9%, var(--card)), var(--card)); }
+.facts { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.fact { min-width: 0; padding: 12px 14px; border-radius: var(--radius-md); background: var(--soft); }
+.fact.total { background: var(--accent-soft); }
+.fact-label { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+              font-weight: 500; color: var(--fg-2); }
+.fact-value { margin: 2px 0; font-family: var(--font-display); font-size: 20px;
+              line-height: 28px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.fact-sub { font-size: 12px; line-height: 16px; color: var(--muted); }
+@media (max-width: 719px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
-/* ── Tiles ────────────────────────────────────────────────── */
-.tiles { display: grid; gap: 12px;
-         grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.tile { position: relative; display: flex; flex-direction: column; gap: 6px;
-        padding: 16px; min-height: 116px; text-decoration: none; overflow: hidden;
-        color: var(--fg); background: var(--card); border: 1px solid var(--line);
-        border-radius: var(--radius); box-shadow: var(--shadow-sm);
-        transition: transform .12s ease, box-shadow .16s ease, border-color .16s ease; }
-.tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-md);
-              border-color: var(--accent-line); }
-.tile strong { font-size: 14.5px; }
-.tile span { color: var(--muted); font-size: 12.5px; line-height: 1.45; flex: 1; }
-.tile em { font-style: normal; font-size: 11.5px; font-weight: 700;
-           color: var(--accent); letter-spacing: .02em; }
-.tile::after { content: ""; position: absolute; top: 0; left: 0; right: 0;
-               height: 3px; background: var(--accent); }
-.tile.k-in::after { background: linear-gradient(90deg, #ff9933, #138808); }
-.tile.k-mf::after { background: linear-gradient(90deg, #0b8a5b, #41a05e); }
-.tile.k-us::after { background: linear-gradient(90deg, #3c3b6e, #b22234); }
-.tile.k-id::after { background: linear-gradient(90deg, #2f5fe0, #6d5ae0); }
-.tile.k-dr::after { background: linear-gradient(90deg, #64748b, #94a3b8); }
-.tile.k-tx::after { background: linear-gradient(90deg, #0b8a5b, #34d39f); }
-.tile.k-th::after { background: linear-gradient(90deg, #a5610a, #f0b45e); }
+/* ── Footer ───────────────────────────────────────────────── */
+.home-foot { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 24px;
+             padding-top: 16px; border-top: 1px solid var(--line);
+             font-size: 12.5px; line-height: 18px; color: var(--muted); }
 
-.home-foot { margin-top: 30px; text-align: center; font-size: 11.5px; color: var(--muted); }
-.banner { padding: 10px 14px; margin-bottom: 14px; border-radius: var(--radius-sm);
-          font-size: 13px; }
-.banner.ok-flash { background: var(--pos-bg); border: 1px solid var(--pos-line);
-                   color: var(--pos); font-weight: 600; }
-
-@media (max-width: 640px) {
-  .hero { padding: 18px; }
-  .hero-right { align-items: flex-start; width: 100%; }
-  .hero .stamp { text-align: left; }
-  .kpi .k-value { font-size: 23px; }
+@media (max-width: 599px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .kpis .kpi.accent { grid-column: 1 / -1; }
+  .status-row .spacer { display: none; }
+  .status-row .stamp { order: 10; width: 100%; }
 }
 """
 
@@ -1018,7 +953,8 @@ _SCRIPT = r"""
     var mf = Math.max(0, Number(t.mf_inr) || 0);
     var us = Math.max(0, Number(t.us_inr) || 0);
     var legend = document.getElementById('geo-legend');
-    var colours = ['#2f5fe0', '#41a05e', '#f0913a'];
+    // Google's palette reads on both the light and the dark surface.
+    var colours = ['#4285f4', '#34a853', '#fbbc04'];
     var labels = ['India equity (Zerodha)', 'Mutual funds', 'US book'];
     var values = [india, mf, us];
 
@@ -1063,6 +999,11 @@ _SCRIPT = r"""
   }
 
   // ── refresh ──────────────────────────────────────────────
+  // The button holds an icon, so only its label text changes.
+  function refreshLabel(btn, text) {
+    (btn.querySelector('.btn-label') || btn).textContent = text;
+  }
+
   function showError(msg) {
     var box = document.getElementById('home-error');
     if (!box) return;
@@ -1075,7 +1016,7 @@ _SCRIPT = r"""
     if (inFlight) return;
     inFlight = true;
     var btn = document.getElementById('home-refresh');
-    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing\u2026'; }
+    if (btn) { btn.disabled = true; refreshLabel(btn, 'Refreshing\u2026'); }
     var stamp = document.getElementById('home-stamp');
     if (stamp && manual) stamp.textContent = 'Fetching live prices\u2026';
 
@@ -1100,7 +1041,7 @@ _SCRIPT = r"""
       })
       .then(function () {
         inFlight = false;
-        if (btn) { btn.disabled = false; btn.textContent = 'Refresh live prices'; }
+        if (btn) { btn.disabled = false; refreshLabel(btn, 'Refresh live prices'); }
       });
   }
   window.refreshHome = refreshHome;
@@ -1115,8 +1056,50 @@ _SCRIPT = r"""
     try { window.localStorage.setItem(AUTO_KEY, on ? '1' : '0'); } catch (e) {}
   }
 
+  // ── holdings tabs (WAI-ARIA tabs pattern) ────────────────
+  var BOOK_KEY = 'homeBookTab';
+  function selectBook(name, focus) {
+    var tabs = document.querySelectorAll('.book-tab');
+    var known = Array.prototype.some.call(tabs, function (t) { return t.dataset.book === name; });
+    if (!known) return;
+    tabs.forEach(function (tab) {
+      var on = tab.dataset.book === name;
+      tab.setAttribute('aria-selected', on ? 'true' : 'false');
+      tab.tabIndex = on ? 0 : -1;
+      var panel = document.getElementById(tab.getAttribute('aria-controls'));
+      if (panel) panel.hidden = !on;
+      if (on && focus) tab.focus();
+    });
+    try { window.localStorage.setItem(BOOK_KEY, name); } catch (e) {}
+  }
+  function bindBookTabs() {
+    var list = document.querySelector('.book-tabs');
+    if (!list) return;
+    list.addEventListener('click', function (event) {
+      var tab = event.target.closest('.book-tab');
+      if (tab) selectBook(tab.dataset.book, false);
+    });
+    list.addEventListener('keydown', function (event) {
+      var tabs = Array.prototype.slice.call(list.querySelectorAll('.book-tab'));
+      var index = tabs.indexOf(document.activeElement);
+      if (index < 0) return;
+      var next = null;
+      if (event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
+      else if (event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
+      else if (event.key === 'Home') next = tabs[0];
+      else if (event.key === 'End') next = tabs[tabs.length - 1];
+      if (!next) return;
+      event.preventDefault();
+      selectBook(next.dataset.book, true);
+    });
+    var saved = null;
+    try { saved = window.localStorage.getItem(BOOK_KEY); } catch (e) {}
+    if (saved) selectBook(saved, false);
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     apply(boot());
+    bindBookTabs();
 
     var auto = document.getElementById('home-auto');
     var saved = '0';

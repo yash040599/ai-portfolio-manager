@@ -118,30 +118,6 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
 .card { background: var(--card); border: 1px solid var(--line);
         border-radius: 8px; padding: 18px 22px; margin-bottom: 16px; }
 .card a { color: var(--accent); }
-nav.topnav { display: flex; gap: 14px; align-items: center;
-             padding: 10px 16px; background: var(--card);
-             border: 1px solid var(--line); border-radius: 8px;
-             margin-bottom: 18px; font-size: 14px; }
-nav.topnav a,
-nav.topnav button.nav-back { color: var(--fg); text-decoration: none;
-                             font-weight: 500; }
-nav.topnav a:hover { text-decoration: underline; }
-nav.topnav button.nav-back { font: inherit; padding: 4px 9px;
-                             border: 1px solid var(--line);
-                             border-radius: 5px; background: white;
-                             cursor: pointer; }
-nav.topnav button.nav-back:hover { background: var(--soft); }
-nav.topnav .here { color: var(--muted); cursor: default; }
-nav.topnav .sep { color: var(--muted); }
-nav.topnav .spacer { flex: 1; }
-nav.topnav .auth { font-size: 12px; padding: 4px 10px; border-radius: 999px;
-                   text-decoration: none; }
-nav.topnav .auth.ok  { background: #e6f4ea; color: var(--pos); }
-nav.topnav .auth.bad { background: var(--risk-bg); color: var(--risk-fg);
-                       border: 1px solid var(--risk-line); }
-nav.topnav .research { font-size: 12px; padding: 4px 10px; border-radius: 999px;
-                       background: #eef4ff; color: #1c4ed8;
-                       border: 1px solid #cfd9eb; }
 table.holdings { width: 100%; border-collapse: collapse; font-size: 13px;
                  font-variant-numeric: tabular-nums; }
 table.holdings th { text-align: left; padding: 6px 10px;
@@ -356,7 +332,7 @@ def _render_header(snap: PortfolioSnapshot) -> str:
     most_stale = snap.most_stale_at()
     when = snap.timestamp.strftime("%Y-%m-%d %H:%M IST")
     age = _staleness_label(most_stale)
-    badge = ('<span class="banner info" style="display:inline-block; margin:0 0 0 8px;">'
+    badge = ('<span class="t-chip info title-chip">'
              f'{html.escape(snap.mode)} run</span>')
     return f"""
 <h1 class="page-title">Portfolio Analyser {badge}</h1>
@@ -960,7 +936,7 @@ def _render_drilldown_header(sym: str, s: StockAnalysis | None, *,
 """
     age = _staleness_label(s.most_stale_at())
     weight = _v(s.weight_in_portfolio_pct)
-    badge = ('<span class="banner info" style="display:inline-block; margin:0 0 0 8px;">'
+    badge = ('<span class="t-chip info title-chip">'
              f'{"HELD" if is_held else "WISHLIST"}</span>')
     return f"""
 <h1 class="page-title">{html.escape(s.symbol)} ({html.escape(s.exchange)}) {badge}</h1>

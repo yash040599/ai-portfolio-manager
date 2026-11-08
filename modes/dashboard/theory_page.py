@@ -24,7 +24,7 @@ import re
 from pathlib import Path
 
 from modes.dashboard.live_stats import LiveStats, compute_live_stats
-from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.nav import render_topnav
 
 
 # `__file__` lives at modes/dashboard/theory_page.py — three .parent
@@ -441,13 +441,6 @@ __THEME_BOOT__
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
 
-    __TOPNAV_CSS__
-  nav.topnav .docs-pick label { font-size: 11px; color: var(--muted);
-                                text-transform: uppercase; letter-spacing: 0.05em;
-                                margin-right: 8px; }
-  nav.topnav select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
-                      border-radius: 5px; background: var(--input-bg); cursor: pointer; }
-
   h1.page-title { font-size: 24px; margin: 4px 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 
@@ -553,8 +546,6 @@ __THEME_BOOT__
     .project-story .doc-section li { margin: 9px 0; }
     .research-chart { position: relative; height: 260px; width: 100%; max-width: 100%;
         min-width: 0; overflow: hidden; margin: 22px 0; }
-    nav.topnav .docs-pick { min-width: 0; max-width: 100%; }
-    nav.topnav .docs-pick select { width: 230px; max-width: 100%; }
     @media (max-width: 760px) {
         .project-story .story-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
         .story-contents { position: static; }
@@ -685,7 +676,6 @@ def render_theory_page(slug: str = DEFAULT_PAGE) -> str:
             .replace("__SOURCE__", "" if is_project else f'<div class="source-banner">Source: <code>docs/{html.escape(filename)}</code></div>')
             .replace("__TITLE__", html.escape(label))
             .replace("__FILENAME__", html.escape(filename))
-            .replace("__TOPNAV_CSS__", topnav_css())
             .replace("__TOPNAV__", render_topnav(f"/theory/{slug}", after_links=docs_picker))
             .replace("__SUMMARY__", summary_html)
             .replace("__BODY__", body))

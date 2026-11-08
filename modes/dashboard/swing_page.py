@@ -30,7 +30,7 @@ from modes.swing.persistence import (
 )
 from modes.swing.types import SwingAction, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import cached_live_quotes, get_live_quotes
-from modes.dashboard.nav import render_topnav
+from modes.dashboard.nav import is_shell, render_topnav
 from modes.dashboard.rupevo import rupevo_card
 from modes.dashboard.swing_actions import latest_swing_status
 from shared.stock_names import get_nse_stock_name
@@ -1860,7 +1860,7 @@ def _wrap(title: str, body_parts: list[str]) -> str:
     # body_parts[0], so lift it out and slot the AI banner underneath.
     parts = list(body_parts)
     topnav = ""
-    if parts and parts[0].lstrip().startswith("<nav"):
+    if parts and is_shell(parts[0]):
         topnav = parts.pop(0)
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -3031,27 +3031,6 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
 .card { background: var(--card); border: 1px solid var(--line);
         border-radius: 8px; padding: 18px 22px; margin-bottom: 16px; }
 .card a { color: var(--accent); }
-nav.topnav { display: flex; gap: 14px; align-items: center;
-             padding: 10px 16px; background: var(--card);
-             border: 1px solid var(--line); border-radius: 8px;
-             margin-bottom: 18px; font-size: 14px; }
-nav.topnav a,
-nav.topnav button.nav-back { color: var(--fg); text-decoration: none;
-                             font-weight: 500; }
-nav.topnav a:hover { text-decoration: underline; }
-nav.topnav button.nav-back { font: inherit; padding: 4px 9px;
-                             border: 1px solid var(--line);
-                             border-radius: 5px; background: white;
-                             cursor: pointer; }
-nav.topnav button.nav-back:hover { background: var(--soft); }
-nav.topnav .here { color: var(--muted); cursor: default; }
-nav.topnav .sep { color: var(--muted); }
-nav.topnav .spacer { flex: 1; }
-nav.topnav .auth { font-size: 12px; padding: 4px 10px; border-radius: 999px;
-                   text-decoration: none; }
-nav.topnav .auth.ok  { background: #e6f4ea; color: var(--pos); }
-nav.topnav .auth.bad { background: #fdecec; color: var(--neg);
-                       border: 1px solid #f4c0c0; }
 table.holdings { width: 100%; border-collapse: collapse; font-size: 13px;
                  font-variant-numeric: tabular-nums; }
 table.holdings th { text-align: left; padding: 6px 10px;

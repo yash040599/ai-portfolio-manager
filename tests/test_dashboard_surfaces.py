@@ -9,14 +9,26 @@ from unittest.mock import Mock, patch
 
 from config import Config
 from core.zerodha_client import ZerodhaClient
+from modes.dashboard.ai_widget import ai_banner_html
 from modes.dashboard.chat_widget import build_chat_prompt, chat_section_html
 from modes.dashboard.coffee import PAYEE, UPI_ID, coffee_dialog_html, coffee_script
-from modes.dashboard.home_page import _connect_card, _currency_toggle_html, _tiles
+from modes.dashboard.home_page import (
+    _books,
+    _connect_card,
+    _currency_toggle_html,
+    render_home_page,
+)
 from modes.dashboard.mf_page import _render_nav_chart_card
-from modes.dashboard.nav import render_topnav
+from modes.dashboard.nav import NAV_ITEMS, is_shell, render_topnav
 from modes.dashboard.portfolio_page import render_login_page
-from modes.dashboard.privacy import privacy_boot_script, privacy_css
-from modes.dashboard.rupevo import CALLOUTS, PAGES, RUPEVO_URL, rupevo_card
+from modes.dashboard.privacy import privacy_boot_script, privacy_css, privacy_toggle_html
+from modes.dashboard.rupevo import (
+    CALLOUTS,
+    PAGES,
+    RUPEVO_URL,
+    rupevo_card,
+    rupevo_footer_link,
+)
 from modes.dashboard.server import RenderCache
 from modes.dashboard.table_sort import SORT_KEY_JS
 from modes.dashboard.theme import theme_boot_script, theme_css
@@ -252,10 +264,11 @@ class TestRupevoLinks(unittest.TestCase):
         mf_links = [re.search(r'href="([^"]+)"', a).group(1) for a in self.anchors(rupevo_card("mf"))]
         self.assertEqual(mf_links, [RUPEVO_URL + path for path in ("mf/#compare", "mf/#plan", "mf/#lumpsum")])
 
-    def test_home_offers_a_rupevo_tile_and_a_hint_only_when_not_connected(self):
-        tiles = [a for a in self.anchors(_tiles()) if "k-rv" in a]
-        self.assertEqual(len(tiles), 1)
-        self.assert_safe_external(tiles[0])
+    def test_home_points_to_rupevo_in_the_footer_and_when_not_connected(self):
+        footer = [a for a in self.anchors(rupevo_footer_link()) if "rv-inline" in a]
+        self.assertEqual(len(footer), 1)
+        self.assertIn(f'href="{RUPEVO_URL}"', footer[0])
+        self.assert_safe_external(footer[0])
         offline = _connect_card({"auth": {"valid": False, "reason": "missing", "has_saved_creds": False,
                                           "user_id": "", "login_url": ""}})
         self.assertIn("Try Rupevo", offline)
@@ -323,6 +336,123 @@ class TestBuyMeACoffee(unittest.TestCase):
         self.assertEqual(script.count("</script>"), 1)
         self.assertIn("window.openDashboardCoffee", script)
         self.assertIn(script, theme_boot_script())
+
+
+class TestAppShell(unittest.TestCase):
+    """Rupevo-style shell: an app bar plus a navigation rail on every page."""
+
+    def test_shell_lists_every_page_and_marks_only_the_current_one(self):
+        expected = {"/": "/", "/portfolio/DEMO": "/portfolio", "Mutual Funds": "/mf",
+                    "/swing": "/swing", "/us/DEMO": "/us", "/trading": "/trading",
+                    "Dry Run": "/dryrun", "/tax": "/tax", "/theory/statistics": "/theory/project",
+                    "Login": None}
+        for here, current in expected.items():
+            nav = render_topnav(here)
+            with self.subTest(page=here):
+                self.assertTrue(is_shell(nav))
+                self.assertLess(nav.index("</header>"), nav.index('<nav class="navbar"'))
+                for _label, href, _icon, _hint in NAV_ITEMS:
+                    self.assertIn(f'class="nav-item" href="{href}"', nav)
+                marked = re.findall(r'<a class="nav-item" href="([^"]+)"[^>]*aria-current="page"', nav)
+                self.assertEqual(marked, [current] if current else [])
+                self.assertNotIn("history.back", nav)
+
+    def test_page_status_pills_sit_in_the_app_bar_before_the_shared_controls(self):
+        nav = render_topnav("/us", after_links='<span class="fx-badge">USD/INR</span>')
+        status = nav.index('<div class="appbar-status"><span class="fx-badge">')
+        self.assertLess(status, nav.index("data-privacy-toggle"))
+        self.assertLess(nav.index("data-privacy-toggle"), nav.index('class="nav-coffee"'))
+        self.assertLess(nav.index('class="nav-coffee"'), nav.index("</header>"))
+        self.assertNotIn("appbar-status", render_topnav("/tax"))
+
+    def test_privacy_toggle_is_an_icon_button_whose_icons_survive_refresh(self):
+        toggle = privacy_toggle_html()
+        for contract in ("data-privacy-toggle", "data-privacy-icon", 'aria-label="Hide amounts"',
+                         "toggleDashboardPrivacy()", "ic-eye", "ic-eye-off"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, toggle)
+        script = privacy_boot_script()
+        self.assertIn("button.hasAttribute('data-privacy-icon')", script)
+        self.assertIn("button.textContent = this.hidden ? 'Show amounts' : 'Hide amounts'", script)
+
+    def test_shell_css_pads_the_body_only_when_the_shell_is_present(self):
+        from modes.dashboard.theme import theme_overrides_css
+
+        css = theme_overrides_css()
+        for contract in ("body:has(.appbar)", ".appbar {", ".navbar {", "@media (min-width: 840px)",
+                         "@media (max-width: 839px)", "table.holdings th { top: var(--appbar-h); }"):
+            with self.subTest(contract=contract):
+                self.assertIn(contract, css)
+        self.assertNotIn("nav.topnav", css + theme_css())
+
+    def test_ask_ai_and_model_switcher_are_collapsed_rows(self):
+        widget = chat_section_html("portfolio")
+        self.assertTrue(widget.lstrip().startswith('<details class="chat-widget ask-ai"'))
+        self.assertNotIn("<details class=\"chat-widget ask-ai\" open", widget)
+        for cls in ("chat-build", "chat-copy", "chat-question", "chat-output", "chat-msg"):
+            with self.subTest(cls=cls):
+                self.assertIn(cls, widget)
+        self.assertNotIn('style="border', widget)
+        banner = ai_banner_html()
+        self.assertTrue(banner.startswith('<details class="ai-widget">'))
+        for element_id in ("ai-label", "ai-provider", "ai-plan", "ai-apply", "ai-free", "ai-msg"):
+            with self.subTest(element_id=element_id):
+                self.assertEqual(banner.count(f'id="{element_id}"'), 1)
+
+
+class TestHomeOverview(unittest.TestCase):
+    BOOKS = {
+        "india": {"available": True, "age_days": 0, "top": []},
+        "us": {"rows": []},
+        "swing_india": {"rows": [], "positions": 0, "live": False, "unrealised": 0.0, "watchlist": 0},
+        "mf": {"rows": [], "schemes": 0, "external_count": 0, "monthly_sip": 0.0, "nav_as_of": ""},
+    }
+
+    def test_books_are_one_tabbed_card_inside_the_privacy_scope(self):
+        books = _books(self.BOOKS)
+        self.assertIn('<section class="card books"', books)
+        tabs = re.findall(r'<button class="book-tab"[^>]*>', books)
+        self.assertEqual(len(tabs), 4)
+        self.assertEqual(sum('aria-selected="true"' in tab for tab in tabs), 1)
+        self.assertEqual(books.count('role="tabpanel"'), 4)
+        self.assertEqual(books.count(" hidden>"), 3)
+        for element_id in ("book-india", "book-mf", "book-us", "book-swing", "mf-foot", "swing-foot"):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', books)
+
+    def test_connected_zerodha_is_a_status_chip_with_relogin(self):
+        chip = _connect_card({"auth": {"valid": True, "token_date": "2026-11-08"}})
+        self.assertIn('id="connect-card"', chip)
+        self.assertIn("connect ok", chip)
+        self.assertIn('href="/login"', chip)
+        self.assertNotIn("<form", chip)
+
+    def test_page_keeps_every_id_its_script_updates(self):
+        auth = {"valid": False, "reason": "missing", "has_saved_creds": False,
+                "user_id": "", "login_url": "", "token_date": ""}
+        market = {"ist": "10:00", "ist_date": "Mon, 09 Nov 2026", "india_open": True,
+                  "india_label": "NSE open", "us_open": False, "us_label": "US closed"}
+        with patch("modes.dashboard.home_page.build_summary", side_effect=RuntimeError("offline")), \
+             patch("modes.dashboard.home_summary.auth_state", return_value=auth), \
+             patch("modes.dashboard.home_summary.market_state", return_value=market):
+            page = render_home_page()
+        for element_id in (
+            "home-bootstrap", "kpi-networth", "kpi-networth-split", "kpi-unrealised",
+            "kpi-unrealised-pct", "kpi-india", "kpi-india-pnl", "kpi-india-count", "kpi-mf",
+            "kpi-mf-pnl", "kpi-mf-count", "kpi-us", "kpi-us-pnl", "kpi-us-count", "r-swing",
+            "r-us", "r-intraday", "r-total", "book-india", "book-us", "book-swing", "book-mf",
+            "mf-foot", "swing-foot", "chart-geo", "geo-legend", "home-stamp", "home-error",
+            "home-refresh", "home-auto", "connect-card", "cur-usd-pill", "cur-inr-pill",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertEqual(page.count(f'id="{element_id}"'), 1)
+        self.assertLess(page.index('<header class="appbar">'), page.index("<main"))
+        self.assertIn('href="#connect-card"', page)
+        self.assertNotIn('class="tile', page)
+        self.assertEqual(len(re.findall(r"<button[^>]*data-privacy-toggle", page)), 1)
+        for scope in ('class="kpis"', 'class="card books"', 'class="facts realised"', 'id="geo-legend"'):
+            with self.subTest(scope=scope):
+                self.assertIn(scope, page)
 
 
 if __name__ == "__main__":

@@ -48,6 +48,11 @@ functions; stateful lifecycles benefit from small, focused classes.
   rows in place, and re-applies the chosen order after live refreshes.
 - `coffee.py` renders the "Buy me a coffee" button and dialog from the same public
   UPI details and QR code that Rupevo publishes.
+- `nav.py` renders the app shell shared by every page: a fixed top app bar (brand,
+  page status pills, privacy, theme and coffee controls) and a navigation rail that
+  becomes a bottom bar on phones. `theme.py` holds the Material 3 tokens shared with
+  Rupevo, lays out the shell and harmonises each page's own CSS; `icons.py` holds
+  the line icons.
 
 ## Privacy Contract
 

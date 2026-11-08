@@ -22,6 +22,8 @@ from __future__ import annotations
 import html
 import re
 
+from modes.dashboard.icons import icon
+
 _VALID_SCOPES = {
     "home",
     "portfolio", "portfolio_detail",
@@ -106,47 +108,68 @@ def chat_section_html(scope: str, symbol: str = "") -> str:
     scope_attr = html.escape(scope)
     sym_attr = html.escape(sym)
 
+    # Collapsed by default: one quiet row per page until it is needed.
     return f"""
-<div class="chat-widget card" data-chat-scope="{scope_attr}"
-     data-chat-symbol="{sym_attr}"
-     style="border:1px solid var(--line);border-radius:var(--radius);
-            background:var(--card);box-shadow:var(--shadow-sm);
-            padding:14px 16px;margin-bottom:16px">
-  <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:var(--fg)">
-    Ask AI {subject}
+<details class="chat-widget ask-ai" data-chat-scope="{scope_attr}"
+         data-chat-symbol="{sym_attr}">
+  <summary>
+    <span class="ask-icon">{icon("spark", size=20)}</span>
+    <span class="ask-copy">
+      <span class="ask-title">Ask AI {subject}</span>
+      <span class="ask-hint">Builds a ready-to-paste prompt with your own position
+        data for ChatGPT, Claude or Gemini.</span>
+    </span>
+    <span class="ask-chev">{icon("chevron-down", size=20)}</span>
+  </summary>
+  <div class="ask-body">
+    <p class="ask-note">Our built-in AI is a free tier. Type your question and we'll
+      build a ready-to-paste prompt, packed with <em>your</em> personal position
+      data, that you can drop into ChatGPT, Claude or Gemini (free) for a stronger
+      answer. Live prices &amp; news are left for that model to look up itself.</p>
+    <textarea class="chat-question" rows="2"
+              placeholder="{html.escape(placeholder)}"></textarea>
+    <div class="ask-actions">
+      <button class="chat-build action" type="button">Build prompt</button>
+      <button class="chat-copy action alt" type="button" disabled>Copy</button>
+      <span class="chat-msg"></span>
+    </div>
+    <textarea class="chat-output" readonly rows="10"
+              placeholder="Your generated prompt will appear here…"
+              style="display:none"></textarea>
   </div>
-  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
-    Our built-in AI is a free tier. Type your question and we'll build a
-    ready-to-paste prompt — packed with <em>your</em> personal position
-    data — that you can drop into ChatGPT, Claude or Gemini (free) for a
-    stronger answer. Live prices &amp; news are left for that model to
-    look up itself.
-  </div>
-  <textarea class="chat-question" rows="2"
-            placeholder="{html.escape(placeholder)}"
-            style="width:100%;box-sizing:border-box;padding:8px;
-                   border-radius:6px;font-size:13px;
-                   font-family:inherit;resize:vertical"></textarea>
-  <div style="display:flex;gap:8px;align-items:center;margin-top:8px;
-              flex-wrap:wrap">
-    <button class="chat-build action"
-            style="padding:6px 14px;font-size:13px">
-      Build prompt
-    </button>
-    <button class="chat-copy action alt" disabled
-            style="padding:6px 14px;font-size:13px">
-      Copy
-    </button>
-    <span class="chat-msg" style="font-size:12px;color:var(--muted)"></span>
-  </div>
-  <textarea class="chat-output" readonly rows="10"
-            placeholder="Your generated prompt will appear here…"
-            style="width:100%;box-sizing:border-box;padding:8px;margin-top:10px;
-                   border-radius:6px;font-size:12px;
-                   font-family:var(--mono);
-                   resize:vertical;display:none"></textarea>
-</div>
+</details>
 {_chat_section_script()}
+"""
+
+
+def chat_widget_css() -> str:
+    """Ask AI styles; `theme_css()` includes them on every page."""
+    return r"""
+/* ── Ask AI (collapsible prompt builder) ──────────────────── */
+details.ask-ai { margin: 0 0 16px; background: var(--card);
+                 border: 1px solid var(--line); border-radius: var(--radius); }
+details.ask-ai > summary { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+                           border-radius: var(--radius); cursor: pointer; list-style: none; }
+details.ask-ai > summary::-webkit-details-marker { display: none; }
+details.ask-ai > summary:hover { background: var(--card-2); }
+details.ask-ai[open] > summary { border-radius: var(--radius) var(--radius) 0 0; }
+.ask-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px;
+            border-radius: 12px; background: var(--tonal); color: var(--on-tonal); }
+.ask-copy { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.ask-title { font-size: 14.5px; line-height: 20px; font-weight: 500; color: var(--fg); }
+.ask-title strong { font-weight: 600; }
+.ask-hint { font-size: 12.5px; line-height: 18px; color: var(--muted); }
+.ask-chev { display: grid; place-items: center; flex: none; width: 32px; height: 32px;
+            border-radius: 50%; background: var(--soft); color: var(--fg-2);
+            transition: transform .2s ease; }
+details.ask-ai[open] .ask-chev { transform: rotate(180deg); }
+.ask-body { display: grid; gap: 10px; padding: 4px 16px 16px; }
+.ask-note { margin: 0; font-size: 12.5px; line-height: 18px; color: var(--muted); }
+.ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ask-body textarea { width: 100%; resize: vertical; }
+.ask-body .chat-output { font-family: var(--mono); font-size: 12px; }
+.chat-msg { font-size: 12.5px; color: var(--muted); }
+@media (max-width: 599px) { .ask-hint { display: none; } }
 """
 
 

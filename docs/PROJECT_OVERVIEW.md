@@ -113,7 +113,7 @@ This dashboard is personal: it reads one person's broker account, so it needs a 
 
 Rupevo applies the project's scoring engines to the whole market: a daily Nifty 100 ranking from the swing scanner (technical setups, scores, risk grades and 52-week dips) and the US long-term scorecard for the NASDAQ-100 and the NYSE's 100 largest companies. It adds a comparison of direct-plan mutual funds within their group, a SIP split by age and risk, a lump-sum valuation check and step-by-step tax tools for foreign RSUs. It publishes scores and grades only, not buy/sell calls or entry, stop and target levels, and it is educational information rather than advice.
 
-The dashboard links to the matching Rupevo page from its navigation, the HQ tools and login card, the Login page, and the Portfolio, Swing, Mutual Funds, US and Tax pages. The links are fixed public addresses that open in a new tab: no holding, amount or account detail leaves the dashboard.
+The dashboard links to the matching Rupevo page from its navigation rail, the HQ footer and login card, the Login page, and the Portfolio, Swing, Mutual Funds, US and Tax pages. The links are fixed public addresses that open in a new tab: no holding, amount or account detail leaves the dashboard. The dashboard also shares Rupevo's look: the same Google Material 3 colours, cards, tiles and app shell, in light and dark themes.
 
 ## Options: research before risk
 

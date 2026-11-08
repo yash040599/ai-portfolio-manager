@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from modes.dashboard.icons import icon
+
 
 def privacy_css() -> str:
     """Masked values are replaced in the text flow, so they inherit each
@@ -26,37 +28,21 @@ html[data-privacy="on"] .privacy-chart::after {
   display: grid; place-items: center; color: var(--muted, #64748b);
   font-size: 13px; pointer-events: none;
 }
-
-/* Matches the nav's pill chrome (.nav-back / nav links), not a page action. */
-nav.topnav button.privacy-toggle {
-  font: inherit; font-size: 13px; font-weight: 600;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 5px 12px; border-radius: var(--radius-pill);
-  border: 1px solid var(--line-strong);
-  background: var(--card); color: var(--fg);
-  cursor: pointer; white-space: nowrap;
-  transition: background .12s ease, color .12s ease, border-color .12s ease;
-}
-nav.topnav button.privacy-toggle::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--muted); transition: background .12s ease;
-}
-nav.topnav button.privacy-toggle:hover { background: var(--soft); }
-nav.topnav button.privacy-toggle[aria-pressed="true"] {
-  background: var(--accent-soft); color: var(--accent);
-  border-color: var(--accent-line);
-}
-nav.topnav button.privacy-toggle[aria-pressed="true"]::before { background: var(--accent); }
 """
 
 
 def privacy_toggle_html() -> str:
-    """Render the shared control; the HQ control uses the same controller."""
+    """Eye icon button for the app bar; pressed while amounts are hidden.
+
+    `data-privacy-icon` tells the controller to update the tooltip instead of
+    replacing the button text, which would wipe the icons.
+    """
     return (
-        '<button class="privacy-toggle" type="button" data-privacy-toggle '
-        'onclick="toggleDashboardPrivacy()" aria-pressed="false" '
+        '<button class="icon-btn privacy-toggle" type="button" data-privacy-toggle '
+        'data-privacy-icon onclick="toggleDashboardPrivacy()" aria-pressed="false" '
+        'aria-label="Hide amounts" '
         'title="Hide personal amounts and quantities across every dashboard page">'
-        'Hide amounts</button>'
+        f'{icon("eye")}{icon("eye-off")}</button>'
     )
 
 
@@ -322,7 +308,14 @@ def privacy_boot_script() -> str:
         document.documentElement.setAttribute('data-privacy-ready', '');
       }
       document.querySelectorAll('[data-privacy-toggle]').forEach(button => {
-        button.textContent = this.hidden ? 'Show amounts' : 'Hide amounts';
+        if (button.hasAttribute('data-privacy-icon')) {
+          // Icon buttons keep a fixed name; aria-pressed carries the state.
+          const tip = this.hidden ? 'Show amounts (screen privacy is on)'
+            : 'Hide personal amounts and quantities across every dashboard page';
+          if (button.title !== tip) button.title = tip;
+        } else {
+          button.textContent = this.hidden ? 'Show amounts' : 'Hide amounts';
+        }
         button.setAttribute('aria-pressed', String(this.hidden));
       });
       this.observer.observe(document.documentElement, {

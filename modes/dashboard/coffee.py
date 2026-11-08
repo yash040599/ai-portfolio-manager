@@ -17,19 +17,13 @@ import html
 import json
 from pathlib import Path
 
+from modes.dashboard.icons import icon
+
 
 UPI_ID = "yash040599@okhdfcbank"
 PAYEE = "Yash Agrawal"
 
 _QR_PATH = Path(__file__).with_name("assets") / "upi-qr.svg"
-
-_ICON = (
-    '<svg class="coffee-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    '<path d="M4.5 10h11v3.5a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5z"/>'
-    '<path d="M15.5 11.5H17a2.5 2.5 0 0 1 0 5h-1.6M8 4.5c-.7.8-.7 1.7 0 2.5'
-    'M11.5 4.5c-.7.8-.7 1.7 0 2.5"/></svg>'
-)
 
 
 @lru_cache(maxsize=1)
@@ -41,11 +35,12 @@ def _qr_svg() -> str:
 
 
 def coffee_button_html() -> str:
-    """Navigation button; the dialog itself is built on first click."""
+    """App-bar button; the dialog itself is built on first click."""
     return (
         '<button class="nav-coffee" type="button" onclick="openDashboardCoffee()" '
-        'aria-haspopup="dialog" title="Buy me a coffee: support this project via UPI">'
-        f'{_ICON}<span class="nav-coffee-text">Buy me a coffee</span></button>'
+        'aria-haspopup="dialog" aria-label="Buy me a coffee" '
+        'title="Buy me a coffee: support this project via UPI">'
+        f'{icon("coffee", size=20)}<span class="nav-coffee-text">Buy me a coffee</span></button>'
     )
 
 
@@ -139,30 +134,30 @@ def coffee_css() -> str:
 /* ── Buy me a coffee (same palette as Rupevo) ─────────────────── */
 :root { --coffee-bg: #ffefc2; --coffee-fg: #4a3300; }
 html[data-theme="dark"] { --coffee-bg: rgba(253, 214, 99, .16); --coffee-fg: #fde293; }
-nav.topnav button.nav-coffee {
-  font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap;
-  display: inline-flex; align-items: center; gap: 6px; padding: 5px 13px 5px 10px;
-  border: 1px solid transparent; border-radius: var(--radius-pill);
-  background: var(--coffee-bg); color: var(--coffee-fg); cursor: pointer; }
-nav.topnav button.nav-coffee:hover { box-shadow: var(--shadow-sm); filter: saturate(1.15); }
-.coffee-icon { width: 18px; height: 18px; flex: none; }
-@media (max-width: 760px) {
+button.nav-coffee {
+  font: inherit; font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 40px; padding: 0 18px 0 14px; margin-left: 4px; flex: none;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--coffee-bg); color: var(--coffee-fg); cursor: pointer;
+  transition: box-shadow .15s ease; }
+button.nav-coffee:hover { box-shadow: var(--shadow-sm); }
+@media (max-width: 839px) {
   .nav-coffee-text { display: none; }
-  nav.topnav button.nav-coffee { padding: 5px 8px; }
+  button.nav-coffee { width: 40px; padding: 0; margin-left: 2px; }
 }
 dialog.coffee-dialog { width: min(540px, calc(100vw - 32px)); padding: 0; color: var(--fg);
-  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: var(--shadow-md); }
-dialog.coffee-dialog::backdrop { background: rgba(15, 23, 42, .5); }
-.coffee-shell { display: grid; gap: 12px; margin: 0; padding: 18px 20px 16px; }
+  background: var(--card); border: 0; border-radius: 28px; box-shadow: var(--shadow-lg); }
+dialog.coffee-dialog::backdrop { background: rgba(0, 0, 0, .32); }
+.coffee-shell { display: grid; gap: 12px; margin: 0; padding: 20px 24px; }
 .coffee-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.coffee-head h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--fg);
+.coffee-head h2 { margin: 0; font-size: 22px; line-height: 28px; font-weight: 400; color: var(--fg);
   text-transform: none; letter-spacing: 0; }
-.coffee-x { font: inherit; font-size: 22px; line-height: 1; padding: 2px 8px; border: 0;
-  border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.coffee-x { font: inherit; font-size: 22px; line-height: 1; width: 40px; height: 40px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--fg-2); cursor: pointer; }
 .coffee-x:hover { background: var(--soft); color: var(--fg); }
-.coffee-shell p { margin: 0; font-size: 13.5px; line-height: 1.5; }
-.coffee-shell p.coffee-note { font-size: 12px; color: var(--muted); }
+.coffee-shell p { margin: 0; font-size: 14px; line-height: 21px; color: var(--fg-2); }
+.coffee-shell p.coffee-note { font-size: 12.5px; color: var(--muted); }
 .coffee-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px;
   align-items: center; }
 .qr-card { margin: 0; padding: 10px 10px 8px; text-align: center; background: #fff;

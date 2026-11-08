@@ -133,13 +133,14 @@ def _link(page: RupevoPage, cls: str, label: str | None = None) -> str:
 
 
 def rupevo_nav_link() -> str:
-    """Shared-navigation entry, rendered on every dashboard page."""
+    """Navigation-rail entry, rendered on every dashboard page."""
     home = PAGES["home"]
     return (
-        f'<a class="nav-rupevo" href="{html.escape(home.url)}" {_NEW_TAB} '
+        f'<a class="nav-item nav-rupevo" href="{html.escape(home.url)}" {_NEW_TAB} '
         'title="Rupevo: free public rankings, fund comparison and tax tools. '
         'No login. Opens in a new tab.">'
-        f'{_MARK}Rupevo{_EXTERNAL}</a>'
+        f'<span class="nav-icon">{_MARK}</span>'
+        f'<span class="nav-label">Rupevo{_EXTERNAL}</span></a>'
     )
 
 
@@ -153,15 +154,16 @@ def rupevo_card(context: str) -> str:
     return (
         f'<section class="rv-card" data-rupevo="{html.escape(context)}" '
         'data-privacy-public aria-label="Rupevo, the public companion site">'
+        '<span class="rv-icon" aria-hidden="true">R</span>'
         '<div class="rv-copy">'
-        f'<div class="rv-eyebrow">{_MARK}Rupevo &middot; free, no login</div>'
+        '<div class="rv-eyebrow">Rupevo &middot; free, no login</div>'
         f'<div class="rv-title">{html.escape(callout.title)}</div>'
         f'<div class="rv-text">{html.escape(callout.text)}</div>'
-        '</div>'
-        f'<div class="rv-actions">{actions}</div>'
         '<div class="rv-note">Public, educational information, not investment '
         'or tax advice. Opens in a new tab; nothing from this dashboard is '
         'sent to Rupevo.</div>'
+        '</div>'
+        f'<div class="rv-actions">{actions}</div>'
         '</section>'
     )
 
@@ -175,16 +177,12 @@ def rupevo_login_hint() -> str:
     )
 
 
-def rupevo_tile() -> str:
-    """HQ tool tile; matches the markup of the internal tiles."""
-    home = PAGES["home"]
+def rupevo_footer_link() -> str:
+    """HQ footer pointer: Rupevo is the version to share with other people."""
     return (
-        f'<a class="tile k-rv" href="{html.escape(home.url)}" {_NEW_TAB} '
-        'title="Opens Rupevo in a new tab">'
-        '<strong>Rupevo</strong>'
-        '<span>Free public site: Nifty 100 and US rankings, fund comparison '
-        'and tax tools. No login, easy to share.</span>'
-        f'<em>Open{_EXTERNAL}</em></a>'
+        '<span class="rv-foot" data-privacy-public>Showing this to someone? '
+        f'{_link(PAGES["home"], "rv-inline", "Rupevo")} is the free public '
+        'version: no login, nothing to install.</span>'
     )
 
 
@@ -193,45 +191,44 @@ def rupevo_css() -> str:
     return r"""
 /* ── Rupevo (public companion site) ─────────────────────────── */
 .rv-mark { display: inline-grid; place-items: center; flex: none;
-           width: 16px; height: 16px; border-radius: 5px;
-           font-size: 10px; font-weight: 800; line-height: 1; color: #fff;
-           background: linear-gradient(135deg, #2f5fe0, #6d5ae0); }
-.rv-ext { margin-left: 3px; font-size: .9em; }
+           width: 24px; height: 24px; border-radius: 8px;
+           font-family: var(--font-display); font-size: 13px; font-weight: 700;
+           line-height: 1; color: var(--accent-fg); background: var(--accent); }
+.rv-ext { margin-left: 2px; font-size: .9em; }
 .rv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden;
          clip: rect(0 0 0 0); white-space: nowrap; }
-nav.topnav a.nav-rupevo { display: inline-flex; align-items: center; gap: 6px;
-                          margin-left: 4px; border: 1px solid var(--line); }
-.rv-card { position: relative; overflow: hidden; display: flex; flex-wrap: wrap;
-           align-items: center; gap: 10px 20px; margin: 12px 0 18px;
-           padding: 15px 18px 12px; color: var(--fg); background: var(--card);
-           border: 1px solid var(--line); border-radius: var(--radius);
-           box-shadow: var(--shadow-sm); }
-.rv-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0;
-                   height: 3px; background: linear-gradient(90deg, #2f5fe0, #6d5ae0); }
-.rv-copy { flex: 1 1 360px; min-width: 0; }
-.rv-eyebrow { display: flex; align-items: center; gap: 7px; font-size: 11px;
-              font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-              color: var(--muted); }
-.rv-title { margin: 6px 0 4px; font-size: 16px; font-weight: 700; }
-.rv-text { max-width: 78ch; font-size: 13px; line-height: 1.5; color: var(--fg-2); }
-.rv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rv-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+           align-items: center; gap: 4px 16px; margin: 4px 0 16px;
+           padding: 16px 20px; color: var(--fg); background: var(--card);
+           border: 1px solid var(--line); border-radius: var(--radius); }
+.rv-icon { display: grid; place-items: center; width: 40px; height: 40px;
+           border-radius: 12px; background: var(--tonal); color: var(--on-tonal);
+           font-family: var(--font-display); font-size: 18px; font-weight: 500; }
+.rv-copy { min-width: 0; }
+.rv-eyebrow { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--muted); }
+.rv-title { margin: 2px 0; font-family: var(--font-display); font-size: 16px;
+            line-height: 22px; font-weight: 500; }
+.rv-text { max-width: 90ch; font-size: 13.5px; line-height: 20px; color: var(--fg-2); }
+.rv-note { margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--muted); }
+.rv-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .rv-card a.rv-cta, .rv-card a.rv-alt {
-  display: inline-flex; align-items: center; padding: 8px 14px;
-  border-radius: var(--radius-sm); font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; min-height: 36px; padding: 0 18px;
+  border-radius: var(--radius-pill); font-size: 13.5px; font-weight: 500;
   text-decoration: none; white-space: nowrap;
-  transition: filter .15s ease, background .12s ease; }
-.rv-card a.rv-cta { color: var(--accent-fg); border: 1px solid transparent;
-  background: linear-gradient(180deg, var(--accent),
-              color-mix(in srgb, var(--accent) 86%, #000)); }
-.rv-card a.rv-cta:hover { filter: brightness(1.06); }
-.rv-card a.rv-alt { color: var(--fg); background: var(--card);
+  transition: box-shadow .15s ease, background-color .15s ease; }
+.rv-card a.rv-cta { color: var(--accent-fg); background: var(--accent);
+                    border: 1px solid transparent; }
+.rv-card a.rv-cta:hover { box-shadow: var(--shadow-sm); }
+.rv-card a.rv-alt { color: var(--accent); background: transparent;
                     border: 1px solid var(--line-strong); }
-.rv-card a.rv-alt:hover { background: var(--soft); }
-.rv-note { flex-basis: 100%; font-size: 11.5px; color: var(--muted); }
+.rv-card a.rv-alt:hover { background: var(--accent-soft); }
 .rv-hint { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
-.rv-hint a.rv-inline { font-weight: 600; text-decoration: none; }
-.rv-hint a.rv-inline:hover { text-decoration: underline; }
-.tile.k-rv::after { background: linear-gradient(90deg, #0b57d0, #6d5ae0); }
+.rv-hint a.rv-inline, .rv-foot a.rv-inline { font-weight: 500; text-decoration: none; }
+.rv-hint a.rv-inline:hover, .rv-foot a.rv-inline:hover { text-decoration: underline; }
+@media (max-width: 719px) {
+  .rv-card { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .rv-actions { grid-column: 1 / -1; justify-content: flex-start; margin-top: 8px; }
+}
 """
 
 
@@ -243,7 +240,7 @@ __all__ = [
     "RupevoPage",
     "rupevo_card",
     "rupevo_css",
+    "rupevo_footer_link",
     "rupevo_login_hint",
     "rupevo_nav_link",
-    "rupevo_tile",
 ]

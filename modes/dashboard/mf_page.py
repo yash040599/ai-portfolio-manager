@@ -21,7 +21,7 @@ from __future__ import annotations
 import html
 import json
 
-from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.nav import is_shell, render_topnav
 from modes.dashboard.rupevo import rupevo_card
 from modes.mf.book import build_book
 from modes.mf.catalog import catalog_as_of, ensure_catalog, search_catalog
@@ -777,7 +777,7 @@ def _wrap(title: str, body_parts: list[str]) -> str:
 
     parts = list(body_parts)
     topnav = ""
-    if parts and parts[0].lstrip().startswith("<nav"):
+    if parts and is_shell(parts[0]):
         topnav = parts.pop(0)
     return (
         "<!DOCTYPE html>\n<html lang=\"en\">"
@@ -932,7 +932,7 @@ ul.tight li { margin: 3px 0; }
   .kpis { grid-template-columns: repeat(2, 1fr); }
   .split { grid-template-columns: 1fr; }
 }
-""" + topnav_css()
+"""
 
 
 _SCRIPT = r"""

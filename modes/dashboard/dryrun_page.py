@@ -700,20 +700,6 @@ body { font-family: var(--font);
        background:var(--bg); color:var(--fg); margin:0; padding:24px;
        line-height:1.5; }
 .wrap { max-width:1180px; margin:0 auto; }
-nav.topnav { display:flex; gap:14px; align-items:center; padding:10px 16px;
-             background:var(--card); border:1px solid var(--line);
-             border-radius:8px; margin-bottom:18px; font-size:14px;
-             flex-wrap:wrap; }
-nav.topnav a, nav.topnav button.nav-back { color:var(--fg);
-             text-decoration:none; font-weight:500; }
-nav.topnav a:hover { text-decoration:underline; }
-nav.topnav button.nav-back { font:inherit; padding:4px 9px;
-             border:1px solid var(--line); border-radius:5px;
-             background:var(--card); cursor:pointer; }
-nav.topnav button.nav-back:hover { background:var(--soft); }
-nav.topnav .here { color:var(--muted); }
-nav.topnav .sep { color:var(--muted); }
-nav.topnav .spacer { flex:1; }
 h1.page-title { font-size:24px; margin:0 0 4px; }
 .sub { color:var(--muted); font-size:13px; margin-bottom:18px; }
 .grid { display:grid; gap:16px; margin-bottom:16px; }

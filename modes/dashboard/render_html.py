@@ -18,7 +18,7 @@ import webbrowser
 from pathlib import Path
 
 from config import Config
-from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.nav import render_topnav
 from modes.dashboard.metrics import HeadlinePnL
 from modes.dashboard.verdict import VerdictResult
 
@@ -123,7 +123,6 @@ def render_shell(initial_payload: dict, *, server_mode: bool) -> str:
                           .replace("__THEME_BOOT__", theme_boot_script()) \
                           .replace("__THEME_CSS__", theme_css()) \
                           .replace("__THEME_OVERRIDES__", theme_overrides_css()) \
-                          .replace("__TOPNAV_CSS__", topnav_css()) \
                           .replace("__TOPNAV__", render_topnav("/trading"))
 
 
@@ -236,7 +235,6 @@ __THEME_BOOT__
   .static-banner.reset { background: var(--info-bg); border-color: var(--info-line);
                          color: var(--fg); }
   .static-banner.reset strong { color: var(--info-fg); }
-  __TOPNAV_CSS__
   __THEME_OVERRIDES__
 </style>
 </head>

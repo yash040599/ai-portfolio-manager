@@ -221,13 +221,18 @@ date range / source toggles / per-stock drill-down / "Analyse now"
 buttons, so the CLI is just an entry point.
 
 All pages share one design system
-([modes/dashboard/theme.py](modes/dashboard/theme.py)) — one token set
-for colour, radius and shadow, plus a **light / dark theme** toggle in
-the nav that persists in `localStorage` and follows the OS preference by
-default.
+([modes/dashboard/theme.py](modes/dashboard/theme.py)) in the same Google
+Material 3 style as Rupevo: flat white surfaces, outlined cards, soft tonal
+tiles, pill buttons and light headings, in **light and dark themes** (the
+choice persists in `localStorage` and follows the OS preference by default).
+Every page sits in one app shell ([modes/dashboard/nav.py](modes/dashboard/nav.py)):
+a top app bar with the brand, the page's own status pills (Zerodha auth, USD/INR
+rate, display currency, docs picker) and icon buttons for screen privacy, theme
+and Buy me a coffee, plus a navigation rail listing every page and Rupevo. On a
+phone the rail becomes a bottom bar that scrolls sideways.
 
-**Screen privacy is shared across every dashboard page.** HQ's Hide amounts
-button and the navigation control use one saved setting. Only regions declared
+**Screen privacy is shared across every dashboard page.** The eye button in the
+app bar hides or shows amounts everywhere and remembers the choice. Only regions declared
 personal are masked — amounts, quantities, folios, private inputs and monetary
 charts — so tax rules, option examples, tool costs and research figures stay
 readable. Percentages remain visible, and masked values keep their column
@@ -235,9 +240,10 @@ alignment. Personal edit/copy prompts are restricted while hidden. This is
 screen privacy, not authentication: do not publish the personal server, page
 source, API responses, exports or browser developer tools.
 
-**Rupevo links.** The shared navigation carries a **Rupevo ↗** link on every
-page, and HQ, Login, Portfolio, Swing, Mutual Funds, US and Tax show a card for
-the matching public page at the top — see [Phase 6](#phase-6--rupevo-public-login-free-companion-website).
+**Rupevo links.** The navigation rail carries a **Rupevo ↗** item on every
+page. Login, Portfolio, Swing, Mutual Funds, US and Tax show a card for the
+matching public page at the top, and HQ points to Rupevo in its footer and
+while Zerodha is not connected — see [Phase 6](#phase-6--rupevo-public-login-free-companion-website).
 
 **Sortable tables.** Every data table on every page sorts by any column: click a
 header for ascending, again for descending, and a third time for the page's
@@ -246,16 +252,19 @@ numbers; blank cells stay last, totals rows stay at the bottom, and the choice
 survives live refreshes for the browser session. Columns hidden by screen
 privacy sort as equal values, so a hidden ranking is not revealed.
 
-**Buy me a coffee.** The navigation's coffee button opens the same UPI QR code
+**Buy me a coffee.** The app bar's coffee button opens the same UPI QR code
 and UPI ID that Rupevo shows, for anyone who wants to support the project.
 
 Pages:
 
-- **`/`** (default landing) — command centre. Net worth, unrealised
-  P&L, India (Zerodha), mutual-fund and US books, a book-mix doughnut,
-  Indian sector weights, the top rows of all four books, realised P&L
-  across swing / US / intraday, and **inline Zerodha login** (TOTP
-  quick-login plus paste-back) so a re-auth never needs a detour. First
+- **`/`** (default landing) — overview. A compact page head with market,
+  USD/INR and Zerodha status chips plus refresh and auto-refresh; tiles for
+  net worth, unrealised P&L, India (Zerodha), mutual funds and the US book;
+  one **tabbed Holdings card** (India, mutual funds, US, swing tracker) beside
+  an Allocation card (book-mix doughnut and Indian sector weights); realised
+  P&L across swing / US / intraday; and, only while Zerodha is not connected,
+  an **inline login** card (TOTP quick-login plus paste-back) so a re-auth
+  never needs a detour. First
   paint is snapshot-only — SQLite plus cached quotes, no broker calls;
   the browser then fetches `/api/home/summary?live=1` once, with opt-in
   auto-refresh.
@@ -263,7 +272,8 @@ Pages:
   funds + US book. The India swing open book is a *tracking* ledger over
   shares that already sit inside the Zerodha holdings, so it is shown
   separately and never summed into net worth. A persistent USD/INR toggle
-  keeps home and the US page in the same display currency. **Ask AI** builds
+  keeps home and the US page in the same display currency. **Ask AI** (a
+  collapsed row here and on the book pages) builds
   a copy-paste prompt containing the private multi-book snapshot, allocation,
   SIP and overlap context for use in ChatGPT, Claude or Gemini; it does not
   place orders or send the prompt automatically.
@@ -483,8 +493,8 @@ links to Rupevo wherever someone without an account would otherwise hit a wall.
 
 | Dashboard surface | Rupevo destination (card at the top of the page) |
 |---|---|
-| Navigation (every page) | Rupevo home |
-| HQ `/` | Tools tile, plus a "Try Rupevo" hint while Zerodha is not connected |
+| Navigation rail (every page) | Rupevo home |
+| HQ `/` | Footer pointer, plus a "Try Rupevo" hint while Zerodha is not connected |
 | Login `/login` | Rupevo home, Nifty 100 ranking, fund comparison, US ranking |
 | Portfolio `/portfolio`, Swing `/swing` | Nifty 100 ranking |
 | Mutual Funds `/mf` | Fund comparison, SIP split by age, lump-sum check |
@@ -493,7 +503,7 @@ links to Rupevo wherever someone without an account would otherwise hit a wall.
 
 - **Privacy:** every link is a fixed public address that opens in a new tab
   without a referrer. No holding, amount, folio or account detail leaves the dashboard.
-- **Buy me a coffee:** the navigation button shows the same UPI QR code and UPI ID
+- **Buy me a coffee:** the app-bar button shows the same UPI QR code and UPI ID
   as Rupevo; update them in [modes/dashboard/coffee.py](modes/dashboard/coffee.py)
   and `modes/dashboard/assets/upi-qr.svg` if Rupevo's change.
 - **Changing an address or a placement:** edit `RUPEVO_URL`, `PAGES` or `CALLOUTS`
@@ -563,7 +573,7 @@ their content.
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
 | [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) | **Operator-facing walkthrough for Phase 4 swing** — dashboard surface, full CLI reference, 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence, AI overlay (cost / sticky cache / prompt), Compare-up-to-4, Add+ flow, HTTP API, persistence, tuning knobs, FAQ |
 | [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D38 adds sortable tables, Rupevo cards at the top of pages and "Buy me a coffee". |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D39 moves every page into a Rupevo-style Material 3 app shell and declutters HQ. |
 | [Rupevo README](https://github.com/yash040599/Rupevo#readme) | **Public companion website (Phase 6)** — its pages, data pipeline, refresh schedule and compliance notes. Lives in its own public repository. |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday (superseded), ~~A2 swing~~ (✅ done), A3 ETF rotation (planning), A4 options (✅ shipped). No-F&O constraint lifted 2026-06-09. |
 | [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) | **Plain-English options primer** — what options are, how P&L works, the Greeks (delta/theta/vega/gamma), buying vs selling mechanics |
@@ -1172,12 +1182,13 @@ ai-portfolio-manager/
 │       ├── metrics.py               # headline P&L, cumulative series (intraday)
 │       ├── budget_history.py        # per-day budget from trading_data_*.json
 │       ├── verdict.py               # capital-ladder traffic-light engine
-│       ├── theme.py                 # shared design tokens + light/dark theme
-│       ├── nav.py                   # shared top nav + theme toggle
+│       ├── theme.py                 # Material design tokens, shared components, light/dark theme
+│       ├── nav.py                   # app shell: top app bar + navigation rail (bottom bar on phones)
+│       ├── icons.py                 # line icons shared with Rupevo
 │       ├── rupevo.py                # links to Rupevo, the public login-free site (Phase 6)
 │       ├── coffee.py                # "Buy me a coffee" dialog (UPI QR in assets/upi-qr.svg)
 │       ├── table_sort.py            # click-to-sort for every dashboard table
-│       ├── home_page.py             # / command centre (net worth, books, inline login)
+│       ├── home_page.py             # / overview (net worth, tabbed books, inline login)
 │       ├── home_summary.py          # cross-book aggregation for the home page
 │       ├── render_html.py           # /trading Chart.js SPA shell
 │       ├── render_text.py           # plain-text mode (--text)

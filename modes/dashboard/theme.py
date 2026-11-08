@@ -2,13 +2,17 @@
 modes/dashboard/theme.py
 ========================
 
-Shared dashboard design system (2026-07-30 UI revamp).
+Shared dashboard design system.
 
-Before this module every page carried its own `:root { … }` block with
-a slightly different palette, so /portfolio, /swing, /us, /tax and
-/dryrun all looked like different apps.  This module is now the single
-source of truth for colour, spacing, radius, shadow and the shared
-component styles (cards, stat tiles, tables, buttons, chips, banners).
+Since the 2026-11 redesign the dashboard speaks the same Google Material 3
+language as Rupevo, its public companion site: flat white surfaces, outlined
+cards, soft tonal tiles, pill buttons, light display headings and an app
+shell (a fixed top app bar plus a navigation rail that becomes a bottom bar
+on phones, rendered by ``nav.py``). This module is the single source of
+truth for colour, type, spacing, radius and the shared component styles.
+Token names from the 2026-07-30 revamp (``--risk-*``, ``--accent-2``,
+``--bg-tint``, ``--accent-legacy``) are kept, so older page CSS keeps
+resolving.
 
 Usage from a page renderer::
 
@@ -21,13 +25,14 @@ Usage from a page renderer::
 
 Ordering matters:
 
-* ``theme_css()``       — tokens + base element styles.  Goes FIRST so a
-  page can still override anything it needs to.
+* ``theme_css()``       — tokens, base element styles and the shared
+  components (Rupevo card, coffee dialog, sortable headers, Ask AI). Goes
+  FIRST so a page can still override anything it needs to.
 * ``PAGE_STYLE``        — the page's own layout rules.
-* ``theme_overrides_css()`` — the deliberate "make every page look the
-  same" layer (buttons, cards, tables, nav, banners) plus every dark
-  mode fix-up for hard-coded colours that live in inline ``style=``
-  attributes scattered through the older page renderers.
+* ``theme_overrides_css()`` — the app shell plus the deliberate "make every
+  page look the same" layer (headings, cards, buttons, tables, banners) and
+  every dark-mode fix-up for hard-coded colours that live in inline
+  ``style=`` attributes scattered through the older page renderers.
 
 Dark mode is driven by ``document.documentElement.dataset.theme``.
 ``theme_boot_script()`` must be emitted inside ``<head>`` *before* any
@@ -38,7 +43,10 @@ light theme).  The user's choice is persisted in
 
 from __future__ import annotations
 
+from modes.dashboard.ai_widget import ai_widget_css
+from modes.dashboard.chat_widget import chat_widget_css
 from modes.dashboard.coffee import coffee_css, coffee_script
+from modes.dashboard.icons import icon
 from modes.dashboard.privacy import privacy_boot_script
 from modes.dashboard.rupevo import rupevo_css
 from modes.dashboard.table_sort import table_sort_css, table_sort_script
@@ -52,137 +60,153 @@ def theme_css() -> str:
 :root {
   color-scheme: light;
   /* Surfaces */
-  --bg:            #eef2f9;
-  --bg-tint:       radial-gradient(1200px 600px at 12% -8%, #dfe9ff 0%, rgba(223,233,255,0) 55%),
-                   radial-gradient(1000px 520px at 92% 0%, #e6f6ef 0%, rgba(230,246,239,0) 52%);
+  --bg:            #ffffff;
+  --bg-tint:       none;
   --card:          #ffffff;
-  --card-2:        #fbfcfe;
-  --soft:          #f1f5f9;
+  --card-2:        #f8fafd;
+  --soft:          #f0f4f9;
+  --soft-2:        #e1e7ef;
   --input-bg:      #ffffff;
-  --line:          #e2e8f0;
-  --line-strong:   #cbd5e1;
+  --line:          #e3e3e3;
+  --line-strong:   #c4c7c5;
 
   /* Text */
-  --fg:            #0f172a;
-  --fg-2:          #334155;
-  --muted:         #64748b;
-  --faint:         #94a3b8;
+  --fg:            #1f1f1f;
+  --fg-2:          #444746;
+  --muted:         #5f6368;
+  --faint:         #80868b;
 
-  /* Brand / accent */
-  --accent:        #2f5fe0;
-  --accent-2:      #6d5ae0;
+  /* Accent: --accent-2 equals --accent, so legacy gradients render flat */
+  --accent:        #0b57d0;
+  --accent-2:      #0b57d0;
   --accent-fg:     #ffffff;
-  --accent-soft:   #e8efff;
-  --accent-line:   #c5d7ff;
+  --accent-soft:   #e8f0fe;
+  --accent-line:   #a8c7fa;
+  --tonal:         #d3e3fd;
+  --on-tonal:      #041e49;
+  --nav-active:    #c2e7ff;
+  --on-nav-active: #001d35;
 
   /* Semantics */
-  --pos:           #0b8a5b;
-  --pos-bg:        #e4f7ef;
-  --pos-line:      #b6e6d2;
-  --neg:           #d0342c;
-  --neg-bg:        #fdecea;
-  --neg-line:      #f6c5c0;
-  --warn-fg:       #a5610a;
-  --warn-bg:       #fff6e5;
-  --warn-line:     #f6d7a3;
-  --risk-fg:       #b91c1c;
-  --risk-bg:       #fdecec;
-  --risk-line:     #f4c0c0;
-  --info-fg:       #1d4ed8;
-  --info-bg:       #eaf1ff;
-  --info-line:     #c9daff;
+  --pos:           #137333;
+  --pos-bg:        #e6f4ea;
+  --pos-line:      #ceead6;
+  --neg:           #c5221f;
+  --neg-bg:        #fce8e6;
+  --neg-line:      #fad2cf;
+  --warn-fg:       #8f4f00;
+  --warn-bg:       #fef7e0;
+  --warn-line:     #fde293;
+  --risk-fg:       #c5221f;
+  --risk-bg:       #fce8e6;
+  --risk-line:     #fad2cf;
+  --info-fg:       #0b57d0;
+  --info-bg:       #e8f0fe;
+  --info-line:     #d2e3fc;
 
-  /* Legacy aliases kept so old page CSS keeps resolving */
-  --accent-legacy: #1c1f23;
+  /* Legacy alias kept so old page CSS keeps resolving */
+  --accent-legacy: #1f1f1f;
 
   /* Shape */
-  --radius:        14px;
-  --radius-sm:     9px;
+  --radius:        16px;
+  --radius-md:     12px;
+  --radius-sm:     8px;
   --radius-pill:   999px;
-  --shadow-sm:     0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
-  --shadow-md:     0 6px 18px -6px rgba(15,23,42,.16), 0 2px 6px rgba(15,23,42,.06);
-  --shadow-lg:     0 18px 42px -18px rgba(15,23,42,.35);
-  --ring:          0 0 0 3px rgba(47,95,224,.22);
+  --shadow-sm:     0 1px 2px rgba(60,64,67,.3), 0 1px 3px 1px rgba(60,64,67,.15);
+  --shadow-md:     0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
+  --shadow-lg:     0 2px 3px rgba(60,64,67,.3), 0 6px 10px 4px rgba(60,64,67,.15);
+  --ring:          0 0 0 2px var(--accent);
 
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          "Helvetica Neue", Arial, sans-serif;
-  --mono: "SF Mono", ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  /* Type (Google Sans where installed, the system UI font elsewhere) */
+  --font: "Google Sans Text", "Google Sans", Roboto, system-ui, -apple-system,
+          BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Google Sans", "Google Sans Display", Roboto, system-ui,
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Google Sans Mono", "Roboto Mono", ui-monospace, "SF Mono",
+          "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* App shell (nav.py) */
+  --wrap:          1240px;
+  --appbar-h:      64px;
+  --rail-w:        88px;
+  --navbar-h:      64px;
+  --gutter:        24px;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --bg:            #0a1020;
-  --bg-tint:       radial-gradient(1200px 600px at 12% -8%, #16244a 0%, rgba(22,36,74,0) 55%),
-                   radial-gradient(1000px 520px at 92% 0%, #10312a 0%, rgba(16,49,42,0) 52%);
-  --card:          #121a2b;
-  --card-2:        #162034;
-  --soft:          #1a2438;
-  --input-bg:      #161f33;
-  --line:          #253149;
-  --line-strong:   #33425f;
+  --bg:            #131314;
+  --bg-tint:       none;
+  --card:          #1b1c1d;
+  --card-2:        #1e1f20;
+  --soft:          #282a2c;
+  --soft-2:        #37393b;
+  --input-bg:      #1b1c1d;
+  --line:          #3c4043;
+  --line-strong:   #5f6368;
 
-  --fg:            #e6edf8;
-  --fg-2:          #c6d2e4;
-  --muted:         #93a3bb;
-  --faint:         #6f819b;
+  --fg:            #e3e3e3;
+  --fg-2:          #c4c7c5;
+  --muted:         #9aa0a6;
+  --faint:         #80868b;
 
-  --accent:        #6f9bff;
-  --accent-2:      #a08cff;
-  --accent-fg:     #08122a;
-  --accent-soft:   #1a2947;
-  --accent-line:   #2e4472;
+  --accent:        #a8c7fa;
+  --accent-2:      #a8c7fa;
+  --accent-fg:     #062e6f;
+  --accent-soft:   rgba(168,199,250,.14);
+  --accent-line:   rgba(168,199,250,.4);
+  --tonal:         #004a77;
+  --on-tonal:      #c2e7ff;
+  --nav-active:    #004a77;
+  --on-nav-active: #c2e7ff;
 
-  --pos:           #34d39f;
-  --pos-bg:        #0f2e26;
-  --pos-line:      #1d5544;
-  --neg:           #ff7b72;
-  --neg-bg:        #331a1c;
-  --neg-line:      #5f2b2b;
-  --warn-fg:       #f0b45e;
-  --warn-bg:       #33260f;
-  --warn-line:     #5c451c;
-  --risk-fg:       #ff8b84;
-  --risk-bg:       #331a1c;
-  --risk-line:     #5f2b2b;
-  --info-fg:       #93b4ff;
-  --info-bg:       #182444;
-  --info-line:     #2c3f6b;
+  --pos:           #81c995;
+  --pos-bg:        rgba(129,201,149,.14);
+  --pos-line:      rgba(129,201,149,.35);
+  --neg:           #f28b82;
+  --neg-bg:        rgba(242,139,130,.14);
+  --neg-line:      rgba(242,139,130,.35);
+  --warn-fg:       #fdd663;
+  --warn-bg:       rgba(253,214,99,.12);
+  --warn-line:     rgba(253,214,99,.32);
+  --risk-fg:       #f28b82;
+  --risk-bg:       rgba(242,139,130,.14);
+  --risk-line:     rgba(242,139,130,.35);
+  --info-fg:       #a8c7fa;
+  --info-bg:       rgba(168,199,250,.12);
+  --info-line:     rgba(168,199,250,.32);
 
-  --accent-legacy: #e6edf8;
+  --accent-legacy: #e3e3e3;
 
-  --shadow-sm:     0 1px 2px rgba(0,0,0,.4);
-  --shadow-md:     0 8px 22px -8px rgba(0,0,0,.65);
-  --shadow-lg:     0 22px 48px -20px rgba(0,0,0,.8);
-  --ring:          0 0 0 3px rgba(111,155,255,.28);
+  --shadow-sm:     0 1px 2px rgba(0,0,0,.5), 0 1px 3px 1px rgba(0,0,0,.3);
+  --shadow-md:     0 1px 3px rgba(0,0,0,.5), 0 4px 8px 3px rgba(0,0,0,.3);
+  --shadow-lg:     0 2px 3px rgba(0,0,0,.5), 0 6px 10px 4px rgba(0,0,0,.35);
 }
 
 * { box-sizing: border-box; }
 
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 html, body { min-height: 100%; }
 
 body {
   margin: 0;
-  padding: 22px 20px 48px;
+  padding: 24px 20px 48px;
   font-family: var(--font);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.45;
   color: var(--fg);
-  background-color: var(--bg);
-  background-image: var(--bg-tint);
-  background-attachment: fixed;
-  background-repeat: no-repeat;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
-a { color: var(--accent); }
-
-::selection { background: var(--accent-soft); color: var(--fg); }
-
-:focus-visible {
-  outline: none;
-  box-shadow: var(--ring);
-  border-radius: var(--radius-sm);
-}
+h1, h2, h3 { font-family: var(--font-display); }
+a { color: var(--accent); text-underline-offset: 2px; }
+::selection { background: var(--tonal); color: var(--on-tonal); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+svg.ic { display: block; flex: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+           overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
 /* Scrollbars (WebKit) */
 ::-webkit-scrollbar { width: 11px; height: 11px; }
@@ -195,53 +219,102 @@ a { color: var(--accent); }
 
 /* ── Shared components ─────────────────────────────────────── */
 
-.t-grid { display: grid; gap: 14px; }
-.t-row  { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.t-grid { display: grid; gap: 16px; }
+.t-row  { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
 .t-card {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-  padding: 16px 18px;
+  padding: 20px 24px;
 }
 
 .t-section-title {
-  display: flex; align-items: baseline; gap: 10px;
-  font-size: 12px; font-weight: 700; letter-spacing: .08em;
-  text-transform: uppercase; color: var(--muted);
-  margin: 26px 0 10px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px;
+  margin: 28px 0 12px; font-family: var(--font-display);
+  font-size: 18px; line-height: 24px; font-weight: 500; color: var(--fg);
 }
 .t-section-title .hint {
-  font-size: 11px; font-weight: 500; letter-spacing: 0;
-  text-transform: none; color: var(--faint);
+  font-family: var(--font); font-size: 12.5px; font-weight: 400; color: var(--muted);
 }
 
 .t-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 3px 10px; border-radius: var(--radius-pill);
-  font-size: 11.5px; font-weight: 600; line-height: 1.6;
-  border: 1px solid var(--line); background: var(--soft); color: var(--fg-2);
-  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 26px;
+  padding: 3px 10px; border-radius: var(--radius-sm);
+  font-size: 12.5px; line-height: 18px; font-weight: 500;
+  border: 1px solid var(--line); background: transparent; color: var(--fg-2);
+  white-space: nowrap; text-decoration: none;
 }
-.t-chip.pos  { background: var(--pos-bg);  color: var(--pos);      border-color: var(--pos-line); }
-.t-chip.neg  { background: var(--neg-bg);  color: var(--neg);      border-color: var(--neg-line); }
-.t-chip.warn { background: var(--warn-bg); color: var(--warn-fg);  border-color: var(--warn-line); }
-.t-chip.info { background: var(--info-bg); color: var(--info-fg);  border-color: var(--info-line); }
-.t-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.t-chip.pos  { background: var(--pos-bg);  color: var(--pos);     border-color: transparent; }
+.t-chip.neg  { background: var(--neg-bg);  color: var(--neg);     border-color: transparent; }
+.t-chip.warn { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
+.t-chip.info { background: var(--info-bg); color: var(--info-fg); border-color: transparent; }
+.t-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .t-chip .dot.live { animation: t-pulse 1.8s ease-in-out infinite; }
 @keyframes t-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+/* A status chip beside a page title (e.g. "AI run", "HELD") */
+h1 .title-chip { margin-left: 8px; vertical-align: middle; font-family: var(--font); }
 
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
 .muted { color: var(--muted); }
 .num { font-variant-numeric: tabular-nums; }
 
+/* Page and card heads, as on Rupevo */
+.page-head { margin: 4px 0 20px; }
+.eyebrow { margin-bottom: 4px; font-size: 12px; line-height: 16px; font-weight: 500;
+           letter-spacing: .02em; color: var(--muted); }
+.page-head h1 { margin: 0; font-size: 28px; line-height: 36px; font-weight: 400;
+                letter-spacing: 0; color: var(--fg); }
+.page-head .lede { margin: 6px 0 0; max-width: 760px; color: var(--fg-2);
+                   font-size: 15px; line-height: 22px; }
+.card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+             margin-bottom: 12px; }
+.card-head h2 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 500;
+                letter-spacing: 0; text-transform: none; color: var(--fg); }
+.card-head .hint { font-size: 12.5px; color: var(--muted); }
+.card-head .spacer { flex: 1; }
+
+/* Icon and text buttons */
+.icon-btn {
+  flex: none; width: 40px; height: 40px; display: inline-grid; place-items: center;
+  padding: 0; border: 0; border-radius: 50%; background: transparent;
+  color: var(--fg-2); cursor: pointer; font: inherit;
+  transition: background-color .15s ease, color .15s ease;
+}
+.icon-btn:hover { background: var(--soft); color: var(--fg); }
+.icon-btn[aria-pressed="true"] { background: var(--tonal); color: var(--on-tonal); }
+.text-btn {
+  font: inherit; font-size: 13px; font-weight: 500; line-height: 20px;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+  padding: 6px 12px; border: 0; border-radius: var(--radius-pill);
+  background: none; color: var(--accent); cursor: pointer; text-decoration: none;
+}
+.text-btn:hover { background: var(--accent-soft); }
+.text-btn[disabled] { opacity: .5; cursor: default; background: none; }
+
+/* Material 3 switch: <label class="switch"><input type="checkbox"> Label</label> */
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px;
+          color: var(--fg-2); cursor: pointer; user-select: none; }
+.switch input {
+  appearance: none; -webkit-appearance: none; position: relative; flex: none;
+  width: 36px; height: 20px; margin: 0; border-radius: 999px; cursor: pointer;
+  border: 2px solid var(--line-strong); background: var(--soft-2);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.switch input::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
+  border-radius: 50%; background: var(--muted);
+  transition: transform .15s ease, background-color .15s ease;
+}
+.switch input:checked { background: var(--accent); border-color: var(--accent); }
+.switch input:checked::before { transform: translateX(16px); background: var(--accent-fg); }
+
 /* Skeleton shimmer for values that load after first paint */
 .t-skel {
   display: inline-block; min-width: 68px; height: 1em;
   border-radius: 5px; vertical-align: middle;
-  background: linear-gradient(90deg, var(--soft) 25%, var(--line) 37%, var(--soft) 63%);
+  background: linear-gradient(90deg, var(--soft) 25%, var(--soft-2) 37%, var(--soft) 63%);
   background-size: 400% 100%;
   animation: t-shimmer 1.3s ease infinite;
 }
@@ -251,18 +324,22 @@ a { color: var(--accent); }
   * { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
       transition-duration: .001ms !important; }
 }
-""" + rupevo_css() + coffee_css() + table_sort_css()
+""" + rupevo_css() + coffee_css() + table_sort_css() + chat_widget_css() + ai_widget_css()
 
 
-# ── Deliberate cross-page polish + dark-mode fix-ups ─────────────
+# ── App shell + cross-page polish + dark-mode fix-ups ────────────
 
 def theme_overrides_css() -> str:
-    """Component polish applied AFTER each page's own CSS.
+    """App shell and component polish applied AFTER each page's own CSS.
 
-    Two jobs:
-      1. Give every legacy page the same buttons / cards / tables /
-         banners so the dashboard reads as one product.
-      2. Neutralise hard-coded light-mode colours (`background: white`,
+    Three jobs:
+      1. Lay out the app shell from ``nav.py``: a fixed top app bar and a
+         navigation rail (a bottom bar on phones). The body is padded only
+         when the shell is present (``body:has(.appbar)``), which also
+         outranks every page's own ``body { padding }`` rule.
+      2. Give every legacy page the same headings / cards / buttons /
+         tables / banners so the dashboard reads as one product.
+      3. Neutralise hard-coded light-mode colours (`background: white`,
          `#f7f8fa`, `#1c1f23`, `#cfd9eb`, …) that older renderers bake
          into inline `style=` attributes, which would otherwise stay
          white-on-white in dark mode.  Inline styles can only be beaten
@@ -270,82 +347,227 @@ def theme_overrides_css() -> str:
          block on purpose.
     """
     return r"""
-/* ── Layout shells ───────────────────────────────────────────── */
-.wrap { max-width: 1240px; margin: 0 auto; }
-/* Some pages emit the nav / AI banner as direct <body> children while
-   the content lives inside .wrap — centre them so nothing looks
-   off-axis. */
-body > nav.topnav,
+/* ── App shell (rendered by modes/dashboard/nav.py) ──────────── */
+html:has(.appbar) { scroll-padding-top: calc(var(--appbar-h) + 16px); }
+body:has(.appbar) {
+  padding: calc(var(--appbar-h) + 8px) var(--gutter) 48px calc(var(--rail-w) + var(--gutter));
+}
+.appbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  display: flex; align-items: center; gap: 4px;
+  height: var(--appbar-h); padding: 0 16px 0 23px;
+  background: var(--bg); border-bottom: 1px solid transparent;
+  font-family: var(--font); font-size: 14px; line-height: 20px; color: var(--fg);
+  transition: border-color .2s ease;
+}
+.appbar.scrolled { border-bottom-color: var(--line); }
+.appbar .brand {
+  display: inline-flex; align-items: center; gap: 10px; flex: none;
+  padding: 6px 12px 6px 6px; border-radius: var(--radius-pill);
+  color: var(--fg); text-decoration: none; white-space: nowrap;
+  font-family: var(--font-display); font-size: 20px; font-weight: 500; letter-spacing: -.01em;
+}
+.appbar .brand:hover { background: var(--soft); }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 10px; display: inline-grid; place-items: center;
+  flex: none; background: var(--accent); color: var(--accent-fg);
+  font-family: var(--font-display); font-size: 16px; font-weight: 700; letter-spacing: 0;
+}
+.appbar-spacer { flex: 1; min-width: 8px; }
+.appbar-status { display: flex; align-items: center; gap: 8px; min-width: 0; margin-right: 4px; }
+.privacy-toggle .ic-eye-off { display: none; }
+html[data-privacy="on"] .privacy-toggle .ic-eye { display: none; }
+html[data-privacy="on"] .privacy-toggle .ic-eye-off { display: block; }
+.theme-sun, .theme-moon { display: grid; }
+html[data-theme="dark"] .theme-sun { display: none; }
+html:not([data-theme="dark"]) .theme-moon { display: none; }
+
+/* Page status pills passed in as `after_links` */
+.appbar .auth, .appbar .research {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 12px;
+  border: 0; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500;
+  text-decoration: none; white-space: nowrap;
+}
+.appbar .auth strong { font-weight: 500; }
+.appbar .auth.ok  { background: var(--pos-bg); color: var(--pos); }
+.appbar .auth.bad { background: var(--neg-bg); color: var(--neg); }
+.appbar .auth:hover { box-shadow: inset 0 0 0 1px currentColor; }
+.appbar .research { max-width: 280px; overflow: hidden; text-overflow: ellipsis;
+                    background: var(--info-bg); color: var(--info-fg); }
+.appbar .fx-badge {
+  font-size: 12.5px; padding: 4px 10px; border: 0; border-radius: var(--radius-pill);
+  background: var(--soft); color: var(--fg-2); white-space: nowrap;
+}
+.appbar .fx-badge strong { font-weight: 500; color: var(--fg); }
+.appbar .cur-toggle {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px; margin: 0 2px;
+  border-radius: var(--radius-pill); border: 1px solid var(--line-strong);
+  background: transparent; cursor: pointer; font: inherit; overflow: visible;
+}
+.appbar .cur-pill {
+  min-width: 34px; padding: 2px 8px; border-radius: var(--radius-pill); line-height: 18px;
+  font-size: 12.5px; font-weight: 600; color: var(--muted); text-align: center;
+}
+.appbar .cur-pill.active { background: var(--tonal); color: var(--on-tonal); }
+.appbar .docs-pick { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.appbar .docs-pick label { margin: 0; font-size: 12.5px; color: var(--muted);
+                           text-transform: none; letter-spacing: 0; }
+.appbar .docs-pick select {
+  width: 240px; max-width: 100%; padding: 6px 12px; font-size: 13px;
+  border-radius: var(--radius-pill) !important; cursor: pointer;
+}
+
+/* Navigation: a rail on wide screens, a bottom bar on phones */
+.navbar { position: fixed; z-index: 45; display: flex; font-family: var(--font); }
+.nav-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0;
+  color: var(--fg-2); text-decoration: none; font-size: 12px; line-height: 16px; font-weight: 500;
+}
+.nav-item:hover { color: var(--fg); }
+.nav-icon { display: grid; place-items: center; width: 56px; height: 32px; border-radius: 16px;
+            transition: background-color .2s ease; }
+.nav-item:hover .nav-icon { background: var(--soft-2); }
+.nav-item[aria-current="page"] { color: var(--fg); font-weight: 700; }
+.nav-item[aria-current="page"] .nav-icon { background: var(--nav-active); color: var(--on-nav-active); }
+.nav-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-sep { flex: none; width: 32px; height: 1px; background: var(--line); }
+
+@media (min-width: 840px) {
+  .navbar {
+    top: var(--appbar-h); bottom: 0; left: 0; width: var(--rail-w);
+    flex-direction: column; align-items: center; gap: 12px; padding: 8px 0 16px;
+    background: var(--bg); overflow-y: auto; scrollbar-width: none;
+  }
+  .navbar::-webkit-scrollbar { display: none; }
+  .nav-item { width: 100%; }
+}
+
+/* ── Layout ──────────────────────────────────────────────────── */
+.wrap { max-width: var(--wrap); margin: 0 auto; }
+/* Some pages emit the AI banner or a card as direct <body> children while
+   the content lives inside .wrap — centre them so nothing looks off-axis. */
 body > .ai-widget,
 body > .chat-widget,
-body > .banner { max-width: 1240px; margin-left: auto; margin-right: auto; }
+body > .banner,
+body > .rv-card { max-width: var(--wrap); margin-left: auto; margin-right: auto; }
 
+/* ── Type: light display headings, sentence-case section titles ── */
 h1, h1.page-title {
-  font-size: 25px; font-weight: 700; letter-spacing: -.015em;
-  margin: 0 0 4px; color: var(--fg);
+  font-family: var(--font-display); font-size: 28px; line-height: 36px;
+  font-weight: 400; letter-spacing: 0; margin: 4px 0 6px; color: var(--fg);
+}
+h2 {
+  font-family: var(--font-display); font-size: 18px; line-height: 24px;
+  font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--fg);
 }
 .sub { color: var(--muted); }
 
-/* ── Cards ───────────────────────────────────────────────────── */
-.card, .chart-card, .card-mini {
+/* ── Cards: outlined, flat ───────────────────────────────────── */
+.card, .chart-card, .card-mini, .summary-card {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
-.card { padding: 16px 18px; }
+.card { padding: 20px 24px; }
+.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
 
-/* ── Buttons ─────────────────────────────────────────────────── */
-button.action, .btn {
-  font: inherit; font-weight: 600; font-size: 13px;
-  padding: 8px 14px; border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: linear-gradient(180deg, var(--accent), color-mix(in srgb, var(--accent) 86%, #000));
-  color: var(--accent-fg) !important;
-  cursor: pointer; transition: transform .06s ease, box-shadow .15s ease, filter .15s ease;
-  box-shadow: var(--shadow-sm);
+/* Chart titles: sentence case, like Rupevo's card heads */
+.chart-card h3, .chart-grid .chart-card h3, .chart-card .title {
+  font-family: var(--font-display); font-size: 14px; line-height: 20px; font-weight: 500;
+  letter-spacing: 0; text-transform: none; color: var(--fg);
 }
-button.action:hover, .btn:hover { filter: brightness(1.06); box-shadow: var(--shadow-md); }
-button.action:active, .btn:active { transform: translateY(1px); }
+
+/* Summary tiles (HQ, funds): soft tonal surfaces like Rupevo's */
+.kpi {
+  background: var(--soft); border: 0; border-radius: var(--radius-md);
+  box-shadow: none; padding: 14px 16px;
+}
+.kpi.accent { background: var(--accent-soft); }
+.k-label {
+  display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px;
+  font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--fg-2);
+}
+.k-value {
+  font-family: var(--font-display); font-size: 24px; line-height: 32px; font-weight: 400;
+  letter-spacing: 0; margin: 4px 0 2px; font-variant-numeric: tabular-nums;
+}
+.k-foot { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── Buttons: Material pills ─────────────────────────────────── */
+button.action, a.action, .btn {
+  font: inherit; font-size: 13.5px; font-weight: 500; line-height: 20px; letter-spacing: .01em;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 36px; padding: 7px 20px;
+  border-radius: var(--radius-pill); border: 1px solid transparent;
+  background: var(--accent); color: var(--accent-fg) !important;
+  cursor: pointer; text-decoration: none; box-shadow: none;
+  transition: box-shadow .15s ease, background-color .15s ease;
+}
+button.action:hover, a.action:hover, .btn:hover { box-shadow: var(--shadow-sm); }
+button.action:active, a.action:active, .btn:active { box-shadow: none; }
 button.action[disabled], .btn[disabled] {
-  opacity: .5; cursor: not-allowed; box-shadow: none; filter: none;
+  opacity: .38; cursor: not-allowed; box-shadow: none;
 }
-button.action.alt, .btn.alt {
-  background: var(--card) !important;
-  color: var(--fg) !important;
+button.action.alt, a.action.alt, .btn.alt {
+  background: transparent !important;
+  color: var(--accent) !important;
   border-color: var(--line-strong) !important;
 }
-button.action.alt:hover, .btn.alt:hover { background: var(--soft) !important; }
+button.action.alt:hover, a.action.alt:hover, .btn.alt:hover {
+  background: var(--accent-soft) !important; box-shadow: none;
+}
+/* Row actions stay compact so tables keep their density. */
+table button.action, table a.action, table .btn {
+  min-height: 28px; padding: 3px 12px; font-size: 12.5px;
+}
+.controls button { border-radius: var(--radius-pill) !important; padding: 7px 20px; font-weight: 500; }
 
 /* ── Form controls (incl. inline-styled legacy inputs) ───────── */
-input[type="text"], input[type="number"], input[type="search"],
+input[type="text"], input[type="number"], input[type="search"], input[type="email"],
 input[type="password"], input[type="date"], select, textarea {
-  background: var(--input-bg) !important;
+  background-color: var(--input-bg) !important;
   color: var(--fg) !important;
   border: 1px solid var(--line-strong) !important;
   border-radius: var(--radius-sm) !important;
   font: inherit;
-  padding: 7px 10px;
+  padding: 7px 12px;
 }
-input::placeholder, textarea::placeholder { color: var(--faint); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 input:focus-visible, select:focus-visible, textarea:focus-visible {
-  border-color: var(--accent) !important; box-shadow: var(--ring);
+  outline: none; border-color: var(--accent) !important;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
-/* ── Tables ──────────────────────────────────────────────────── */
+/* ── Tables: hairline rows, quiet sentence-case headers ──────── */
 table.holdings, table.kvtable, table.grid {
   font-variant-numeric: tabular-nums;
 }
 table.holdings th {
   color: var(--muted) !important;
+  font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  padding: 10px;
   border-bottom: 1px solid var(--line) !important;
-  background: var(--card-2);
+  background: var(--card);
   position: sticky; top: 0; z-index: 1;
 }
-html[data-theme="dark"] table th { background: var(--card-2); }
-table.holdings td { border-bottom: 1px solid var(--line) !important; }
-table.holdings tr:hover td { background: var(--soft) !important; }
-table.kvtable td { border-bottom: 1px dashed var(--line) !important; }
+/* Pin sticky headers under the fixed app bar, not behind it. */
+body:has(.appbar) table.holdings th { top: var(--appbar-h); }
+table.holdings td { padding: 8px 10px; border-bottom: 1px solid var(--line) !important; }
+table.holdings tr:hover td { background: var(--card-2) !important; }
+table.kvtable td { border-bottom: 1px solid var(--line) !important; }
+
+/* Every table header and small label in sentence case, as on Rupevo */
+th { text-transform: none !important; letter-spacing: 0 !important; }
+table.data-table th, .day-detail th {
+  font-size: 12px; font-weight: 500; color: var(--muted); border-bottom-width: 1px;
+}
+.metric { background: var(--soft); border: 0; border-radius: var(--radius-md); padding: 14px 16px; }
+.metric-label, .controls label, .summary-col .col-title, .history-strip .tile .when {
+  font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--fg-2);
+}
+.metric-value { font-family: var(--font-display); font-size: 22px; line-height: 28px; font-weight: 400; }
 
 /* Wide tables (entry recommendations, open book) carry 12-15 columns and
    cannot compress below ~1100px without the cells colliding. Without a
@@ -355,8 +577,8 @@ table.kvtable td { border-bottom: 1px dashed var(--line) !important; }
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   /* Bleed to the card edges so the scrollbar is not inset awkwardly. */
-  margin-inline: -18px;
-  padding-inline: 18px;
+  margin-inline: -24px;
+  padding-inline: 24px;
 }
 .table-scroll > table.holdings { min-width: 1100px; }
 .table-scroll > table.holdings th,
@@ -373,80 +595,24 @@ table.kvtable td { border-bottom: 1px dashed var(--line) !important; }
    so drop the sticky header rather than have it pin to the wrong box. */
 .table-scroll > table.holdings th { position: static; }
 
-/* ── Banners / flags ─────────────────────────────────────────── */
-.banner { border-radius: var(--radius-sm); }
-.banner.info { background: var(--info-bg) !important; border: 1px solid var(--info-line) !important;
-               color: var(--fg) !important; }
-.banner.warn { background: var(--warn-bg) !important; border: 1px solid var(--warn-line) !important;
-               color: var(--warn-fg) !important; }
-.banner.error { background: var(--risk-bg) !important; border: 1px solid var(--risk-line) !important;
-                color: var(--risk-fg) !important; }
+/* ── Banners / flags: tonal, borderless ──────────────────────── */
+.banner { border-radius: var(--radius-md); border: 0 !important; }
+.banner.info { background: var(--info-bg) !important; color: var(--fg) !important; }
+.banner.warn { background: var(--warn-bg) !important; color: var(--warn-fg) !important; }
+.banner.error { background: var(--neg-bg) !important; color: var(--neg) !important; }
+.flag { border-radius: var(--radius-md); }
 .flag.INFO { background: var(--info-bg) !important; color: var(--fg) !important; }
 .flag.WARN { background: var(--warn-bg) !important; color: var(--warn-fg) !important; }
 .flag.RISK { background: var(--risk-bg) !important; color: var(--risk-fg) !important; }
 
 code, pre { background: var(--soft) !important; color: var(--fg-2) !important;
-            border-radius: 5px; }
+            border-radius: 6px; }
 
 hr { border: none; border-top: 1px solid var(--line); }
 
-/* ── Nav (rendered by modes/dashboard/nav.py) ────────────────── */
-nav.topnav {
-  position: sticky; top: 8px; z-index: 40;
-  background: color-mix(in srgb, var(--card) 96%, transparent) !important;
-  backdrop-filter: saturate(1.6) blur(12px);
-  -webkit-backdrop-filter: saturate(1.6) blur(12px);
-  border: 1px solid var(--line) !important;
-  border-radius: var(--radius) !important;
-  box-shadow: var(--shadow-md);
-  padding: 8px 12px !important;
-  gap: 4px !important;
-}
-nav.topnav .sep { display: none; }
-nav.topnav a {
-  padding: 6px 11px; border-radius: var(--radius-pill);
-  color: var(--fg-2) !important; font-weight: 600; font-size: 13px;
-  text-decoration: none !important; white-space: nowrap;
-  transition: background .12s ease, color .12s ease;
-}
-nav.topnav a:hover { background: var(--soft); color: var(--fg) !important; }
-nav.topnav .here {
-  padding: 6px 11px; border-radius: var(--radius-pill);
-  background: var(--accent-soft) !important; color: var(--accent) !important;
-  font-weight: 700; font-size: 13px; white-space: nowrap;
-  border: 1px solid var(--accent-line);
-}
-nav.topnav button.nav-back {
-  background: var(--card) !important; color: var(--fg) !important;
-  border: 1px solid var(--line-strong) !important;
-  border-radius: var(--radius-pill) !important;
-  padding: 5px 12px !important; font-weight: 600; font-size: 13px;
-}
-nav.topnav button.nav-back:hover { background: var(--soft) !important; }
-nav.topnav .auth { font-weight: 600; border: 1px solid transparent; }
-nav.topnav .auth.ok  { background: var(--pos-bg) !important; color: var(--pos) !important;
-                       border-color: var(--pos-line) !important; }
-nav.topnav .auth.bad { background: var(--risk-bg) !important; color: var(--risk-fg) !important;
-                       border-color: var(--risk-line) !important; }
-nav.topnav .research { background: var(--info-bg) !important; color: var(--info-fg) !important;
-                       border-color: var(--info-line) !important; }
-nav.topnav .fx-badge {
-  font-size: 12px; padding: 4px 10px; border-radius: var(--radius-pill);
-  background: var(--soft); color: var(--fg-2); border: 1px solid var(--line);
-}
-
-/* Theme switch */
-button.theme-toggle {
-  font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
-  width: 32px; height: 32px; display: inline-flex;
-  align-items: center; justify-content: center;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--line-strong);
-  background: var(--card); color: var(--fg);
-}
-button.theme-toggle:hover { background: var(--soft); }
-html[data-theme="dark"] .theme-toggle-sun { display: none; }
-html:not([data-theme="dark"]) .theme-toggle-moon { display: none; }
+/* Fixed overlays that must clear the app bar */
+#err-toast-host { top: calc(var(--appbar-h) + 8px) !important; }
+body:has(.appbar) .story-contents { top: calc(var(--appbar-h) + 16px); }
 
 /* ── Dark-mode rescues for hard-coded light colours ──────────── */
 html[data-theme="dark"] .tile,
@@ -521,29 +687,37 @@ html[data-theme="dark"] .banner-cta { background: var(--accent); color: var(--ac
 html[data-theme="dark"] .sectorbar { background: var(--accent) !important; }
 html[data-theme="dark"] img:not([src*=".svg"]) { filter: brightness(.92); }
 
-input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
-
 /* Charts read these via getComputedStyle in page scripts */
 .chart-card canvas { max-height: 300px; }
 
-@media (max-width: 820px) {
-  body { padding: 14px 12px 40px; }
-  nav.topnav { position: static; }
-  h1, h1.page-title { font-size: 21px; }
-  /* The nav is a flex row whose link group defaults to min-width:auto, so
-     it refused to shrink below its max-content width and alone forced
-     ~500px of horizontal page scroll even after the tables were fixed.
-     `display:flex` is restated here because pages that predate nav.py's
-     stylesheet (swing) render .nav-links as a plain block, where
-     flex-wrap would silently do nothing. */
-  nav.topnav { flex-wrap: wrap; row-gap: 6px; }
-  nav.topnav .nav-links {
-    display: flex; flex-wrap: wrap; row-gap: 6px;
-    min-width: 0; max-width: 100%;
+/* ── Phones and small tablets: bottom navigation bar ─────────── */
+@media (max-width: 839px) {
+  :root { --appbar-h: 56px; --gutter: 16px; }
+  body:has(.appbar) {
+    padding: calc(var(--appbar-h) + 8px) var(--gutter)
+             calc(var(--navbar-h) + 24px + env(safe-area-inset-bottom, 0px));
   }
-  nav.topnav .spacer { flex-basis: 100%; height: 0; }
-  .card { padding: 12px 12px; }
-  .table-scroll { margin-inline: -12px; padding-inline: 12px; }
+  .navbar {
+    left: 0; right: 0; bottom: 0; height: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px));
+    padding: 6px 4px env(safe-area-inset-bottom, 0px); align-items: flex-start;
+    background: var(--card-2); border-top: 1px solid var(--line);
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .navbar::-webkit-scrollbar { display: none; }
+  /* Ten destinations do not fit a phone: the bar scrolls sideways. */
+  .nav-item { flex: 1 0 64px; }
+  .nav-sep { display: none; }
+  .appbar { padding: 0 4px 0 8px; gap: 2px; }
+  .appbar .brand { font-size: 18px; padding-right: 8px; }
+  .appbar .research, .appbar .fx-badge, .appbar .docs-pick label { display: none; }
+  .appbar .docs-pick select { width: 170px; }
+  h1, h1.page-title { font-size: 24px; line-height: 32px; }
+  .card { padding: 16px; }
+  .table-scroll { margin-inline: -16px; padding-inline: 16px; }
+}
+@media (max-width: 480px) {
+  .appbar .brand-text { display: none; }
+  .appbar .docs-pick select { width: 140px; }
 }
 """
 
@@ -587,6 +761,15 @@ def theme_boot_script() -> str:
     return document.documentElement.getAttribute('data-theme') === 'dark';
   };
 
+  // The fixed app bar gets a hairline once the page scrolls under it.
+  var appbar = null;
+  function markScrolled() {
+    appbar = appbar || document.querySelector('.appbar');
+    if (appbar) appbar.classList.toggle('scrolled', window.scrollY > 4);
+  }
+  window.addEventListener('scroll', markScrolled, { passive: true });
+  document.addEventListener('DOMContentLoaded', markScrolled);
+
   // Chart.js reads its label/grid colours from `Chart.defaults`, which
   // default to near-black — unreadable on the dark surface. Sync them
   // with the tokens before any page script builds a chart (this
@@ -597,8 +780,11 @@ def theme_boot_script() -> str:
     var css = getComputedStyle(document.documentElement);
     var fg = css.getPropertyValue('--fg-2').trim();
     var grid = css.getPropertyValue('--line').trim();
+    // The token spans several lines; a canvas font string must not.
+    var font = css.getPropertyValue('--font').replace(/\s+/g, ' ').trim();
     if (fg) Chart.defaults.color = fg;
     if (grid) Chart.defaults.borderColor = grid;
+    if (font) Chart.defaults.font.family = font;
     try {
       var live = Chart.instances || {};
       Object.keys(live).forEach(function (k) {
@@ -615,13 +801,13 @@ def theme_boot_script() -> str:
 
 
 def theme_toggle_html() -> str:
-    """Small sun/moon button — drop into the nav's `after_links`."""
+    """Sun/moon icon button for the app bar (Rupevo's control)."""
     return (
-        '<button class="theme-toggle" type="button" onclick="toggleTheme()" '
+        '<button class="icon-btn theme-toggle" type="button" onclick="toggleTheme()" '
         'title="Switch between light and dark theme" '
         'aria-label="Toggle colour theme">'
-        '<span class="theme-toggle-sun" aria-hidden="true">&#9788;</span>'
-        '<span class="theme-toggle-moon" aria-hidden="true">&#9789;</span>'
+        f'<span class="theme-sun">{icon("sun")}</span>'
+        f'<span class="theme-moon">{icon("moon")}</span>'
         '</button>'
     )
 

@@ -1,28 +1,35 @@
-"""Shared dashboard navigation chrome."""
+"""Shared dashboard app shell: a top app bar and a navigation rail.
+
+The layout mirrors Rupevo, the dashboard's public companion site. The app
+bar carries the brand, the page's own status pills (`after_links`), and the
+screen-privacy, theme and "Buy me a coffee" controls. The rail lists every
+dashboard page plus Rupevo; below 840px it becomes a bottom bar that scrolls
+sideways. Both are fixed-position, so the markup works wherever a page puts
+it in <body>; `theme.py` pads the body whenever the shell is present.
+"""
 
 from __future__ import annotations
 
 import html
 
 from modes.dashboard.coffee import coffee_button_html
+from modes.dashboard.icons import icon
 from modes.dashboard.privacy import privacy_toggle_html
 from modes.dashboard.rupevo import rupevo_nav_link
 from modes.dashboard.theme import theme_toggle_html
 
 
-# (label, href, tooltip)
-# "Home" is deliberately absent — the `Portfolio HQ` brand on the left
-# is the home link, so a separate pill would be a second button to the
-# same page.
+# (label, href, icon, tooltip)
 NAV_ITEMS = [
-    ("Portfolio", "/portfolio", "Zerodha holdings, gaps and analyse runs"),
-    ("Mutual Funds", "/mf", "Coin funds plus funds held at other brokers"),
-    ("Swing", "/swing", "Indian swing scan, watchlist and open book"),
-    ("US", "/us", "US long-term portfolio and investment ideas"),
-    ("Intraday", "/trading", "Live intraday P&L"),
-    ("Dry Run", "/dryrun", "Per-strategy dry-run P&L"),
-    ("Tax", "/tax", "Realised P&L and tax projection"),
-    ("Theory", "/theory/project", "The project story, evidence and research roadmap"),
+    ("Home", "/", "home", "Overview of every book"),
+    ("Portfolio", "/portfolio", "portfolio", "Zerodha holdings, gaps and analyse runs"),
+    ("Funds", "/mf", "funds", "Mutual funds: Coin plus funds held at other brokers"),
+    ("Swing", "/swing", "india", "Indian swing scan, watchlist and open book"),
+    ("US", "/us", "us", "US long-term portfolio and investment ideas"),
+    ("Intraday", "/trading", "pulse", "Live intraday P&L"),
+    ("Dry run", "/dryrun", "flask", "Per-strategy dry-run P&L"),
+    ("Tax", "/tax", "tax", "Realised P&L and tax projection"),
+    ("Theory", "/theory/project", "book", "The project story, evidence and research roadmap"),
 ]
 
 # Pages still pass a label (not a path) as `here`; normalise those.
@@ -30,6 +37,7 @@ _LABEL_ALIASES = {
     "home": "/",
     "portfolio": "/portfolio",
     "mutual funds": "/mf",
+    "funds": "/mf",
     "mf": "/mf",
     "swing": "/swing",
     "us": "/us",
@@ -43,7 +51,7 @@ _LABEL_ALIASES = {
 }
 
 
-def _active(here: str, label: str, href: str) -> bool:
+def _active(here: str, href: str) -> bool:
     marker = (here or "").strip().lower()
     if not marker:
         return False
@@ -60,78 +68,45 @@ def _active(here: str, label: str, href: str) -> bool:
 
 
 def render_topnav(here: str = "", *, after_links: str = "") -> str:
-    """Render a full dashboard nav plus a Back control and theme switch.
+    """Render the app bar and navigation rail with `here` marked current.
 
-    The external Rupevo link follows the internal pages on every page, and
-    the "Buy me a coffee" button sits after the theme switch, as on Rupevo.
+    `after_links` holds page status pills (auth, FX rate, currency switch,
+    docs picker); they sit in the app bar before the shared controls.
     """
-    at_home = _active(here, "Home", "/")
-    brand_cls = "nav-brand here" if at_home else "nav-brand"
-    brand_extra = ' aria-current="page"' if at_home else ''
-    parts = [
-        '<button class="nav-back" type="button" title="Go back" '
-        'onclick="if (window.history.length > 1) { window.history.back(); } '
-        'else { window.location.href=\'/\'; }">&#8592; Back</button>',
-        f'<a class="{brand_cls}" href="/"{brand_extra} '
-        'title="Home — overview of every book">'
-        '<span class="dot"></span>Portfolio HQ</a>',
-        '<span class="nav-links">',
-    ]
-    for label, href, hint in NAV_ITEMS:
-        if _active(here, label, href):
-            parts.append(
-                f'<span class="here" aria-current="page" '
-                f'title="{html.escape(hint)}">{html.escape(label)}</span>'
-            )
-        else:
-            parts.append(
-                f'<a href="{href}" title="{html.escape(hint)}">'
-                f'{html.escape(label)}</a>'
-            )
-    parts.append("</span>")
-    parts.append(rupevo_nav_link())
-    return (
-        '<nav class="topnav">'
-        + "".join(parts)
-        + '<span class="spacer"></span>'
-        + after_links
+    status = f'<div class="appbar-status">{after_links}</div>' if after_links else ""
+    appbar = (
+        '<header class="appbar">'
+        '<a class="brand" href="/" title="Portfolio HQ: overview of every book">'
+        '<span class="brand-mark" aria-hidden="true">P</span>'
+        '<span class="brand-text">Portfolio HQ</span></a>'
+        '<span class="appbar-spacer"></span>'
+        + status
         + privacy_toggle_html()
         + theme_toggle_html()
         + coffee_button_html()
-        + '</nav>'
+        + "</header>"
     )
+    items = []
+    for label, href, glyph, hint in NAV_ITEMS:
+        current = ' aria-current="page"' if _active(here, href) else ""
+        items.append(
+            f'<a class="nav-item" href="{href}" title="{html.escape(hint)}"{current}>'
+            f'<span class="nav-icon">{icon(glyph)}</span>'
+            f'<span class="nav-label">{html.escape(label)}</span></a>'
+        )
+    rail = (
+        '<nav class="navbar" aria-label="Dashboard pages">'
+        + "".join(items)
+        + '<span class="nav-sep" aria-hidden="true"></span>'
+        + rupevo_nav_link()
+        + "</nav>"
+    )
+    return appbar + rail
 
 
-def topnav_css() -> str:
-    """Structural nav CSS only — colours come from `theme.py`."""
-    return """
-nav.topnav { display: flex; gap: 8px; align-items: center;
-             padding: 8px 12px; background: var(--card);
-             border: 1px solid var(--line); border-radius: 14px;
-             margin-bottom: 18px; font-size: 14px; flex-wrap: wrap; }
-nav.topnav .nav-brand { display: inline-flex; align-items: center; gap: 7px;
-             font-weight: 700; font-size: 13.5px; letter-spacing: -.01em;
-             padding: 0 8px 0 4px; color: var(--fg); white-space: nowrap;
-             text-decoration: none; }
-nav.topnav .nav-brand .dot { width: 9px; height: 9px; border-radius: 50%;
-             background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
-nav.topnav .nav-links { display: flex; gap: 2px; align-items: center;
-             flex-wrap: wrap; }
-nav.topnav a,
-nav.topnav button.nav-back { color: var(--fg); text-decoration: none;
-                             font-weight: 500; }
-nav.topnav button.nav-back { font: inherit; padding: 5px 12px;
-                             border: 1px solid var(--line);
-                             border-radius: 999px; background: var(--card);
-                             color: var(--fg); cursor: pointer; }
-nav.topnav button.nav-back:hover { background: var(--soft); }
-nav.topnav .here { color: var(--accent); cursor: default; }
-nav.topnav a.nav-brand.here { color: var(--accent); }
-nav.topnav .sep { display: none; }
-nav.topnav .spacer { flex: 1; }
-/* The brand is the only Home affordance now, so it stays visible at
-   every width; the nav wraps instead. */
-"""
+def is_shell(fragment: str) -> bool:
+    """True when `fragment` starts with the shell from `render_topnav`."""
+    return fragment.lstrip().startswith('<header class="appbar"')
 
 
-__all__ = ["NAV_ITEMS", "render_topnav", "topnav_css"]
+__all__ = ["NAV_ITEMS", "is_shell", "render_topnav"]

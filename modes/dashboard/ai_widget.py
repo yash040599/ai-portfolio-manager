@@ -10,6 +10,7 @@ from __future__ import annotations
 import html
 
 from config import Config
+from modes.dashboard.icons import icon
 
 
 def ai_banner_html() -> str:
@@ -58,32 +59,54 @@ def ai_banner_html() -> str:
     free_line = ""
     if free_tier:
         free_line = (
-            f'<div id="ai-free" style="margin-top:4px;color:var(--pos);font-size:12px">'
+            f'<div id="ai-free" class="ai-free pos">'
             f'Free tier: {html.escape(free_tier)} · No credit card required</div>'
         )
     else:
-        free_line = '<div id="ai-free" style="margin-top:4px;font-size:12px"></div>'
+        free_line = '<div id="ai-free" class="ai-free"></div>'
 
+    # Collapsed by default: the summary shows the active model, the
+    # switcher opens on demand.
     return (
-        '<div class="ai-widget" style="margin-bottom:16px;padding:12px 14px;'
-        'border:1px solid var(--line);border-radius:var(--radius);'
-        'background:var(--card);box-shadow:var(--shadow-sm)">'
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
-        '<strong style="font-size:14px;color:var(--fg)">AI Model</strong>'
-        f'<select id="ai-provider" style="padding:4px 8px;border-radius:6px;'
-        f'font-size:13px">{provider_opts}</select>'
-        f'<select id="ai-plan" style="padding:4px 8px;border-radius:6px;'
-        f'font-size:13px">{plan_opts}</select>'
-        '<button id="ai-apply" class="action" style="padding:5px 14px;'
-        'font-size:13px">Apply</button>'
-        f'<span id="ai-label" style="font-size:13px;color:var(--muted)">'
-        f'{html.escape(provider.upper())} / {html.escape(model)} · {html.escape(cost)}'
-        '</span>'
+        '<details class="ai-widget">'
+        '<summary>'
+        f'<span class="ask-icon">{icon("spark", size=20)}</span>'
+        '<span class="ask-copy"><span class="ask-title">AI model</span>'
+        f'<span class="ask-hint" id="ai-label">{html.escape(provider.upper())} / '
+        f'{html.escape(model)} · {html.escape(cost)}</span></span>'
+        f'<span class="ask-chev">{icon("chevron-down", size=20)}</span>'
+        '</summary>'
+        '<div class="ai-body">'
+        '<div class="ai-row">'
+        f'<select id="ai-provider" aria-label="AI provider">{provider_opts}</select>'
+        f'<select id="ai-plan" aria-label="AI plan">{plan_opts}</select>'
+        '<button id="ai-apply" class="action" type="button">Apply</button>'
         '</div>'
         f'{free_line}'
-        '<div id="ai-msg" style="margin-top:4px;font-size:12px;color:var(--muted)"></div>'
+        '<div id="ai-msg" class="ai-msg"></div>'
         '</div>'
+        '</details>'
     )
+
+
+def ai_widget_css() -> str:
+    """Styles for the collapsible model switcher (shares Ask AI's row look)."""
+    return r"""
+/* ── AI model switcher ─────────────────────────────────────── */
+details.ai-widget { margin: 0 0 16px; background: var(--card);
+                    border: 1px solid var(--line); border-radius: var(--radius); }
+details.ai-widget > summary { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+                              border-radius: var(--radius); cursor: pointer; list-style: none; }
+details.ai-widget > summary::-webkit-details-marker { display: none; }
+details.ai-widget > summary:hover { background: var(--card-2); }
+details.ai-widget[open] .ask-chev { transform: rotate(180deg); }
+.ai-body { display: grid; gap: 6px; padding: 4px 16px 14px; }
+.ai-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ai-row select { font-size: 13px; }
+.ai-free, .ai-msg { font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+.ai-free.pos { color: var(--pos); }
+.ai-free:empty, .ai-msg:empty { display: none; }
+"""
 
 
 def ai_banner_script() -> str:
@@ -132,24 +155,24 @@ def ai_banner_script() -> str:
         var ft = document.getElementById('ai-free');
         if (ft) {
           ft.textContent = d.free_tier ? ('Free tier: ' + d.free_tier + ' \\u00b7 No credit card required') : '';
-          ft.style.color = d.free_tier ? '#0a8' : '';
+          ft.style.color = d.free_tier ? 'var(--pos)' : '';
         }
         var txt = 'Switched to ' + d.provider.toUpperCase() +
           ' / ' + d.model + ' (' + d.plan.toUpperCase() + ')';
         if (d.cost_warning) {
           txt += '\\n' + d.cost_warning;
-          msg.style.color = '#e0a800';
+          msg.style.color = 'var(--warn-fg)';
         } else {
-          msg.style.color = '#1a7f37';
+          msg.style.color = 'var(--pos)';
         }
         msg.textContent = txt;
       } else {
         msg.textContent = d.error || 'Switch failed';
-        msg.style.color = '#d1242f';
+        msg.style.color = 'var(--neg)';
       }
     }).catch(function(e){
       msg.textContent = 'Error: ' + e;
-      msg.style.color = '#d1242f';
+      msg.style.color = 'var(--neg)';
     });
   });
 })();

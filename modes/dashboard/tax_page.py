@@ -17,7 +17,7 @@ from __future__ import annotations
 import html
 import json
 
-from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.nav import render_topnav
 from modes.dashboard.rupevo import rupevo_card
 from modes.dashboard.tax import (
     SLABS_BY_FY,
@@ -93,7 +93,6 @@ def render_tax_page(*, other_income: float = 0.0,
       .replace("__THEME_BOOT__", theme_boot_script())
       .replace("__THEME_CSS__", theme_css())
       .replace("__THEME_OVERRIDES__", theme_overrides_css())
-      .replace("__TOPNAV_CSS__", topnav_css())
       .replace("__BODY__", _body(
         summary=summary,
         proj_with=proj_with,
@@ -385,10 +384,7 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
           proj_without: TaxComputation, intraday_tax: float,
           other_income: float, is_salaried: bool) -> str:
     salaried_checked = "checked" if is_salaried else ""
-    topnav = render_topnav(
-        '/tax',
-        after_links='<span class="muted small">Pure projection &mdash; does not file or pay anything.</span>',
-    )
+    topnav = render_topnav('/tax')
     return f"""
 {topnav}
 
@@ -397,6 +393,7 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
   Income-tax estimate for this FY built from your live trade ledger plus the other
   income you enter below. New-regime slabs, Section 87A rebate, surcharge and
   Health &amp; Education cess (4%) are applied as per Budget 2025 (effective FY 2025-26+).
+  This is a pure projection: it does not file or pay anything.
 </div>
 
 {rupevo_card('tax')}
@@ -458,8 +455,6 @@ __THEME_BOOT__
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          line-height: 1.55; }
   .wrap { max-width: 1080px; margin: 0 auto; }
-  __TOPNAV_CSS__
-  nav.topnav .small { font-size: 12px; }
 
   h1.page-title { font-size: 24px; margin: 4px 0 4px; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }

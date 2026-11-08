@@ -7,11 +7,16 @@ Dry Run, Tax and Theory are implemented. US is long-term investment research,
 not a swing strategy. `/theory/project` is the default, public-only project
 story with financial definitions, archived evidence and the portfolio pivot.
 
-Every page's navigation links to Rupevo, the public login-free companion site;
-HQ, Login, Portfolio, Swing, Mutual Funds, US and Tax show a card for the
-matching public page at the top (D37, D38). Every data table sorts by any
-column, and a "Buy me a coffee" button opens Rupevo's UPI QR and UPI ID (D38).
-The dashboard stays personal and Zerodha-backed.
+Every page shares one Rupevo-style Google Material 3 shell (D39): a top app
+bar with the brand, page status pills and icon buttons for screen privacy,
+theme and "Buy me a coffee", and a navigation rail (a bottom bar on phones)
+listing every page plus Rupevo, the public login-free companion site. Login,
+Portfolio, Swing, Mutual Funds, US and Tax show a card for the matching public
+page at the top (D37, D38); HQ points to Rupevo in its footer and while Zerodha
+is not connected. HQ is a compact overview: status row, KPI tiles, one tabbed
+Holdings card beside Allocation, realised P&L and a collapsed Ask AI row. Every
+data table sorts by any column, and the coffee button opens Rupevo's UPI QR and
+UPI ID (D38). The dashboard stays personal and Zerodha-backed.
 
 Shared `DashboardPrivacy` state covers navigation, refreshes, quantities,
 personal inputs and tooltips. Masking is scoped to regions marked personal, so
@@ -192,6 +197,7 @@ decisions risks compounding small reporting errors into the wrong call.
 | D36 | **Whole-book Ask-AI prompt and dashboard usability pass.** | MEDIUM | High | Medium | ✅ **Shipped 2026-08-12** — the home dashboard now builds a copy-paste prompt containing the private India-equity, mutual-fund and US snapshot, allocation, SIP flow and duplicate-exposure context, with row caps for free-model context windows. The prompt stays local until the user copies it; the dashboard never sends it to an LLM or places orders. Home and `/us` share one persistent USD/INR display preference. `/mf` now gives visible refresh progress/completion feedback and a fund-selectable NAV chart whose selection is restored after the book rerenders. |
 | D37 | **Rupevo links — public, login-free companion site.** | MEDIUM | Medium | Low | ✅ **Shipped 2026-11-08** — `modes/dashboard/rupevo.py` owns the Rupevo address (`https://yash040599.github.io/Rupevo/`), its destinations and the page copy. The shared nav carries a `Rupevo ↗` link on every page; HQ adds a Tools tile and, while Zerodha is not connected, a "Try Rupevo" hint; Login points visitors without a Zerodha account to Rupevo's rankings and fund comparison; Portfolio and Swing link the Nifty 100 ranking, Mutual Funds the fund comparison, SIP split and lump-sum check, US the US ranking, and Tax the foreign-RSU tools. Links are fixed public URLs (no personal data), open in a new tab with `noopener noreferrer`, and the cards are marked `data-privacy-public`. Covered by `TestRupevoLinks`. |
 | D38 | **Sortable tables, Rupevo cards at the top and "Buy me a coffee".** | MEDIUM | High | Low | ✅ **Shipped 2026-11-08** — `modes/dashboard/table_sort.py` makes every data table on every page sortable: header click cycles ascending, descending and the original order, with numeric parsing of ₹/$/Rs amounts, lakh/crore and K/M/B suffixes, signed percentages, dates and times. Blank cells sort last, `total-row` rows stay at the bottom, intraday detail rows move with their trade, key-value tables are skipped, and the sort survives live refreshes and section reloads for the session. Columns masked by screen privacy sort as equal values, so hidden amounts are never ranked. The Rupevo cards moved from the bottom to the top of each page. `modes/dashboard/coffee.py` adds Rupevo's "Buy me a coffee" button to the shared nav: a dialog with the same public UPI QR (`assets/upi-qr.svg`) and UPI ID, a copy button and no `upi://` link. Covered by `TestSortableTables` (parser runs under Node) and `TestBuyMeACoffee`. |
+| D39 | **Rupevo-style Material 3 redesign: app shell and decluttered HQ.** | MEDIUM | High | Medium | ✅ **Shipped 2026-11-08** — the dashboard now uses Rupevo's design language. [`theme.py`](../theme.py) carries Rupevo's light and dark tokens (legacy names such as `--risk-*` and `--accent-2` kept so older page CSS resolves), flat outlined cards, soft tonal KPI tiles, pill buttons, sentence-case headings and table headers, and tonal borderless banners; the override layer harmonises every page's own CSS. [`nav.py`](../nav.py) renders the shell: a fixed 64px app bar (brand, the page's status pills, an eye icon for screen privacy, a sun/moon theme icon and the coffee pill) and an 88px navigation rail with icons from [`icons.py`](../icons.py), which becomes a sideways-scrolling bottom bar below 840px; the body is padded only when the shell is present (`body:has(.appbar)`) and sticky table headers pin under the app bar. The Back button is gone (detail pages keep their own back links). HQ was decluttered: a page head with one status row (markets, USD/INR, Zerodha chip with Re-login, refresh, auto-refresh), KPI tiles, the four books as one tabbed Holdings card beside Allocation, realised facts, a collapsed Ask AI row and a footer; the login card only appears while Zerodha is disconnected, and the Tools tiles were removed because the rail replaces them. Ask AI and the AI-model switcher are collapsed `<details>` rows on every page, and the Rupevo card is a compact Material card. Covered by `TestAppShell` and `TestHomeOverview`; checked in the browser in light, dark and phone widths with screen privacy on. |
 
 ### Portfolio-Analyser Sub-Module (D24–D29) — design notes
 
