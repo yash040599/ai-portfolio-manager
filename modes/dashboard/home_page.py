@@ -4,11 +4,12 @@ Layout (2026-07-30 revamp):
 
     hero            greeting, IST clock, NSE/US market chips, refresh
     kpi row         net worth, unrealised P&L, India book, US book
-    connect card    Zerodha auth status + inline login (TOTP / paste)
+    connect card    Zerodha auth status + inline login (TOTP / paste), with a
+                    Rupevo pointer for visitors without a Zerodha account
     allocation      India-vs-US doughnut + Indian sector weights
     books           India holdings, US positions, swing tracker
     realised strip  swing India, US, intraday
-    tiles           navigation into the per-book tools
+    tiles           navigation into the per-book tools, plus Rupevo (public site)
 
 Book boundaries are enforced in `modes/dashboard/home_summary.py`:
 net worth = Zerodha holdings + US book.  The India swing open book is
@@ -31,6 +32,7 @@ import json
 
 from modes.dashboard.home_summary import build_summary
 from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.rupevo import rupevo_login_hint, rupevo_tile
 from modes.dashboard.theme import (
     theme_boot_script,
     theme_css,
@@ -282,6 +284,7 @@ def _connect_card(data: dict) -> str:
       <p class="hint">{login_link} → log in → copy the full address-bar URL back here.</p>
     </form>
   </div>
+  {rupevo_login_hint()}
 </section>
 """
 
@@ -496,7 +499,7 @@ def _tiles() -> str:
     ]
     return f"""
 <h2 class="t-section-title">Tools</h2>
-<section class="tiles">{''.join(cards)}</section>
+<section class="tiles">{''.join(cards)}{rupevo_tile()}</section>
 """
 
 

@@ -31,6 +31,7 @@ from modes.swing.persistence import (
 from modes.swing.types import SwingAction, DIP_SETUP_TYPES
 from modes.dashboard.live_quotes import cached_live_quotes, get_live_quotes
 from modes.dashboard.nav import render_topnav
+from modes.dashboard.rupevo import rupevo_card
 from modes.dashboard.swing_actions import latest_swing_status
 from shared.stock_names import get_nse_stock_name
 
@@ -768,6 +769,7 @@ def render_swing_page() -> str:
                     'Confirm an entry recommendation above to start tracking.</div>')
     body.append('</div>')
 
+    body.append(rupevo_card("swing"))
     body.append('</div>')  # .wrap
 
     # ── JavaScript ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 
 from modes.dashboard.privacy import privacy_toggle_html
+from modes.dashboard.rupevo import rupevo_nav_link
 from modes.dashboard.theme import theme_toggle_html
 
 
@@ -58,7 +59,10 @@ def _active(here: str, label: str, href: str) -> bool:
 
 
 def render_topnav(here: str = "", *, after_links: str = "") -> str:
-    """Render a full dashboard nav plus a Back control and theme switch."""
+    """Render a full dashboard nav plus a Back control and theme switch.
+
+    The external Rupevo link follows the internal pages on every page.
+    """
     at_home = _active(here, "Home", "/")
     brand_cls = "nav-brand here" if at_home else "nav-brand"
     brand_extra = ' aria-current="page"' if at_home else ''
@@ -83,6 +87,7 @@ def render_topnav(here: str = "", *, after_links: str = "") -> str:
                 f'{html.escape(label)}</a>'
             )
     parts.append("</span>")
+    parts.append(rupevo_nav_link())
     return (
         '<nav class="topnav">'
         + "".join(parts)

@@ -27,6 +27,7 @@ from modes.dashboard.us_analysis import (
     build_us_health_checks,
 )
 from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.rupevo import rupevo_card
 from modes.swing.persistence import (
     init_db, open_positions, get_watchlist, realised_pnl_summary,
 )
@@ -100,6 +101,7 @@ def render_us_page() -> str:
     body.append(_render_compare_card(default_ticket))
 
     body.append(_render_us_sections_loader())
+    body.append(rupevo_card("us"))
 
     body.append('</div>')  # /.wrap
     body.append(_js(fx))

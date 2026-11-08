@@ -18,6 +18,7 @@ import html
 import json
 
 from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.rupevo import rupevo_card
 from modes.dashboard.tax import (
     SLABS_BY_FY,
     STD_DEDUCTION_SALARY,
@@ -429,6 +430,8 @@ def _body(*, summary: FYSummary, proj_with: TaxComputation,
 {_docs_checklist()}
 
 {_theory_link_card()}
+
+{rupevo_card('tax')}
 
 <footer>
   Disclaimer: pure heuristic projection. Verify against your Zerodha Tax P&amp;L PDF and consult

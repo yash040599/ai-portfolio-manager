@@ -5,6 +5,9 @@ mutual funds**, with a local dashboard and optional AI explanations.
 Intraday trading was tried end to end, including broker buys and sells, but
 is now **paused**: the tested Rs.50,000 setup did not justify its full costs.
 Options remain **research-only**, with backtesting required before live use.
+The tool is personal and needs a Zerodha login; its public, login-free
+companion website, **[Rupevo](https://yash040599.github.io/Rupevo/)**, shares
+the general research with anyone (Phase 6).
 
 Start with the self-contained [project story](docs/PROJECT_OVERVIEW.md), also
 available on the dashboard at `/theory/project`. Reviewed 14 September 2026;
@@ -19,7 +22,7 @@ Copilot/automation should follow this contract so updates are
 consistent across edits.
 
 Structure (do NOT reorder, do NOT merge):
-  1. What it does       — 5 modes (Phase 1 analyse, Phase 2 trade, Phase 3 dashboard, Phase 4 swing, Phase 5 options). One paragraph + bullets each.
+  1. What it does       — 6 phases (Phase 1 analyse, Phase 2 trade, Phase 3 dashboard, Phase 4 swing, Phase 5 options, Phase 6 Rupevo public site). One paragraph + bullets each.
   2. Quick start        — install + first run, max 7 commands.
   3. Documentation map  — table of links to docs/* (single source of truth).
   4. Prerequisites      — bullets only.
@@ -57,7 +60,7 @@ When in doubt: terser is better. Long-form belongs in docs/TRADE_STRATEGY.md.
 ## 1. What it does
 
 One CLI and a shared dashboard, with active investment-analysis surfaces and
-separate trading-research modes.
+separate trading-research modes, plus a public companion website (Phase 6).
 
 ### Phase 1 — Portfolio analysis (read-only)
 
@@ -231,6 +234,10 @@ readable. Percentages remain visible, and masked values keep their column
 alignment. Personal edit/copy prompts are restricted while hidden. This is
 screen privacy, not authentication: do not publish the personal server, page
 source, API responses, exports or browser developer tools.
+
+**Rupevo links.** The shared navigation carries a **Rupevo ↗** link on every
+page, and HQ, Login, Portfolio, Swing, Mutual Funds, US and Tax add a card for
+the matching public page — see [Phase 6](#phase-6--rupevo-public-login-free-companion-website).
 
 Pages:
 
@@ -447,6 +454,40 @@ python scripts/trade/backtest_options.py          # run backtest
 python scripts/trade/backtest_options.py --sweep  # parameter sweep
 ```
 
+### Phase 6 — Rupevo (public, login-free companion website)
+
+**[Rupevo](https://yash040599.github.io/Rupevo/)** is the public side of this
+project: general market information for anyone, with no login or broker account.
+This tool stays personal because it reads your Zerodha account, so the dashboard
+links to Rupevo wherever someone without an account would otherwise hit a wall.
+
+- **What Rupevo offers:** a daily Nifty 100 ranking built on the swing scanner's
+  engine; the US long-term scorecard for the NASDAQ-100 and the NYSE's 100 largest
+  companies; a direct-plan mutual-fund comparison with a SIP split by age and a
+  lump-sum valuation check; and step-by-step tax tools for foreign RSUs.
+- **Screener-style by design:** scores and grades only — no buy/sell calls or
+  entry, stop and target levels. It is educational information, not advice.
+- **Separate repository:** the static site and its scheduled data pipeline live
+  in the public [Rupevo repository](https://github.com/yash040599/Rupevo); this
+  repository only links to it.
+
+| Dashboard surface | Rupevo destination |
+|---|---|
+| Navigation (every page) | Rupevo home |
+| HQ `/` | Tools tile, plus a "Try Rupevo" hint while Zerodha is not connected |
+| Login `/login` | Rupevo home, Nifty 100 ranking, fund comparison, US ranking |
+| Portfolio `/portfolio`, Swing `/swing` | Nifty 100 ranking |
+| Mutual Funds `/mf` | Fund comparison, SIP split by age, lump-sum check |
+| US `/us` | US stock ranking |
+| Tax `/tax` | Foreign RSU tax, tax tools |
+
+- **Privacy:** every link is a fixed public address that opens in a new tab
+  without a referrer. No holding, amount, folio or account detail leaves the dashboard.
+- **Changing an address or a placement:** edit `RUPEVO_URL`, `PAGES` or `CALLOUTS`
+  in [modes/dashboard/rupevo.py](modes/dashboard/rupevo.py);
+  [tests/test_dashboard_surfaces.py](tests/test_dashboard_surfaces.py) guards the
+  destinations and link-safety rules.
+
 ### Historical candle cache
 
 - `data/candle_cache.db` (SQLite) keeps prior days' candles to avoid
@@ -509,7 +550,8 @@ their content.
 | [docs/SWING_STRATEGY.md](docs/SWING_STRATEGY.md) | Swing trading strategy reference — 4 setup types, risk model, position review, exit stack, AI overlay semantics, broker-entry instructions, dashboard surface spec |
 | [docs/SWING_GUIDE.md](docs/SWING_GUIDE.md) | **Operator-facing walkthrough for Phase 4 swing** — dashboard surface, full CLI reference, 5 setup detectors, 52W dip-buy strategy + 10y backtest evidence, AI overlay (cost / sticky cache / prompt), Compare-up-to-4, Add+ flow, HTTP API, persistence, tuning knobs, FAQ |
 | [docs/SWING_ROADMAP.md](docs/SWING_ROADMAP.md) | Swing change log — Pending / Awaiting-Data / Removed / Completed (S1-S48 to date). Read this before touching any swing knob to confirm you're not undoing a calibrated decision. |
-| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D36 adds whole-book Ask-AI prompts, shared USD/INR display state and MF refresh/NAV-chart UX. |
+| [modes/dashboard/docs/DASHBOARD_ROADMAP.md](modes/dashboard/docs/DASHBOARD_ROADMAP.md) | **Tool-wide operator surface** — portfolio, mutual-fund, swing, US, intraday and tax pages; latest D37 links every page to the public Rupevo site. |
+| [Rupevo README](https://github.com/yash040599/Rupevo#readme) | **Public companion website (Phase 6)** — its pages, data pipeline, refresh schedule and compliance notes. Lives in its own public repository. |
 | [docs/IDEATIONS.md](docs/IDEATIONS.md) | Future money-engine ideation: A1 V3 AI intraday (superseded), ~~A2 swing~~ (✅ done), A3 ETF rotation (planning), A4 options (✅ shipped). No-F&O constraint lifted 2026-06-09. |
 | [docs/OPTIONS_GUIDE.md](docs/OPTIONS_GUIDE.md) | **Plain-English options primer** — what options are, how P&L works, the Greeks (delta/theta/vega/gamma), buying vs selling mechanics |
 | [docs/OPTIONS_STRATEGY.md](docs/OPTIONS_STRATEGY.md) | **Options strategy reference** — regime-gated directional buying v1.0, premium model (Brenner-Subrahmanyam + Parkinson), NSE charges, backtest results, improvement ideas, config reference, module architecture |
@@ -537,7 +579,9 @@ their content.
 - **Browser and local storage:** Safari/Chrome/Firefox for the dashboard; keep
   the checkout outside iCloud/OneDrive-synced folders, for example `~/Projects`.
 - **Zerodha account** with [Kite Connect](https://developers.kite.trade)
-  subscription (Rs.500/month).
+  subscription (Rs.500/month). Without one, use the public, login-free
+  [Rupevo](https://yash040599.github.io/Rupevo/) site (Phase 6) for the general
+  rankings, fund comparison and tax tools.
 - **AI API key** — only needed for `--ai` mode. Default provider is
   **Gemini** (free tier: 500 req/day). Alternatively GPT (OpenAI) or
   Claude (Anthropic). Set `AI_PROVIDER` in config.py.
@@ -1092,6 +1136,7 @@ ai-portfolio-manager/
 │       ├── verdict.py               # capital-ladder traffic-light engine
 │       ├── theme.py                 # shared design tokens + light/dark theme
 │       ├── nav.py                   # shared top nav + theme toggle
+│       ├── rupevo.py                # links to Rupevo, the public login-free site (Phase 6)
 │       ├── home_page.py             # / command centre (net worth, books, inline login)
 │       ├── home_summary.py          # cross-book aggregation for the home page
 │       ├── render_html.py           # /trading Chart.js SPA shell

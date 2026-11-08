@@ -17,6 +17,7 @@ multi-tenant financial service. The public project story is in
 | Intraday | `modes/trade/manager.py`, scanner, order engine and tracker | Orchestration, candidate decisions, risk/execution, reconciliation and evidence. Live startup is paused by default. |
 | Options | `modes/options/` | Contract research, pricing, scans and simulated trade lifecycle. Infrastructure exists; a profitable strategy is not validated. |
 | Dashboard | `modes/dashboard/` | Render snapshots and explanations, display quotes, and expose deliberate local workflow actions. No broker order placement. |
+| Public companion links | `modes/dashboard/rupevo.py` | The Rupevo address, its destinations and the page cards that point visitors to the public, login-free site. |
 | Research | `scripts/trade/`, `docs/backtest/` | Replays, strategy comparisons, costs and dated evidence. |
 | Repository safety | `scripts/shared/repository_audit.py`, `backup_data.py` | Publication checks, dataset integrity, consistent private snapshots and explicit publication. |
 
@@ -67,6 +68,11 @@ Privacy survives navigation and reloads, synchronises tabs and reclassifies
 asynchronously rendered sections. Disabled storage defaults to hidden values.
 The HQ and navigation controls operate the same state.
 
+Links to Rupevo, the public companion site, are fixed addresses defined in
+`modes/dashboard/rupevo.py`. Never build a Rupevo URL from personal data such as
+held symbols, amounts, folios or scheme codes. Links open in a new tab with
+`rel="noopener noreferrer"`, and the server also sends `Referrer-Policy: no-referrer`.
+
 Screen privacy does not remove the underlying API/HTML/browser-memory data.
 Do not expose the personal server publicly, share raw snapshots, open developer
 tools during a recording, or show broker login/credential screens. The public
@@ -80,6 +86,7 @@ data or the public page; keep private captures outside the code repository.
 | Application | Source, tests, documentation and labelled research summaries | No personal identifiers, balances, positions or credentials. |
 | Backtest data | Historical market data, schemas, metadata and checksums | No personal records. Provider redistribution rights need a separate review before publication. |
 | Operational data | Personal books, tax/trade records, reports, logs and private runbooks | Must remain private; never store credentials, even invalidated tokens. |
+| Rupevo (public website) | Static site, market snapshots and copies of the pure scoring engines | Public. No personal records, credentials or broker access; screener-style output without buy/sell calls or entry, stop and target levels. The dashboard only links to it. |
 
 Git ignore rules do not remove a file already tracked, and removing it from
 the current index does not erase history. The invalidated token previously

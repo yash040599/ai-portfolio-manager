@@ -39,6 +39,7 @@ light theme).  The user's choice is persisted in
 from __future__ import annotations
 
 from modes.dashboard.privacy import privacy_boot_script
+from modes.dashboard.rupevo import rupevo_css
 
 
 # ── Tokens + base ────────────────────────────────────────────────
@@ -248,7 +249,7 @@ a { color: var(--accent); }
   * { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
       transition-duration: .001ms !important; }
 }
-"""
+""" + rupevo_css()
 
 
 # ── Deliberate cross-page polish + dark-mode fix-ups ─────────────

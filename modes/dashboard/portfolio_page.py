@@ -38,6 +38,7 @@ from modes.analyze.types import (
 )
 from modes.dashboard.portfolio_actions import latest_status
 from modes.dashboard.nav import render_topnav
+from modes.dashboard.rupevo import rupevo_card
 
 
 # ── Shared chrome ───────────────────────────────────────────────
@@ -306,6 +307,7 @@ def render_portfolio_page() -> str:
 
     if snap is None:
         body.append(_empty_state())
+        body.append(rupevo_card("portfolio"))
         return _wrap("Portfolio", "Portfolio", "".join(body),
                      holdings_count=0)
 
@@ -316,6 +318,7 @@ def render_portfolio_page() -> str:
     body.append(_render_charts(snap))
     body.append(_render_metrics(snap.metrics))
     body.append(_render_lazy_sections_loader())
+    body.append(rupevo_card("portfolio"))
     return _wrap("Portfolio", "Portfolio", "".join(body),
                  holdings_count=len(snap.holdings))
 
@@ -1518,6 +1521,7 @@ def render_login_page(*, ok: bool = False, err: str = "") -> str:
     the safest from a single-page browser context.
   </p>
 </div>
+{rupevo_card('login')}
 """
     return _wrap("Login", "Login", body)
 

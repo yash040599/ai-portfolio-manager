@@ -107,6 +107,14 @@ Instead of asking only "what should we trade this morning?", the active work ask
 
 The Indian swing tracker can describe shares already counted in the Indian holdings. HQ does not add those shares a second time. Unrealised results (gains or losses on investments still held) are also kept distinct from realised results (gains or losses after closing).
 
+## Rupevo: the public companion
+
+This dashboard is personal: it reads one person's broker account, so it needs a Zerodha login. [Rupevo](https://yash040599.github.io/Rupevo/) is the public, login-free side of the same research, for anyone to explore or share.
+
+Rupevo applies the project's scoring engines to the whole market: a daily Nifty 100 ranking from the swing scanner (technical setups, scores, risk grades and 52-week dips) and the US long-term scorecard for the NASDAQ-100 and the NYSE's 100 largest companies. It adds a comparison of direct-plan mutual funds within their group, a SIP split by age and risk, a lump-sum valuation check and step-by-step tax tools for foreign RSUs. It publishes scores and grades only, not buy/sell calls or entry, stop and target levels, and it is educational information rather than advice.
+
+The dashboard links to the matching Rupevo page from its navigation, the HQ tools and login card, the Login page, and the Portfolio, Swing, Mutual Funds, US and Tax pages. The links are fixed public addresses that open in a new tab: no holding, amount or account detail leaves the dashboard.
+
 ## Options: research before risk
 
 An **option** is a time-limited contract linked to an asset or index. The premium is its price. A call gives its buyer the right to buy at a specified price, and a put gives its buyer the right to sell. The expiry is the date that right ends. The price can change because of time remaining and expected market movement, not just the direction of the underlying stock or index.
@@ -123,7 +131,7 @@ Responsibilities are separated: market-data clients fetch information; analysis 
 
 SQLite (a small database stored in a local file) holds structured records. Cached data (a saved copy of a previous response) keeps the interface usable when a provider is slow or unavailable. Source and date fields help distinguish fresh information from older snapshots.
 
-Three repositories have different jobs: the application contains code and public documentation; the backtest-data repository contains versioned market-research datasets; the private operational-data repository holds backups of personal records. Market data must not be confused with broker tokens, personal positions or tax ledgers. A configuration fingerprint (a short identifier for the settings used) helps connect an experiment to its exact rules.
+Four repositories have different jobs: the application contains code and public documentation; the backtest-data repository contains versioned market-research datasets; the private operational-data repository holds backups of personal records; and the public Rupevo repository builds the companion website from market data alone. Market data must not be confused with broker tokens, personal positions or tax ledgers. A configuration fingerprint (a short identifier for the settings used) helps connect an experiment to its exact rules.
 
 ## Privacy and limits
 

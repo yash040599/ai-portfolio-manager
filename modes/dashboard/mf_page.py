@@ -22,6 +22,7 @@ import html
 import json
 
 from modes.dashboard.nav import render_topnav, topnav_css
+from modes.dashboard.rupevo import rupevo_card
 from modes.mf.book import build_book
 from modes.mf.catalog import catalog_as_of, ensure_catalog, search_catalog
 from modes.mf.types import SRC_COIN, SRC_EXTERNAL
@@ -107,6 +108,7 @@ def render_mf_page() -> str:
     body.append(_render_kpis(book))
     body.append(_render_charts())
     body.append(_render_sections_loader())
+    body.append(rupevo_card("mf"))
     body.append('</div>')
     body.append(f'<script id="mf-bootstrap" type="application/json">'
                 f'{_safe_json(payload)}</script>')
