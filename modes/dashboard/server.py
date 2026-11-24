@@ -1581,10 +1581,10 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(err)
             return
-        if qty <= 0 or price <= 0:
+        if qty < 0:
             err = json.dumps({
                 "ok": False,
-                "error": "qty and average price must be positive numbers",
+                "error": "qty cannot be negative",
             }).encode("utf-8")
             self.send_response(400)
             self.send_header("Content-Type", "application/json")
@@ -1593,14 +1593,33 @@ class _DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(err)
             return
 
-        from modes.swing.persistence import edit_position
-        pos = edit_position(
-            position_id=pos_id,
-            managed_qty=qty,
-            entry_price=price,
-            stop_price=stop,
-            target_price=target,
-        )
+        if qty == 0:
+            from modes.swing.persistence import remove_position_from_open_book
+            pos = remove_position_from_open_book(position_id=pos_id)
+        else:
+            if price <= 0:
+                err = json.dumps({
+                    "ok": False,
+                    "error": "average price must be a positive number",
+                }).encode("utf-8")
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+                return
+
+            from modes.swing.persistence import edit_position
+            pos = edit_position(
+                position_id=pos_id,
+                managed_qty=qty,
+                entry_price=price,
+                stop_price=stop,
+                target_price=target,
+            )
+        if pos:
+            for prefix in ("page:us", "json:us", "page:swing", "page:home"):
+                _invalidate_render_cache(prefix)
         body = json.dumps({
             "ok": pos is not None,
             "position_id": pos.position_id if pos else 0,

@@ -1550,6 +1550,39 @@ def edit_position(
         return _load_position(conn, position_id)
 
 
+def remove_position_from_open_book(
+    position_id: int,
+    path: str = DB_PATH,
+) -> SwingPosition | None:
+    """Remove an open position from tracking without recording a sale or P&L."""
+    with _connect(path) as conn:
+        _ensure_schema(conn)
+        pos = _load_position(conn, position_id)
+        if not pos or pos.status != "OPEN":
+            return None
+
+        ts = now_ist().isoformat()
+        updated = conn.execute(
+            """UPDATE swing_positions
+               SET managed_qty = 0, status = 'REMOVED'
+               WHERE position_id = ? AND status = 'OPEN'""",
+            (position_id,),
+        )
+        if updated.rowcount != 1:
+            return None
+
+        conn.execute(
+            """INSERT INTO swing_events (position_id, event_time,
+                   event_type, old_value, new_value, reason)
+               VALUES (?, ?, 'REMOVE_FROM_OPEN_BOOK', ?, ?, ?)""",
+            (position_id, ts,
+             json.dumps({"qty": pos.managed_qty, "status": pos.status}),
+             json.dumps({"qty": 0, "status": "REMOVED"}),
+             "Removed from open book without recording realized P&L"),
+        )
+        return _load_position(conn, position_id)
+
+
 def get_watchlist(path: str = DB_PATH,
                   exchange: str | None = None) -> list[WatchlistItem]:
     """All active watchlist items (WATCHING status)."""

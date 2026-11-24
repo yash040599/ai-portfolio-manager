@@ -1928,16 +1928,30 @@ function addUsPosition() {
     }, {symbol: symbol, exchange: 'NASDAQ'});
 }
 function editUsPosition(posId, qty, price, stop, target) {
-    var newQty = _qty(prompt('Total shares (decimals OK):', String(qty)), 'Qty');
+    var rawQty = prompt('Total shares (decimals OK):', String(qty));
+    if (rawQty === null) return;
+    var qtyText = String(rawQty).replace(/,/g, '').trim();
+    var parsedQty = Number(qtyText);
+    if (qtyText !== '' && isFinite(parsedQty) && parsedQty === 0) {
+        if (!confirm('Setting quantity to 0 will remove this stock from the open book without recording realized P&L. Continue?')) return;
+        submitUsPositionEdit(posId, {qty: 0});
+        return;
+    }
+    var newQty = _qty(rawQty, 'Qty');
     if (newQty === null) return;
     var newPrice = _optionalNum(prompt('Average cost ($):', String(price)), 'Price');
     if (newPrice === null || newPrice <= 0) return;
     var newStop = _optionalNum(prompt('Stop ($):', String(stop)), 'Stop');
     var newTarget = _optionalNum(prompt('Target ($):', String(target)), 'Target');
+    submitUsPositionEdit(posId, {
+        qty: newQty, price: newPrice, stop: newStop, target: newTarget
+    });
+}
+function submitUsPositionEdit(posId, data) {
     fetch('/api/us/positions/' + posId + '/edit', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({qty: newQty, price: newPrice, stop: newStop, target: newTarget})
+        body: JSON.stringify(data)
     })
         .then(function(r) { return r.json().then(function(j) { return {ok: r.ok, body: j}; }); })
         .then(function(res) {

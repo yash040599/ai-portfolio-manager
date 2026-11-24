@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 import sys
 from types import SimpleNamespace
@@ -33,6 +34,14 @@ from modes.dashboard.server import RenderCache
 from modes.dashboard.table_sort import SORT_KEY_JS
 from modes.dashboard.theme import theme_boot_script, theme_css
 from modes.dashboard.theory_page import DEFAULT_PAGE, render_theory_page
+from modes.dashboard.us_page import _js as us_page_js
+from modes.swing.persistence import (
+    add_manual_position,
+    all_positions,
+    open_positions,
+    realised_pnl_summary,
+    remove_position_from_open_book,
+)
 
 
 class TestRenderCache(unittest.TestCase):
@@ -209,6 +218,35 @@ class TestDashboardControls(unittest.TestCase):
         self.assertIn('value="1001"', card)
         self.assertIn("Alpha Fund", card)
         self.assertIn("Beta Fund", card)
+
+
+class TestUsPositionRemoval(unittest.TestCase):
+    def test_editing_quantity_to_zero_confirms_non_pnl_removal(self):
+        script = us_page_js({})
+
+        self.assertIn("Setting quantity to 0 will remove this stock from the open book", script)
+        self.assertIn("without recording realized P&L", script)
+        self.assertIn("submitUsPositionEdit(posId, {qty: 0})", script)
+
+    def test_removal_excludes_position_without_creating_realized_pnl(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = f"{temp_dir}/swing.db"
+            position = add_manual_position(
+                symbol="ORCL", executed_qty=5, executed_price=120,
+                exchange="NASDAQ", path=path,
+            )
+            assert position is not None
+
+            removed = remove_position_from_open_book(position.position_id, path=path)
+
+            self.assertIsNotNone(removed)
+            self.assertEqual(removed.status, "REMOVED")
+            self.assertEqual(removed.managed_qty, 0)
+            self.assertEqual(open_positions(path=path), [])
+            summary = realised_pnl_summary(path=path, exchange="NASDAQ")
+            self.assertEqual(summary["count"], 0)
+            self.assertEqual(summary["net_pnl"], 0)
+            self.assertEqual(len(all_positions(path=path)), 1)
 
 
 class TestRupevoLinks(unittest.TestCase):
